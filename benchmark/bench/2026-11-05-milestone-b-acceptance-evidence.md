@@ -1,6 +1,6 @@
 # Milestone B acceptance: retained evidence
 
-Companion to [the acceptance report](2026-11-05-milestone-b-acceptance.md). Product access uses public interfaces only. Credential, bearer-token and epoch-key values are excluded. These are observations, not prior-thread claims.
+Companion to [the acceptance report](2026-11-05-milestone-b-acceptance.md). Product access uses public interfaces only. Credential, bearer-token and epoch-key values are excluded. These are observations, not prior-thread claims. Repeated Server-Timing names on forwarded responses use the last endpoint-attributed entry in corrected summaries/samples. The historical raw summary.json retains its initial first-entry analysis; complete raw headers remain authoritative.
 
 ## Raw file manifest
 
@@ -8,6 +8,8 @@ Retained on beta under `/home/mariogk/.t3/worktrees/terrascale/t3-b1c4ae61/bench
 
 | File | Bytes | SHA-256 |
 |---|---:|---|
+| `account-closure-denial.json` | 2790 | `ca29b45c0680ee6c46662144234803ca0fcfc5a5ff46644d09d27b6d259860dd` |
+| `account-closure.json` | 229 | `31a18a407350b067f3d6950e220a27da6fb5dd0b57826f8390bceb6aae623766` |
 | `cdn-after-420s.json` | 13781 | `9459997b5529576c1b8801be2e0c917a32e3bc4a2cc76a0d410d871fc68e06d4` |
 | `cdn-after-delete.json` | 2430 | `2ec00997ffa11b85c54056223a05b04764ee7c40d06ebfcec2a027d658deb41e` |
 | `cdn-regions.json` | 3067 | `0c62f7d84c57a657e9b646bc077b81e21c987e100c051796f3f6ccd27de7de53` |
@@ -16,7 +18,13 @@ Retained on beta under `/home/mariogk/.t3/worktrees/terrascale/t3-b1c4ae61/bench
 | `cdn-retest-create.json` | 2418 | `ebb010e190785d206b7e4ff752111c38e1d96c5700d18dd0e1ee3c973a6525a3` |
 | `cdn-retest-deletion.json` | 8632 | `0e71d95ee63957764ae6c3a5d717777f1df8f0b9f1ff4c8cdf2b2a382a76da4c` |
 | `cdn-retest-shapes.json` | 15371 | `62056540ff4bc6b2780bb84a0c285645619e165aa5cea5cee46e9e09aaf92d71` |
+| `confirm-measurements.jsonl` | 2678490 | `d00ef47dfd6be840dda7ff39c9e406f4a78cdb4846e5c1d7f6b8e0555a2e1263` |
+| `confirm-summary.json` | 3585 | `12413c2755a705f2e253d7bc7698ecfdbc7465e248e5295e2766351e0c86013c` |
 | `deletion.json` | 5532 | `cf828cc0ff1c12a650641ef3312ac69571c85d21c6619cd2407546d56d7ee087` |
+| `final-cdn-after-delete.json` | 2613 | `44bb84bcfef9ad110e0c7e8dc3cd48cfc3c0f82080cbf2e7fde1b13b6173626b` |
+| `final-cdn-before-delete.json` | 4540 | `3116ce502aa573988a7188ceaa198c6bf04c18af3b48abbffb7769242083e481` |
+| `final-database-cleanup.json` | 18870 | `44d084da11b4388ed12739cad8ae7494a2b875e4e6e2786a4130b184d74ee3b6` |
+| `final-shapes.json` | 12408 | `34cf388af090b4cce82ee19b1ebbab41d292f65b3d8abeb02629ccf8521c6300` |
 | `free-measurements.jsonl` | 1706941 | `08b14c5dad9a17c24114fc6ef8c52b33e42d6060746c28e9b1f4efc1602e6504` |
 | `home-durable-functional.jsonl` | 11598 | `690524debaac31017a5fc2caaeefe464ff2e7f1c977d754509e9a810794004bc` |
 | `move-approx-times.json` | 1706 | `80806463389c50aebd222a908b64f00d2d09b24fa6cf043c4df1e9e320185cdf` |
@@ -25,7 +33,7 @@ Retained on beta under `/home/mariogk/.t3/worktrees/terrascale/t3-b1c4ae61/bench
 | `move.jsonl` | 374247 | `d8c90f6405f07e178a992e9e971aff5ba848d76a3ccaec28c73cf1a4a23dc80c` |
 | `postfix-measurements.jsonl` | 2670808 | `667fca92822429d656a4ae84f772ca69d8d8845367fbe50f212385e0f8815c5f` |
 | `postfix-sql-error-followup.json` | 370 | `084b3f0fc4755261d3561f21a876daacc15eaa499f51d8c2ccb4dbbd930b7dfa` |
-| `postfix-summary.json` | 2097 | `f24231c30f86cd023f7c11a489f594af014c2ccaa7f3f6def70f8a55e3c59677` |
+| `postfix-summary.json` | 2097 | `0c1ce08d271861705fc361428ba43a6e488ee70c7d2f04f175b0cafd992c94cc` |
 | `pre-delete-placement.json` | 341 | `d2e7c2a33f26d8ece8f717cbd46d995fe8ea9a37043f2940a45adccbdb6fe78f` |
 | `pro-measurements.jsonl` | 1704048 | `e7ed1d44d93b086b3265b43a652561dd53ee686599211c76ef3294e18948917d` |
 | `pro-read-only.jsonl` | 144670 | `16c8de8bd99ace08c11ea591d9acb188d245cba46f4bc3bb954206866d4a3a20` |
@@ -36,6 +44,7 @@ Retained on beta under `/home/mariogk/.t3/worktrees/terrascale/t3-b1c4ae61/bench
 | `public-versions.json` | 870 | `166ecd4b007d15f96b6f7e5f027c68d5dc680a20705b414801a4bca39dcb5e0e` |
 | `shapes.json` | 43328 | `063498be532b062b233d26cba566878e5cfaa00b68c163a6aff035b939c49277` |
 | `summary.json` | 960 | `eea659fb8a1b42b119cc8607922458f808db31881051c16c479c7210c9121a97` |
+| `credential-cleanup.json` | 451 | `671b4340d6dbfbcfaa49f02d2052ecd4465000440854b842411d86d00d1df85d` |
 
 ## Screenshot manifest
 
@@ -2353,7 +2362,7 @@ All-attempt write percentile results:
     "repeat": null,
     "server_pass": false,
     "client_pass": false,
-    "server_p99": 607.32,
+    "server_p99": 726.52,
     "client_p99": 1077.745,
     "baseline": 195.447
   },
@@ -2380,7 +2389,7 @@ All-attempt write percentile results:
     "repeat": 3,
     "server_pass": false,
     "client_pass": false,
-    "server_p99": 620.04,
+    "server_p99": 749.63,
     "client_p99": 1928.428,
     "baseline": 211.806
   },
@@ -2389,7 +2398,7 @@ All-attempt write percentile results:
     "repeat": null,
     "server_pass": false,
     "client_pass": false,
-    "server_p99": 462.11,
+    "server_p99": 620.04,
     "client_p99": 968.217,
     "baseline": 211.806
   }
@@ -6091,4 +6100,1656 @@ All regional endpoints return1003 total/distinct rows with TLS certificate verif
     "stderr": ""
   }
 ]
+```
+
+## Baseline-first independent confirmation
+
+The path baseline precedes every measured write. Full timed requests, including failures and sanitized SQL error messages, are in the samples document. Exact inventories retain all ID/value comparisons.
+
+```json
+[
+  {
+    "kind": "environment",
+    "host": "delta",
+    "sdk_revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+    "at": "2026-11-05T20:20:49Z"
+  },
+  {
+    "kind": "confirmation_database_created",
+    "at": "2026-11-05T20:20:50.064511+00:00",
+    "value": {
+      "id": "01M6PNY2NSDD07TVSQZJYHK8JW",
+      "project_id": "01M6PENV06CRPSJYDDRZTF75R4",
+      "name": "milestone-b-confirmation",
+      "created_at": "2026-11-05T20:20:49.4654528+00:00",
+      "region": "gru",
+      "home_region": "gru",
+      "branched_from": null,
+      "raw": {
+        "id": "01M6PNY2NSDD07TVSQZJYHK8JW",
+        "projectId": "01M6PENV06CRPSJYDDRZTF75R4",
+        "name": "milestone-b-confirmation",
+        "branchedFrom": null,
+        "createdAt": "2026-11-05T20:20:49.4654528+00:00",
+        "region": "gru",
+        "homeRegion": "gru",
+        "replicaRegions": [
+          "fra",
+          "sjc"
+        ],
+        "allRegions": true,
+        "previousName": null,
+        "conflictOf": null,
+        "expiresAt": null
+      },
+      "previous_name": null,
+      "conflict_of": null,
+      "expires_at": null,
+      "replica_regions": [
+        "fra",
+        "sjc"
+      ],
+      "all_regions": true
+    }
+  },
+  {
+    "kind": "exact_comparison",
+    "region": "gru",
+    "expected": 960,
+    "rows": 960,
+    "distinct": 960,
+    "missing": [],
+    "unexpected": [],
+    "changed": []
+  },
+  {
+    "kind": "exact_comparison",
+    "region": "sjc",
+    "expected": 960,
+    "rows": 960,
+    "distinct": 960,
+    "missing": [],
+    "unexpected": [],
+    "changed": []
+  },
+  {
+    "kind": "exact_comparison",
+    "region": "fra",
+    "expected": 960,
+    "rows": 960,
+    "distinct": 960,
+    "missing": [],
+    "unexpected": [],
+    "changed": []
+  }
+]
+```
+
+All-attempt write percentiles:
+
+```json
+[
+  {
+    "region": "gru",
+    "repeat": 1,
+    "attempted": 100,
+    "accepted": 100,
+    "origin_samples": 100,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 38.7,
+    "client_p99": 65.293,
+    "server_max": 47.73,
+    "client_max": 70.401,
+    "baseline": 23.199
+  },
+  {
+    "region": "gru",
+    "repeat": 2,
+    "attempted": 100,
+    "accepted": 100,
+    "origin_samples": 100,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 47.14,
+    "client_p99": 68.869,
+    "server_max": 54.47,
+    "client_max": 77.193,
+    "baseline": 23.199
+  },
+  {
+    "region": "gru",
+    "repeat": 3,
+    "attempted": 100,
+    "accepted": 100,
+    "origin_samples": 100,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 57.93,
+    "client_p99": 81.493,
+    "server_max": 61.03,
+    "client_max": 84.913,
+    "baseline": 23.199
+  },
+  {
+    "region": "gru",
+    "repeat": null,
+    "attempted": 300,
+    "accepted": 300,
+    "origin_samples": 300,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 54.47,
+    "client_p99": 77.193,
+    "server_max": 61.03,
+    "client_max": 84.913,
+    "baseline": 23.199
+  },
+  {
+    "region": "sjc",
+    "repeat": 1,
+    "attempted": 100,
+    "accepted": 100,
+    "origin_samples": 100,
+    "server_pass": false,
+    "client_pass": false,
+    "server_p99": 202.83,
+    "client_p99": 400.024,
+    "server_max": 551.04,
+    "client_max": 745.894,
+    "baseline": 193.266
+  },
+  {
+    "region": "sjc",
+    "repeat": 2,
+    "attempted": 100,
+    "accepted": 100,
+    "origin_samples": 100,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 46.33,
+    "client_p99": 242.575,
+    "server_max": 79.61,
+    "client_max": 275.416,
+    "baseline": 193.266
+  },
+  {
+    "region": "sjc",
+    "repeat": 3,
+    "attempted": 100,
+    "accepted": 100,
+    "origin_samples": 100,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 61.07,
+    "client_p99": 255.486,
+    "server_max": 91.69,
+    "client_max": 289.329,
+    "baseline": 193.266
+  },
+  {
+    "region": "sjc",
+    "repeat": null,
+    "attempted": 300,
+    "accepted": 300,
+    "origin_samples": 300,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 79.61,
+    "client_p99": 275.416,
+    "server_max": 551.04,
+    "client_max": 745.894,
+    "baseline": 193.266
+  },
+  {
+    "region": "fra",
+    "repeat": 1,
+    "attempted": 100,
+    "accepted": 100,
+    "origin_samples": 100,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 57.08,
+    "client_p99": 269.991,
+    "server_max": 92.77,
+    "client_max": 306.775,
+    "baseline": 211.43699999999998
+  },
+  {
+    "region": "fra",
+    "repeat": 2,
+    "attempted": 100,
+    "accepted": 100,
+    "origin_samples": 100,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 47.27,
+    "client_p99": 260.67,
+    "server_max": 84.42,
+    "client_max": 308.176,
+    "baseline": 211.43699999999998
+  },
+  {
+    "region": "fra",
+    "repeat": 3,
+    "attempted": 100,
+    "accepted": 100,
+    "origin_samples": 100,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 49.84,
+    "client_p99": 263.422,
+    "server_max": 50.1,
+    "client_max": 263.659,
+    "baseline": 211.43699999999998
+  },
+  {
+    "region": "fra",
+    "repeat": null,
+    "attempted": 300,
+    "accepted": 300,
+    "origin_samples": 300,
+    "server_pass": true,
+    "client_pass": true,
+    "server_p99": 50.64,
+    "client_p99": 265.568,
+    "server_max": 92.77,
+    "client_max": 308.176,
+    "baseline": 211.43699999999998
+  }
+]
+```
+
+Every failed API call:
+
+```json
+[]
+```
+
+Immediate home checks following home-durable acknowledgement:
+
+```json
+[
+  {
+    "source": "gru",
+    "id": "01M6PP38QNC3FFZXZ37FHE523K",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:39.575935+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.15, home_lookup;dur=0.82, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.10, execute;dur=0.66, app;dur=1.92;desc=\"gru\"",
+      "x-request-id": "01M6PP38SQN59R36CSYTE38T98",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "gru",
+    "id": "01M6PP38SRD1STTZ8XZANSCT3H",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:39.635603+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.14, auth;dur=0.13, home_lookup;dur=0.86, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.07, execute;dur=0.70, app;dur=1.96;desc=\"gru\"",
+      "x-request-id": "01M6PP38VJ4SF60N781Q2EV9EW",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "gru",
+    "id": "01M6PP38VK6ZE1J3Y18J60VH88",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:39.692761+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.12, home_lookup;dur=0.85, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.08, execute;dur=0.71, app;dur=1.94;desc=\"gru\"",
+      "x-request-id": "01M6PP38XCHHXMB544CBFNZAJ2",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "gru",
+    "id": "01M6PP38XCNX3N7B9SR873P08T",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:39.752660+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.12, home_lookup;dur=0.60, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.08, execute;dur=0.85, app;dur=1.84;desc=\"gru\"",
+      "x-request-id": "01M6PP38Z8D2E4YABWSKJK7GB4",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "gru",
+    "id": "01M6PP38Z83SZ5KQR8P89HC10E",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:39.823841+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.11, auth;dur=0.11, home_lookup;dur=1.00, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.09, execute;dur=0.72, app;dur=2.10;desc=\"gru\"",
+      "x-request-id": "01M6PP391DXM774HQXE7DJ1SEB",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "gru",
+    "id": "01M6PP391GMJH17JQS380B3FW0",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:39.882527+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.12, home_lookup;dur=0.94, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.07, execute;dur=0.68, app;dur=2.00;desc=\"gru\"",
+      "x-request-id": "01M6PP393956H848C1VKDRDMHK",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "gru",
+    "id": "01M6PP393AGJBY6XC4MG3MMM0F",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:39.957812+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.11, auth;dur=0.13, home_lookup;dur=0.77, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.08, execute;dur=1.20, app;dur=2.36;desc=\"gru\"",
+      "x-request-id": "01M6PP395MZN7ZPHXTMY7BRJDW",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "gru",
+    "id": "01M6PP395NJA3V1S3WPJBV0TGR",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:40.024012+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.15, home_lookup;dur=0.83, qos;dur=0.03, project;dur=0.03, placement;dur=0.01, tenant;dur=0.08, execute;dur=0.74, app;dur=1.99;desc=\"gru\"",
+      "x-request-id": "01M6PP397QJH3B25RY5HBRYVTT",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "gru",
+    "id": "01M6PP397RMNC4B4G674VJEGC3",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:40.083160+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.07, auth;dur=0.08, home_lookup;dur=0.55, qos;dur=0.02, project;dur=0.02, placement;dur=0.01, tenant;dur=0.05, execute;dur=2.06, app;dur=2.87;desc=\"gru\"",
+      "x-request-id": "01M6PP399H0079NAH31VMPRFZ9",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "gru",
+    "id": "01M6PP399K5PHG6EJH0ZF0FYJN",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:40.143497+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.12, home_lookup;dur=0.95, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.07, execute;dur=0.73, app;dur=2.07;desc=\"gru\"",
+      "x-request-id": "01M6PP39BE2J1VZC8MXPJKV52B",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3APEHR772N0QTDA4RFFX",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:41.946120+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.16, auth;dur=0.12, home_lookup;dur=3.69, qos;dur=1.43, project;dur=0.03, placement;dur=0.01, tenant;dur=1.77, execute;dur=1.53, app;dur=8.75;desc=\"gru\"",
+      "x-request-id": "01M6PP3B3J8XWEVF901CSJN80B",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3B3TGSYG12T42P8GW10Q",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:42.358756+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.14, auth;dur=0.58, home_lookup;dur=0.92, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.10, execute;dur=1.10, app;dur=2.91;desc=\"gru\"",
+      "x-request-id": "01M6PP3BGNF49XVQQGQ9WSCP3W",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3BGPYWX4AVSRQP78C3N4",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:42.769578+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.11, auth;dur=0.11, home_lookup;dur=0.71, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.09, execute;dur=1.79, app;dur=2.87;desc=\"gru\"",
+      "x-request-id": "01M6PP3BXG3J2HSCPGXHXN025N",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3BXHQHRQVTRT3M493PNB",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:43.194197+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.15, home_lookup;dur=0.84, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.08, execute;dur=0.81, app;dur=2.08;desc=\"gru\"",
+      "x-request-id": "01M6PP3CASWKBMGJEMD7ERMK11",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3CAT0HNAR9A48JBA5K2H",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:43.608135+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.44, home_lookup;dur=0.93, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.08, execute;dur=0.86, app;dur=2.50;desc=\"gru\"",
+      "x-request-id": "01M6PP3CQPWXP0AFCAE04WQV5F",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3CQRECSDS3A4CBV76Y5M",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:44.022244+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.14, home_lookup;dur=0.87, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.08, execute;dur=3.26, app;dur=4.54;desc=\"gru\"",
+      "x-request-id": "01M6PP3D4J3BSJTT0HP7CYC32P",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3D4PHYF0F0N4ENG4PYJG",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:44.428944+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.12, home_lookup;dur=0.90, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.08, execute;dur=0.67, app;dur=1.97;desc=\"gru\"",
+      "x-request-id": "01M6PP3DHCCEE1PJG56N9JEV77",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3DHDY5T4E26HTY3Z0YK1",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:44.846139+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.46, home_lookup;dur=4.46, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.05, execute;dur=1.37, app;dur=6.52;desc=\"gru\"",
+      "x-request-id": "01M6PP3DY9NHSANTP07DKCSBFS",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3DYEWMM5TM1S2GKHSQ5Z",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:45.258191+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.12, home_lookup;dur=0.90, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.14, execute;dur=0.78, app;dur=2.13;desc=\"gru\"",
+      "x-request-id": "01M6PP3EB9DEVKBTJY448E9AXC",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "sjc",
+    "id": "01M6PP3EBA4TGYX8YD8P7KRYGS",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:45.671974+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.15, home_lookup;dur=0.90, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.10, execute;dur=1.01, app;dur=2.35;desc=\"gru\"",
+      "x-request-id": "01M6PP3ER69WKS1ZYT19AEQNDJ",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3MDZCNG0REGSGY9QKP64",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:52.016697+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.08, auth;dur=0.07, home_lookup;dur=5.60, qos;dur=5.52, project;dur=0.03, placement;dur=0.02, tenant;dur=3.14, execute;dur=3.77, app;dur=18.24;desc=\"gru\"",
+      "x-request-id": "01M6PP3MXZKXNX6P503Q2GT93N",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3MYG6DKVM8HF8PMKHHKF",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:52.463233+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.09, auth;dur=0.25, home_lookup;dur=1.92, qos;dur=0.02, project;dur=0.01, placement;dur=0.01, tenant;dur=0.07, execute;dur=0.87, app;dur=3.24;desc=\"gru\"",
+      "x-request-id": "01M6PP3NCCYR7HK0M76CZ1Q51M",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3NCFSJ6PP3ZR69ADFBMH",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:52.928573+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.09, auth;dur=0.11, home_lookup;dur=0.86, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.08, execute;dur=0.75, app;dur=1.96;desc=\"gru\"",
+      "x-request-id": "01M6PP3NTZDPN0YN6ZRYCDMYTA",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3NV0MWEP9NWY5X9N2V8K",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:53.398688+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.12, home_lookup;dur=0.91, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.11, execute;dur=0.72, app;dur=2.06;desc=\"gru\"",
+      "x-request-id": "01M6PP3P9NFYDTNAKJGN41YYRA",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3P9PFCGS0P70K0TQRN07",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:53.847366+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.12, home_lookup;dur=0.98, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.08, execute;dur=0.69, app;dur=2.04;desc=\"gru\"",
+      "x-request-id": "01M6PP3PQPF2XJCDCGY3YX20JW",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3PQQY8NJ29XDDNTPPM41",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:54.294406+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.53, home_lookup;dur=0.89, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.07, execute;dur=1.11, app;dur=2.80;desc=\"gru\"",
+      "x-request-id": "01M6PP3Q5MQRYMBCZ4Y1RRHW74",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3Q5PMY68DR7PMG85QR99",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:54.740116+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.18, home_lookup;dur=2.36, qos;dur=0.04, project;dur=0.02, placement;dur=0.01, tenant;dur=0.10, execute;dur=0.78, app;dur=3.61;desc=\"gru\"",
+      "x-request-id": "01M6PP3QKJRA9FJCCKW706CDQ9",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3QKMTNY7TMJTXB2XVBSS",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:55.185283+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.12, home_lookup;dur=1.12, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.13, execute;dur=0.79, app;dur=2.35;desc=\"gru\"",
+      "x-request-id": "01M6PP3R1GD5H8E1MADVG27DFX",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3R1H3A9ZFMSP2QGGNXK9",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:55.628549+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.09, auth;dur=0.09, home_lookup;dur=0.61, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.07, execute;dur=0.69, app;dur=1.62;desc=\"gru\"",
+      "x-request-id": "01M6PP3RFB7TBQEFCQT98CGK4N",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  },
+  {
+    "source": "fra",
+    "id": "01M6PP3RFCVJN9C9TRH412QJEN",
+    "ok": true,
+    "status": 200,
+    "visible": true,
+    "completed_at": "2026-11-05T20:23:56.102833+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.10, auth;dur=0.42, home_lookup;dur=5.69, qos;dur=3.55, project;dur=0.03, placement;dur=0.01, tenant;dur=2.49, execute;dur=1.21, app;dur=13.51;desc=\"gru\"",
+      "x-request-id": "01M6PP3RXTWSDVCKTQKXY9JC8W",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    }
+  }
+]
+```
+
+## final-database-cleanup.json
+
+```json
+[
+  {
+    "status": 200,
+    "received_at": "2026-11-05T20:28:13.490303+00:00",
+    "headers": {
+      "x-request-id": "01M6PPBKWZ5NFSTRQRJZHJQTM1",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": true,
+    "database_ids": [
+      "01M6PFQFV240ECH0BCQ5AKFYHX",
+      "01M6PK77TX4H0B1D3GQZ73XZCF",
+      "01M6PNY2NSDD07TVSQZJYHK8JW"
+    ],
+    "next_cursor": null,
+    "kind": "final-list-before-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:13.031048+00:00",
+    "completed_at": "2026-11-05T20:28:13.490907+00:00",
+    "ms": 459.872
+  },
+  {
+    "status": 200,
+    "received_at": "2026-11-05T20:28:14.603574+00:00",
+    "headers": {
+      "x-request-id": "01M6PPBMRY5WE6TV27C3TF7WGY",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": true,
+    "database_ids": [
+      "01M6PFQFV240ECH0BCQ5AKFYHX",
+      "01M6PK77TX4H0B1D3GQZ73XZCF",
+      "01M6PNY2NSDD07TVSQZJYHK8JW"
+    ],
+    "next_cursor": null,
+    "kind": "final-list-before-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:13.491049+00:00",
+    "completed_at": "2026-11-05T20:28:14.604167+00:00",
+    "ms": 1113.129
+  },
+  {
+    "status": 200,
+    "received_at": "2026-11-05T20:28:15.835373+00:00",
+    "headers": {
+      "x-request-id": "01M6PPBNXPPHT4F4AQZMSGGGJD",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": true,
+    "database_ids": [
+      "01M6PFQFV240ECH0BCQ5AKFYHX",
+      "01M6PK77TX4H0B1D3GQZ73XZCF",
+      "01M6PNY2NSDD07TVSQZJYHK8JW"
+    ],
+    "next_cursor": null,
+    "kind": "final-list-before-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:14.604298+00:00",
+    "completed_at": "2026-11-05T20:28:15.835982+00:00",
+    "ms": 1231.691
+  },
+  {
+    "status": 204,
+    "received_at": "2026-11-05T20:28:19.554875+00:00",
+    "headers": {
+      "x-request-id": "01M6PPBPM3R5BXCM06WC6WV3QP",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": true,
+    "kind": "prior-delete-database",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:15.866870+00:00",
+    "completed_at": "2026-11-05T20:28:19.555334+00:00",
+    "ms": 3688.476,
+    "database_id": "01M6PFQFV240ECH0BCQ5AKFYHX"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:19.769594+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.10, auth;dur=0.11, home_lookup;dur=188.57, qos;dur=2.03, project;dur=0.03, placement;dur=0.02, execute;dur=0.98, app;dur=191.85;desc=\"gru\"",
+      "x-request-id": "01M6PPBT7C1XE67WYXC1ZBY10J",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-sql-after-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:19.555445+00:00",
+    "completed_at": "2026-11-05T20:28:19.770214+00:00",
+    "ms": 214.78,
+    "database_id": "01M6PFQFV240ECH0BCQ5AKFYHX"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:19.975511+00:00",
+    "headers": {
+      "x-request-id": "01M6PPBTE3SKWA6VT02H31X24B",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-metadata-after-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:19.770315+00:00",
+    "completed_at": "2026-11-05T20:28:19.975979+00:00",
+    "ms": 205.671,
+    "database_id": "01M6PFQFV240ECH0BCQ5AKFYHX"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:20.737790+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.31, home_lookup;dur=170.98, qos;dur=0.90, project;dur=0.03, placement;dur=0.01, execute;dur=1.11, app;dur=173.47;desc=\"sjc\"",
+      "x-request-id": "01M6PPBV3NECYAZ60YBMCDNJKA",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-sql-after-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:19.976042+00:00",
+    "completed_at": "2026-11-05T20:28:20.738124+00:00",
+    "ms": 762.087,
+    "database_id": "01M6PFQFV240ECH0BCQ5AKFYHX"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:21.102616+00:00",
+    "headers": {
+      "x-request-id": "01M6PPBVF5X9KX1P4EWV91NGZF",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-metadata-after-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:20.738190+00:00",
+    "completed_at": "2026-11-05T20:28:21.103008+00:00",
+    "ms": 364.824,
+    "database_id": "01M6PFQFV240ECH0BCQ5AKFYHX"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:21.910967+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.12, home_lookup;dur=183.06, qos;dur=0.87, project;dur=0.02, placement;dur=0.01, execute;dur=2.38, app;dur=186.60;desc=\"fra\"",
+      "x-request-id": "01M6PPBW7KAYCFKC89D8D9SQ6X",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-sql-after-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:21.103078+00:00",
+    "completed_at": "2026-11-05T20:28:21.911370+00:00",
+    "ms": 808.299,
+    "database_id": "01M6PFQFV240ECH0BCQ5AKFYHX"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:22.303467+00:00",
+    "headers": {
+      "x-request-id": "01M6PPBWKXWP1WX20HBJRP3XFA",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-metadata-after-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:21.911476+00:00",
+    "completed_at": "2026-11-05T20:28:22.303969+00:00",
+    "ms": 392.499,
+    "database_id": "01M6PFQFV240ECH0BCQ5AKFYHX"
+  },
+  {
+    "status": 204,
+    "received_at": "2026-11-05T20:28:26.198254+00:00",
+    "headers": {
+      "x-request-id": "01M6PPBX136R2FSKM3VJ7MJF39",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": true,
+    "kind": "prior-delete-database",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:22.333893+00:00",
+    "completed_at": "2026-11-05T20:28:26.198402+00:00",
+    "ms": 3864.513,
+    "database_id": "01M6PK77TX4H0B1D3GQZ73XZCF"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:26.408789+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.09, auth;dur=0.15, home_lookup;dur=185.23, qos;dur=1.97, project;dur=0.02, placement;dur=0.01, execute;dur=1.20, app;dur=188.69;desc=\"gru\"",
+      "x-request-id": "01M6PPC0PZYSG1P3A1SZ5K8WDT",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-sql-after-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:26.198468+00:00",
+    "completed_at": "2026-11-05T20:28:26.409281+00:00",
+    "ms": 210.822,
+    "database_id": "01M6PK77TX4H0B1D3GQZ73XZCF"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:26.618319+00:00",
+    "headers": {
+      "x-request-id": "01M6PPC0XJ1PNM5B22AR138VZQ",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-metadata-after-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:26.409394+00:00",
+    "completed_at": "2026-11-05T20:28:26.618688+00:00",
+    "ms": 209.302,
+    "database_id": "01M6PK77TX4H0B1D3GQZ73XZCF"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:27.374688+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.13, auth;dur=0.17, home_lookup;dur=170.35, qos;dur=1.50, project;dur=0.04, placement;dur=0.01, execute;dur=0.96, app;dur=173.18;desc=\"sjc\"",
+      "x-request-id": "01M6PPC1K1CTP6ME8NMZQ3BSF5",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-sql-after-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:26.618781+00:00",
+    "completed_at": "2026-11-05T20:28:27.375301+00:00",
+    "ms": 756.527,
+    "database_id": "01M6PK77TX4H0B1D3GQZ73XZCF"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:27.739249+00:00",
+    "headers": {
+      "x-request-id": "01M6PPC1YHT5P41V0H55DG4JJ3",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-metadata-after-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:27.375406+00:00",
+    "completed_at": "2026-11-05T20:28:27.739548+00:00",
+    "ms": 364.148,
+    "database_id": "01M6PK77TX4H0B1D3GQZ73XZCF"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:28.133734+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.11, home_lookup;dur=184.46, qos;dur=1.42, project;dur=0.03, placement;dur=0.01, execute;dur=1.01, app;dur=187.18;desc=\"fra\"",
+      "x-request-id": "01M6PPC2A2WX2V620SJD137MMB",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-sql-after-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:27.739624+00:00",
+    "completed_at": "2026-11-05T20:28:28.134004+00:00",
+    "ms": 394.387,
+    "database_id": "01M6PK77TX4H0B1D3GQZ73XZCF"
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:28.524021+00:00",
+    "headers": {
+      "x-request-id": "01M6PPC2PB0XMV38NGRHZ1C5HG",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "prior-metadata-after-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:28.134074+00:00",
+    "completed_at": "2026-11-05T20:28:28.524541+00:00",
+    "ms": 390.478,
+    "database_id": "01M6PK77TX4H0B1D3GQZ73XZCF"
+  },
+  {
+    "status": 200,
+    "received_at": "2026-11-05T20:28:29.011475+00:00",
+    "headers": {
+      "x-request-id": "01M6PPC30JY0GHVWA798Q94W0T",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": true,
+    "kind": "final-key-before-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:28.554069+00:00",
+    "completed_at": "2026-11-05T20:28:29.013215+00:00",
+    "ms": 459.152
+  },
+  {
+    "status": 200,
+    "received_at": "2026-11-05T20:28:29.379846+00:00",
+    "headers": {
+      "server-timing": "home;dur=169.5;desc=\"gru\"",
+      "x-request-id": "01M6PPC3HQT7NPGEYZZ6937336",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": true,
+    "kind": "final-key-before-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:29.013318+00:00",
+    "completed_at": "2026-11-05T20:28:29.380126+00:00",
+    "ms": 366.815
+  },
+  {
+    "status": 200,
+    "received_at": "2026-11-05T20:28:29.772343+00:00",
+    "headers": {
+      "server-timing": "home;dur=181.9;desc=\"gru\"",
+      "x-request-id": "01M6PPC3X98TX2285DVJPWCMHV",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": true,
+    "kind": "final-key-before-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:29.380197+00:00",
+    "completed_at": "2026-11-05T20:28:29.772811+00:00",
+    "ms": 392.62
+  },
+  {
+    "status": 204,
+    "received_at": "2026-11-05T20:28:33.875654+00:00",
+    "headers": {
+      "x-request-id": "01M6PPC46N4E73K9FH29ER9Z1J",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": true,
+    "kind": "final-delete-database",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:29.772873+00:00",
+    "completed_at": "2026-11-05T20:28:33.875825+00:00",
+    "ms": 4102.957
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:34.087311+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.11, auth;dur=0.11, home_lookup;dur=185.71, qos;dur=1.91, project;dur=0.03, placement;dur=0.01, execute;dur=1.14, app;dur=189.04;desc=\"gru\"",
+      "x-request-id": "01M6PPC86WXE08S67BB5Q67RW5",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "final-sql-after-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:33.875894+00:00",
+    "completed_at": "2026-11-05T20:28:34.087645+00:00",
+    "ms": 211.758
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:34.293089+00:00",
+    "headers": {
+      "x-request-id": "01M6PPC8DG263BB468GWYRM4CM",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "final-metadata-after-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:34.087726+00:00",
+    "completed_at": "2026-11-05T20:28:34.293512+00:00",
+    "ms": 205.793
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:34.499927+00:00",
+    "headers": {
+      "x-request-id": "01M6PPC8KYY75KWDHAZYAQHDHB",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": true,
+    "code": "unknown_database",
+    "kind": "final-key-after-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:34.293584+00:00",
+    "completed_at": "2026-11-05T20:28:34.500203+00:00",
+    "ms": 206.625
+  },
+  {
+    "status": 200,
+    "received_at": "2026-11-05T20:28:34.708735+00:00",
+    "headers": {
+      "x-request-id": "01M6PPC8TD7GK5MB58PNZ9Q1FW",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": true,
+    "database_ids": [],
+    "next_cursor": null,
+    "kind": "final-list-after-delete",
+    "region": "gru",
+    "started_at": "2026-11-05T20:28:34.500266+00:00",
+    "completed_at": "2026-11-05T20:28:34.709044+00:00",
+    "ms": 208.784
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:35.464883+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.12, auth;dur=0.14, home_lookup;dur=171.51, qos;dur=1.65, project;dur=0.03, placement;dur=0.01, execute;dur=1.22, app;dur=174.68;desc=\"sjc\"",
+      "x-request-id": "01M6PPC9FW67WGSP4C2FKRHE9D",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "final-sql-after-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:34.709121+00:00",
+    "completed_at": "2026-11-05T20:28:35.465204+00:00",
+    "ms": 756.089
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:35.828638+00:00",
+    "headers": {
+      "x-request-id": "01M6PPC9VB29JMF07583T44QT5",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "final-metadata-after-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:35.465280+00:00",
+    "completed_at": "2026-11-05T20:28:35.829216+00:00",
+    "ms": 363.946
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:36.198295+00:00",
+    "headers": {
+      "x-request-id": "01M6PPCA6QHBHY9Q54EKRRVHBC",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": true,
+    "code": "unknown_database",
+    "kind": "final-key-after-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:35.829335+00:00",
+    "completed_at": "2026-11-05T20:28:36.198900+00:00",
+    "ms": 369.581
+  },
+  {
+    "status": 200,
+    "received_at": "2026-11-05T20:28:36.565161+00:00",
+    "headers": {
+      "x-request-id": "01M6PPCAJ91DT79S6YR51PZCED",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": true,
+    "database_ids": [],
+    "next_cursor": null,
+    "kind": "final-list-after-delete",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:28:36.199045+00:00",
+    "completed_at": "2026-11-05T20:28:36.565543+00:00",
+    "ms": 366.505
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:37.387086+00:00",
+    "headers": {
+      "server-timing": "admission;dur=0.14, auth;dur=0.11, home_lookup;dur=183.41, qos;dur=1.60, project;dur=0.03, placement;dur=0.01, execute;dur=1.09, app;dur=186.41;desc=\"fra\"",
+      "x-request-id": "01M6PPCBB5949K45EZTR1MYPXT",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "final-sql-after-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:36.565637+00:00",
+    "completed_at": "2026-11-05T20:28:37.387415+00:00",
+    "ms": 821.784
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:37.784395+00:00",
+    "headers": {
+      "x-request-id": "01M6PPCBQK9X3MP9PTX9MKKJ07",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": false,
+    "code": "unknown_database",
+    "error_type": "NotFoundError",
+    "kind": "final-metadata-after-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:37.387480+00:00",
+    "completed_at": "2026-11-05T20:28:37.784704+00:00",
+    "ms": 397.23
+  },
+  {
+    "status": 404,
+    "received_at": "2026-11-05T20:28:38.184888+00:00",
+    "headers": {
+      "x-request-id": "01M6PPCC41CM4Y47V8H74VF3S0",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": true,
+    "code": "unknown_database",
+    "kind": "final-key-after-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:37.784807+00:00",
+    "completed_at": "2026-11-05T20:28:38.185235+00:00",
+    "ms": 400.434
+  },
+  {
+    "status": 200,
+    "received_at": "2026-11-05T20:28:38.581135+00:00",
+    "headers": {
+      "x-request-id": "01M6PPCCGHNHEA2DH2YVCBYHKQ",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": true,
+    "database_ids": [],
+    "next_cursor": null,
+    "kind": "final-list-after-delete",
+    "region": "fra",
+    "started_at": "2026-11-05T20:28:38.185297+00:00",
+    "completed_at": "2026-11-05T20:28:38.581419+00:00",
+    "ms": 396.127
+  }
+]
+```
+
+## account-closure.json
+
+```json
+{
+  "started_at": "2026-11-05T20:30:30.823243+00:00",
+  "completed_at": "2026-11-05T20:30:37.789928+00:00",
+  "exit": 0,
+  "duration_ms": 6966.696,
+  "helper_output": "DELETED mb-acceptance-20261105-b1c4",
+  "helper_stderr": ""
+}
+```
+
+## account-closure-denial.json
+
+```json
+[
+  {
+    "response_host": "gru.api.terrascale.tech",
+    "status": 401,
+    "headers": {
+      "x-request-id": "01M6PPH8XBQY1J45YKAFDESYZJ",
+      "x-terrabase-machine": "ts-gru-1",
+      "x-terrabase-region": "gru"
+    },
+    "ok": false,
+    "code": "invalid_key",
+    "error_type": "AuthenticationError",
+    "kind": "retained-token-after-account-close",
+    "region": "gru",
+    "started_at": "2026-11-05T20:31:18.384674+00:00",
+    "completed_at": "2026-11-05T20:31:18.457483+00:00",
+    "ms": 72.827
+  },
+  {
+    "response_host": "auth.terrascale.tech",
+    "status": 401,
+    "headers": {
+      "x-request-id": "01M6PPH8ZJTP7ZPRQRXZ9CYCWG"
+    },
+    "ok": false,
+    "code": "invalid_client",
+    "error_type": "TokenError",
+    "kind": "api-key-after-account-close",
+    "region": "gru",
+    "started_at": "2026-11-05T20:31:18.457668+00:00",
+    "completed_at": "2026-11-05T20:31:18.569551+00:00",
+    "ms": 111.906
+  },
+  {
+    "response_host": "sjc.api.terrascale.tech",
+    "status": 401,
+    "headers": {
+      "x-request-id": "01M6PPH9H3QJ5KPXH0B0P3D880",
+      "x-terrabase-machine": "ts-sjc-1",
+      "x-terrabase-region": "sjc"
+    },
+    "ok": false,
+    "code": "invalid_key",
+    "error_type": "AuthenticationError",
+    "kind": "retained-token-after-account-close",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:31:18.585747+00:00",
+    "completed_at": "2026-11-05T20:31:19.172245+00:00",
+    "ms": 586.513
+  },
+  {
+    "response_host": "auth.terrascale.tech",
+    "status": 401,
+    "headers": {
+      "x-request-id": "01M6PPH9NP3DNNC2B2KBTW9ZR3"
+    },
+    "ok": false,
+    "code": "invalid_client",
+    "error_type": "TokenError",
+    "kind": "api-key-after-account-close",
+    "region": "sjc",
+    "started_at": "2026-11-05T20:31:19.172409+00:00",
+    "completed_at": "2026-11-05T20:31:19.274499+00:00",
+    "ms": 102.111
+  },
+  {
+    "response_host": "fra.api.terrascale.tech",
+    "status": 401,
+    "headers": {
+      "x-request-id": "01M6PPHA8AVE3V9BM05NVZ01RA",
+      "x-terrabase-machine": "ts-fra-1",
+      "x-terrabase-region": "fra"
+    },
+    "ok": false,
+    "code": "invalid_key",
+    "error_type": "AuthenticationError",
+    "kind": "retained-token-after-account-close",
+    "region": "fra",
+    "started_at": "2026-11-05T20:31:19.290648+00:00",
+    "completed_at": "2026-11-05T20:31:19.926759+00:00",
+    "ms": 636.132
+  },
+  {
+    "response_host": "auth.terrascale.tech",
+    "status": 401,
+    "headers": {
+      "x-request-id": "01M6PPHADF5E36VP2AR6Q17QXM"
+    },
+    "ok": false,
+    "code": "invalid_client",
+    "error_type": "TokenError",
+    "kind": "api-key-after-account-close",
+    "region": "fra",
+    "started_at": "2026-11-05T20:31:19.926929+00:00",
+    "completed_at": "2026-11-05T20:31:20.038980+00:00",
+    "ms": 112.08
+  }
+]
+```
+
+## final-cdn-before-delete.json
+
+```json
+{
+  "deleted_at": null,
+  "coordinator_check_started_at": "2026-11-05T20:27:35.276861+00:00",
+  "url_count": 1,
+  "repeats": 2,
+  "regions": [
+    {
+      "region": "gru",
+      "results": [
+        {
+          "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/h1-4b96f5b96783edd0/1f9c30c673ad5c986c636d4b8360c1ea1da3467d319be8e08a8fe384f9eba1bf",
+          "n": 0,
+          "status": 200,
+          "started_at": "2026-11-05T20:27:36.325391+00:00",
+          "completed_at": "2026-11-05T20:27:36.562795+00:00",
+          "request_ms": 237.404,
+          "bytes": 116250,
+          "sha256": "4986838237e6aff7bd002c0b1fc284068306ea43c3686902736656310d252f65",
+          "headers": {
+            "age": null,
+            "cf-cache-status": "HIT",
+            "cf-ray": "a55e99a0688ef211-GRU",
+            "date": "Thu, 05 Nov 2026 20:27:36 GMT"
+          }
+        },
+        {
+          "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/h1-4b96f5b96783edd0/1f9c30c673ad5c986c636d4b8360c1ea1da3467d319be8e08a8fe384f9eba1bf",
+          "n": 1,
+          "status": 200,
+          "started_at": "2026-11-05T20:27:36.562943+00:00",
+          "completed_at": "2026-11-05T20:27:36.611070+00:00",
+          "request_ms": 48.132,
+          "bytes": 116250,
+          "sha256": "4986838237e6aff7bd002c0b1fc284068306ea43c3686902736656310d252f65",
+          "headers": {
+            "age": "147",
+            "cf-cache-status": "HIT",
+            "cf-ray": "a55e99a1a83e622f-GRU",
+            "date": "Thu, 05 Nov 2026 20:27:36 GMT"
+          }
+        }
+      ]
+    },
+    {
+      "region": "sjc",
+      "results": [
+        {
+          "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/h1-4b96f5b96783edd0/1f9c30c673ad5c986c636d4b8360c1ea1da3467d319be8e08a8fe384f9eba1bf",
+          "n": 0,
+          "status": 200,
+          "started_at": "2026-11-05T20:27:37.902842+00:00",
+          "completed_at": "2026-11-05T20:27:38.149279+00:00",
+          "request_ms": 246.436,
+          "bytes": 116250,
+          "sha256": "4986838237e6aff7bd002c0b1fc284068306ea43c3686902736656310d252f65",
+          "headers": {
+            "age": null,
+            "cf-cache-status": "HIT",
+            "cf-ray": "a55e99aa39ec7a33-SJC",
+            "date": "Thu, 05 Nov 2026 20:27:38 GMT"
+          }
+        },
+        {
+          "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/h1-4b96f5b96783edd0/1f9c30c673ad5c986c636d4b8360c1ea1da3467d319be8e08a8fe384f9eba1bf",
+          "n": 1,
+          "status": 200,
+          "started_at": "2026-11-05T20:27:38.149404+00:00",
+          "completed_at": "2026-11-05T20:27:38.208021+00:00",
+          "request_ms": 58.622,
+          "bytes": 116250,
+          "sha256": "4986838237e6aff7bd002c0b1fc284068306ea43c3686902736656310d252f65",
+          "headers": {
+            "age": "148",
+            "cf-cache-status": "HIT",
+            "cf-ray": "a55e99ab8e4feb1e-SJC",
+            "date": "Thu, 05 Nov 2026 20:27:38 GMT"
+          }
+        }
+      ]
+    },
+    {
+      "region": "fra",
+      "results": [
+        {
+          "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/h1-4b96f5b96783edd0/1f9c30c673ad5c986c636d4b8360c1ea1da3467d319be8e08a8fe384f9eba1bf",
+          "n": 0,
+          "status": 200,
+          "started_at": "2026-11-05T20:27:38.351341+00:00",
+          "completed_at": "2026-11-05T20:27:38.536244+00:00",
+          "request_ms": 184.902,
+          "bytes": 116250,
+          "sha256": "4986838237e6aff7bd002c0b1fc284068306ea43c3686902736656310d252f65",
+          "headers": {
+            "age": null,
+            "cf-cache-status": "HIT",
+            "cf-ray": "a55e99ad0d79d2bf-FRA",
+            "date": "Thu, 05 Nov 2026 20:27:38 GMT"
+          }
+        },
+        {
+          "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/h1-4b96f5b96783edd0/1f9c30c673ad5c986c636d4b8360c1ea1da3467d319be8e08a8fe384f9eba1bf",
+          "n": 1,
+          "status": 200,
+          "started_at": "2026-11-05T20:27:38.536393+00:00",
+          "completed_at": "2026-11-05T20:27:39.172916+00:00",
+          "request_ms": 636.529,
+          "bytes": 116250,
+          "sha256": "4986838237e6aff7bd002c0b1fc284068306ea43c3686902736656310d252f65",
+          "headers": {
+            "age": "149",
+            "cf-cache-status": "HIT",
+            "cf-ray": "a55e99b02f18a4cb-GRU",
+            "date": "Thu, 05 Nov 2026 20:27:38 GMT"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+## final-cdn-after-delete.json
+
+```json
+{
+  "deleted_at": "2026-11-05T20:28:33.875825+00:00",
+  "coordinator_check_started_at": "2026-11-05T20:29:13.187470+00:00",
+  "url_count": 1,
+  "repeats": 1,
+  "regions": [
+    {
+      "region": "gru",
+      "results": [
+        {
+          "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/h1-4b96f5b96783edd0/1f9c30c673ad5c986c636d4b8360c1ea1da3467d319be8e08a8fe384f9eba1bf",
+          "n": 0,
+          "status": 404,
+          "started_at": "2026-11-05T20:29:14.186436+00:00",
+          "completed_at": "2026-11-05T20:29:14.480732+00:00",
+          "request_ms": 294.295,
+          "bytes": 27150,
+          "sha256": "62c1c0b235e26952857139537b65f8272026cd1c385c1bf6dba20481ee8a6619",
+          "headers": {
+            "age": null,
+            "cf-cache-status": "BYPASS",
+            "cf-ray": "a55e9c03fe68d986-GRU",
+            "date": "Thu, 05 Nov 2026 20:29:14 GMT"
+          },
+          "elapsed_since_delete_s": 40.310611
+        }
+      ]
+    },
+    {
+      "region": "sjc",
+      "results": [
+        {
+          "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/h1-4b96f5b96783edd0/1f9c30c673ad5c986c636d4b8360c1ea1da3467d319be8e08a8fe384f9eba1bf",
+          "n": 0,
+          "status": 404,
+          "started_at": "2026-11-05T20:29:15.819802+00:00",
+          "completed_at": "2026-11-05T20:29:16.053445+00:00",
+          "request_ms": 233.641,
+          "bytes": 27150,
+          "sha256": "62c1c0b235e26952857139537b65f8272026cd1c385c1bf6dba20481ee8a6619",
+          "headers": {
+            "age": null,
+            "cf-cache-status": "BYPASS",
+            "cf-ray": "a55e9c0e2eacebed-SJC",
+            "date": "Thu, 05 Nov 2026 20:29:16 GMT"
+          },
+          "elapsed_since_delete_s": 41.943977
+        }
+      ]
+    },
+    {
+      "region": "fra",
+      "results": [
+        {
+          "url": "https://shapes-ts-terrabase-shapes-prod.terrascale.tech/v1/shapes/h1-4b96f5b96783edd0/1f9c30c673ad5c986c636d4b8360c1ea1da3467d319be8e08a8fe384f9eba1bf",
+          "n": 0,
+          "status": 404,
+          "started_at": "2026-11-05T20:29:16.235796+00:00",
+          "completed_at": "2026-11-05T20:29:16.978211+00:00",
+          "request_ms": 742.412,
+          "bytes": 27150,
+          "sha256": "62c1c0b235e26952857139537b65f8272026cd1c385c1bf6dba20481ee8a6619",
+          "headers": {
+            "age": null,
+            "cf-cache-status": "BYPASS",
+            "cf-ray": "a55e9c131b384568-GRU",
+            "date": "Thu, 05 Nov 2026 20:29:16 GMT"
+          },
+          "elapsed_since_delete_s": 42.359971
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Final shape subscriptions before cleanup
+
+Shipped SDK ddbc3a87d source,960 rows in all3 regions. No epoch-key values are retained.
+
+```json
+[
+  {
+    "kind": "sdk_environment",
+    "sdk_revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+    "at": "2026-11-05T20:25:06.851Z"
+  },
+  {
+    "kind": "shape_result",
+    "region": "gru",
+    "ok": true,
+    "rows": 960,
+    "provisional": 0,
+    "offset": "3776"
+  },
+  {
+    "kind": "shape_result",
+    "region": "sjc",
+    "ok": true,
+    "rows": 960,
+    "provisional": 0,
+    "offset": "3776"
+  },
+  {
+    "kind": "shape_result",
+    "region": "fra",
+    "ok": true,
+    "rows": 960,
+    "provisional": 0,
+    "offset": "3776"
+  }
+]
+```
+
+## Private credential cleanup
+
+```json
+{
+  "completed_at": "2026-11-05T20:33:56.978786+00:00",
+  "beta_private_directory_removed": true,
+  "mariogk_dev_private_directory_removed": true,
+  "helper_tag_files_remaining": 0,
+  "known_credential_scan": "PASS; 56 files, five private values checked before deletion",
+  "retained_public_evidence_directory": "/home/mariogk/.t3/worktrees/terrascale/t3-b1c4ae61/benchmark/bench/milestone-b-acceptance-20261105",
+  "owned_preview_tabs_remaining": 0
+}
 ```

@@ -1,32 +1,32 @@
 # Milestone B end-to-end acceptance — 2026-11-05
 
-**Overall: FAIL.** The public product accepts writes and serves local reads in all three regions before the home move, and SQL reads do not increase billable write units. Default acknowledgement tails fail #1105. The original home move loses two acknowledged rows (#1106); three independent post-fix moves now preserve every acknowledged row, with one refused insert disclosed. The initial CDN deletion deadline also failed (#1107); a fresh post-fix deletion now returns 404 in every region within 20 seconds. The first post-fix latency run overlaps a rollout and still fails; baseline-first confirmation and final account closure are pending.
+**Overall: PASS against the pooled gates, with a repeat-level latency failure.** The final fresh Pro cohort accepts 900/900 writes and 1800/1800 cross reads, and every region passes the pooled 300-write origin/client p99 gates. **SJC repeat 1 fails both latency gates** (202.83 ms endpoint /400.024 ms client); its home fallback and following 551.04 ms endpoint outlier remain disclosed. SQL reads do not increase billable write units. Three post-fix home moves preserve every acknowledged row, and a fresh CDN deletion returns 404 in all three POPs within 20 seconds. Original failures and the failed rollout cohort are retained below.
 
 | Item | Result | Independently observed evidence |
 |---|---|---|
 | Fresh account, Free → Pro | PASS | Hosted sign-up, real email verification, dashboard onboarding, API key creation, and public Stripe **sandbox** checkout; Pro active. No real-money activation. |
-| 1. Write each region; read other regions | PASS baseline; FAIL during rollout | Each plan: 900/900 writes; 1,800 cross-region read requests, all served in the requested region. Final pre-move reconciliation includes every acknowledged ID exactly once. Eventual visibility, not immediate cross-region read-your-writes. Post-fix rollout run: 898/900 writes; 4 cross-read SQL errors; all 958 acknowledged rows reconcile exactly in all regions. |
-| 2. Default local ack | FAIL; confirmation held | Free SJC/FRA server p99 351.95/391.63 ms; Pro 169.51/455.34 ms, versus approximately 200 ms home call. First post-fix run during rollout: SJC/FRA pooled app p99 607.32/462.11 ms. [#1105](https://github.com/TerraScale/terrascale/issues/1105). |
-| 2. Opt-in home-durable ack | PASS | 30 accepted home-durable writes per plan; additional Pro functional check: 9/9 writes immediately visible at home; post-fix run adds 30/30 immediate home reads. |
+| 1. Write each region; read other regions | PASS after fix; rollout FAIL retained | Final fresh Pro confirmation: 900/900 writes, 1,800/1800 cross reads, 960 acknowledged IDs/values exactly once in every region. Each baseline plan: 900/900 writes; 1,800 cross-region read requests, all served in the requested region. Final pre-move reconciliation includes every acknowledged ID exactly once. Eventual visibility, not immediate cross-region read-your-writes. Post-fix rollout run: 898/900 writes; 4 cross-read SQL errors; all 958 acknowledged rows reconcile exactly in all regions. |
+| 2. Default local ack | PASS pooled; FAIL SJC repeat 1 | Final pooled GRU/SJC/FRA endpoint p99: 54.47/79.61/50.64 ms; client: 77.193/275.416/265.568 ms, all below own baseline+100 ms. SJC repeat 1: 202.83/400.024 ms, both FAIL. SJC 299/300 and FRA 300/300 default writes commit locally; one SJC home fallback. [#1105 evidence](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6668472420). |
+| 2. Opt-in home-durable ack | PASS | 30 accepted home-durable writes per plan; additional Pro functional check: 9/9 writes immediately visible at home; each post-fix cohort adds 30/30 immediate home reads. |
 | 3. SQL reads are not billed | PASS | Pro read-only workload: 300/300 successful reads; write units stay 981; usage charges stay $0.00. Read fair-use units are separate. |
 | 3. CDN cache in all regions | PASS | SDK-used shape ciphertext: 200/HIT at GRU, SJC and FRA with `terrascale-js/0.0.19`; matching bytes and digest. |
 | 4. Move home under light writes | PASS after fix; initial FAIL | Original move loses 2 accepted rows. Post-fix: 3/3 moves, 45 accepted load writes, all 1,003 IDs/values exactly once in every region; 9/9 inventories target-local, including pinned SJC. One of 46 insert attempts is refused during move 2. [#1106](https://github.com/TerraScale/terrascale/issues/1106#issuecomment-6667871258). |
 | 5. Database data and keys | PASS after fix; initial FAIL | Original deletion: APIs/key routes 404, but all 21 cached-object GETs remain 200/HIT at 527–530 s. Fresh post-fix deletion: APIs/key routes 404; warmed CDN URL 404/BYPASS in all three POPs at 17.34–19.45 s. [#1107](https://github.com/TerraScale/terrascale/issues/1107). |
-| 5. Account closure | PENDING | Account retained for the explicitly requested post-fix #1105 rerun; original database is deleted. |
+| 5. Account closure | PASS | Closed at 20:30:37.789928Z. Retained bearer token: 401 invalid_key at all 3 pinned regional APIs. Fresh API-key exchanges: 401 invalid_client for all 3 attempts. All 5 databases deleted. |
 
 ## Method and scope
 
-Fresh identity: `mariogk+mb-acceptance-20261105-b1c4@terrascale.tech`, organization `01M6PENTY9976KJDP65GTQDQVK`, project `01M6PENV06CRPSJYDDRZTF75R4`. Created with `ts-throwaway-account mb-acceptance-20261105-b1c4`. Original database `01M6PER4PDC8FM24ZYKX1PJ6JE` (`milestone-b-acceptance`) was created in the dashboard with home gru and All regions, returning replicas fra/sjc. The fresh follow-up database is `01M6PFQFV240ECH0BCQ5AKFYHX` (`milestone-b-ack-retest`), home gru, All regions.
+Fresh identity: `mariogk+mb-acceptance-20261105-b1c4@terrascale.tech`, organization `01M6PENTY9976KJDP65GTQDQVK`, project `01M6PENV06CRPSJYDDRZTF75R4`. Created with `ts-throwaway-account mb-acceptance-20261105-b1c4`. Original database `01M6PER4PDC8FM24ZYKX1PJ6JE` (`milestone-b-acceptance`) was created in the dashboard with home gru and All regions, returning replicas fra/sjc. The reserved follow-up database is `01M6PFQFV240ECH0BCQ5AKFYHX` (`milestone-b-ack-retest`). The rollout/R9 database is `01M6PK77TX4H0B1D3GQZ73XZCF`; the final fresh Pro confirmation database is `01M6PNY2NSDD07TVSQZJYHK8JW` (`milestone-b-confirmation`), home gru, All regions.
 
-Only hosted auth, public dashboard/API, official Python/JavaScript SDK source, and stock psql were used as product interfaces. Python SDK source: `c27dbfa6220ca1a7857b6dc0c95bef220e8684cd`; JavaScript SDK 0.0.19. Public health identifies region and version 0.1.0; it does not identify the deployed backend source SHA. No earlier thread report substitutes for the measurements here. No product code was changed.
+Only hosted auth, public dashboard/API, official Python/JavaScript SDK source, and stock psql were used as product interfaces. Baseline Python SDK source: `c27dbfa6220ca1a7857b6dc0c95bef220e8684cd`; JavaScript SDK 0.0.19. Post-fix Python probes and final Python/JavaScript cleanup proofs pin shipped source `ddbc3a87d7c16cedf918cb3754bad364f7c068eb`. Public health identifies region and version 0.1.0; it does not identify the deployed backend source SHA. No earlier thread report substitutes for the measurements here. No product code was changed.
 
-Public load probes ran through `ts-heavy-any` on dev hosts, primarily beta (the move probe ran on delta). Three client workers ran concurrently, one per write region. Each plan had three measured repeats of 100 writes per region, with read-only warmups and no application-request retries. Each write used a fresh ULID in `acceptance_rows (id TEXT PRIMARY KEY, writer TEXT, sequence INTEGER, body TEXT)` and was followed by SELECT-by-ID from each other region. Percentiles use nearest rank and include the first measured write. Client times include the dev-host network path; they are not claimed as in-region client times. Server `app` timings isolate origin work; the forced-home `home` timings provide the region-to-home comparison.
+Public load probes ran through `ts-heavy-any` on dev hosts, primarily beta (the move probe ran on delta). Three client workers ran concurrently, one per write region. Each plan had three measured repeats of 100 writes per region, with read-only warmups and no application-request retries. Each write used a fresh ULID in `acceptance_rows (id TEXT PRIMARY KEY, writer TEXT, sequence INTEGER, body TEXT)` and was followed by SELECT-by-ID from each other region. Percentiles use nearest rank and include the first measured write. Forwarded responses can contain both home and endpoint `app` timings; endpoint work uses the last `app` entry, attributed to the requested endpoint. This corrects the initial first-entry parser, which understated some forwarded-request timings; raw headers and every attempt are retained. Client times include the dev-host network path; they are not claimed as in-region client times. Server `app` timings isolate origin work; the forced-home `home` timings provide the region-to-home comparison.
 
 The regional HTTP clients use `base_url=https://<region>.api.terrascale.tech` and the SDK's `region=<region>` pin. Default inserts use `INSERT INTO acceptance_rows (id, writer, sequence, body) VALUES (?, ?, ?, ?)`. Cross reads use `SELECT id, writer, sequence, body FROM acceptance_rows WHERE id = ?`. Home-durable comparison requests add `TerraScale-Durability: home`; forced-home comparison requests add `TerraScale-Write: home`. Local attribution uses `X-TerraBase-Region`, `X-TerraBase-Machine` and the region in `Server-Timing`; `TerraScale-Write-Route` records the selected route and commit mode. A successful HTTP response containing an empty row set counts as a first-read miss.
 
 CDN checks used existing gru/sjc/fra nodes solely as network vantage points for a handful of unauthenticated public HTTPS GETs of SDK-returned sealed object URLs. No internal product endpoints or storage were read. The JavaScript SDK was used with its supported fetch adapter to record responses and identify requests with `terrascale-js/0.0.19`. Epoch-key values and credentials were never logged. psql used verify-full TLS with system roots and a temporary mode-0600 pgpass file, removed afterward.
 
-DECISION: Use server app p99 <100 ms as the post-fix primary local-ack gate, with client p99 < the measured beta-to-region path baseline +100 ms. Reason: the initial load client is beta; its path to SJC/FRA already costs roughly 200 ms. The post-fix run will measure 100 read-only baseline requests per region and retain both end-to-end and server timing. This follows the parent’s Q-RTT decision. A later Q-BETA decision authorizes mariogk-dev for the independent post-fix run when beta lacks admission headroom, using mariogk-dev’s own path baseline and the same <100 ms origin / baseline +100 ms client gates. Production nodes do not run load clients.
+DECISION: Evaluate pooled 300-write endpoint p99 <100 ms and client p99 < the measured client-path baseline+100 ms, while retaining every 100-write repeat and its PASS/FAIL result. Reason: the user's Q-RTT/Q-PLACEMENT decisions account for the dev client's roughly 200 ms path to SJC/FRA; pooled success must not hide the SJC repeat 1 failure. The parent authorizes delta, which runs both post-fix cohorts. Production nodes run only the small anonymous CDN vantage checks.
 
 ## Writes and local acknowledgement
 
@@ -37,7 +37,7 @@ DECISION: Use server app p99 <100 ms as the post-fix primary local-ack gate, wit
 | Free | fra | 300/300 | 231.447 / 602.066 | 19.83 / 391.63 | 300/300 |
 | Pro | gru | 300/300 | 36.822 / 280.697 | 13.91 / 63.85 | home execution |
 | Pro | sjc | 300/300 | 216.623 / 527.401 | 20.48 / 169.51 | 300/300 |
-| Pro | fra | 300/300 | 231.828 / 671.412 | 20.42 / 455.34 | 297/300 |
+| Pro | fra | 300/300 | 231.828 / 671.412 | 20.51 / 455.34 | 297/300 |
 
 All non-home local routes report `route=local; reason=ulid_insert; commit=local`. Pro FRA has three successful home fallbacks. The slow tails include local sealing; the Free first writes took 1,452.035 ms SJC and 1,635.941 ms FRA client time, with local_seal 844.73/1,206.51 ms. Free repeat 2 server p99 is 351.95/391.63 ms SJC/FRA, above approximately 200 ms home calls. This is a measured failure even after separating client distance. See #1105 and the [individual samples](2026-11-05-milestone-b-acceptance-samples.md).
 
@@ -73,13 +73,13 @@ Each row is a separate measured 100-write repeat. Warmups are read-only; cold fi
 | Pro | sjc | 1 | 216.123 / 365.052 | 21.23 / 49.24 |
 | Pro | sjc | 2 | 216.393 / 527.401 | 19.99 / 43.46 |
 | Pro | sjc | 3 | 217.207 / 402.546 | 20.48 / 169.51 |
-| Pro | fra | 1 | 235.379 / 672.349 | 22.58 / 459.40 |
+| Pro | fra | 1 | 235.379 / 672.349 | 22.74 / 459.40 |
 | Pro | fra | 2 | 230.019 / 429.584 | 19.48 / 39.14 |
 | Pro | fra | 3 | 230.764 / 471.876 | 19.98 / 35.65 |
 
 ## Independent post-fix Pro run during a rollout
 
-SDK source: `ddbc3a87d7c16cedf918cb3754bad364f7c068eb`. Server deployment handoff: `9a335684e9b3a8b9eff9fe191444e91b7794628d`, confirmed by the fixer on all six nodes at 19:01:47Z. The following measurements are independent acceptance requests, not the fixer’s results. This run began before the parent’s request to measure the path baseline first; it retained its original baseline-after-writes order. A separate baseline-first confirmation is held for further readiness. The run also overlaps the afa0171 rollout; no failed or slow samples are discarded. A newly created all-regions database captures first inserts after read-only warmups.
+SDK source: `ddbc3a87d7c16cedf918cb3754bad364f7c068eb`. Server deployment handoff: `9a335684e9b3a8b9eff9fe191444e91b7794628d`, confirmed by the fixer on all six nodes at 19:01:47Z. The following measurements are independent acceptance requests, not the fixer’s results. This run began before the parent’s request to measure the path baseline first; it retained its original baseline-after-writes order. The separate baseline-first fresh-database confirmation follows this retained cohort below. The run also overlaps the afa0171 rollout; no failed or slow samples are discarded. A newly created all-regions database captures first inserts after read-only warmups.
 
 Client host: `delta`. Database `01M6PK77TX4H0B1D3GQZ73XZCF` (`milestone-b-postfix`), home gru.
 
@@ -98,13 +98,13 @@ The path baseline consists of 100 SELECT-1 requests per region after the write w
 | gru | 3 | 100/100 | 37.595 / 57.661 | 13.05 / 34.09 | 0/100 | PASS / PASS |
 | gru | pooled | 300/300 | 36.918 / 92.188 | 13.11 / 55.92 | 0/300 | PASS / PASS |
 | sjc | 1 | 100/100 | 215.500 / 237.259 | 21.66 / 44.24 | 100/100 | PASS / PASS |
-| sjc | 2 | 99/100 | 218.369 / 2211.595 | 21.79 / 881.77 | 80/100 | FAIL / FAIL |
+| sjc | 2 | 99/100 | 218.369 / 2211.595 | 23.48 / 881.77 | 80/100 | FAIL / FAIL |
 | sjc | 3 | 100/100 | 219.605 / 816.145 | 21.15 / 218.11 | 100/100 | FAIL / FAIL |
-| sjc | pooled | 299/300 | 218.062 / 1077.745 | 21.66 / 607.32 | 280/300 | FAIL / FAIL |
+| sjc | pooled | 299/300 | 218.062 / 1077.745 | 22.07 / 726.52 | 280/300 | FAIL / FAIL |
 | fra | 1 | 100/100 | 232.397 / 267.299 | 20.82 / 53.97 | 100/100 | PASS / PASS |
 | fra | 2 | 100/100 | 233.769 / 877.049 | 20.41 / 293.02 | 100/100 | FAIL / FAIL |
-| fra | 3 | 99/100 | 242.038 / 1928.428 | 21.62 / 620.04 | 70/100 | FAIL / FAIL |
-| fra | pooled | 299/300 | 235.487 / 968.217 | 20.95 / 462.11 | 270/300 | FAIL / FAIL |
+| fra | 3 | 99/100 | 242.038 / 1928.428 | 27.37 / 749.63 | 70/100 | FAIL / FAIL |
+| fra | pooled | 299/300 | 235.487 / 968.217 | 22.14 / 620.04 | 270/300 | FAIL / FAIL |
 
 | Region | First measured insert client ms | Origin app ms | Route |
 |---|---:|---:|---|
@@ -160,6 +160,91 @@ Exact reconciliation after the comparison requests:
 ]
 ```
 
+## Baseline-first independent confirmation
+
+Server readiness: `26338d3151770a15137c6cb077b94d6da47c1257`, all six nodes healthy at 20:18:59Z, CI [42100601357](https://github.com/TerraScale/terrascale/actions/runs/42100601357) successful. The parent freezes the fabric through 20:40Z; all cohort requests finish by 20:24:03.983270Z.
+
+Client `delta`, SDK `ddbc3a87d7c16cedf918cb3754bad364f7c068eb`, starting `2026-11-05T20:20:49Z`. Database `01M6PNY2NSDD07TVSQZJYHK8JW`, home `gru`, created fresh on Pro with all regions. These are its first measured inserts after read-only warmups. The earlier rollout cohort remains above.
+
+One hundred SELECT-1 baseline attempts per region precede all measured writes. Path RTT is the median of successful request client duration minus origin app duration. Client limits are this value +100 ms; origin p99 must be <100 ms. Failures remain in the cohort. Missing origin timing prevents a server PASS; per-repeat and pooled values use nearest-rank percentiles.
+
+| Region | Baseline successful / attempted | Baseline client / app p50 ms | Path RTT ms | Client limit ms |
+|---|---:|---:|---:|---:|
+| gru | 100/100 | 25.089 / 1.77 | 23.199 | 123.199 |
+| sjc | 100/100 | 194.825 / 1.47 | 193.266 | 293.266 |
+| fra | 100/100 | 212.935 / 1.47 | 211.437 | 311.437 |
+
+| Region | Repeat | Accepted / attempts | Client p50 / p99 ms | Origin p50 / p99 ms | Origin samples | Client / origin max ms | Local commits | Server / client gates |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| gru | 1 | 100/100 | 35.620 / 65.293 | 13.25 / 38.70 | 100/100 | 70.401 / 47.73 | 0/100 | PASS / PASS |
+| gru | 2 | 100/100 | 36.041 / 68.869 | 12.74 / 47.14 | 100/100 | 77.193 / 54.47 | 0/100 | PASS / PASS |
+| gru | 3 | 100/100 | 39.510 / 81.493 | 17.61 / 57.93 | 100/100 | 84.913 / 61.03 | 0/100 | PASS / PASS |
+| gru | pooled | 300/300 | 36.666 / 77.193 | 14.03 / 54.47 | 300/300 | 84.913 / 61.03 | 0/300 | PASS / PASS |
+| sjc | 1 | 100/100 | 219.090 / 400.024 | 22.86 / 202.83 | 100/100 | 745.894 / 551.04 | 99/100 | FAIL / FAIL |
+| sjc | 2 | 100/100 | 217.832 / 242.575 | 21.81 / 46.33 | 100/100 | 275.416 / 79.61 | 100/100 | PASS / PASS |
+| sjc | 3 | 100/100 | 218.487 / 255.486 | 22.54 / 61.07 | 100/100 | 289.329 / 91.69 | 100/100 | PASS / PASS |
+| sjc | pooled | 300/300 | 218.469 / 275.416 | 22.30 / 79.61 | 300/300 | 745.894 / 551.04 | 299/300 | PASS / PASS |
+| fra | 1 | 100/100 | 235.568 / 269.991 | 22.02 / 57.08 | 100/100 | 306.775 / 92.77 | 100/100 | PASS / PASS |
+| fra | 2 | 100/100 | 234.803 / 260.670 | 21.24 / 47.27 | 100/100 | 308.176 / 84.42 | 100/100 | PASS / PASS |
+| fra | 3 | 100/100 | 236.339 / 263.422 | 22.67 / 49.84 | 100/100 | 263.659 / 50.10 | 100/100 | PASS / PASS |
+| fra | pooled | 300/300 | 235.531 / 265.568 | 22.05 / 50.64 | 300/300 | 308.176 / 92.77 | 300/300 | PASS / PASS |
+
+| Region | First cohort insert client / origin ms | Route |
+|---|---:|---|
+| gru | 49.158 / 27.36 | home |
+| sjc | 235.391 / 39.61 | `route=local; reason=ulid_insert; commit=local` |
+| fra | 269.991 / 57.08 | `route=local; reason=ulid_insert; commit=local` |
+
+| Write → read | Attempts / successful | Client p50 / p99 ms | Visible first read | Target-local header |
+|---|---:|---:|---:|---:|
+| gru → sjc | 300 / 300 | 199.630 / 240.359 | 294/300 | 300/300 |
+| gru → fra | 300 / 300 | 215.796 / 242.950 | 300/300 | 300/300 |
+| sjc → gru | 300 / 300 | 26.387 / 53.450 | 291/300 | 300/300 |
+| sjc → fra | 300 / 300 | 214.707 / 255.158 | 296/300 | 300/300 |
+| fra → gru | 300 / 300 | 26.537 / 52.746 | 296/300 | 300/300 |
+| fra → sjc | 300 / 300 | 198.160 / 239.758 | 295/300 | 300/300 |
+
+Exact ID/value reconciliation:
+
+```json
+[
+  {
+    "kind": "exact_comparison",
+    "region": "gru",
+    "expected": 960,
+    "rows": 960,
+    "distinct": 960,
+    "missing": [],
+    "unexpected": [],
+    "changed": []
+  },
+  {
+    "kind": "exact_comparison",
+    "region": "sjc",
+    "expected": 960,
+    "rows": 960,
+    "distinct": 960,
+    "missing": [],
+    "unexpected": [],
+    "changed": []
+  },
+  {
+    "kind": "exact_comparison",
+    "region": "fra",
+    "expected": 960,
+    "rows": 960,
+    "distinct": 960,
+    "missing": [],
+    "unexpected": [],
+    "changed": []
+  }
+]
+```
+
+Home-durable first immediate home checks: 30/30. All failed requests and maxima remain in the evidence and sample documents.
+
+The pooled gates pass; SJC repeat 1 fails both gates. Its n21 request `01M6PNZ85YKBDC4T1B180CH7NP` takes 400.024 ms client /202.83 ms SJC endpoint, with `commit=home` and 184 ms home RTT. The next request `01M6PNZ8T08P9HZG281SWP32AM` takes 745.894 ms /551.04 ms, including 531.58 ms `local_begin`, with `commit=local`. SJC 299/300 and FRA 300/300 default writes commit locally. These residuals are retained in [#1105](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6668472420), every sample, and the repeat-level table. No failed or slow sample is removed.
+
 ## Baseline cross-region reads
 
 Latency is the first read request after the write response. Empty first reads are reported, not retried into successful measurements. Every response has `X-TerraBase-Region` equal to the targeted read region and is attributed to that region in `Server-Timing`. Final inventories reconcile the complete acknowledged ID set before the move; first-read misses are eventual-consistency observations.
@@ -195,7 +280,7 @@ Exact acknowledgement wall-clock timestamps and JetStream sequences were not cap
 
 Original database deletion completes at **18:33:44Z**, SDK success in **3,080.026 ms**, request `01M6PFSX4GBNX4KZ8RADRN7HWW`. Its SQL, metadata and previously successful shape epoch-key requests return 404 `unknown_database` at all three pinned APIs. The initial CDN recheck completes by 18:34:33.168464Z, at most **49.168464 s** after deletion; both checked sealed objects remain 200/HIT in GRU/SJC/FRA, with first-object Age 846/848/848. The clarified F11 deadline is 420 s, so that early result is not a failed purge gate. The timed recheck begins at **18:42:30.071786Z**, 526.072 s after deletion. All **21 GETs (7 SDK-used URLs × 3 regions)** return **200/HIT at 527.137–529.930 s**. First-object Age is GRU 1326, SJC 1328, FRA 1328; CF-Ray suffixes confirm each POP. This fails the 420-second gate ([#1107 final evidence](https://github.com/TerraScale/terrascale/issues/1107#issuecomment-6666293272)). Returned bytes are ciphertext; no plaintext-access claim is made.
 
-Account closure and deletion of the fresh follow-up database remain pending the explicitly requested post-fix #1105 rerun. The original, reserved, latency-rerun and dedicated CDN-rerun databases are the only databases used on this one account. The dedicated CDN database is also deleted.
+Database cleanup is complete; final account-closure evidence is recorded below. Five databases were used on this one account: original, reserved, latency/R9, dedicated CDN, and fresh confirmation. All five are now deleted.
 
 ## Independent home-move rerun after #1106 fix
 
@@ -210,6 +295,8 @@ Deployed readiness: `b06bd58a8`, green CI [42096907611](https://github.com/Terra
 All nine inventories match the complete expected ID/value set. Each pinned inventory response identifies the requested region in `X-TerraBase-Region`, including SJC after all three moves. The no-loss/no-duplicate gate is **PASS after fix**.
 
 All **45/45 accepted SJC writes** report exactly `TerraScale-Write-Route: route=local; reason=ulid_insert; commit=local`: 14/14, 14/14 and 17/17 by move. No accepted insert forwards home or lacks this header. The SQL names all four columns explicitly and supplies a fresh ULID primary key. The one refused write has no route/commit header.
+
+[#1106 is closed](https://github.com/TerraScale/terrascale/issues/1106) with this independent proof. The fixer's [final home-move evidence](2026-11-05-home-move-1106.md) ships at `01f0daa33`; the refused SJC insert remains tracked under #1105.
 
 Stock psql with `sslmode=verify-full` also succeeds through all three regional PostgreSQL endpoints at 20:00:30–20:00:32Z, returning `1003|1003` for total/distinct IDs. Client durations including connection establishment are GRU 400.646 ms, SJC 1,768.470 ms and FRA 1,855.242 ms. The original SJC timeout remains in the baseline evidence.
 
@@ -246,8 +333,18 @@ Screenshots were captured with preview tools from the fresh account. Placement i
 | Pro usage after writes | [dark](../../docs/qa/milestone-b-acceptance-20261105/usage-pro-after-writes-dark.png) |
 | Pro billing before/after reads | [before](../../docs/qa/milestone-b-acceptance-20261105/billing-pro-before.png), [after](../../docs/qa/milestone-b-acceptance-20261105/billing-pro-after-reads.png) |
 
+## Final cleanup
+
+The original and dedicated CDN databases were deleted earlier. The reserved, latency/R9 and final confirmation databases are deleted through the public SDK; SQL and metadata return 404 `unknown_database` in GRU/SJC/FRA for each. The final database's previously valid shape-key requests return 200 before deletion and404 afterward in all 3 regions. All 3 regional database lists are empty. Final confirmation DELETE completes **20:28:33.875825Z**.
+
+The final database's SDK-used ciphertext URL is warmed with 200/HIT from the three regional vantage points before deletion. After deletion, every vantage returns 404/BYPASS at 40.31–42.36 seconds, with no Age. CF-Ray identifies GRU, SJC and GRU respectively; the final FRA-network response identifies a GRU POP. The separate dedicated CDN rerun above independently proves actual GRU/SJC/FRA POP404 within 19.45 seconds.
+
+`ts-throwaway-account --delete mb-acceptance-20261105-b1c4` exits 0 with `DELETED` at **20:30:37.789928Z**. At20:31:18–20:31:20Z, the retained pre-closure bearer is refused with 401 `invalid_key` by all 3 pinned APIs; fresh key exchanges return401 `invalid_client`. The retained bearer checks the project database list, so a deleted-database404 cannot masquerade as account revocation.
+
+After the known-credential/JWT scan passed, all private credential files and probe environments on beta and mariogk-dev were removed at 2026-11-05T20:33:56.978786+00:00. Throwaway-helper tag files remaining:0. Sanitized request logs remain at the documented evidence path. The preview session list is empty; no owned tab remains open.
+
 ## Evidence and shipping
 
-[Individual measured samples](2026-11-05-milestone-b-acceptance-samples.md) preserve timing, region, route, first-read visibility, row ID and request ID. The [detailed evidence](2026-11-05-milestone-b-acceptance-evidence.md) preserves sanitized HTTP responses, inventory digests, usage counters, deletion status, and CDN elapsed times/cache headers. Final cleanup confirmation will be completed before shipping. Raw sanitized files are retained on beta at `/home/mariogk/.t3/worktrees/terrascale/t3-b1c4ae61/benchmark/bench/milestone-b-acceptance-20261105/`. Credentials remain in private temporary files and the throwaway helper state, never in committed evidence.
+[Individual measured samples](2026-11-05-milestone-b-acceptance-samples.md) preserve timing, region, route, first-read visibility, row ID and request ID. The [detailed evidence](2026-11-05-milestone-b-acceptance-evidence.md) preserves sanitized HTTP responses, inventory digests, usage counters, deletion status, and CDN elapsed times/cache headers. Final cleanup and credential removal are recorded below. Raw sanitized files are retained on beta at `/home/mariogk/.t3/worktrees/terrascale/t3-b1c4ae61/benchmark/bench/milestone-b-acceptance-20261105/`. Credentials and epoch-key values are excluded from the committed evidence.
 
-Shipping: pending. This change contains documentation and screenshot assets only; no product fixes or test-suite changes.
+Shipping uses `ts-ship`, docs-only. Product tests are skipped under AGENTS.md; no product fixes or test-suite changes are included. Documentation validation checks sample counts, complete ID/value reconciliation, timing attribution, Markdown links/fences, screenshot hashes, and known credentials.
