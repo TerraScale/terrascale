@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             } while (after is not null);
         }
 
-        // The usage feed is trusted only for the current UTC month, fresh, and in strictly ascending organization order.
+        // The usage snapshot is trusted only for the current UTC month, fresh, and in strictly ascending organization order.
         public static DateTimeOffset ValidatedMonth(AllowanceUsagePage page, string? after, DateTimeOffset now, bool previous = false)
         {
             if (page.Items.Count > 0 && page.OperationsContract != OperationsContract)
@@ -86,7 +86,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         private async Task ObserveAsync(AllowanceUsageObservation item, DateTimeOffset month, CancellationToken cancellationToken)
         {
             var organizationRow = await state.GetAsync(AccountService.OrganizationsTable, item.OrganizationId, cancellationToken);
-            // A deleted organization stays in the usage feed for the month; it has no owners to notify.
+            // A deleted organization stays in the usage snapshot for the month; it has no owners to notify.
             if (organizationRow is null || AccountService.IsDeletionFence(organizationRow))
             {
                 return;
