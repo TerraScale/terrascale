@@ -111,25 +111,7 @@ internal sealed class RegionalHandoff(
                         throw new InvalidDataException("regional owner is outside admitted peers");
                     }
 
-                    var changed = owners.Find(region) != owner;
-                    owners.Observe(owner);
-                    if (changed)
-                    {
-                        services.GetRequiredService<RegionReplication>().WakeCatalog(region);
-                        if (region == options.Region && owner.Node == options.MachineId)
-                        {
-                            _prepared.Clear();
-                            owners.Resume();
-                        }
-                        else if (region == options.Region)
-                        {
-                            foreach (var database in _promoted.Values)
-                            {
-                                services.GetRequiredService<RegionReplication>().Resume(database);
-                            }
-                            _promoted.Clear();
-                        }
-                    }
+                    Observe(owner);
                     if (region == options.Region && owner.Node == options.MachineId)
                     {
                         // A quorum CAS, rather than a cached watch value, renews write admission.
@@ -142,6 +124,37 @@ internal sealed class RegionalHandoff(
             {
                 _changing.Release();
             }
+        }
+    }
+
+    private void Observe(RegionalOwner owner)
+    {
+        var changed = owners.Find(owner.Region) != owner;
+        owners.Observe(owner);
+        if (!changed)
+        {
+            return;
+        }
+
+        var replication = services.GetRequiredService<RegionReplication>();
+        replication.WakeCatalog(owner.Region);
+        if (owner.Region != options.Region)
+        {
+            return;
+        }
+
+        if (owner.Node == options.MachineId)
+        {
+            _prepared.Clear();
+            owners.Resume();
+        }
+        else
+        {
+            foreach (var database in _promoted.Values)
+            {
+                replication.Resume(database);
+            }
+            _promoted.Clear();
         }
     }
 
@@ -381,7 +394,7 @@ internal sealed class RegionalHandoff(
 
             var next = new RegionalOwner(options.Region, target, owner.Epoch + 1);
             _ = await kv.UpdateAsync(options.Region, Encode(next), entry.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
-            owners.Observe(next);
+            Observe(next);
             logger.ZLogInformation($"Regional writer moved to {target:@Node} at epoch {next.Epoch:@Epoch} after {positions.Count:@Databases} applied positions were proven");
             return true;
         }
