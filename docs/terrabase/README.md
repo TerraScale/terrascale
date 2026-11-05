@@ -183,6 +183,7 @@ SQL runs on real tables in each database's file (tables, indexes, views, trigger
 SQL over WebSocket: [protocol](sql/websocket.md).
 
 Writes in a replica region: [write routing](sql/write-routing.md).
+SQL origin stages and forwarding time: [request timing](sql/request-timing.md).
 
 Removed protocol surfaces and compatibility notes: [E4a](e4a-removal.md).
 

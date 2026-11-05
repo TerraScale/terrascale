@@ -3,6 +3,7 @@
 The existing runtime peer credential stays on the host and reaches curl on stdin.
 """
 
+import argparse
 import datetime
 import json
 import subprocess
@@ -30,12 +31,24 @@ address = next(row[2] for row in peers if row[0] == environment[b"TS_NODE"].deco
 config = f'header = "X-TerraBase-Peer-Credential: {credential}"\n'
 
 
-def get(path):
+def get(path, at=address):
     return subprocess.check_output(["curl", "--http2-prior-knowledge", "-fsS", "--max-time", "10",
-                                    "-K", "-", f"http://{address}:8081/{path}"], input=config.encode())
+                                    "-K", "-", f"http://{at}:8081/{path}"], input=config.encode())
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--health-samples", type=int, default=0)
+args = parser.parse_args()
 health = json.loads(get("healthz"))
+peer_health_ms = {}
+if args.health_samples:
+    for node, region, peer_address in peers:
+        # One curl process per node reuses HTTP/2; first sample includes connect.
+        elapsed = subprocess.check_output(["curl", "--http2-prior-knowledge", "-fsS", "--max-time", "10",
+                                           "-K", "-", "-w", "%{time_total}\n",
+                                           *[argument for _ in range(args.health_samples)
+                                             for argument in ("-o", "/dev/null", f"http://{peer_address}:8081/healthz")]], input=config.encode())
+        peer_health_ms[node] = {"region": region, "health": json.loads(get("healthz", peer_address)), "samples_ms": [round(float(line) * 1000, 3) for line in elapsed.decode().splitlines()]}
 lines = [line for line in get("metrics").decode().splitlines() if line.startswith("terrabase_push_")]
 print(json.dumps({"captured_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                  "image": image, "health": health, "metrics": lines}, indent=2))
+                  "image": image, "health": health, "metrics": lines, "peer_internal_health_ms": peer_health_ms}, indent=2))
