@@ -95,7 +95,8 @@ cases = [
 ]
 # Retained dependency symbols and ordinary framework APIs stay narrow.
 cases.extend([
-    ({"src/TerraBase/Engine/EngineExtensions.cs": "TursoStorageEngine TursoReplicas",
+    ({"src/TerraBase/Engine/EngineExtensions.cs": "TursoStorageEngine TursoReplicas turso_",
+      "src/TerraScale.TerraBase.Contracts/TerraBaseSqlNames.cs": '"turso_", "__turso_", "collections"',
       "src/vendor/Turso.Data.Sqlite/src/Turso.Data/TursoParameterCollection.cs": "DbParameterCollection TursoParameterCollection",
       "scripts/vendor/turso-native-budget.patch": "DocumentIdentity std::collections documents",
       ".github/workflows/ci.yml": "--term documents --term collections --term document-feeds --term lattices",
