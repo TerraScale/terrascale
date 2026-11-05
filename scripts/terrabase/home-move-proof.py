@@ -73,7 +73,7 @@ def main():
                     for sequence in range(start, min(start + 100, 1923)):
                         row = new_id()
                         values = [row, "baseline", sequence, "baseline"]
-                        batch.append(("INSERT INTO acceptance_rows VALUES (?, ?, ?, ?)", values))
+                        batch.append(("INSERT INTO acceptance_rows (id, writer, sequence, body) VALUES (?, ?, ?, ?)", values))
                         expected[row] = values
                     db.batch(batch)
 
@@ -102,7 +102,7 @@ def main():
                         values = [row, "sjc", sequence, "move-load"]
                         started = utc()
                         try:
-                            sjc.database(database.id).execute("INSERT INTO acceptance_rows VALUES (?, ?, ?, ?)", values)
+                            sjc.database(database.id).execute("INSERT INTO acceptance_rows (id, writer, sequence, body) VALUES (?, ?, ?, ?)", values)
                             completed = utc()
                             expected[row] = values
                             accepted.append({"id": row, "sequence": sequence, "started": started, "completed": completed, **last.response})
@@ -121,7 +121,10 @@ def main():
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     future = pool.submit(writer)
+                    future.add_done_callback(lambda _: third.set())
                     if not third.wait(30) or len(accepted) < 3:
+                        if future.done():
+                            future.result()
                         raise AssertionError("three local writes were not acknowledged before the move")
                     move_started = utc()
                     try:
