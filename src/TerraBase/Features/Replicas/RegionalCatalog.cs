@@ -25,7 +25,10 @@ internal static class RegionalCatalog
     private static readonly Dictionary<string, object?> NoNamed = [];
 
     private static bool Shared(string kind) => kind is "catalog" or "api_keys" or "api_key_hashes"
-        or "project_closures" or "database_expiry" or "retired_databases" or "database_purges"
+        or "project_closures" or "database_expiry" or "retired_databases" or "database_purges" or "home_moves"
+        || kind.StartsWith("file-storage/", StringComparison.Ordinal)
+        || kind.StartsWith("backup_destination_history/", StringComparison.Ordinal)
+        || kind.StartsWith("project_closure_purges/", StringComparison.Ordinal)
         || kind.StartsWith("projects/", StringComparison.Ordinal) && (kind.EndsWith("/api_keys", StringComparison.Ordinal)
             || kind.EndsWith("/backup_destination", StringComparison.Ordinal) || kind.EndsWith("/file-buckets", StringComparison.Ordinal))
         || kind.StartsWith("databases/", StringComparison.Ordinal) && (kind.EndsWith("/functions", StringComparison.Ordinal)
@@ -37,6 +40,7 @@ internal static class RegionalCatalog
         await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         var tables = new List<RegionalTable>();
         long bytes = 0;
+        var count = 0;
         foreach (var name in Tables)
         {
             var result = await transaction.ExecuteStatementAsync(Sql($"SELECT * FROM {name} LIMIT {MaxRows + 1}"), cancellationToken).ConfigureAwait(false);
@@ -47,6 +51,11 @@ internal static class RegionalCatalog
             var rows = new List<RegionalCell[]>();
             foreach (var row in result.Rows)
             {
+                bytes += row.Sum(value => value is string text ? 6L * text.Length + 64 : 64);
+                if (bytes > MaxBytes || ++count > MaxRows)
+                {
+                    throw new IOException("regional catalog exceeds the handoff bound");
+                }
                 rows.Add([.. row.Select(value => value switch
                 {
                     null => new RegionalCell(null, null),
@@ -54,7 +63,6 @@ internal static class RegionalCatalog
                     long number => new RegionalCell(null, number),
                     _ => throw new InvalidDataException("unsupported regional catalog column"),
                 })]);
-                bytes += row.Sum(value => value is string text ? 6L * text.Length + 64 : 64);
             }
             tables.Add(new RegionalTable(name, rows));
         }
@@ -74,7 +82,7 @@ internal static class RegionalCatalog
                     foreach (var record in entries.Records)
                     {
                         bytes += record.Json.Length * 2L + 6L * (record.Id.Length + kind.Name.Length) + 128;
-                        if (bytes > MaxBytes || records.Count >= MaxRows)
+                        if (bytes > MaxBytes || ++count > MaxRows)
                         {
                             throw new IOException("regional catalog exceeds the handoff bound");
                         }

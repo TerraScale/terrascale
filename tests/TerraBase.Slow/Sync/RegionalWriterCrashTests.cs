@@ -78,6 +78,12 @@ public sealed class RegionalWriterCrashTests
             File.Delete(writer.Arm);
             await writer.StartAsync(token);
             using var recovered = PeerTls.CreateClient(writer.Address);
+            await TerraBaseTestServer.EventuallyAsync(async _ =>
+            {
+                using var status = await recovered.GetAsync(ManagementApi.Uri("/v1/rollout/status"), token);
+                var body = await status.Content.ReadFromJsonAsync<JsonElement>(token);
+                return body.GetProperty("writer").GetBoolean() && body.GetProperty("ready").GetBoolean();
+            }, TimeSpan.FromSeconds(15));
             using var transfer = await recovered.PostAsync(ManagementApi.Uri("/v1/rollout/drain?target=gru-2"), null, token);
             await Assert.That(transfer.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await transfer.Content.ReadAsStringAsync(token));
             using var survivor = PeerTls.CreateClient(follower.Address);
