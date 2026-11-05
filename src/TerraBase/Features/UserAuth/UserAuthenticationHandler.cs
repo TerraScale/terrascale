@@ -226,7 +226,10 @@ internal sealed class UserAuthenticationHandler(
     {
         var principal = new ClaimsPrincipal(new ClaimsIdentity(accepted.Claims.Select(claim => new Claim(claim.Type, claim.Value)), SchemeName));
         Context.Features.Set(new ProjectToken(accepted.Project, accepted.Database, accepted.Scope, new DateTimeOffset(accepted.ValidTo, TimeSpan.Zero), accepted.Allowlists,
-            accepted.Key is var (id, generation) ? new KeyToken(id, generation, accepted.Project, token) : null));
+            accepted.Key is var (id, generation) ? new KeyToken(id, generation, accepted.Project, token)
+            {
+                ValidTo = new DateTimeOffset(accepted.ValidTo, TimeSpan.Zero),
+            } : null));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 

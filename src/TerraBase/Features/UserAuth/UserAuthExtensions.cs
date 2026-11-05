@@ -45,7 +45,9 @@ internal static class UserAuthExtensions
         services.AddSingleton<IIssuerKeys>(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddSingleton<IProjectAuthorityVerifier, TsAuthProjectAuthorityVerifier>();
         services.AddSingleton<TsAuthKeyExchange>();
-        services.AddSingleton<IKeyAuthority, TsAuthKeyAuthority>();
+        services.AddSingleton<TsAuthKeyAuthority>();
+        services.AddSingleton<IKeyAuthority>(provider => provider.GetRequiredService<TsAuthKeyAuthority>());
+        services.AddHostedService(provider => provider.GetRequiredService<TsAuthKeyAuthority>());
         services.AddHostedService(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddAuthentication()
             .AddScheme<AuthenticationSchemeOptions, UserAuthenticationHandler>(UserAuthenticationHandler.SchemeName, configureOptions: null)

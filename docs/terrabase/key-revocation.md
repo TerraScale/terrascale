@@ -48,7 +48,7 @@ SHA-256 of the key string they came from). ts-auth caps their expiry at the key'
 | Postgres | FATAL `28000 key_revoked: ...` / `key_expired: ...`, then the connection closes | the session is watched for its whole life, idle or busy. Its TCP connection is aborted within 2.5 s and unflushed rows are dropped. An open transaction rolls back |
 
 A request or session is watched by asking `IKeyAuthority` every 250 ms while it runs. These checks hit the same
-per-node answers, so a busy key still costs about one ts-auth call per node per second. Running work never outlives the
+per-node answers and background flights, so a warm key costs about two ts-auth calls per node per second. Running work never outlives the
 last yes. If no new yes arrives before that one runs out (2 s after it was asked), the work is cut off, and waiting for
 ts-auth does not extend it. A slow ts-auth therefore ends long requests with `503 auth_unavailable` rather than a reset. A Postgres session exchanges its key again as each 60-second token lapses, as statements
 do, so an idle session that is still valid stays open. Clients should treat `key_revoked` and
@@ -79,8 +79,8 @@ ts-auth answers the status check only on the GRU authority, where revocations ar
 storage-backed checks per second for one key, key string and project. Beyond those limits it answers 503 or 429, and
 TerraBase refuses on both. A caller hammering its own key throttles only that key.
 
-A node asks about each active key about once a second. From `sjc` and `fra`, that is one round trip to ts-auth in `gru`.
-Requests never wait on it while the key stays busy. An idle key's first request waits for one round trip. A new key
+A node asks about each warm key about twice a second. From `sjc` and `fra`, that is one round trip to ts-auth in `gru`.
+Nodes keep up to 256 validated key tokens warm in the background until their signed expiry. Every 250 ms they check which answers are at least 500 ms old and join the same per-key status flight. A pause between read warmup and the first insert therefore does not move a status RTT onto that insert. Expiry and the two-second revocation deadline remain strict; failed refreshes never extend a yes. A key outside that bounded warm set, or the first request using a new key, can still wait for one round trip. A new key
 works in every region from its first request: when the first answer arrives too late to admit new work (a cold
 cross-region connection), TerraBase asks once more before it answers `503 auth_unavailable`. That second question is
 fresh, so the revocation bound is unchanged. Nodes keep their connection pool to ts-auth warm for 10 minutes between

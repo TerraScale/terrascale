@@ -16,6 +16,9 @@ namespace TerraBase.Features.UserAuth;
 /// <param name="Token">The access token itself: ts-auth's status check takes it as its own credential.</param>
 public sealed record KeyToken(string KeyId, string Generation, string? ProjectId, string Token)
 {
+    /// <summary>The strictly validated token's expiry; background status checks never retain it beyond this time.</summary>
+    public DateTimeOffset ValidTo { get; init; }
+
     /// <summary>Whether <paramref name="value"/> has the shape of a <c>key_gen</c> claim: 16 lowercase hex digits.</summary>
     public static bool IsGeneration(string? value) => value is { Length: 16 } && value.All(char.IsAsciiHexDigitLower);
 }
@@ -192,7 +195,8 @@ internal sealed record TsAuthErrorBody(TsAuthErrorDetail? Error);
 /// <see cref="Unavailable"/>, never a stale yes: a key is refused at most <see cref="Fresh"/> after ts-auth acknowledged
 /// its revocation, in every region.
 /// </summary>
-internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFactory http, TimeProvider time) : IKeyAuthority
+internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IHostApplicationLifetime lifetime)
+    : BackgroundService, IKeyAuthority
 {
     /// <summary>How long ts-auth's yes holds, from when it was asked: the revocation bound.</summary>
     public static readonly TimeSpan Fresh = TimeSpan.FromSeconds(2);
@@ -217,12 +221,15 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
 
     private readonly ConcurrentDictionary<string, Answer> _answers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<Answer>>> _asking = new(StringComparer.Ordinal);
+    private readonly Lock _warmGate = new();
+    private readonly Dictionary<string, KeyToken> _warm = new(StringComparer.Ordinal);
     private int _inFlight;
 
     public async ValueTask<KeyAuthorityResult> AdmitAsync(KeyToken key, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(key);
         var id = Id(key);
+        KeepWarm(id, key);
         if (_answers.TryGetValue(id, out var known))
         {
             var age = time.GetUtcNow() - known.AskedAt;
@@ -256,6 +263,7 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
     {
         ArgumentNullException.ThrowIfNull(key);
         var id = Id(key);
+        KeepWarm(id, key);
         if (_answers.TryGetValue(id, out var known))
         {
             var age = time.GetUtcNow() - known.AskedAt;
@@ -274,6 +282,51 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
     }
 
     private static string Id(KeyToken key) => key.KeyId + " " + key.Generation + " " + key.ProjectId;
+
+    private void KeepWarm(string id, KeyToken key)
+    {
+        if (key.ValidTo <= time.GetUtcNow())
+        {
+            return;
+        }
+
+        lock (_warmGate)
+        {
+            if (_warm.TryGetValue(id, out var previous) ? key.ValidTo > previous.ValidTo : _warm.Count < MaxInFlight)
+            {
+                _warm[id] = key;
+            }
+        }
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(AdmissionRefresh / 2, time);
+        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+        {
+            KeyValuePair<string, KeyToken>[] active;
+            var now = time.GetUtcNow();
+            lock (_warmGate)
+            {
+                foreach (var (id, key) in _warm.ToArray())
+                {
+                    if (key.ValidTo <= now || _answers.TryGetValue(id, out var answer) && answer.Result.Value is KeyRefused)
+                    {
+                        _warm.Remove(id);
+                    }
+                }
+
+                active = [.. _warm];
+            }
+
+            // At most MaxInFlight tokens, retained only to their signed expiry. A client's thinking time must not let
+            // its two-second authority lapse between warmup and its first write. The foreground still refuses an
+            // expired/unavailable answer, and every refresh shares the same per-key flight and revocation deadline.
+            await Task.WhenAll(active.Where(pair => !_answers.TryGetValue(pair.Key, out var answer)
+                    || now - answer.AskedAt >= AdmissionRefresh)
+                .Select(pair => Ask(pair.Key, pair.Value))).ConfigureAwait(false);
+        }
+    }
 
     private Task<Answer> Ask(string id, KeyToken key) =>
         _asking.GetOrAdd(id, _ => new Lazy<Task<Answer>>(() => AskAsync(id, key))).Value;
@@ -326,11 +379,12 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
             using var client = http.CreateClient(TsAuthKeys.HttpClientName);
             client.MaxResponseContentBufferSize = MaxResponseBytes;
             using var deadline = new CancellationTokenSource(Timeout, time);
-            using var response = await client.SendAsync(request, deadline.Token).ConfigureAwait(false);
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, lifetime.ApplicationStopping);
+            using var response = await client.SendAsync(request, cancellation.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.OK)
             {
                 // Only an answer about this very key counts as a yes.
-                var status = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthKeyStatus, deadline.Token).ConfigureAwait(false);
+                var status = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthKeyStatus, cancellation.Token).ConfigureAwait(false);
                 return status?.KeyId == key.KeyId ? new KeyActive(until) : new Unavailable("ts-auth answered about another key");
             }
 
@@ -345,7 +399,7 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
                 return new Unavailable("ts-auth key status is unavailable");
             }
 
-            var body = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthErrorBody, deadline.Token).ConfigureAwait(false);
+            var body = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthErrorBody, cancellation.Token).ConfigureAwait(false);
             return new KeyRefused(body?.Error?.Code is "key_revoked" or "key_expired" ? body.Error.Code : "invalid_token");
         }
         catch (Exception error) when (error is JsonException or InvalidOperationException or NotSupportedException)

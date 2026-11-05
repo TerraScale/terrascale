@@ -24,3 +24,7 @@ acknowledgement bound. Backups continue to use authoritative current selection.
 and `local_native` within `local_execute`, alongside existing `local_seal`, HLC,
 publish, partner-hold, and local-commit spans. Nested spans must not be added to
 their parent durations.
+
+## Requests before replica preparation
+
+SQL HTTP routing reads the durable catalog placement even when the follower has not opened a local copy yet. Such reads and writes forward once to the database home through the existing authenticated peer path. They never open an absent primary file and return a misleading `400 sql_error`. Local acknowledgement resumes through the usual router once the prepared replica is available. This does not change edge draining or node replacement.

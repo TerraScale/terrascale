@@ -249,7 +249,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         }
 
         return new TsAuthKeyGrant(subject, project, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
-            hasKey ? new KeyToken(subject, generation!, project, token) : null);
+            hasKey ? new KeyToken(subject, generation!, project, token) { ValidTo = new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero) } : null);
     }
 
     private static Unavailable Unavailable() => new("ts-auth key exchange is unavailable");

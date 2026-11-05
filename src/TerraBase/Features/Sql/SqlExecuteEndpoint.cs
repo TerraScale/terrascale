@@ -102,9 +102,9 @@ internal sealed class SqlExecuteEndpoint(
     private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
         SqlRequestTiming.Mark(HttpContext, "tenant");
-        // Only a node holding a replica of the database reads its placement here; the home answers without another catalog read.
-        if (replicas.Holds(database)
-            && await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
+        // Placement survives a restart before the follower opens its replica. During that interval ReplicaAsync forwards
+        // to the home; opening this node's absent primary file would incorrectly answer 400 sql_error.
+        if (await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
         {
             return await ReplicaAsync(database, placement, commands, body, all, cancellationToken);
         }

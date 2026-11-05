@@ -12,6 +12,44 @@ namespace TerraBase.Fast.Management;
 public sealed class KeyRevocationTests
 {
     [Test]
+    public async Task A_keys_authority_stays_warm_between_read_warmup_and_the_first_write()
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(time: time);
+        var database = await api.CreateManagedDatabaseAsync();
+        using var owner = api.WithToken(api.ProjectToken(database.Project, "sql:read sql:write"));
+        using (var schema = await ManagementApi.SqlAsync(owner, database, "CREATE TABLE notes (body TEXT)"))
+        {
+            await Assert.That(schema.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+        var (_, token) = Grant(api, database, scope: "sql:read sql:write");
+        using var client = api.WithToken(token);
+        using (var warmup = await ManagementApi.SqlAsync(client, database, "SELECT 1"))
+        {
+            await Assert.That(warmup.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        api.Issuer.BeforeStatus = () => refreshed.TrySetResult();
+        time.Advance(TimeSpan.FromMilliseconds(1500));
+        await refreshed.Task.WaitAsync(TestContext.Current!.Execution.CancellationToken);
+        // Join completion of the background answer, then let the original warmup's authority expire without
+        // dispatching another timer. The renewed answer still has enough lifetime to admit the first write.
+        using (var joined = await ManagementApi.SqlAsync(client, database, "SELECT 1"))
+        {
+            await Assert.That(joined.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+        time.AdjustTime(time.GetUtcNow().AddMilliseconds(750));
+        api.Issuer.StatusAvailable = false;
+        using var inserted = await ManagementApi.SqlAsync(client, database, "INSERT INTO notes VALUES ('first')");
+        await Assert.That(inserted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        // Background renewal never extends a yes through issuer failure.
+        time.AdjustTime(time.GetUtcNow().AddSeconds(2));
+        using var refused = await ManagementApi.SqlAsync(client, database, "SELECT 1");
+        await ErrorAssert.ErrorAsync(refused, HttpStatusCode.ServiceUnavailable, "auth_unavailable", "API key status cannot be verified right now; retry");
+    }
+
+    [Test]
     public async Task The_same_bearer_stops_reading_when_its_key_stops_acting()
     {
         const string code = "key_revoked";
