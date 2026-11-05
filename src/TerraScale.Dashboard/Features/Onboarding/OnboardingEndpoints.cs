@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 Error = error.Length > 0 ? error : context.Request.Query["error"].ToString(),
                 ProjectName = draft?["name"].ToString() ?? "Personal",
                 Region = draft?["region"].ToString() ?? "",
-                Plan = OfferedPlan(plans, requested).Length == 0 ? (plans is [var firstPlan, ..] ? firstPlan?.Key ?? "" : "") : requested,
+                Plan = SelectedPlan(plans, requested),
                 Document = new("Activate your TerraScale account", DocumentModel.NonceFor(context))
             };
             if (payment == "success" && page.Step == "payment-method")
@@ -121,6 +121,12 @@ namespace TerraScale.Dashboard.Features.Onboarding
         private static string OfferedPlan(IReadOnlyList<BillingPlan> plans, string? raw)
         {
             return plans.Any(plan => plan.Key == raw) ? raw! : "";
+        }
+
+        // Free leads the payment step and is the default; an explicit paid plan stays selected.
+        private static string SelectedPlan(IReadOnlyList<BillingPlan> plans, string? raw)
+        {
+            return plans.Any(plan => plan.Key == raw && plan.PriceCents > 0) ? raw! : OnboardingService.FreePlanKey;
         }
 
         private static string ReturnPath(string? value)

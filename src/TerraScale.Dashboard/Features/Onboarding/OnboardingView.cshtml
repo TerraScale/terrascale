@@ -38,20 +38,22 @@
         }
         else if (Model.Step == "payment-method")
         {
-            <form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="payment-method-title">
+            var free = PlanCatalog.For("free");
+            <form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="payment-method-title" data-signals="{_planFree: @(Model.Plan == free.Key ? "true" : "false")}">
                 <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="payment-method" /><input type="hidden" name="return" value="/onboarding" />
                 <div class="ts-row-between ts-onboarding-payment-head">
                     <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="payment-method-title">Choose your plan</h2></div>
                 </div>
                 <fieldset class="ts-onboarding-plans"><legend class="ts-sr-only">Select a plan</legend>
+                    <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@free.Key" checked="@(Model.Plan == free.Key ? "checked" : null)" data-on:change="$_planFree = true" /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@free.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">$0<span class="ts-meta"> / month</span></span><span class="ts-meta">No card required</span><span class="ts-meta">@free.DatabaseAllowance · @free.StorageAllowance · @free.MemberAllowance</span><span class="ts-meta">@free.OperationsAllowance · @free.EgressAllowance</span></label>
                     @foreach (var plan in Model.Plans ?? [])
                     {
-                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">@plan.Price<span class="ts-meta"> @plan.PriceUnit</span></span><span class="ts-meta">@plan.BillingDescription</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
+                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" data-on:change="$_planFree = false" /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">@plan.Price<span class="ts-meta"> @plan.PriceUnit</span></span><span class="ts-meta">@plan.BillingDescription</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
                     }
                 </fieldset>
                 <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling</p>
                 <p><a class="ts-btn ts-btn-secondary" href="https://terrascale.tech/contact" @(ExternalLink.Attributes)>Contact sales@(ExternalLink.Hint)</a></p>
-                <div class="ts-onboarding-footer"><button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1" formnovalidate>Continue on @PlanCatalog.For("free").Name</button><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to checkout <span aria-hidden="true">→</span></button></div>
+                <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit"><span data-text="$_planFree ? 'Continue on @free.Name' : 'Continue to checkout'">@(Model.Plan == free.Key ? "Continue on " + free.Name : "Continue to checkout")</span> <span aria-hidden="true">→</span></button></div>
             </form>
         }
         else

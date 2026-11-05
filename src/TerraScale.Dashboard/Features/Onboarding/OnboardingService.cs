@@ -12,6 +12,13 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 .ThenBy(plan => plan.Key, StringComparer.Ordinal)];
         }
 
+        public const string FreePlanKey = "free";
+
+        // The payment step shows Free first, selected by default, ahead of the paid checkout offers.
+        public static IReadOnlyList<BillingPlan> SelectionPlans => [PlanCatalog.For(FreePlanKey), .. PlanCatalog.Plans.Where(plan => plan.PriceCents > 0)
+            .OrderBy(plan => plan.PriceCents)
+            .ThenBy(plan => plan.Key, StringComparer.Ordinal)];
+
         public async Task ConfirmPaymentAsync(SessionRecord session, CancellationToken cancellationToken)
         {
             var context = await accounts.GetContextAsync(session, cancellationToken);
@@ -65,7 +72,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
                         throw new OnboardingValidationException("Complete the current setup step first.");
                     }
 
-                    if (form["bypass"] == "1")
+                    if (form["bypass"] == "1" || form["plan"] == FreePlanKey)
                     {
                         await accounts.UpdateAccountAsync(session, account =>
                         {
