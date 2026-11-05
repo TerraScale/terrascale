@@ -12,10 +12,10 @@ make region-sim                      # builds TerraBase, ts and region-sim, writ
 make region-sim REGION_SIM_ARGS='-logs /tmp/region-sim-logs'
 ```
 
-Run it on a dev host through `ts-heavy-any` (never on mariogk-desktop). For a fresh checkout, run `scripts/vendor/download-turso-native.sh` first. `nats-server` must be on `PATH`. The node addresses 127.0.0.2–127.0.0.5 must be usable; Linux routes all of 127.0.0.0/8 to loopback by default.
+Run it on a dev host through `ts-heavy-any` (never on mariogk-desktop). `make region-sim` prepares the server dependencies. `nats-server` must be on `PATH`. The node addresses 127.0.0.2–127.0.0.5 must be usable; Linux routes all of 127.0.0.0/8 to loopback by default.
 
 ```sh
-ts-heavy-any bash -c 'mkdir -p $HOME/region-sim && exec > $HOME/region-sim/job.log 2>&1 </dev/null; scripts/vendor/download-turso-native.sh && make region-sim REGION_SIM_ARGS="-logs $HOME/region-sim/logs"' --repo terrascale --branch <branch>
+ts-heavy-any bash -c 'mkdir -p $HOME/region-sim && exec > $HOME/region-sim/job.log 2>&1 </dev/null; make region-sim REGION_SIM_ARGS="-logs $HOME/region-sim/logs"' --repo terrascale --branch <branch>
 ```
 
 Flags: `-terrabase <binary or .dll>`, `-ts <ts binary>`, `-out <file>`, `-logs <dir>`, `-peer-delay <duration>` (one-way latency on the peer path and on sjc-1's NATS connection, e.g. `85ms` for gru–sjc), `-lag-writes <n>` (default 100). Without `-logs`, node logs are deleted with the run directory. On a failure, the end of each node's log is printed to stderr.
