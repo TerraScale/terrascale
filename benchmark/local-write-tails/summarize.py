@@ -1,4 +1,4 @@
-"""Summarize all retained writes, with conservative observed-order p99."""
+"""Summarize all retained writes, preserving empirical p99 and the older conservative statistic."""
 import argparse
 import gzip
 import json
@@ -17,24 +17,27 @@ with reader(args.input, 'rt') as source:
 def summary(values):
     ordered = sorted(values)
     return {'count': len(ordered), 'p50_ms': round(statistics.median(ordered), 3),
-            'p99_ms': round(ordered[math.ceil(.99 * (len(ordered) - 1))], 3),
+            'p99_ms': round(ordered[math.ceil(.99 * len(ordered)) - 1], 3),
+            'p99_conservative_ms': round(ordered[math.ceil(.99 * (len(ordered) - 1))], 3),
             'max_ms': round(ordered[-1], 3)} if ordered else None
 
 def stages(row):
     return {name: float(duration) for name, duration in re.findall(
         r'([\w_]+);dur=([\d.]+)', row.get('headers', {}).get('server-timing', ''))}
 
-result = {'input': str(args.input), 'percentile': 'sorted[ceil(q*(n-1))]; all samples retained',
+result = {'input': str(args.input), 'percentile': 'p99=sorted[ceil(q*n)-1]; older sorted[ceil(q*(n-1))] also retained; all samples retained',
           'environment': [row for row in rows if row['kind'] == 'environment'], 'regions': {}}
 for region in ('gru', 'sjc', 'fra'):
     writes = [row for row in rows if row['kind'] == 'write' and row['region'] == region]
-    baselines = [row['ms'] for row in rows if row['kind'] == 'baseline' and row['region'] == region]
-    region_result = {'baseline': summary(baselines), 'failed_writes': sum(not row['ok'] for row in writes),
+    baseline_rows = [row for row in rows if row['kind'] in ('baseline', 'baseline_path') and row['region'] == region]
+    baselines = [row['ms'] for row in baseline_rows]
+    paths = [max(0, row['ms'] - stages(row).get('app', 0)) for row in baseline_rows]
+    region_result = {'baseline': summary(baselines), 'baseline_path': summary(paths), 'failed_writes': sum(not row['ok'] for row in writes),
                      'client': summary([row['ms'] for row in writes]),
                      'server': summary([stages(row)['app'] for row in writes if 'app' in stages(row)]),
                      'first_insert': writes[0] if writes else None, 'repeats': {}}
     if baselines:
-        region_result['client_budget_ms'] = round(statistics.median(baselines) + 100, 3)
+        region_result['client_budget_ms'] = round(statistics.median(paths) + 100, 3)
     for repeat in (1, 2, 3):
         selected = [row for row in writes if row['repeat'] == repeat]
         region_result['repeats'][repeat] = {
@@ -45,6 +48,7 @@ for region in ('gru', 'sjc', 'fra'):
                                     'local_seal', 'local_hlc', 'push_publish', 'push_hold', 'local_commit')},
             'routes': sorted({row.get('headers', {}).get('terrascale-write-route', '') for row in selected})}
     result['regions'][region] = region_result
+result['exact_comparisons'] = [row for row in rows if row['kind'] == 'exact_comparison']
 result['inventories'] = [row for row in rows if row['kind'] == 'inventory']
 result['cross_reads'] = {'count': sum(row['kind'] == 'cross_read' for row in rows),
                        'failures': sum(row['kind'] == 'cross_read' and not row['ok'] for row in rows),

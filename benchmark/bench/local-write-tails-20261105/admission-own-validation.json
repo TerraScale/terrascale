@@ -1,0 +1,9 @@
+{
+  "region": "gru",
+  "expected": 960,
+  "actual": 960,
+  "ok": true,
+  "repaired_runner_lines": 1,
+  "method": "Rejoin one diagnostic JSON line split by stderr; original runner log retained. Derive diagnostic sequence from its original ordered ten samples per mode/region.",
+  "away_inventories": "not collected; post-cohort validator KeyError n"
+}
