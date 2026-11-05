@@ -15,18 +15,23 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 {
     private TerraBaseTestServer? server;
     private TerraBaseTestTenant? owner;
-    private readonly Lazy<Task<OidcHarness>> management;
+    // Separate databases avoid queueing every parallel management journey on one database writer.
+    private readonly Lazy<Task<OidcHarness>>[] management;
+    private int nextManagement = -1;
     private readonly Lazy<Task> initialized;
 
     public TerraBaseFixture()
     {
-        this.management = new(this.StartManagementAsync);
+        this.management = Enumerable.Range(0, 4).Select(_ => new Lazy<Task<OidcHarness>>(this.StartManagementAsync)).ToArray();
         this.initialized = new(this.InitializeCoreAsync);
     }
 
     public TerraBaseTestServer Server => this.server ?? throw new InvalidOperationException("TerraBase fixture has not started.");
 
-    internal Task<OidcHarness> ManagementAsync() => this.management.Value;
+    internal Task<OidcHarness> ManagementAsync() =>
+        this.management[(uint)Interlocked.Increment(ref this.nextManagement) % (uint)this.management.Length].Value;
+
+    internal Task InitializeManagementAsync() => Task.WhenAll(this.management.Select(host => host.Value));
 
     private Task<OidcHarness> StartManagementAsync()
     {
@@ -124,10 +129,8 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     {
         try
         {
-            if (this.management.IsValueCreated)
-            {
-                await (await this.management.Value).DisposeAsync();
-            }
+            await Task.WhenAll(this.management.Where(host => host.IsValueCreated).Select(async host =>
+                await (await host.Value).DisposeAsync()));
         }
         finally
         {
