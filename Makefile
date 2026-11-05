@@ -88,7 +88,11 @@ libs-build: restore
 	dotnet build libs.slnf --configuration $(CONFIGURATION) --no-restore
 
 libs-test: libs-build
-	set -e; for p in $(LIBS_TEST_PROJECTS); do dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS); done
+	# Independent assemblies run together; each runner keeps TUnit's default parallelism.
+	@set -e; pids=""; \
+	for p in $(LIBS_TEST_PROJECTS); do dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS) & pids="$$pids $$!"; done; \
+	trap 'kill $$pids 2>/dev/null || true' EXIT INT TERM; \
+	status=0; for pid in $$pids; do wait $$pid || status=$$?; done; trap - EXIT INT TERM; exit $$status
 
 libs-check: libs-build
 	set -e; for p in $(LIBS_PROJECTS); do dotnet format style $$p --verify-no-changes --no-restore; done
