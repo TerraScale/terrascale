@@ -19,8 +19,12 @@ test('cf output is portable and contains exactly the checked site bytes', async 
   const assets = workers.default.assetsDir;
   const sourceFiles = filesIn(source).map((file) => file.slice(source.length));
   assert.deepEqual(filesIn(assets).map((file) => file.slice(assets.length)), sourceFiles);
-  for (const file of sourceFiles) {
-    assert.deepEqual(await readFile(`${assets}${file}`), await readFile(`${source}${file}`), file);
+  // Read independent pairs together without opening the entire site at once.
+  for (let offset = 0; offset < sourceFiles.length; offset += 32) {
+    await Promise.all(sourceFiles.slice(offset, offset + 32).map(async (file) => {
+      const [published, checked] = await Promise.all([readFile(`${assets}${file}`), readFile(`${source}${file}`)]);
+      assert.deepEqual(published, checked, file);
+    }));
   }
 });
 
