@@ -5,7 +5,10 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
+using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
@@ -81,6 +84,7 @@ public sealed class RegionShapeTailTests
         await replication.PullAllAsync(token);
         var tenant = new TenantContext(organization, PlanTier.Hobby, project, database.Id);
         var store = await gru.Server.StoreAsync(tenant);
+        var replicas = sjc.Server.Services.GetRequiredService<IDatabaseReplicas>();
         Task<long> ReadReplicaFloorAsync() => store.WithWriterAsync(writer =>
         {
             using var command = writer.Connection.CreateCommand();
@@ -91,6 +95,7 @@ public sealed class RegionShapeTailTests
         await Assert.That(replicaFloor).IsGreaterThan(0);
         for (var round = 0; round < 3; round++)
         {
+            var held = replicas.HeldRevision(tenant)!.Value;
             var targets = shapes.Select(shape => shape.Uri(shape.NextOffset, live: true)).ToArray();
             var parked = shapes.Select((shape, index) => shape.GetAsync(targets[index])).ToArray();
             using var changed = await home.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"),
@@ -115,6 +120,17 @@ public sealed class RegionShapeTailTests
                     return (long)command.ExecuteScalar()!;
                 }, "the advertised continuation after backup cleanup", token);
                 await Assert.That(boundary).IsEqualTo(1L);
+            }
+
+            if (round == 1)
+            {
+                using var push = await RevisionPush.BuildAsync(gru.Server.Services.GetRequiredService<IDatabaseRevisions>(),
+                    gru.Server.Services.GetRequiredService<IMemoryBudget>(), tenant, held.ToString(), 0, token);
+                await Assert.That(RevisionPush.TryRead(push!.Payload.ToArray(), out var notice, out var answer)).IsTrue();
+                await Assert.That(DatabaseRevision.TryParse(notice!.Revision, out var target)).IsTrue();
+                await Assert.That(replicas.Offer(tenant, held, target, answer, notice.CdcPosition)).IsTrue();
+                await Assert.That((await replicas.PullAsync(tenant, fromHome: false, token))!.Pushed).IsTrue();
+                _ = await Task.WhenAll(parked).WaitAsync(TimeSpan.FromSeconds(10), token);
             }
 
             await replication.PullAllAsync(token);
