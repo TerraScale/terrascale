@@ -109,17 +109,27 @@ public sealed class HomeMoveLocalWritesTests
             await Assert.That(late.Id).IsNotNull();
             expected.Add(lateId);
             await writer.WaitAsync(TimeSpan.FromSeconds(30), token);
-            await TerraBaseTestServer.EventuallyAsync(async cancellation =>
+            string[] observed = [];
+            var readStatus = HttpStatusCode.OK;
+            try
             {
-                using var read = await ExecuteAsync(viaTarget, sql, "SELECT id FROM acked ORDER BY id", cancellation);
-                if (read.StatusCode != HttpStatusCode.OK)
+                await TerraBaseTestServer.EventuallyAsync(async cancellation =>
                 {
-                    return false;
-                }
+                    using var read = await ExecuteAsync(viaTarget, sql, "SELECT id FROM acked ORDER BY id", cancellation);
+                    readStatus = read.StatusCode;
+                    if (read.StatusCode != HttpStatusCode.OK)
+                    {
+                        return false;
+                    }
 
-                var rows = Rows(await read.Content.ReadFromJsonAsync<JsonElement>(cancellation));
-                return rows.Length == expected.Count && rows.ToHashSet(StringComparer.Ordinal).SetEquals(expected);
-            }, TimeSpan.FromSeconds(45));
+                    observed = Rows(await read.Content.ReadFromJsonAsync<JsonElement>(cancellation));
+                    return observed.Length == expected.Count && observed.ToHashSet(StringComparer.Ordinal).SetEquals(expected);
+                }, TimeSpan.FromSeconds(45));
+            }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            {
+                throw new InvalidOperationException($"move={round + 1} status={readStatus} expected={string.Join(',', expected)} actual={string.Join(',', observed)}");
+            }
             var replication = sjc.Server.Services.GetRequiredService<RegionReplication>();
             await replication.SyncCatalogsAsync(token);
             await replication.PullAllAsync(token);
@@ -129,7 +139,7 @@ public sealed class HomeMoveLocalWritesTests
             var actual = Rows(await pinned.Content.ReadFromJsonAsync<JsonElement>(token));
             await Assert.That(actual.Length).IsEqualTo(expected.Count);
             await Assert.That(actual).IsEquivalentTo(expected);
-            Console.WriteLine($"move={round + 1} home={targetRegion} acknowledged={expected.Count} missing=0 duplicates=0 sjc=local");
+            Console.WriteLine($"move={round + 1} home={targetRegion} acknowledged={expected.Count} missing=0 duplicates=0 sjc=local origin_sequence={local.LastPushed(tenant)} ids={string.Join(',', expected.Order(StringComparer.Ordinal))}");
             await old.Server.Services.GetRequiredService<RegionReplication>().SyncCatalogsAsync(token);
             await old.Server.Services.GetRequiredService<RegionReplication>().PullAllAsync(token);
         }

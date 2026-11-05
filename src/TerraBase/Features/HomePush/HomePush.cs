@@ -11,6 +11,7 @@ using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Clock;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.LocalAck;
@@ -60,7 +61,6 @@ internal sealed class HomePush(
     internal const int MaxPayloadBytes = 8 << 20;
     private const int MaxParallelDatabases = 16;
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan DrainWindow = RegionReplication.Sweep * 2;
 
     private static readonly TimeSpan SettleBound = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HomeWait = TimeSpan.FromSeconds(30);
@@ -70,7 +70,6 @@ internal sealed class HomePush(
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), ulong> _pushed = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), byte> _forwarded = new();
     private readonly ConcurrentDictionary<(string Origin, string Organization, string Project, string Database), ulong> _applied = new();
-    private readonly ConcurrentDictionary<string, ulong> _floors = new(StringComparer.Ordinal);
     private TaskCompletionSource _progress = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Lazy<ILocalCommitFeed?> _feed = new(services.GetService<ILocalCommitFeed>);
     private readonly Channel<(TenantContext Database, ulong Through)> _purges = Channel.CreateBounded<(TenantContext, ulong)>(
@@ -186,11 +185,11 @@ internal sealed class HomePush(
         {
             try
             {
-                foreach (var peer in await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false))
+                foreach (var origin in (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Region).Append(options.Region).Distinct(StringComparer.Ordinal))
                 {
-                    if (!consuming.ContainsKey(peer.Region))
+                    if (!consuming.ContainsKey(origin))
                     {
-                        consuming[peer.Region] = ConsumeAsync(js, nats, peer.Region, cancellationToken);
+                        consuming[origin] = ConsumeAsync(js, nats, origin, cancellationToken);
                     }
                 }
             }
@@ -220,7 +219,7 @@ internal sealed class HomePush(
         }
 
         if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-            || placement.Home == options.Region || !placement.Replicas.Contains(options.Region))
+            || placement.Home == options.Region || !placement.Includes(options.Region))
         {
             return null;
         }
@@ -254,8 +253,7 @@ internal sealed class HomePush(
         while (true)
         {
             var progress = Volatile.Read(ref _progress).Task;
-            if ((_floors.TryGetValue(origin, out var floor) && sequence <= floor)
-                || (_applied.TryGetValue((origin, database.OrganizationId, database.ProjectId!, database.DatabaseId!), out var applied) && applied >= sequence))
+            if (_applied.TryGetValue((origin, database.OrganizationId, database.ProjectId!, database.DatabaseId!), out var applied) && applied >= sequence)
             {
                 return true;
             }
@@ -300,7 +298,7 @@ internal sealed class HomePush(
         var stream = PushNames.Stream(origin);
         var scan = await js.CreateOrderedConsumerAsync(stream, new NatsJSOrderedConsumerOpts
         {
-            FilterSubjects = [PushNames.Subject(origin, options.Region, database)],
+            FilterSubjects = [PushNames.DatabaseFilter(origin, database)],
             DeliverPolicy = ConsumerConfigDeliverPolicy.All,
         }, cancellationToken).ConfigureAwait(false);
         ulong? found = null;
@@ -334,7 +332,7 @@ internal sealed class HomePush(
         return resume;
     }
 
-    internal async Task<int> DrainFormerHomeAsync(TenantContext database, string formerHome, long fence, CancellationToken cancellationToken)
+    internal async Task<int> DrainOriginsAsync(TenantContext database, long fence, CancellationToken cancellationToken)
     {
         if (_js is not { } js || _nats is not { } nats)
         {
@@ -342,17 +340,16 @@ internal sealed class HomePush(
         }
 
         var scans = new List<INatsJSConsumer>();
-        foreach (var origin in (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Region).Append(options.Region).Where(region => region != formerHome).Distinct(StringComparer.Ordinal))
+        foreach (var origin in (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Region).Append(options.Region).Distinct(StringComparer.Ordinal))
         {
             scans.Add(await js.CreateOrderedConsumerAsync(PushNames.Stream(origin), new NatsJSOrderedConsumerOpts
             {
-                FilterSubjects = [PushNames.Subject(origin, formerHome, database)],
+                FilterSubjects = [PushNames.DatabaseFilter(origin, database)],
                 DeliverPolicy = ConsumerConfigDeliverPolicy.All,
             }, cancellationToken).ConfigureAwait(false));
         }
 
         var applied = 0;
-        var until = time.GetTimestamp() + (long)(DrainWindow.TotalSeconds * time.TimestampFrequency);
         while (true)
         {
             var read = 0;
@@ -361,7 +358,8 @@ internal sealed class HomePush(
                 await foreach (var message in scan.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
                 {
                     read++;
-                    if (message.Data is not { } data || !TryDecode(data, out var transaction) || Epoch(message.Headers) >= fence)
+                    if (Epoch(message.Headers) >= fence || message.Data is not { } data
+                        || await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
                     {
                         continue;
                     }
@@ -382,12 +380,7 @@ internal sealed class HomePush(
 
             if (read == 0)
             {
-                if (time.GetTimestamp() >= until)
-                {
-                    break;
-                }
-
-                await Task.Delay(TimeSpan.FromSeconds(1), time, cancellationToken).ConfigureAwait(false);
+                break;
             }
         }
 
@@ -541,7 +534,7 @@ internal sealed class HomePush(
                 var consumer = await js.CreateOrUpdateConsumerAsync(PushNames.Stream(origin), new ConsumerConfig(name)
                 {
                     DurableName = name,
-                    FilterSubject = PushNames.HomeFilter(origin, options.Region),
+                    FilterSubject = PushNames.Subjects(origin),
                     AckPolicy = ConsumerConfigAckPolicy.Explicit,
                     DeliverPolicy = ConsumerConfigDeliverPolicy.All,
                     AckWait = TimeSpan.FromSeconds(60),
@@ -549,9 +542,9 @@ internal sealed class HomePush(
                 }, cancellationToken).ConfigureAwait(false);
                 if (reset)
                 {
-                    _floors[origin] = consumer.Info.AckFloor.StreamSeq;
-                    Progressed(origin, null, 0);
-                    await consumer.ResetAsync(consumer.Info.AckFloor.StreamSeq + 1, cancellationToken).ConfigureAwait(false);
+                    // A region may have become home while it was offline. Revisit retained
+                    // messages even if this consumer previously skipped them as a non-home.
+                    await consumer.ResetAsync(1, cancellationToken).ConfigureAwait(false);
                     reset = false;
                 }
 
@@ -573,12 +566,14 @@ internal sealed class HomePush(
 
     private void Dispatch(NatsConnection nats, INatsJSMsg<byte[]> message, CancellationToken cancellationToken)
     {
+        var key = PushNames.Origin(message.Subject) is { } origin && PushNames.Database(message.Subject) is { } database
+            ? PushNames.DatabaseFilter(origin, database) : message.Subject;
         var start = false;
         lock (_queuesGate)
         {
-            if (!_queues.TryGetValue(message.Subject, out var queue))
+            if (!_queues.TryGetValue(key, out var queue))
             {
-                _queues[message.Subject] = queue = new Queue<INatsJSMsg<byte[]>>();
+                _queues[key] = queue = new Queue<INatsJSMsg<byte[]>>();
                 start = true;
             }
 
@@ -587,7 +582,7 @@ internal sealed class HomePush(
 
         if (start)
         {
-            _ = Task.Run(() => DrainAsync(nats, message.Subject, cancellationToken), cancellationToken);
+            _ = Task.Run(() => DrainAsync(nats, key, cancellationToken), cancellationToken);
         }
     }
 
@@ -626,6 +621,16 @@ internal sealed class HomePush(
 
     private async Task ApplyAsync(NatsConnection nats, INatsJSMsg<byte[]> message, CancellationToken cancellationToken)
     {
+        if (PushNames.Database(message.Subject) is { } addressed
+            && await catalog.FindAsync(addressed, cancellationToken).ConfigureAwait(false) is var record
+            && (record is NotFound || record is TenantDatabaseRecord { Placement: var placed } && placed.Home != options.Region))
+        {
+            // Acknowledging consumption here never confirms the transaction to its origin.
+            // Retention is controlled by a home-confirmed replica pull, not consumer acks.
+            await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (PushNames.Database(message.Subject) is not { } database || message.Data is not { } data || await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
         {
             logger.ZLogWarning($"A malformed pushed message is dropped");
@@ -643,6 +648,15 @@ internal sealed class HomePush(
         HomeApplyResult result;
         while (true)
         {
+            // Subjects contain the home observed when the remote transaction began. The
+            // lease/catalog decides where it applies now, including late old-epoch pushes.
+            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
+                && placement.Home != options.Region)
+            {
+                await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             HomeApplyResult? applied;
             var started = Stopwatch.GetTimestamp();
             var reason = "missing_database";
@@ -720,6 +734,9 @@ internal sealed class HomePush(
             }
         }
     }
+
+    private void RecordPublished(TenantContext database, string transaction, string home, long epoch, ulong sequence) =>
+        logger.ZLogInformation($"Local transaction {transaction:@Transaction} for database {database.DatabaseId:@Database} stored in origin {options.Region:@Origin} at sequence {sequence:@Sequence}, addressed to {home:@Home} at epoch {epoch:@Epoch}");
 
     private async Task<RegionTransaction?> DecodeAsync(TenantContext database, byte[] data, CancellationToken cancellationToken)
     {
@@ -834,6 +851,7 @@ internal sealed class HomePush(
             await writer.DisposeAsync().ConfigureAwait(false);
             Record("local_commit", ref started);
             push._feed.Value?.Committed(database, transaction.Id!, captured);
+            push.RecordPublished(database, transaction.Id!, home, epoch, acknowledged.Seq);
             if (!homeDurable && held)
             {
                 return new LocalCommit(transaction.Id, null);

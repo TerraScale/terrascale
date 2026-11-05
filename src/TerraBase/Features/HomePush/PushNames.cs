@@ -12,7 +12,8 @@ internal static class PushNames
     public static string Subject(string origin, string home, TenantContext database) =>
         $"terrabase.push.{origin}.{home}.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}";
 
-    public static string HomeFilter(string origin, string home) => $"terrabase.push.{origin}.{home}.>";
+    public static string DatabaseFilter(string origin, TenantContext database) =>
+        $"terrabase.push.{origin}.*.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}";
 
     public static string Consumer(string home) => "home-" + home;
 

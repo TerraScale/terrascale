@@ -72,7 +72,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         {
             case Unavailable error:
                 return ErrorResponse.From(error);
-            case TenantDatabaseRecord { Placement: var placement } when placement.Home == options.Region && placement.Replicas.Contains(transaction!.Region!):
+            case TenantDatabaseRecord { Placement: var placement } when placement.Home == options.Region && (placement.AllRegions || placement.Replicas.Contains(transaction!.Region!)):
                 break;
             default:
                 return ErrorResponse.From(new NotFound("the database is not homed here with a replica in that region"));

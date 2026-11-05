@@ -254,7 +254,13 @@ internal sealed class HomeMoves(
 
             if (placement.Home == options.Region)
             {
-                return new HomePromoteAnswer(placement.Version >= request.Version);
+                if (placement.Version >= request.Version)
+                {
+                    await DrainAsync(database, request.Version).ConfigureAwait(false);
+                    return new HomePromoteAnswer(true);
+                }
+
+                return new HomePromoteAnswer(false);
             }
 
             if (placement.Home != request.FromRegion || placement.Version >= request.Version)
@@ -366,7 +372,7 @@ internal sealed class HomeMoves(
             }
 
             await apply.PrepareAsync(database, CancellationToken.None).ConfigureAwait(false);
-            _ = DrainAsync(database, fromRegion, placement.Version);
+            await DrainAsync(database, placement.Version).ConfigureAwait(false);
             return new HomePromoteAnswer(true);
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -383,14 +389,14 @@ internal sealed class HomeMoves(
         }
     }
 
-    private async Task DrainAsync(TenantContext database, string formerHome, long fence)
+    private async Task DrainAsync(TenantContext database, long fence)
     {
         var backoff = TimeSpan.FromMilliseconds(200);
         for (var attempt = 0; attempt < 60; attempt++)
         {
             try
             {
-                var drained = await pushes.DrainFormerHomeAsync(database, formerHome, fence, CancellationToken.None).ConfigureAwait(false);
+                var drained = await pushes.DrainOriginsAsync(database, fence, CancellationToken.None).ConfigureAwait(false);
                 logger.ZLogInformation($"A new home applied {drained} pushed transactions addressed to its former home");
                 return;
             }
@@ -405,6 +411,8 @@ internal sealed class HomeMoves(
                 backoff = TimeSpan.FromTicks(Math.Min(TimeSpan.FromSeconds(5).Ticks, backoff.Ticks * 2));
             }
         }
+
+        throw new IOException("the new home could not drain retained origin pushes");
     }
 
     public async Task<HomePromoteAnswer> AbortAsync(TenantContext database, HomeAbortRequest request, CancellationToken cancellationToken)
@@ -417,6 +425,7 @@ internal sealed class HomeMoves(
             if (await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
                 && placement.Home == options.Region && placement.Version >= request.Version)
             {
+                await DrainAsync(database, request.Version).ConfigureAwait(false);
                 return new HomePromoteAnswer(true);
             }
 
