@@ -45,7 +45,7 @@ public sealed class RegionShapeStreamTests
         await Assert.That(Settled(confirmed, "confirmed")).IsEquivalentTo([commit.Id]);
         await Assert.That(Pending(confirmed).Count).IsEqualTo(0);
         // A delayed direct message after the pages arrived must never resurrect the provisional copy.
-        fra.Overlay.Add(world.Database, duplicate);
+        await DeliverAsync(world, fra, duplicate, token);
         fra.Local = "1111111111111111";
         await Assert.That(Pending(await fra.NextAsync(token)).Count).IsEqualTo(0);
 
@@ -87,12 +87,23 @@ public sealed class RegionShapeStreamTests
         await Assert.That(ops[0].GetProperty("row").GetProperty("v").GetString()).IsEqualTo("sjc");
         link.Restore();
         // The same ID through a late direct delivery is filtered against the home pages.
-        fra.Overlay.Add(world.Database, world.Overlay.Snapshot(world.Database).Single());
+        await DeliverAsync(world, fra, world.Overlay.Snapshot(world.Database).Single(), token);
         fra.Local = "1111111111111111";
         var replay = await fra.NextAsync(token);
         await Assert.That(Pending(replay).Count).IsEqualTo(0);
         await Assert.That(replay.GetProperty("changes").GetArrayLength()).IsEqualTo(0);
         await Assert.That((await world.HomeSqlAsync("SELECT count(*) FROM items")).GetRawText()).IsEqualTo("[[1]]");
+    }
+
+    private static async Task DeliverAsync(LocalWriteWorld world, Reader fra, ProvisionalTransaction transaction, CancellationToken token)
+    {
+        var database = world.Database;
+        var payload = JsonSerializer.SerializeToUtf8Bytes(transaction, ShapeOverlayJsonContext.Default.ProvisionalTransaction);
+        await TerraBaseTestServer.EventuallyAsync(async _ =>
+        {
+            await world.Client.PublishAsync($"terrabase.local.sjc.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}", payload, cancellationToken: token);
+            return fra.Overlay.Snapshot(database).Any(entry => entry.Id == transaction.Id);
+        }, TimeSpan.FromSeconds(5));
     }
 
     private static List<JsonElement> Pending(JsonElement body) => body.GetProperty("provisional").EnumerateArray().ToList();
