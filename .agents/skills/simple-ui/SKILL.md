@@ -37,3 +37,12 @@ description: TerraScale UI standard — simple purpose, architecture, design and
 - Before/after screenshots of every changed page (repo rule).
 - Run the area's Fast suite through `ts-ship`; run browser journeys (`make dashboard-test-slow`) through `ts-heavy-any` when dashboard markup changes.
 - Update tests that asserted removed copy to assert behavior instead; never weaken them.
+- Compare the actual before/after screenshots against these rules before shipping; fix default-styled or unfinished controls first.
+
+## Tabs and segmented controls
+
+- SDK language switchers use the shared `.sdk-tabs` design and keyboard handler documented in [SDK language tabs](../../../docs/dashboard/sdk-language-tabs.md).
+- Use a flat row with a self-hosted official language logo and name. Never nest boxed buttons inside another boxed control or rely on browser default button styling.
+- Show selection with one blue accent underline. Keep hover, selected and visible keyboard focus distinct in light and dark themes.
+- Use tablist/tab/tabpanel semantics, associated IDs, selected state and a single tab stop. Support Left/Right, Home/End and wraparound; selection must switch the snippet and copy target together.
+- Verify desktop and narrow layouts, pointer and keyboard switching, loaded icons, and screenshots in every supported theme across dashboard, docs and landing.
