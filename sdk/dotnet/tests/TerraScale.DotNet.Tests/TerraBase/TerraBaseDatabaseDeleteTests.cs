@@ -6,7 +6,7 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 /// <summary>DeleteAsync over a fake handler.</summary>
 public sealed class TerraBaseDatabaseDeleteTests
 {
-    private static readonly TerraBaseDocumentsClientOptions Options = new()
+    private static readonly TerraBaseDatabaseClientOptions Options = new()
     {
         BaseAddress = new Uri("https://terrabase.example.test/"),
         ApiKey = "tb_test_key",
@@ -22,7 +22,7 @@ public sealed class TerraBaseDatabaseDeleteTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
         });
         using var http = new HttpClient(handler);
-        var database = new TerraBaseDocumentsClient(http, Options).Database("project", "app");
+        var database = new TerraBaseDatabaseClient(http, Options).Database("project", "app");
 
         await database.DeleteAsync();
 

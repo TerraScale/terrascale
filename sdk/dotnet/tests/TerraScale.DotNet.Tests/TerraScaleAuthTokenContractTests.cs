@@ -75,7 +75,7 @@ public sealed class TerraScaleAuthTokenContractTests
             return Task.FromResult(TerraBaseIntegrationFixture.Json("{\"error\":{\"code\":\"" + code + "\",\"message\":\"refused\"}}", status));
         });
         using var http = new HttpClient(handler);
-        var client = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        var client = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions
         {
             Region = "sjc",
             AccessTokenProvider = _ => { Interlocked.Increment(ref tokens); return ValueTask.FromResult("project-token"); },
