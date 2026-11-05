@@ -74,7 +74,7 @@ public sealed class HomeMoveLocalWritesTests
             // transaction open across promotion, independently of catalog refresh timing.
             await using var delayed = await local.BeginAsync(tenant, token) ?? throw new InvalidOperationException("SJC lost its local commit path");
             var lateId = EntityIds.New().ToString();
-            _ = await delayed.ExecuteAsync(new SqlStatement($"INSERT INTO acked (id) VALUES ('{lateId}')"), token);
+            _ = await delayed.ExecuteAsync(new SqlStatement($"INSERT INTO acked (id) VALUES ('{lateId}')", [], new Dictionary<string, object?>(), 100, 1 << 20, TimeSpan.FromSeconds(5)), token);
             var writer = Task.Run(async () =>
             {
                 // The open local writer serializes this load until its delayed commit below.
