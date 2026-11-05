@@ -52,6 +52,7 @@ internal sealed class HomePush(
 
     private static readonly TimeSpan SettleBound = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HomeWait = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PeerSweep = TimeSpan.FromSeconds(5);
 
     private readonly LocalOverlay _overlay = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), ulong> _pushed = new();
@@ -65,7 +66,6 @@ internal sealed class HomePush(
     private readonly Dictionary<string, Queue<INatsJSMsg<byte[]>>> _queues = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _applying = new(MaxParallelDatabases, MaxParallelDatabases);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
-    private IReadOnlyList<RegionPeer> _peers = [];
     private NatsConnection? _nats;
     private NatsJSContext? _js;
     private volatile bool _ready;
@@ -87,8 +87,7 @@ internal sealed class HomePush(
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        _peers = await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
-        if (_peers.Count > 0 && options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
+        if (options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
         {
             _nats = new NatsConnection(new NatsOpts
             {
@@ -108,7 +107,7 @@ internal sealed class HomePush(
             _overlay.Held += (database, through) => _purges.Writer.TryWrite((database, through));
             _overlay.Reverted += OnReverted;
         }
-        else if (_peers.Count > 0)
+        else if ((await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Count > 0)
         {
             logger.ZLogWarning($"TS_NATS_URL or TERRABASE_NATS_TOKEN_FILE is missing; writes for databases homed in other regions go home");
         }
@@ -143,11 +142,40 @@ internal sealed class HomePush(
         await RetryAsync(token => EnsureStreamAsync(js, nats, token), "the push stream is not ready", stoppingToken).ConfigureAwait(false);
         await RetryAsync(token => RebuildAsync(js, token), "the push overlay could not be read back", stoppingToken).ConfigureAwait(false);
         _ready = true;
-        await Task.WhenAll([
-            NoticesAsync(nats, stoppingToken),
-            PurgesAsync(js, stoppingToken),
-            .. _peers.Select(peer => peer.Region).Distinct(StringComparer.Ordinal).Select(origin => ConsumeAsync(js, nats, origin, stoppingToken)),
-        ]).ConfigureAwait(false);
+        await Task.WhenAll(NoticesAsync(nats, stoppingToken), PurgesAsync(js, stoppingToken), OriginsAsync(js, nats, stoppingToken)).ConfigureAwait(false);
+    }
+
+    private async Task OriginsAsync(NatsJSContext js, NatsConnection nats, CancellationToken cancellationToken)
+    {
+        var consuming = new Dictionary<string, Task>(StringComparer.Ordinal);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                foreach (var peer in await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    if (!consuming.ContainsKey(peer.Region))
+                    {
+                        consuming[peer.Region] = ConsumeAsync(js, nats, peer.Region, cancellationToken);
+                    }
+                }
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogInformation($"The region list is read again shortly: {error.GetType().Name:@Error}");
+            }
+
+            try
+            {
+                await Task.Delay(PeerSweep, time, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+
+        await Task.WhenAll(consuming.Values).ConfigureAwait(false);
     }
 
     public async ValueTask<ILocalTransaction?> BeginAsync(TenantContext database, CancellationToken cancellationToken)
