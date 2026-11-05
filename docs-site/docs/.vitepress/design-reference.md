@@ -61,4 +61,4 @@ reported by location/type and rotated without reproducing its value.
 
 Use the canonical flat tabs, local language marks and keyboard handler shared
 with dashboard and landing. Implementation and screenshot checks:
-[SDK language tabs](../../../../docs/dashboard/sdk-language-tabs.md).
+[SDK language tabs](../../../docs/dashboard/sdk-language-tabs.md).
