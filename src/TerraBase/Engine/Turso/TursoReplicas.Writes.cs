@@ -24,6 +24,12 @@ internal sealed partial class TursoReplicas
 
         private TursoDatabaseHandle? _writer;
 
+        /// <summary>
+        /// True while the replica may hold local rows its pulled revision does not: set by a local commit, and after a pull
+        /// by whether the overlay re-applied anything. Verification skips such a replica instead of rebuilding it.
+        /// </summary>
+        internal bool Local { get; private set; }
+
         public async Task<IReplicaWriter?> BeginWriteAsync(CancellationToken cancellationToken)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -53,7 +59,8 @@ internal sealed partial class TursoReplicas
             }
 
             await using var writer = await OpenWriterAsync(captured: false, release: false, cancellationToken).ConfigureAwait(false);
-            if (await overlay(database, Held, writer, cancellationToken).ConfigureAwait(false))
+            Local = await overlay(database, Held, writer, cancellationToken).ConfigureAwait(false);
+            if (Local)
             {
                 await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -67,10 +74,12 @@ internal sealed partial class TursoReplicas
                 Run(native, CaptureOff);
                 if (captured)
                 {
+                    // No AUTOINCREMENT: the table is emptied by every capture, and a sqlite_sequence row would be a replica-only
+                    // object that replica verification sees as divergence from the home.
                     if (TursoStorageTransaction.Counter(native, $"SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = '{CaptureTable}';") == 0)
                     {
                         Run(native, "CREATE TABLE IF NOT EXISTS turso_cdc_version (table_name TEXT PRIMARY KEY, version TEXT NOT NULL);");
-                        Run(native, $"CREATE TABLE IF NOT EXISTS {CaptureTable} (change_id INTEGER PRIMARY KEY AUTOINCREMENT, change_time INTEGER, change_txn_id INTEGER, change_type INTEGER, table_name TEXT, id, before BLOB, after BLOB, updates BLOB);");
+                        Run(native, $"CREATE TABLE IF NOT EXISTS {CaptureTable} (change_id INTEGER PRIMARY KEY, change_time INTEGER, change_txn_id INTEGER, change_type INTEGER, table_name TEXT, id, before BLOB, after BLOB, updates BLOB);");
                         Run(native, $"INSERT OR IGNORE INTO turso_cdc_version (table_name, version) VALUES ('{CaptureTable}', 'v2');");
                     }
 
@@ -138,6 +147,10 @@ internal sealed partial class TursoReplicas
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _ended) != 0, this);
                 await Task.Run(() => Run(native, "COMMIT;"), cancellationToken).ConfigureAwait(false);
                 _committed = true;
+                if (captured)
+                {
+                    replica.Local = true;
+                }
             }
 
             public ValueTask DisposeAsync()

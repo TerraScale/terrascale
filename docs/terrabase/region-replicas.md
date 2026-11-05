@@ -91,13 +91,17 @@ Replicas never silently diverge from their home.
    at most 256 rows and 4 MiB (SHA-256 over typed values). A round stops after 64 ranges or 16 MiB and returns a cursor;
    the next round continues 5 seconds later until the pass covers every table. The replica hashes the same ranges in one
    read snapshot at the same revision and compares. When the home moved on, the replica pulls and retries up to three
-   times, then skips the round for 30 seconds (`result="skipped"`).
+   times, then skips the round for 30 seconds (`result="skipped"`). A replica that holds local writes its pulled
+   revision does not contain yet ([local overlay](local-overlay.md)) differs from the home on purpose, so it skips the
+   same way until a pull holds them. The schema hash leaves out each node's own objects: the sync client's
+   `turso_sync*`, the CDC logs `turso_cdc*` and the replica's local-write capture table `_ts_local_cdc`.
 3. **Bounded cost.** One round runs at a time per replica node. On the home a round is bulk storage work attributed to
    the database's organization, so it shares that organization's I/O worker cap (E11) and never takes a customer's
    request or engine budget.
 4. **Healing.** Equal revisions with unequal hashes are a divergence: the replica logs an error naming the database, counts
    `terrabase.replica.verifications{result="diverged"}`, deletes its files and bootstraps again from the home's full
-   answer, then verifies again. A replica that diverges again within 15 minutes of a rebootstrap waits out that window,
+   answer, then verifies again. Deleting waits for a running local write or pull to finish (up to 30 seconds), and
+   the overlay is applied again on the new replica's first pull. A replica that diverges again within 15 minutes of a rebootstrap waits out that window,
    so a persistent fault alerts instead of looping. A restore or failover starts a new incarnation (D18), so replicas
    take a full answer on their next pull.
 

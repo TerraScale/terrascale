@@ -499,7 +499,8 @@ internal sealed partial class TursoReplicas(
             await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                if (Held != revision)
+                // Local writes not yet in the pulled revision make the replica differ from the home on purpose.
+                if (Held != revision || Local)
                 {
                     return new ReplicaComparison(ReplicaVerdict.Moved, Held, null);
                 }
@@ -667,26 +668,48 @@ internal sealed partial class TursoReplicas(
                 _ = Interlocked.Decrement(ref _idleCount);
             }
 
-            try
+            // A reader's BEGIN is refused as locked while the replica's writer commits or checkpoints (a local write, an
+            // overlay re-apply). Like the primary store's sessions, wait it out in 50 ms steps for up to five seconds.
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            while (true)
             {
-                Run(native, "BEGIN;");
-            }
-            catch
-            {
-                Close(native);
-                throw;
+                try
+                {
+                    Run(native, "BEGIN;");
+                    break;
+                }
+                catch (TursoException error) when (Locked(error) && System.Diagnostics.Stopwatch.GetElapsedTime(started) < LockedWait)
+                {
+                    try
+                    {
+                        await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        Close(native);
+                        throw;
+                    }
+                }
+                catch
+                {
+                    Close(native);
+                    throw;
+                }
             }
 
             return new Reader(this, native, lease);
         }
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
             {
-                return ValueTask.CompletedTask;
+                return;
             }
 
+            // A local write or a pull still running owns the writer connection: let it finish (a heal or delete waits
+            // for it) instead of closing the connection under it.
+            _ = await _pulls.WaitAsync(WriterWait).ConfigureAwait(false);
             while (_idle.TryDequeue(out var native))
             {
                 Close(native);
@@ -703,7 +726,6 @@ internal sealed partial class TursoReplicas(
             observer.Clear();
             _pulls.Dispose();
             _gate.Dispose();
-            return ValueTask.CompletedTask;
         }
 
         private void Return(TursoDatabaseHandle native, bool healthy)
@@ -736,6 +758,11 @@ internal sealed partial class TursoReplicas(
             native.Dispose();
             sync.ReleaseConnection();
         }
+
+        private static readonly TimeSpan LockedWait = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan WriterWait = TimeSpan.FromSeconds(30);
+
+        private static bool Locked(TursoException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
 
         private static void Run(TursoDatabaseHandle native, string sql)
         {
