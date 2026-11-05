@@ -50,8 +50,8 @@ A lost release is covered by the next one, because each one covers everything be
 Every second a node sends `POST /v1/sync/holds/<origin>/contact` to its partner, which answers 204 while its storage
 is ready. The partner counts as healthy for 3 s after any answer.
 
-`ILocalCommitPath.TwoNodeAck` is the fact the router (R4) reads. It is true while the partner is healthy and the push
-stream is ready. The router commits a write locally when its shape allows it, the node's clock is admitted (R12), and
+`ILocalCommitPath.TwoNodeAck` is the fact the router (R4) reads. It is true while the partner is healthy, the push
+stream is ready and connected, and the clock is admitted. The router commits a write locally when its shape allows it, the node's clock is admitted (R12), and
 either the write asks for `durability=home` or `TwoNodeAck` holds. Every other write goes home. So a one-node region
 commits only `durability=home` writes locally, and those answer after the home applied them. The admin metric
 `terrabase.localwrites.available` is 1 while `TwoNodeAck` holds.
