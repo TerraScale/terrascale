@@ -5,9 +5,12 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
+using TerraBase.Features.HomeApply;
+using TerraBase.Features.HomePush;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Sync;
@@ -62,6 +65,8 @@ public sealed class HomeFailoverTests
         var pushedDuringCut = 0;
         var unknown = 0;
         var sjcStatuses = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
+        var localWrites = sjc.Server.Services.GetRequiredService<ILocalWrites>();
+        var tenant = new TenantContext(organization, PlanTier.Hobby, project, all.Id);
         using var stop = new CancellationTokenSource();
         var writers = new[] { (all, "all"), (local, "local") }.Select(pair => Task.Run(async () =>
         {
@@ -95,33 +100,35 @@ public sealed class HomeFailoverTests
                     continue;
                 }
 
-                await Task.Delay(TimeSpan.FromMilliseconds(50), token);
-                var row = "sjc-" + EntityIds.New();
-                using var response = await viaSjc.PostAsJsonAsync(all.Sql, new
+                if (sjcLeases.Find(all.Id)?.Home == "sjc")
                 {
-                    statements = new object[]
-                    {
-                        new { sql = "UPDATE tally SET n = n + 1 WHERE id = 1" },
-                        new { sql = "INSERT INTO acked (id) VALUES (?)", args = new[] { row } },
-                    },
-                }, token);
-                if (Volatile.Read(ref cut) == 1 && sjcLeases.Find(all.Id)?.Home != "sjc")
-                {
-                    var body = await response.Content.ReadAsStringAsync(token);
-                    sjcStatuses.AddOrUpdate($"{(int)response.StatusCode} {(response.Headers.TryGetValues("X-TerraBase-Region", out var regions) ? regions.First() : "-")} {body[..Math.Min(160, body.Length)]}", 1, (_, n) => n + 1);
+                    return;
                 }
 
-                if (response.StatusCode == HttpStatusCode.OK)
+                await Task.Delay(TimeSpan.FromMilliseconds(50), token);
+                var row = "sjc-" + EntityIds.New();
+                try
                 {
-                    pushed.Enqueue(row);
-                    if (Volatile.Read(ref cut) == 1 && sjcLeases.Find(all.Id)?.Home != "sjc")
+                    await using var transaction = await localWrites.BeginAsync(tenant, token);
+                    if (transaction is null)
                     {
-                        Interlocked.Increment(ref pushedDuringCut);
+                        sjcStatuses.AddOrUpdate("not local", 1, (_, n) => n + 1);
+                        continue;
                     }
+
+                    _ = await transaction.ExecuteAsync(ApplySql.Statement("UPDATE tally SET n = n + 1 WHERE id = 1"), token);
+                    _ = await transaction.ExecuteAsync(ApplySql.Statement("INSERT INTO acked (id) VALUES (?)", row), token);
+                    _ = await transaction.CommitAsync(homeDurable: false, token);
+                    pushed.Enqueue(row);
+                    Interlocked.Increment(ref pushedDuringCut);
                 }
-                else if ((int)response.StatusCode >= 500)
+                catch (LocalOutcomeUnknownException)
                 {
                     Interlocked.Increment(ref unknown);
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    sjcStatuses.AddOrUpdate(error.GetType().Name + " " + error.Message, 1, (_, n) => n + 1);
                 }
             }
         }, token)).ToArray();
