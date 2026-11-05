@@ -103,6 +103,14 @@ public sealed class ClockSafetyTests
         await ReadyAsync(healthy);
         var later = await healthy.NextAsync(new ClockRequest());
         await Assert.That(later.HlcPhysicalMilliseconds).IsGreaterThanOrEqualTo(newest.HlcPhysicalMilliseconds);
+        var reserved = await ReservationAsync(peer, later.HlcNodeId);
+        var future = new HlcTimestamp(reserved.PhysicalMilliseconds + 1, 0, "remote");
+        var observed = await peer.Services.GetRequiredService<IHlcClock>().ObserveAsync(future, CancellationToken.None);
+        await Assert.That(observed.CompareTo(future)).IsGreaterThan(0);
+        await Assert.That((await ReservationAsync(peer, later.HlcNodeId)).CompareTo(observed)).IsGreaterThan(0);
+        await Assert.That(peer.Services.GetRequiredService<ILocalWriteClock>().Allowed).IsFalse();
+        var futureRefused = await Assert.ThrowsAsync<RpcException>(async () => await healthy.NextAsync(new ClockRequest()));
+        await Assert.That(futureRefused!.StatusCode).IsEqualTo(StatusCode.Unavailable);
     }
 
     private static GrpcChannel Channel(TerraBaseTestServer server) =>
