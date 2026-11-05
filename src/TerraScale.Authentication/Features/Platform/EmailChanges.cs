@@ -83,10 +83,10 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
         var record = new EmailChangeRecord(caller.InstanceId, caller.Id, caller.AuthEpoch, caller.AuthStamp, normalized,
             this.Digest(caller, normalized, code), Tokens.Sha256Hex(cancel), clock.GetUtcNow() + Lifetime, 0, verified.StepUpBindings);
         var json = JsonSerializer.SerializeToElement(record, EmailChangeJson.Default.EmailChangeRecord);
-        var existing = await store.GetAsync(AuthStore.EmailChangeCollection, caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false);
+        var existing = await store.GetAsync(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false);
         if (await store.TransactAsync([.. StepUpProofs.Requirements(verified), existing is null
-            ? AuthStore.Create(AuthStore.EmailChangeCollection, caller.InstanceId, caller.Id, json)
-            : AuthStore.Replace(AuthStore.EmailChangeCollection, caller.InstanceId, caller.Id, json, existing.Version)], cancellationToken).ConfigureAwait(false) is not null)
+            ? AuthStore.Create(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, json)
+            : AuthStore.Replace(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, json, existing.Version)], cancellationToken).ConfigureAwait(false) is not null)
         {
             throw ApiException.Unavailable();
         }
@@ -125,7 +125,7 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
             if (!Passcodes.WellFormed(code) || !Tokens.FixedTimeEquals(record.CodeHash, this.Digest(caller, record.NewEmail, code.Trim())))
             {
                 var charged = JsonSerializer.SerializeToElement(record with { FailedAttempts = record.FailedAttempts + 1 }, EmailChangeJson.Default.EmailChangeRecord);
-                if (await store.CompareAndPutAsync(AuthStore.EmailChangeCollection, caller.InstanceId, caller.Id, charged, current.Version, cancellationToken).ConfigureAwait(false))
+                if (await store.CompareAndPutAsync(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, charged, current.Version, cancellationToken).ConfigureAwait(false))
                 {
                     throw Denied();
                 }
@@ -142,7 +142,7 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
             // The user write itself is versioned, so its own state binding is not asserted separately.
             var lineage = record.Bindings.Where(binding => binding != AuthStore.UserStateBinding(caller.Id, record.AuthStamp ?? string.Empty)).ToArray();
             var changed = await users.ChangeEmailAsync(caller.InstanceId, caller.Id, record.AuthEpoch, record.AuthStamp, record.NewEmail,
-                [AuthStore.Delete(AuthStore.EmailChangeCollection, caller.InstanceId, caller.Id, current.Version), .. AuthStore.CredentialRequirements(caller.InstanceId, lineage)],
+                [AuthStore.Delete(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, current.Version), .. AuthStore.CredentialRequirements(caller.InstanceId, lineage)],
                 cancellationToken).ConfigureAwait(false);
             if (changed == true)
             {
@@ -172,16 +172,16 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
             return false;
         }
 
-        await store.CompareAndDeleteAsync(AuthStore.EmailChangeCollection, Instance, userId, current.Version, cancellationToken).ConfigureAwait(false);
+        await store.CompareAndDeleteAsync(AuthStore.EmailChangeTable, Instance, userId, current.Version, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
     private async Task<(EmailChangeRecord Record, string Version)?> ReadAsync(string instanceId, string userId, CancellationToken cancellationToken)
     {
-        var document = await store.GetAsync(AuthStore.EmailChangeCollection, instanceId, userId, cancellationToken).ConfigureAwait(false);
-        return document?.Document.Deserialize(EmailChangeJson.Default.EmailChangeRecord) is { } record
+        var record = await store.GetAsync(AuthStore.EmailChangeTable, instanceId, userId, cancellationToken).ConfigureAwait(false);
+        return record?.Body.Deserialize(EmailChangeJson.Default.EmailChangeRecord) is { } record
             && record.InstanceId == instanceId && record.UserId == userId && record.ExpiresAt > clock.GetUtcNow()
-                ? (record, document.Version) : null;
+                ? (record, record.Version) : null;
     }
 
     private string Digest(UserRecord caller, string newEmail, string code) =>

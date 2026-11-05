@@ -134,8 +134,8 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
     }
 
     private static async Task<JsonElement> CurrentTokenAsync(OidcHarness oidc, string type) =>
-        (await oidc.Database.RowsAsync(AuthStore.OidcTokenCollection)).Single(document =>
-            document.Document.GetProperty("type").GetString() == type && document.Document.GetProperty("status").GetString() == "valid").Document;
+        (await oidc.Database.RowsAsync(AuthStore.OidcTokenTable)).Single(record =>
+            record.Body.GetProperty("type").GetString() == type && record.Body.GetProperty("status").GetString() == "valid").Body;
 
     private static async Task AssertLineageAsync(OidcHarness oidc, JsonElement parent, JsonElement child)
     {
@@ -154,7 +154,7 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
 
     // Descending, so an unexpected status leads the failure message.
 
-    // The instance's stored signing key documents, read directly from TerraBase.
+    // The instance's stored signing key records, read directly from TerraBase.
 
     // Overwrites a stored key as a storage writer could; returns the new version.
 }

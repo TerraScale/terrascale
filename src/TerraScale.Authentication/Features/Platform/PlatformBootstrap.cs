@@ -55,16 +55,16 @@ public sealed class PlatformBootstrap(AuthStore store, Users users, PlatformDire
             var member = new MembershipRecord(instance, OrganizationId, owner.Id, Roles.Owner, now);
             var operations = new List<StoreOperation>
             {
-                AuthStore.Create(AuthStore.OrganizationCollection, instance, OrganizationId, JsonSerializer.SerializeToElement(organization, PlatformJson.Default.OrganizationRecord)),
-                AuthStore.Create(AuthStore.MembershipCollection, instance, $"{OrganizationId}/{owner.Id}", JsonSerializer.SerializeToElement(member, PlatformJson.Default.MembershipRecord)),
+                AuthStore.Create(AuthStore.OrganizationTable, instance, OrganizationId, JsonSerializer.SerializeToElement(organization, PlatformJson.Default.OrganizationRecord)),
+                AuthStore.Create(AuthStore.MembershipTable, instance, $"{OrganizationId}/{owner.Id}", JsonSerializer.SerializeToElement(member, PlatformJson.Default.MembershipRecord)),
             };
             foreach (var (id, name) in new[] { (AuthProjectId, App.StorageDatabase), (DashboardProjectId, "ts-dashboard") })
             {
                 var project = new ProjectRecord(id, instance, OrganizationId, name, owner.Id, now);
                 var grant = new ProjectMemberRecord(instance, OrganizationId, id, owner.Id, Roles.Admin, now);
                 operations.Add(AuthStore.Claim(instance, "project-name", $"{OrganizationId}/{name.ToUpperInvariant()}", id));
-                operations.Add(AuthStore.Create(AuthStore.ProjectCollection, instance, id, JsonSerializer.SerializeToElement(project, PlatformJson.Default.ProjectRecord)));
-                operations.Add(AuthStore.Create(AuthStore.ProjectMemberCollection, instance, $"{id}/{owner.Id}", JsonSerializer.SerializeToElement(grant, PlatformJson.Default.ProjectMemberRecord)));
+                operations.Add(AuthStore.Create(AuthStore.ProjectTable, instance, id, JsonSerializer.SerializeToElement(project, PlatformJson.Default.ProjectRecord)));
+                operations.Add(AuthStore.Create(AuthStore.ProjectMemberTable, instance, $"{id}/{owner.Id}", JsonSerializer.SerializeToElement(grant, PlatformJson.Default.ProjectMemberRecord)));
             }
 
             operations.Add(directory.Audit(OrganizationId, owner.Id, "platform.bootstrapped"));

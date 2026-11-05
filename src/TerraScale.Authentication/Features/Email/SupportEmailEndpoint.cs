@@ -47,7 +47,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
     public const string SupportAddress = "support@terrascale.tech";
     /// <summary>Requests one user may send per hour.</summary>
     public const int PerUserPerHour = 5;
-    private const string Collection = "email_support_deliveries";
+    private const string Table = "email_support_deliveries";
 
     private static readonly Dictionary<string, string> Targets = new(StringComparer.Ordinal)
     {
@@ -110,7 +110,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
         string version;
         try
         {
-            version = (await store.CreateAsync(Collection, OidcIssuer.InstanceId, request.RequestId, JsonSerializer.SerializeToElement(
+            version = (await store.CreateAsync(Table, OidcIssuer.InstanceId, request.RequestId, JsonSerializer.SerializeToElement(
                 delivery, SupportEmailJson.Default.SupportEmailDelivery), cancellationToken).ConfigureAwait(false)).Version;
         }
         catch (StorePreconditionFailedException)
@@ -132,7 +132,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
         if (outcome == EmailDeliveryOutcome.Retryable)
         {
             // Only an explicit refusal known not to have sent releases the id for another support attempt.
-            if (!await store.CompareAndDeleteAsync(Collection, OidcIssuer.InstanceId, request.RequestId, version, cancellationToken).ConfigureAwait(false))
+            if (!await store.CompareAndDeleteAsync(Table, OidcIssuer.InstanceId, request.RequestId, version, cancellationToken).ConfigureAwait(false))
             {
                 throw ApiException.Unavailable();
             }
@@ -140,7 +140,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
         }
 
         // Persist support acceptance and reserve its one acknowledgement before making another external call.
-        version = await store.ReplaceAsync(Collection, OidcIssuer.InstanceId, request.RequestId,
+        version = await store.ReplaceAsync(Table, OidcIssuer.InstanceId, request.RequestId,
             JsonSerializer.SerializeToElement(delivery, SupportEmailJson.Default.SupportEmailDelivery), version, cancellationToken).ConfigureAwait(false)
             ?? throw ApiException.Unavailable();
         if (outcome == EmailDeliveryOutcome.Accepted)
@@ -157,7 +157,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
                 acknowledgement = EmailDeliveryOutcome.Unknown;
             }
             delivery = delivery with { AcknowledgementStatus = Status(acknowledgement) };
-            if (!await store.CompareAndPutAsync(Collection, OidcIssuer.InstanceId, request.RequestId,
+            if (!await store.CompareAndPutAsync(Table, OidcIssuer.InstanceId, request.RequestId,
                 JsonSerializer.SerializeToElement(delivery, SupportEmailJson.Default.SupportEmailDelivery), version, cancellationToken).ConfigureAwait(false))
             {
                 throw ApiException.Unavailable();
@@ -205,19 +205,19 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
 
     private async Task<(SupportEmailDelivery Delivery, string Version)?> ReadAsync(EmailSupportRequest request, CancellationToken cancellationToken)
     {
-        var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, request.RequestId, cancellationToken).ConfigureAwait(false);
-        if (document is null)
+        var record = await store.GetAsync(Table, OidcIssuer.InstanceId, request.RequestId, cancellationToken).ConfigureAwait(false);
+        if (record is null)
         {
             return null;
         }
-        var delivery = document.Document.Deserialize(SupportEmailJson.Default.SupportEmailDelivery);
-        if (document.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, request.RequestId) ||
+        var delivery = record.Body.Deserialize(SupportEmailJson.Default.SupportEmailDelivery);
+        if (record.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Table, request.RequestId) ||
             delivery is null || delivery.InstanceId != OidcIssuer.InstanceId || delivery.RequestId != request.RequestId)
         {
             throw ApiException.Unavailable();
         }
         // Another user's id is indistinguishable from an unknown one.
-        return delivery.UserId == request.UserId ? (delivery, document.Version) : throw PlatformDirectory.NotFound();
+        return delivery.UserId == request.UserId ? (delivery, record.Version) : throw PlatformDirectory.NotFound();
     }
 }
 

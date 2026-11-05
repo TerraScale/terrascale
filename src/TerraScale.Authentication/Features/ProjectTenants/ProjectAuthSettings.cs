@@ -6,7 +6,7 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary>A project tenant's sign-in methods and branding (collection <c>project_auth_settings</c>, one per project).</summary>
+/// <summary>A project tenant's sign-in methods and branding (table <c>project_auth_settings</c>, one per project).</summary>
 /// <param name="InstanceId">The project.</param>
 /// <param name="Passcode">Email passcode sign-in.</param>
 /// <param name="Password">Password sign-in.</param>
@@ -33,7 +33,7 @@ public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode 
 /// <summary>Per-project sign-in settings, read by the management API and the tenant's hosted pages.</summary>
 public sealed class ProjectAuthSettings(AuthStore store)
 {
-    private const string Collection = AuthStore.ProjectAuthSettingsCollection;
+    private const string Table = AuthStore.ProjectAuthSettingsTable;
 
     /// <summary>The project's settings; a project that never changed them has every method on and no branding.</summary>
     public async Task<ProjectAuthSettingsRecord> GetAsync(string projectId, CancellationToken cancellationToken = default) =>
@@ -52,11 +52,11 @@ public sealed class ProjectAuthSettings(AuthStore store)
             {
                 if (version is null)
                 {
-                    await store.CreateAsync(Collection, projectId, projectId, record, cancellationToken).ConfigureAwait(false);
+                    await store.CreateAsync(Table, projectId, projectId, record, cancellationToken).ConfigureAwait(false);
                     return updated;
                 }
 
-                if (await store.CompareAndPutAsync(Collection, projectId, projectId, record, version, cancellationToken).ConfigureAwait(false))
+                if (await store.CompareAndPutAsync(Table, projectId, projectId, record, version, cancellationToken).ConfigureAwait(false))
                 {
                     return updated;
                 }
@@ -71,9 +71,9 @@ public sealed class ProjectAuthSettings(AuthStore store)
     }
 
     private async Task<(ProjectAuthSettingsRecord Settings, string? Version)> ReadAsync(string projectId, CancellationToken cancellationToken) =>
-        await store.GetAsync(Collection, projectId, projectId, cancellationToken).ConfigureAwait(false) is { } document
-        && document.Document.Deserialize(ProjectAuthSettingsJson.Default.ProjectAuthSettingsRecord) is { } settings && settings.InstanceId == projectId
-            ? (settings, document.Version)
+        await store.GetAsync(Table, projectId, projectId, cancellationToken).ConfigureAwait(false) is { } record
+        && record.Body.Deserialize(ProjectAuthSettingsJson.Default.ProjectAuthSettingsRecord) is { } settings && settings.InstanceId == projectId
+            ? (settings, record.Version)
             : (new ProjectAuthSettingsRecord(projectId), null);
 }
 

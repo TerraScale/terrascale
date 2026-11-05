@@ -37,17 +37,17 @@ public sealed class DeletionCleanup(
                 new JsonObject { ["lte"] = new JsonArray("/nextAttemptAt", JsonValue.Create(now)) },
                 new JsonObject { ["eq"] = new JsonArray("/authLogicalVerifiedAt", null) }),
         }.ToJsonString());
-        var jobs = await store.QueryAsync(AuthStore.DeletionJobCollection, filter.RootElement, BatchSize,
+        var jobs = await store.QueryAsync(AuthStore.DeletionJobTable, filter.RootElement, BatchSize,
             [new StoreSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false);
-        foreach (var document in jobs)
+        foreach (var record in jobs)
         {
-            var job = document.Document.Deserialize(DeletionJson.Default.DeletionJob);
+            var job = record.Body.Deserialize(DeletionJson.Default.DeletionJob);
             // Logical cleanup needs only the request's own identity and deadline (jobs written before the history fields too).
             if (!LogicallyValid(job))
             {
                 // Never silent: its key does not match its own fields, so it cannot be rewritten safely; an operator must act.
                 Outcomes.Add(1, new KeyValuePair<string, object?>("outcome", "invalid"));
-                logger.ZLogError($"Auth deletion job {document.Id:@DocumentId} is malformed and cannot be processed; an operator must repair or remove it");
+                logger.ZLogError($"Auth deletion job {record.Id:@RecordId} is malformed and cannot be processed; an operator must repair or remove it");
                 continue;
             }
 
@@ -89,8 +89,8 @@ public sealed class DeletionCleanup(
                 AuthLogicalVerifiedAt = failure is null ? finished : null,
             };
             // Retain the job as the write fence. This timestamp certifies only the verified auth logical scope.
-            await store.CompareAndPutAsync(AuthStore.DeletionJobCollection, job.InstanceId, job.Id,
-                JsonSerializer.SerializeToElement(updated, DeletionJson.Default.DeletionJob), document.Version, cancellationToken).ConfigureAwait(false);
+            await store.CompareAndPutAsync(AuthStore.DeletionJobTable, job.InstanceId, job.Id,
+                JsonSerializer.SerializeToElement(updated, DeletionJson.Default.DeletionJob), record.Version, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -110,11 +110,11 @@ public sealed class DeletionCleanup(
                     new JsonObject { ["ne"] = new JsonArray("/instanceId", PlatformDirectory.Instance) })
                 }),
         }.ToJsonString());
-        var jobs = await store.QueryAsync(AuthStore.DeletionJobCollection, filter.RootElement, BatchSize,
+        var jobs = await store.QueryAsync(AuthStore.DeletionJobTable, filter.RootElement, BatchSize,
             [new StoreSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false);
-        foreach (var document in jobs)
+        foreach (var record in jobs)
         {
-            var job = document.Document.Deserialize(DeletionJson.Default.DeletionJob);
+            var job = record.Body.Deserialize(DeletionJson.Default.DeletionJob);
             if (!HistoryValid(job) || job.AuthLogicalVerifiedAt is null)
             {
                 continue;
@@ -125,7 +125,7 @@ public sealed class DeletionCleanup(
                 if (clock.GetUtcNow() >= job.FenceExpiresAt
                     && (job.InstanceId != PlatformDirectory.Instance || job.DashboardVerifiedAt is not null))
                 {
-                    _ = await store.RetireDeletionFenceAsync(job, document.Version, cancellationToken).ConfigureAwait(false);
+                    _ = await store.RetireDeletionFenceAsync(job, record.Version, cancellationToken).ConfigureAwait(false);
                 }
 
                 continue;
@@ -138,8 +138,8 @@ public sealed class DeletionCleanup(
                 HistoryStatus = "complete",
                 HistoryCompletedAt = finished,
             };
-            await store.CompareAndPutAsync(AuthStore.DeletionJobCollection, job.InstanceId, job.Id,
-                JsonSerializer.SerializeToElement(updated, DeletionJson.Default.DeletionJob), document.Version, cancellationToken).ConfigureAwait(false);
+            await store.CompareAndPutAsync(AuthStore.DeletionJobTable, job.InstanceId, job.Id,
+                JsonSerializer.SerializeToElement(updated, DeletionJson.Default.DeletionJob), record.Version, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -188,9 +188,9 @@ public sealed class DeletionCleanup(
     {
         var root = job.Scope switch
         {
-            "organization" => AuthStore.OrganizationCollection,
-            "project" => AuthStore.ProjectCollection,
-            "account" => AuthStore.UserCollection,
+            "organization" => AuthStore.OrganizationTable,
+            "project" => AuthStore.ProjectTable,
+            "account" => AuthStore.UserTable,
             _ => null,
         };
         if (root is null || job.Scope != "account" && job.InstanceId != PlatformDirectory.Instance
@@ -199,60 +199,60 @@ public sealed class DeletionCleanup(
             return "scope_not_deleted";
         }
 
-        (string Collection, string Field)[] scopes = job.Scope switch
+        (string Table, string Field)[] scopes = job.Scope switch
         {
             "organization" =>
             [
-                (AuthStore.ProjectCollection, "/organizationId"), (AuthStore.ProjectMemberCollection, "/organizationId"),
-                (AuthStore.MembershipCollection, "/organizationId"), (AuthStore.ApiKeyCollection, "/organizationId"), (AuthStore.ApiKeyUsageCollection, "/organizationId"),
-                (AuthStore.InvitationCollection, "/organizationId"), (AuthStore.AuditEventCollection, "/organizationId"),
+                (AuthStore.ProjectTable, "/organizationId"), (AuthStore.ProjectMemberTable, "/organizationId"),
+                (AuthStore.MembershipTable, "/organizationId"), (AuthStore.ApiKeyTable, "/organizationId"), (AuthStore.ApiKeyUsageTable, "/organizationId"),
+                (AuthStore.InvitationTable, "/organizationId"), (AuthStore.AuditEventTable, "/organizationId"),
             ],
-            "project" => [(AuthStore.ProjectMemberCollection, "/projectId"), (AuthStore.ApiKeyCollection, "/projectId"), (AuthStore.ApiKeyUsageCollection, "/projectId"), (AuthStore.InvitationCollection, "/projectId")],
+            "project" => [(AuthStore.ProjectMemberTable, "/projectId"), (AuthStore.ApiKeyTable, "/projectId"), (AuthStore.ApiKeyUsageTable, "/projectId"), (AuthStore.InvitationTable, "/projectId")],
             _ =>
             [
-                (AuthStore.SessionCollection, "/userId"), (AuthStore.PasscodeCollection, "/userId"), (AuthStore.MfaCollection, "/userId"),
-                (AuthStore.StepUpProofCollection, "/userId"), (AuthStore.StepUpDeletionGrantCollection, "/userId"),
-                (AuthStore.StepUpPasscodeCollection, "/userId"), (AuthStore.EmailChangeCollection, "/userId"),
-                (AuthStore.OidcTokenCollection, "/subject"), (AuthStore.OidcAuthorizationCollection, "/subject"),
-                (AuthStore.ProjectMemberCollection, "/userId"), (AuthStore.MembershipCollection, "/userId"),
-                (AuthStore.ChallengeCollection, "/subjectId"), (AuthStore.UniqueCollection, "/ownerId"),
+                (AuthStore.SessionTable, "/userId"), (AuthStore.PasscodeTable, "/userId"), (AuthStore.MfaTable, "/userId"),
+                (AuthStore.StepUpProofTable, "/userId"), (AuthStore.StepUpDeletionGrantTable, "/userId"),
+                (AuthStore.StepUpPasscodeTable, "/userId"), (AuthStore.EmailChangeTable, "/userId"),
+                (AuthStore.OidcTokenTable, "/subject"), (AuthStore.OidcAuthorizationTable, "/subject"),
+                (AuthStore.ProjectMemberTable, "/userId"), (AuthStore.MembershipTable, "/userId"),
+                (AuthStore.ChallengeTable, "/subjectId"), (AuthStore.UniqueTable, "/ownerId"),
             ],
         };
         var remaining = RecordBudget;
-        foreach (var (collection, field) in scopes)
+        foreach (var (table, field) in scopes)
         {
-            await foreach (var record in store.QueryAsync(collection, job.InstanceId, field, job.SubjectId, cancellationToken).ConfigureAwait(false))
+            await foreach (var record in store.QueryAsync(table, job.InstanceId, field, job.SubjectId, cancellationToken).ConfigureAwait(false))
             {
                 if (remaining-- <= 0)
                 {
                     return "batch_remaining";
                 }
 
-                var value = record.Document;
+                var value = record.Body;
                 if (Text(value, "instanceId") != job.InstanceId || Text(value, field[1..]) != job.SubjectId)
                 {
                     return "scope_mismatch";
                 }
 
                 // An organization with a surviving project needs cross-service orchestration, never a blind cascade.
-                if (collection == AuthStore.ProjectCollection)
+                if (table == AuthStore.ProjectTable)
                 {
                     return "project_handoff_required";
                 }
 
-                if (job.Scope == "account" && collection == AuthStore.MembershipCollection && Text(value, "role") == Roles.Owner
-                    && await store.GetAsync(AuthStore.OrganizationCollection, job.InstanceId, Text(value, "organizationId")!, cancellationToken).ConfigureAwait(false) is not null)
+                if (job.Scope == "account" && table == AuthStore.MembershipTable && Text(value, "role") == Roles.Owner
+                    && await store.GetAsync(AuthStore.OrganizationTable, job.InstanceId, Text(value, "organizationId")!, cancellationToken).ConfigureAwait(false) is not null)
                 {
                     return "organization_handoff_required";
                 }
 
-                if (collection is AuthStore.UniqueCollection or AuthStore.ChallengeCollection)
+                if (table is AuthStore.UniqueTable or AuthStore.ChallengeTable)
                 {
-                    await store.DeleteOwnedInfrastructureAsync(collection, job.InstanceId, job.SubjectId, record, cancellationToken).ConfigureAwait(false);
+                    await store.DeleteOwnedInfrastructureAsync(table, job.InstanceId, job.SubjectId, record, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
-                if (job.Scope == "project" && collection == AuthStore.ProjectMemberCollection)
+                if (job.Scope == "project" && table == AuthStore.ProjectMemberTable)
                 {
                     if (Text(value, "organizationId") != job.OrganizationId)
                     {
@@ -263,37 +263,37 @@ public sealed class DeletionCleanup(
                     continue;
                 }
 
-                var key = collection switch
+                var key = table switch
                 {
-                    AuthStore.SessionCollection => Text(value, "tokenHash"),
-                    AuthStore.ApiKeyUsageCollection => Text(value, "keyId"),
-                    AuthStore.PasscodeCollection or AuthStore.MfaCollection or AuthStore.EmailChangeCollection => Text(value, "userId"),
-                    AuthStore.StepUpDeletionGrantCollection => Text(value, "receiptHash"),
-                    AuthStore.StepUpPasscodeCollection => Text(value, "stepUpRequestId"),
-                    AuthStore.MembershipCollection => Text(value, "organizationId") + "/" + Text(value, "userId"),
-                    AuthStore.ProjectMemberCollection => Text(value, "projectId") + "/" + Text(value, "userId"),
+                    AuthStore.SessionTable => Text(value, "tokenHash"),
+                    AuthStore.ApiKeyUsageTable => Text(value, "keyId"),
+                    AuthStore.PasscodeTable or AuthStore.MfaTable or AuthStore.EmailChangeTable => Text(value, "userId"),
+                    AuthStore.StepUpDeletionGrantTable => Text(value, "receiptHash"),
+                    AuthStore.StepUpPasscodeTable => Text(value, "stepUpRequestId"),
+                    AuthStore.MembershipTable => Text(value, "organizationId") + "/" + Text(value, "userId"),
+                    AuthStore.ProjectMemberTable => Text(value, "projectId") + "/" + Text(value, "userId"),
                     _ => Text(value, "id"),
                 };
-                if (key is null || record.Id != AuthStore.NaturalKeyId(job.InstanceId, collection, key))
+                if (key is null || record.Id != AuthStore.NaturalKeyId(job.InstanceId, table, key))
                 {
                     return "scope_mismatch";
                 }
 
-                if (collection is AuthStore.InvitationCollection or AuthStore.OidcTokenCollection or AuthStore.OidcAuthorizationCollection)
+                if (table is AuthStore.InvitationTable or AuthStore.OidcTokenTable or AuthStore.OidcAuthorizationTable)
                 {
-                    await store.DeleteWithClaimsAsync(collection, job.InstanceId, key, record.Version, key, cancellationToken).ConfigureAwait(false);
+                    await store.DeleteWithClaimsAsync(table, job.InstanceId, key, record.Version, key, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
-                    await store.CompareAndDeleteAsync(collection, job.InstanceId, key, record.Version, cancellationToken).ConfigureAwait(false);
+                    await store.CompareAndDeleteAsync(table, job.InstanceId, key, record.Version, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
 
         // Deletion races and lost conditional writes are not success. Verify every scope again after the pass.
-        foreach (var (collection, field) in scopes)
+        foreach (var (table, field) in scopes)
         {
-            if (await store.QueryAsync(collection, job.InstanceId, field, job.SubjectId, cancellationToken).AnyAsync(cancellationToken).ConfigureAwait(false))
+            if (await store.QueryAsync(table, job.InstanceId, field, job.SubjectId, cancellationToken).AnyAsync(cancellationToken).ConfigureAwait(false))
             {
                 return "records_remaining";
             }

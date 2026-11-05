@@ -12,7 +12,7 @@ namespace TerraScale.Authentication.Features.Email;
 /// <summary>Durable provider-account admission, shared by every sending instance on the GRU storage authority.</summary>
 public sealed class EmailAdmission(AuthStore store, TimeProvider clock)
 {
-    internal const string Collection = "email_admission";
+    internal const string Table = "email_admission";
     private const string Key = "cloudflare";
     private static readonly Meter Meter = new(AuthMetrics.MeterName);
     private static readonly Counter<long> Decisions = Meter.CreateCounter<long>("ts_auth.email_admission");
@@ -25,8 +25,8 @@ public sealed class EmailAdmission(AuthStore store, TimeProvider clock)
     {
         for (var attempt = 0; attempt < 16; attempt++)
         {
-            var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, Key, cancellationToken).ConfigureAwait(false);
-            var state = Read(document);
+            var record = await store.GetAsync(Table, OidcIssuer.InstanceId, Key, cancellationToken).ConfigureAwait(false);
+            var state = Read(record);
             var now = clock.GetUtcNow();
             state.Reservations.RemoveAll(item => item.At <= now - Window);
             var purpose = message.Purpose;
@@ -43,15 +43,15 @@ public sealed class EmailAdmission(AuthStore store, TimeProvider clock)
             }
             state.Reservations.Add(new(now, purpose, message.Tenant, attemptId));
             var record = JsonSerializer.SerializeToElement(state, EmailAdmissionJson.Default.EmailBudget);
-            if (document is null)
+            if (record is null)
             {
                 try
                 {
-                    _ = await store.CreateAsync(Collection, OidcIssuer.InstanceId, Key, record, cancellationToken).ConfigureAwait(false);
+                    _ = await store.CreateAsync(Table, OidcIssuer.InstanceId, Key, record, cancellationToken).ConfigureAwait(false);
                 }
                 catch (StorePreconditionFailedException) { continue; }
             }
-            else if (!await store.CompareAndPutAsync(Collection, OidcIssuer.InstanceId, Key, record, document.Version, cancellationToken).ConfigureAwait(false))
+            else if (!await store.CompareAndPutAsync(Table, OidcIssuer.InstanceId, Key, record, record.Version, cancellationToken).ConfigureAwait(false))
             {
                 continue;
             }
@@ -62,14 +62,14 @@ public sealed class EmailAdmission(AuthStore store, TimeProvider clock)
         return false;
     }
 
-    private static EmailBudget Read(StoredDocument? document)
+    private static EmailBudget Read(StoredRow? record)
     {
-        if (document is null)
+        if (record is null)
         {
             return new(OidcIssuer.InstanceId, [], default);
         }
-        var state = document.Document.Deserialize(EmailAdmissionJson.Default.EmailBudget);
-        return document.Id == AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, Key) &&
+        var state = record.Body.Deserialize(EmailAdmissionJson.Default.EmailBudget);
+        return record.Id == AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Table, Key) &&
             state is { InstanceId: OidcIssuer.InstanceId, Reservations.Count: <= 1000 } ? state
             : throw new InvalidOperationException("Invalid mail admission record.");
     }
@@ -87,11 +87,11 @@ public sealed class EmailAdmission(AuthStore store, TimeProvider clock)
         until = until <= now ? now + TimeSpan.FromMinutes(1) : until > now + Window ? now + Window : until;
         for (var attempt = 0; attempt < 16; attempt++)
         {
-            var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, Key, cancellationToken).ConfigureAwait(false)
+            var record = await store.GetAsync(Table, OidcIssuer.InstanceId, Key, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("Missing mail admission record.");
-            var state = Read(document);
-            if (state.PausedUntil >= until || await store.CompareAndPutAsync(Collection, OidcIssuer.InstanceId, Key,
-                JsonSerializer.SerializeToElement(state with { PausedUntil = until }, EmailAdmissionJson.Default.EmailBudget), document.Version, cancellationToken).ConfigureAwait(false))
+            var state = Read(record);
+            if (state.PausedUntil >= until || await store.CompareAndPutAsync(Table, OidcIssuer.InstanceId, Key,
+                JsonSerializer.SerializeToElement(state with { PausedUntil = until }, EmailAdmissionJson.Default.EmailBudget), record.Version, cancellationToken).ConfigureAwait(false))
             {
                 return;
             }

@@ -102,7 +102,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
         var secret = id + "." + Tokens.RandomToken(43);
         var record = new StepUpRecord(caller.InstanceId, id, caller.Id, caller.AuthEpoch, caller.AuthStamp, Tokens.Sha256Hex(secret),
             request.Purpose, request.Audience, callback.AbsoluteUri, clock.GetUtcNow().AddMinutes(5));
-        if (await store.TransactAsync([Current(caller), AuthStore.Create(AuthStore.StepUpProofCollection, caller.InstanceId, id, Serialize(record))], cancellationToken).ConfigureAwait(false) is not null)
+        if (await store.TransactAsync([Current(caller), AuthStore.Create(AuthStore.StepUpProofTable, caller.InstanceId, id, Serialize(record))], cancellationToken).ConfigureAwait(false) is not null)
         {
             throw Required();
         }
@@ -112,11 +112,11 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
 
     internal async Task<(StepUpRecord Record, string Version)?> ReadAsync(UserRecord caller, string id, CancellationToken cancellationToken)
     {
-        var document = await store.GetAsync(AuthStore.StepUpProofCollection, caller.InstanceId, id, cancellationToken).ConfigureAwait(false);
-        return document?.Document.Deserialize(StepUpJson.Default.StepUpRecord) is { } record
+        var record = await store.GetAsync(AuthStore.StepUpProofTable, caller.InstanceId, id, cancellationToken).ConfigureAwait(false);
+        return record?.Body.Deserialize(StepUpJson.Default.StepUpRecord) is { } record
             && record.InstanceId == caller.InstanceId && record.UserId == caller.Id && record.Id == id
             && record.AuthEpoch == caller.AuthEpoch && record.AuthStamp == caller.AuthStamp && !record.Consumed && record.ExpiresAt > clock.GetUtcNow()
-                ? (record, document.Version) : null;
+                ? (record, record.Version) : null;
     }
 
     internal async Task<bool> AdvanceAsync(UserRecord caller, StepUpRecord record, string version, CancellationToken cancellationToken)
@@ -127,7 +127,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
             return false;
         }
 
-        return await store.TransactAsync([.. Requirements(Merge(caller, record.Bindings ?? [])), AuthStore.Replace(AuthStore.StepUpProofCollection, caller.InstanceId, record.Id, Serialize(record), version)], cancellationToken).ConfigureAwait(false) is null
+        return await store.TransactAsync([.. Requirements(Merge(caller, record.Bindings ?? [])), AuthStore.Replace(AuthStore.StepUpProofTable, caller.InstanceId, record.Id, Serialize(record), version)], cancellationToken).ConfigureAwait(false) is null
             && record.ExpiresAt > clock.GetUtcNow();
     }
 
@@ -146,14 +146,14 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
         }
 
         var verified = Merge(caller, current.Record.Bindings ?? []);
-        List<StoreOperation> operations = [.. Requirements(verified), AuthStore.Replace(AuthStore.StepUpProofCollection, caller.InstanceId, current.Record.Id,
+        List<StoreOperation> operations = [.. Requirements(verified), AuthStore.Replace(AuthStore.StepUpProofTable, caller.InstanceId, current.Record.Id,
             Serialize(current.Record with { Consumed = true }), current.Version)];
         var authorization = receiptHash is null ? null : Tokens.RandomToken(43);
         if (receiptHash is not null)
         {
             var grant = new StepUpDeletionGrant(caller.InstanceId, caller.Id, caller.AuthEpoch, caller.AuthStamp, receiptHash,
                 clock.GetUtcNow().AddDays(15), Tokens.Sha256Hex(authorization!), current.Record.Bindings ?? []);
-            operations.Add(AuthStore.Create(AuthStore.StepUpDeletionGrantCollection, caller.InstanceId, receiptHash, JsonSerializer.SerializeToElement(grant, StepUpJson.Default.StepUpDeletionGrant)));
+            operations.Add(AuthStore.Create(AuthStore.StepUpDeletionGrantTable, caller.InstanceId, receiptHash, JsonSerializer.SerializeToElement(grant, StepUpJson.Default.StepUpDeletionGrant)));
         }
 
         if (current.Record.ExpiresAt <= clock.GetUtcNow() || await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is not null
@@ -173,8 +173,8 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
         ArgumentNullException.ThrowIfNull(request);
         if (receiptHash is not null && !request.Headers.ContainsKey(Header))
         {
-            var stored = await store.GetAsync(AuthStore.StepUpDeletionGrantCollection, caller.InstanceId, receiptHash, cancellationToken).ConfigureAwait(false);
-            if (stored?.Document.Deserialize(StepUpJson.Default.StepUpDeletionGrant) is { } grant
+            var stored = await store.GetAsync(AuthStore.StepUpDeletionGrantTable, caller.InstanceId, receiptHash, cancellationToken).ConfigureAwait(false);
+            if (stored?.Body.Deserialize(StepUpJson.Default.StepUpDeletionGrant) is { } grant
                 && grant.InstanceId == caller.InstanceId && grant.UserId == caller.Id && grant.AuthEpoch == caller.AuthEpoch
                 && grant.AuthStamp == caller.AuthStamp && grant.ReceiptHash == receiptHash && grant.ExpiresAt > clock.GetUtcNow()
                 && grant.Bindings.Count > 0
@@ -211,23 +211,23 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
         var now = JsonSerializer.Serialize(clock.GetUtcNow(), IdentityJson.Default.DateTimeOffset);
         using var filter = JsonDocument.Parse($$"""{"lte":["/expiresAt",{{now}}]}""");
         var total = 0;
-        foreach (var collection in new[] { AuthStore.StepUpProofCollection, AuthStore.StepUpDeletionGrantCollection, AuthStore.StepUpPasscodeCollection, AuthStore.EmailChangeCollection })
+        foreach (var table in new[] { AuthStore.StepUpProofTable, AuthStore.StepUpDeletionGrantTable, AuthStore.StepUpPasscodeTable, AuthStore.EmailChangeTable })
         {
             while (true)
             {
-                var batch = await store.QueryAsync(collection, filter.RootElement, batchSize, cancellationToken).ConfigureAwait(false);
+                var batch = await store.QueryAsync(table, filter.RootElement, batchSize, cancellationToken).ConfigureAwait(false);
                 var deleted = 0;
-                foreach (var document in batch)
+                foreach (var record in batch)
                 {
-                    var instance = document.Document.GetProperty("instanceId").GetString()!;
-                    var key = document.Document.GetProperty(collection switch
+                    var instance = record.Body.GetProperty("instanceId").GetString()!;
+                    var key = record.Body.GetProperty(table switch
                     {
-                        AuthStore.StepUpDeletionGrantCollection => "receiptHash",
-                        AuthStore.StepUpPasscodeCollection => "stepUpRequestId",
-                        AuthStore.EmailChangeCollection => "userId",
+                        AuthStore.StepUpDeletionGrantTable => "receiptHash",
+                        AuthStore.StepUpPasscodeTable => "stepUpRequestId",
+                        AuthStore.EmailChangeTable => "userId",
                         _ => "id",
                     }).GetString()!;
-                    if (await store.CompareAndDeleteAsync(collection, instance, key, document.Version, cancellationToken).ConfigureAwait(false))
+                    if (await store.CompareAndDeleteAsync(table, instance, key, record.Version, cancellationToken).ConfigureAwait(false))
                     {
                         deleted++;
                     }
@@ -252,7 +252,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
         _ => false,
     };
     private static JsonElement Serialize(StepUpRecord value) => JsonSerializer.SerializeToElement(value, StepUpJson.Default.StepUpRecord);
-    private static StoreOperation Current(UserRecord user) => AuthStore.Require(AuthStore.UserCollection, user.InstanceId, user.Id,
+    private static StoreOperation Current(UserRecord user) => AuthStore.Require(AuthStore.UserTable, user.InstanceId, user.Id,
         JsonSerializer.SerializeToElement(new JsonObject
         {
             ["and"] = new JsonArray(

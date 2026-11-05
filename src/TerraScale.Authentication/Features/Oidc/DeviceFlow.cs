@@ -255,7 +255,7 @@ public sealed class DeviceAuthorizationEndpoint : EndpointWithoutRequest<IResult
         Summary("Device authorization endpoint");
         Description("RFC 8628 for the public ts CLI client (client_id 00000000000000000000000007, display name ts-cli), application/x-www-form-urlencoded client_id and optional scope (openid email profile offline_access). Answers device_code, user_code, verification_uri ({public origin}/ui/terrascale/device), verification_uri_complete (adds ?user_code=), expires_in (1800) and interval (5). The user signs in and approves or denies on that page; the CLI polls the token endpoint with grant_type=urn:ietf:params:oauth:grant-type:device_code and gets authorization_pending, slow_down (polled sooner than interval), access_denied or expired_token as RFC 8628 §3.5 says. Calls share the token endpoint's per-IP minute budget; exhaustion answers 429 rate_limited with Retry-After.");
         Tags("OAuth");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
@@ -302,7 +302,7 @@ public sealed class DeviceDecisionEndpoint(TotpCredentials mfa, AuthOptions opti
         Summary("Approve or deny a device");
         Description("Same-origin form post with user_code and decision=approve or deny, from a browser with a live session (otherwise 403). Approve signs the device in as the session's user with the scopes it asked for; an active MFA user's session must have proved the second factor (otherwise 403). Deny makes the device's next poll answer access_denied. A code works once; an unknown, expired or decided code answers 400. Lookups share the device page's limits (429 with Retry-After).");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status400BadRequest, "text/html");

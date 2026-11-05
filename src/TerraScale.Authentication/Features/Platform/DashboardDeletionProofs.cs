@@ -37,31 +37,31 @@ internal static class DashboardDeletionProofs
                 new JsonObject { ["ne"] = new JsonArray("/authLogicalVerifiedAt", null) },
                 new JsonObject { ["eq"] = new JsonArray("/dashboardVerifiedAt", null) }),
         }.ToJsonString());
-        var position = await store.GetAsync(AuthStore.DashboardDeletionCursorCollection, PlatformDirectory.Instance, "pending", cancellationToken).ConfigureAwait(false);
-        var cursor = position?.Document.Deserialize(DashboardDeletionJson.Default.DashboardDeletionCursor);
+        var position = await store.GetAsync(AuthStore.DashboardDeletionCursorTable, PlatformDirectory.Instance, "pending", cancellationToken).ConfigureAwait(false);
+        var cursor = position?.Body.Deserialize(DashboardDeletionJson.Default.DashboardDeletionCursor);
         StoredPage page;
         try
         {
-            page = await store.PageAsync(AuthStore.DeletionJobCollection, filter.RootElement, 20, cursor?.NextCursor, cancellationToken).ConfigureAwait(false);
+            page = await store.PageAsync(AuthStore.DeletionJobTable, filter.RootElement, 20, cursor?.NextCursor, cancellationToken).ConfigureAwait(false);
         }
         catch (StoreCursorException)
         {
-            page = await store.PageAsync(AuthStore.DeletionJobCollection, filter.RootElement, 20, null, cancellationToken).ConfigureAwait(false);
+            page = await store.PageAsync(AuthStore.DeletionJobTable, filter.RootElement, 20, null, cancellationToken).ConfigureAwait(false);
         }
 
         var next = JsonSerializer.SerializeToElement(new DashboardDeletionCursor(page.NextCursor), DashboardDeletionJson.Default.DashboardDeletionCursor);
         var claimed = position is null
             ? await TryCreateAsync(store, next, cancellationToken).ConfigureAwait(false)
-            : await store.CompareAndPutAsync(AuthStore.DashboardDeletionCursorCollection, PlatformDirectory.Instance, "pending", next, position.Version, cancellationToken).ConfigureAwait(false);
+            : await store.CompareAndPutAsync(AuthStore.DashboardDeletionCursorTable, PlatformDirectory.Instance, "pending", next, position.Version, cancellationToken).ConfigureAwait(false);
         if (!claimed)
         {
             return new([]);
         }
 
         List<DashboardDeletionProof> items = [];
-        foreach (var document in page.Items)
+        foreach (var record in page.Items)
         {
-            if (await ProofAsync(store, document, cancellationToken).ConfigureAwait(false) is { } proof)
+            if (await ProofAsync(store, record, cancellationToken).ConfigureAwait(false) is { } proof)
             {
                 items.Add(proof);
             }
@@ -74,7 +74,7 @@ internal static class DashboardDeletionProofs
     {
         try
         {
-            await store.CreateAsync(AuthStore.DashboardDeletionCursorCollection, PlatformDirectory.Instance, "pending", next, cancellationToken).ConfigureAwait(false);
+            await store.CreateAsync(AuthStore.DashboardDeletionCursorTable, PlatformDirectory.Instance, "pending", next, cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (StorePreconditionFailedException)
@@ -93,16 +93,16 @@ internal static class DashboardDeletionProofs
         var key = DeletionJob.Key(PlatformDirectory.Instance, request.Scope, request.SubjectId);
         for (var attempt = 0; attempt < 4; attempt++)
         {
-            var document = await store.GetAsync(AuthStore.DeletionJobCollection, PlatformDirectory.Instance, key, cancellationToken).ConfigureAwait(false);
-            if (document is null || await ProofAsync(store, document, cancellationToken).ConfigureAwait(false) is not { } proof
+            var record = await store.GetAsync(AuthStore.DeletionJobTable, PlatformDirectory.Instance, key, cancellationToken).ConfigureAwait(false);
+            if (record is null || await ProofAsync(store, record, cancellationToken).ConfigureAwait(false) is not { } proof
                 || proof != new DashboardDeletionProof(id!, request.Scope, request.SubjectId, request.OrganizationId))
             {
                 throw Missing();
             }
 
-            var job = document.Document.Deserialize(DeletionJson.Default.DeletionJob)!;
-            if (job.DashboardVerifiedAt is not null || await store.CompareAndPutAsync(AuthStore.DeletionJobCollection, job.InstanceId, job.Id,
-                JsonSerializer.SerializeToElement(job with { DashboardVerifiedAt = clock.GetUtcNow() }, DeletionJson.Default.DeletionJob), document.Version, cancellationToken).ConfigureAwait(false))
+            var job = record.Body.Deserialize(DeletionJson.Default.DeletionJob)!;
+            if (job.DashboardVerifiedAt is not null || await store.CompareAndPutAsync(AuthStore.DeletionJobTable, job.InstanceId, job.Id,
+                JsonSerializer.SerializeToElement(job with { DashboardVerifiedAt = clock.GetUtcNow() }, DeletionJson.Default.DeletionJob), record.Version, cancellationToken).ConfigureAwait(false))
             {
                 return;
             }
@@ -111,12 +111,12 @@ internal static class DashboardDeletionProofs
         throw new ApiException(StatusCodes.Status409Conflict, "deletion_changed", "Retry acknowledgement of the same proof.");
     }
 
-    private static async Task<DashboardDeletionProof?> ProofAsync(AuthStore store, StoredDocument document, CancellationToken cancellationToken)
+    private static async Task<DashboardDeletionProof?> ProofAsync(AuthStore store, StoredRow record, CancellationToken cancellationToken)
     {
         DeletionJob? job;
         try
         {
-            job = document.Document.Deserialize(DeletionJson.Default.DeletionJob);
+            job = record.Body.Deserialize(DeletionJson.Default.DeletionJob);
             if (job is not null && job.DueAt != job.RequestedAt.AddDays(30))
             {
                 return null;
@@ -129,16 +129,16 @@ internal static class DashboardDeletionProofs
 
         if (job is null || job.InstanceId != PlatformDirectory.Instance || !PlatformDirectory.IsId(job.SubjectId)
             || !PlatformDirectory.IsId(job.ErasureId) || job.Id != DeletionJob.Key(job.InstanceId, job.Scope, job.SubjectId)
-            || document.Id != job.FenceId || job.AuthLogicalVerifiedAt is null)
+            || record.Id != job.FenceId || job.AuthLogicalVerifiedAt is null)
         {
             return null;
         }
 
         var root = job.Scope switch
         {
-            "account" when job.OrganizationId is null => AuthStore.UserCollection,
-            "organization" when job.OrganizationId is null || job.OrganizationId == job.SubjectId => AuthStore.OrganizationCollection,
-            "project" when PlatformDirectory.IsId(job.OrganizationId) => AuthStore.ProjectCollection,
+            "account" when job.OrganizationId is null => AuthStore.UserTable,
+            "organization" when job.OrganizationId is null || job.OrganizationId == job.SubjectId => AuthStore.OrganizationTable,
+            "project" when PlatformDirectory.IsId(job.OrganizationId) => AuthStore.ProjectTable,
             _ => null,
         };
         if (root is null || await store.GetAsync(root, job.InstanceId, job.SubjectId, cancellationToken).ConfigureAwait(false) is not null)

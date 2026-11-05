@@ -13,7 +13,7 @@ public sealed class SetProjectProviderEndpoint(TenantDirectory tenants, ProjectA
     public override void Configure()
     {
         Put(Root + "/providers/{provider}");
-        this.Document("set_project_provider", "Configure a social sign-in provider",
+        this.Describe("set_project_provider", "Configure a social sign-in provider",
             "provider is google, github, apple or oidc. The project's own OAuth client: client_id and client_secret (Apple: the Services ID and the .p8 private key, with team_id and key_id; oidc: also the https issuer). client_secret is stored encrypted and never answered; omitted, the stored one is kept. Register callback_url at the provider. Needs the admin project role.",
             "Project tenants", typeof(SetProviderRequest), StatusCodes.Status200OK, typeof(SettingsBody));
     }

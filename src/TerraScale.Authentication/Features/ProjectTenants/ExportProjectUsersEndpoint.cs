@@ -43,7 +43,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
     public override void Configure()
     {
         Get(Root + "/users/export");
-        this.Document("export_project_users", "Export an end-user directory page", "Needs admin on every page. limit 1..100 (default 100); after is the previous next; format json (default) or csv. X-Export-Next carries the continuation for either format; absent means complete. X-Export-Created-Before is the fixed creation cutoff. Immutable storage-id order, not ULID order. Later creations are excluded; deletions disappear and profile fields are read per page, not a transaction snapshot. Retry the same cursor to resume; retain each page once. Replication lag and creator clock skew can omit accounts; retries may reflect changed fields, so deduplicate by id. Email possession was proven at account creation; only email, linked provider/client/subject and public profile fields are exported; no credentials or sessions are portable. Every returned page is audited.", "Project tenants", null, StatusCodes.Status200OK, typeof(DirectoryPageBody), paged: true);
+        this.Describe("export_project_users", "Export an end-user directory page", "Needs admin on every page. limit 1..100 (default 100); after is the previous next; format json (default) or csv. X-Export-Next carries the continuation for either format; absent means complete. X-Export-Created-Before is the fixed creation cutoff. Immutable storage-id order, not ULID order. Later creations are excluded; deletions disappear and profile fields are read per page, not a transaction snapshot. Retry the same cursor to resume; retain each page once. Replication lag and creator clock skew can omit accounts; retries may reflect changed fields, so deduplicate by id. Email possession was proven at account creation; only email, linked provider/client/subject and public profile fields are exported; no credentials or sessions are portable. Every returned page is audited.", "Project tenants", null, StatusCodes.Status200OK, typeof(DirectoryPageBody), paged: true);
     }
 
     /// <inheritdoc />
@@ -80,7 +80,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         StoredPage page;
         try
         {
-            page = await store.PageAsync(AuthStore.UserCollection, projectId,
+            page = await store.PageAsync(AuthStore.UserTable, projectId,
                 [new JsonObject { ["lt"] = new JsonArray("/createdAt", JsonValue.Create(cutoff)) }], [], limit, position, cancellationToken: cancellationToken);
         }
         catch (StoreCursorException)
@@ -88,7 +88,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
             throw Invalid("after must be a cursor from this project's export.");
         }
 
-        var items = page.Items.Select(document => document.Document.Deserialize(IdentityJson.Default.UserRecord))
+        var items = page.Items.Select(record => record.Body.Deserialize(IdentityJson.Default.UserRecord))
             .Where(user => user is not null && user.InstanceId == projectId)
             .Select(user => new DirectoryUserBody(user!.Id, user.Email, true, user.CreatedAt, user.Disabled,
                 [.. user.LinkedProviders.Select(link => new DirectoryProviderBody(link.Provider, link.ClientId, link.Subject))])).ToArray();

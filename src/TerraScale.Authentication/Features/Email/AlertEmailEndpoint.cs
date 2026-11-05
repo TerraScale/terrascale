@@ -34,7 +34,7 @@ internal sealed record AlertEmailDelivery(string InstanceId, string Organization
 /// <summary>Delivers an alert transition through the dashboard's existing ClientBasic email authority, as allowance messages are.</summary>
 public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirectory directory, Users users, IEmailSender sender, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    private const string Collection = "email_alert_deliveries";
+    private const string Table = "email_alert_deliveries";
 
     /// <inheritdoc />
     public override void Configure()
@@ -76,13 +76,13 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
         }
 
         var key = $"{organization}/{request.AlertId}/{request.State}";
-        if (await store.GetAsync(Collection, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false) is null)
+        if (await store.GetAsync(Table, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false) is null)
         {
             var recipients = new Dictionary<string, string>(StringComparer.Ordinal);
-            await foreach (var document in store.QueryAsync(AuthStore.MembershipCollection, OidcIssuer.InstanceId,
+            await foreach (var record in store.QueryAsync(AuthStore.MembershipTable, OidcIssuer.InstanceId,
                 [("/organizationId", organization), ("/role", Roles.Owner)], cancellationToken).ConfigureAwait(false))
             {
-                if (AllowanceEmailEndpoint.ReadMember(document, organization) is { Role: Roles.Owner } member)
+                if (AllowanceEmailEndpoint.ReadMember(record, organization) is { Role: Roles.Owner } member)
                 {
                     recipients[member.UserId] = "pending";
                 }
@@ -93,7 +93,7 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
             }
             try
             {
-                _ = await store.CreateAsync(Collection, OidcIssuer.InstanceId, key, Serialize(new(OidcIssuer.InstanceId, organization, request.AlertId!, request.State, recipients)),
+                _ = await store.CreateAsync(Table, OidcIssuer.InstanceId, key, Serialize(new(OidcIssuer.InstanceId, organization, request.AlertId!, request.State, recipients)),
                     cancellationToken).ConfigureAwait(false);
             }
             catch (StorePreconditionFailedException) { }
@@ -111,13 +111,13 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
                     break;
                 }
                 current.Delivery.Recipients[recipient] = "sending";
-                if (await store.ReplaceAsync(Collection, OidcIssuer.InstanceId, key, Serialize(current.Delivery), current.Version, cancellationToken).ConfigureAwait(false) is null)
+                if (await store.ReplaceAsync(Table, OidcIssuer.InstanceId, key, Serialize(current.Delivery), current.Version, cancellationToken).ConfigureAwait(false) is null)
                 {
                     continue;
                 }
 
                 // A fresh membership read prevents sending to someone removed since the delivery was reserved.
-                var membership = await store.GetAsync(AuthStore.MembershipCollection, OidcIssuer.InstanceId, $"{organization}/{recipient}", cancellationToken).ConfigureAwait(false);
+                var membership = await store.GetAsync(AuthStore.MembershipTable, OidcIssuer.InstanceId, $"{organization}/{recipient}", cancellationToken).ConfigureAwait(false);
                 var user = await users.GetAsync(OidcIssuer.InstanceId, recipient, cancellationToken).ConfigureAwait(false);
                 var outcome = membership is not null && AllowanceEmailEndpoint.ReadMember(membership, organization).Role == Roles.Owner && user is not null
                     ? await sender.DeliverAsync(user.Email, message, cancellationToken).ConfigureAwait(false)
@@ -159,15 +159,15 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
 
     private async Task<(AlertEmailDelivery Delivery, string Version)> ReadAsync(string key, EmailAlertRequest request, CancellationToken cancellationToken)
     {
-        var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable();
-        var delivery = document.Document.Deserialize(AlertEmailJson.Default.AlertEmailDelivery);
-        if (document.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Collection, key) || delivery is null ||
+        var record = await store.GetAsync(Table, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable();
+        var delivery = record.Body.Deserialize(AlertEmailJson.Default.AlertEmailDelivery);
+        if (record.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Table, key) || delivery is null ||
             delivery.InstanceId != OidcIssuer.InstanceId || delivery.OrganizationId != request.OrganizationId || delivery.AlertId != request.AlertId ||
             delivery.State != request.State || delivery.Recipients is null)
         {
             throw ApiException.Unavailable();
         }
-        return (delivery, document.Version);
+        return (delivery, record.Version);
     }
 
     private async Task CompleteAsync(string key, EmailAlertRequest request, string recipient, string status, CancellationToken cancellationToken)
@@ -176,7 +176,7 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
         {
             var current = await ReadAsync(key, request, cancellationToken).ConfigureAwait(false);
             current.Delivery.Recipients[recipient] = status;
-            if (await store.CompareAndPutAsync(Collection, OidcIssuer.InstanceId, key, Serialize(current.Delivery), current.Version, cancellationToken).ConfigureAwait(false))
+            if (await store.CompareAndPutAsync(Table, OidcIssuer.InstanceId, key, Serialize(current.Delivery), current.Version, cancellationToken).ConfigureAwait(false))
             {
                 return;
             }

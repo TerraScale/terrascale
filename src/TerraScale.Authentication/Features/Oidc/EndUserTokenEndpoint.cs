@@ -107,7 +107,7 @@ public sealed class EndUserTokenEndpoint(EndUserAccessTokens tokens, AttemptLimi
     private IResult Unauthorized()
     {
         this.HttpContext.Response.Headers.WWWAuthenticate = "Bearer realm=\"ts-auth\"";
-        return Results.Json(new ErrorBody(new ErrorDetail("unauthorized", "Present an unrestricted project API key with both document scopes.")),
+        return Results.Json(new ErrorBody(new ErrorDetail("unauthorized", "Present an unrestricted project API key with both record scopes.")),
             EndUserTokenJson.Default.ErrorBody, statusCode: StatusCodes.Status401Unauthorized);
     }
 

@@ -5,8 +5,8 @@ internal static class HostedPageBehavior
 {
     public const string Script = """
 (function () {
-  document.querySelectorAll('input[type="password"]').forEach(function (input) {
-    var group = document.createElement('div'), toggle = document.createElement('button');
+  record.querySelectorAll('input[type="password"]').forEach(function (input) {
+    var group = record.createElement('div'), toggle = record.createElement('button');
     group.className = 'password-control';
     input.before(group); group.append(input);
     toggle.type = 'button'; toggle.className = 'password-toggle';
@@ -21,8 +21,8 @@ internal static class HostedPageBehavior
     });
     group.append(toggle);
   });
-  document.querySelectorAll('input.code[name="code"][pattern="[0-9]{6}"][maxlength="6"]').forEach(function (value) {
-    var group = document.createElement('div'), digits = [], label = document.querySelector('label[for="' + value.id + '"]');
+  record.querySelectorAll('input.code[name="code"][pattern="[0-9]{6}"][maxlength="6"]').forEach(function (value) {
+    var group = record.createElement('div'), digits = [], label = record.querySelector('label[for="' + value.id + '"]');
     group.className = 'otp'; group.setAttribute('role', 'group');
     group.setAttribute('aria-label', label ? label.textContent : 'Verification code');
     value.type = 'hidden'; value.after(group);
@@ -34,7 +34,7 @@ internal static class HostedPageBehavior
     }
     for (var i = 0; i < 6; i++) {
       (function (index) {
-        var digit = document.createElement('input');
+        var digit = record.createElement('input');
         digit.type = 'text'; digit.inputMode = 'numeric'; digit.pattern = '[0-9]'; digit.required = true;
         digit.maxLength = 6; digit.placeholder = '·'; digit.autocomplete = index === 0 ? 'one-time-code' : 'off';
         digit.setAttribute('aria-label', 'Digit ' + (index + 1));
@@ -58,7 +58,7 @@ internal static class HostedPageBehavior
     }
     if (value.autofocus) digits[0].focus();
   });
-  document.addEventListener('submit', function (event) {
+  record.addEventListener('submit', function (event) {
     var form = event.target;
     if (form instanceof HTMLFormElement && !form.hasAttribute('data-busy')) {
       form.setAttribute('data-busy', '');

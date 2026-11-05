@@ -10,7 +10,7 @@ public sealed class EnableProjectUserEndpoint(TenantDirectory tenants, PlatformA
     public override void Configure()
     {
         Post(Root + "/users/{user}/enable");
-        this.Document("enable_project_user", "Enable an end user", "Needs the admin project role. The user may sign in again; sessions ended by disabling stay ended.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectUserBody));
+        this.Describe("enable_project_user", "Enable an end user", "Needs the admin project role. The user may sign in again; sessions ended by disabling stay ended.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectUserBody));
     }
 
     /// <inheritdoc />

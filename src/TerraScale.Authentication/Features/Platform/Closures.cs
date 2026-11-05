@@ -150,7 +150,7 @@ public sealed class Closures(
             }
 
             var seen = current.Value with { FenceSeen = true };
-            if (await store.ReplaceAsync(AuthStore.ClosureJobCollection, current.Value.InstanceId, ClosureJob.Key(current.Value.Scope, current.Value.SubjectId),
+            if (await store.ReplaceAsync(AuthStore.ClosureJobTable, current.Value.InstanceId, ClosureJob.Key(current.Value.Scope, current.Value.SubjectId),
                 JsonSerializer.SerializeToElement(seen, ClosureJson.Default.ClosureJob), current.Version, cancellationToken).ConfigureAwait(false) is { } version)
             {
                 return new(seen, version);
@@ -215,9 +215,9 @@ public sealed class Closures(
             // Only while the account has no closure intent: a newer account closure drives its own intents.
             switch (await store.TransactAsync(
             [
-                AuthStore.Replace(AuthStore.ClosureJobCollection, current.Value.InstanceId, ClosureJob.Key(current.Value.Scope, current.Value.SubjectId),
+                AuthStore.Replace(AuthStore.ClosureJobTable, current.Value.InstanceId, ClosureJob.Key(current.Value.Scope, current.Value.SubjectId),
                     JsonSerializer.SerializeToElement(detached, ClosureJson.Default.ClosureJob), current.Version),
-                AuthStore.Absent(AuthStore.ClosureJobCollection, current.Value.InstanceId, ClosureJob.Key("account", account)),
+                AuthStore.Absent(AuthStore.ClosureJobTable, current.Value.InstanceId, ClosureJob.Key("account", account)),
             ], cancellationToken).ConfigureAwait(false))
             {
                 case null:
@@ -244,8 +244,8 @@ public sealed class Closures(
         {
             ["lte"] = new JsonArray("/nextAttemptAt", JsonValue.Create(clock.GetUtcNow())),
         }.ToJsonString());
-        return [.. (await store.QueryAsync(AuthStore.ClosureJobCollection, filter.RootElement, limit, [new StoreSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false))
-            .Select(document => document.Document.Deserialize(ClosureJson.Default.ClosureJob)).OfType<ClosureJob>()];
+        return [.. (await store.QueryAsync(AuthStore.ClosureJobTable, filter.RootElement, limit, [new StoreSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false))
+            .Select(record => record.Body.Deserialize(ClosureJson.Default.ClosureJob)).OfType<ClosureJob>()];
     }
 
     // 2 s, doubling per earlier attempt, at most a minute; from the deferral that reaches ParkAfter on, every 15 minutes.
@@ -263,7 +263,7 @@ public sealed class Closures(
             FailureCode = failure,
             FenceSeen = job.Value.FenceSeen || fenceSeen,
         };
-        if (!await store.CompareAndPutAsync(AuthStore.ClosureJobCollection, job.Value.InstanceId, ClosureJob.Key(job.Value.Scope, job.Value.SubjectId),
+        if (!await store.CompareAndPutAsync(AuthStore.ClosureJobTable, job.Value.InstanceId, ClosureJob.Key(job.Value.Scope, job.Value.SubjectId),
             JsonSerializer.SerializeToElement(next, ClosureJson.Default.ClosureJob), job.Version, cancellationToken).ConfigureAwait(false))
         {
             logger.ZLogInformation($"A closure intent changed while it was deferred; the next pass reads it again");

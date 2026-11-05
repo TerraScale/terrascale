@@ -7,9 +7,9 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Store;
 
-public sealed record StoredDocument(string Id, JsonElement Document, string Version);
+public sealed record StoredRow(string Id, JsonElement Body, string Version);
 
-public sealed record StoredPage(IReadOnlyList<StoredDocument> Items, string? NextCursor, long? Count = null);
+public sealed record StoredPage(IReadOnlyList<StoredRow> Items, string? NextCursor, long? Count = null);
 
 public sealed record StoreSort(string Path, string? Order = null);
 
@@ -23,17 +23,17 @@ public sealed class StorePreconditionFailedException(int operationIndex)
 
 public sealed class StoreCursorException() : Exception("The cursor does not belong to this query.");
 
-internal sealed record SqlWrite(string Op, string Collection, string Id, JsonElement? Document = null, string? IfMatch = null, JsonElement? Filter = null)
+internal sealed record SqlWrite(string Op, string Table, string Id, JsonElement? Body = null, string? IfMatch = null, JsonElement? Filter = null)
 {
-    public static SqlWrite Create(string collection, JsonElement document, string id) => new("create", collection, id, document);
+    public static SqlWrite Create(string table, JsonElement record, string id) => new("create", table, id, record);
 
-    public static SqlWrite Put(string collection, string id, JsonElement document, string ifMatch) => new("put", collection, id, document, ifMatch);
+    public static SqlWrite Put(string table, string id, JsonElement record, string ifMatch) => new("put", table, id, record, ifMatch);
 
-    public static SqlWrite Delete(string collection, string id, string ifMatch) => new("delete", collection, id, IfMatch: ifMatch);
+    public static SqlWrite Delete(string table, string id, string ifMatch) => new("delete", table, id, IfMatch: ifMatch);
 
-    public static SqlWrite AssertAbsent(string collection, string id) => new("absent", collection, id);
+    public static SqlWrite AssertAbsent(string table, string id) => new("absent", table, id);
 
-    public static SqlWrite Assert(string collection, string id, JsonElement filter) => new("assert", collection, id, Filter: filter);
+    public static SqlWrite Assert(string table, string id, JsonElement filter) => new("assert", table, id, Filter: filter);
 }
 
 internal sealed record CursorPosition(
@@ -42,22 +42,22 @@ internal sealed record CursorPosition(
     [property: JsonPropertyName("i")] string Id);
 
 [JsonSerializable(typeof(CursorPosition))]
-internal sealed partial class SqlDocumentsJson : JsonSerializerContext;
+internal sealed partial class SqlRecordsJson : JsonSerializerContext;
 
-internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
+internal sealed class SqlRecords(TerraBaseSqlDatabase database)
 {
     public const string ChecksTable = "store_checks";
 
     private const int MaxStatements = TerraBaseSqlStatement.MaxPerRequest;
 
-    public static IEnumerable<TerraBaseSqlStatement> Schema(IEnumerable<string> collections)
+    public static IEnumerable<TerraBaseSqlStatement> Schema(IEnumerable<string> tables)
     {
         yield return new($"CREATE TABLE IF NOT EXISTS {ChecksTable} (id TEXT PRIMARY KEY NOT NULL, failed INTEGER NOT NULL)");
-        foreach (var collection in collections)
+        foreach (var name in tables)
         {
-            var table = Table(collection);
+            var table = Table(name);
             yield return new($"CREATE TABLE IF NOT EXISTS {table} (id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 128), instance_id TEXT, version TEXT NOT NULL CHECK (length(version) = 26), body TEXT NOT NULL CHECK (json_valid(body)))");
-            yield return new($"CREATE INDEX IF NOT EXISTS {Table(collection + "_instance")} ON {table} (instance_id, id)");
+            yield return new($"CREATE INDEX IF NOT EXISTS {Table(name + "_instance")} ON {table} (instance_id, id)");
         }
     }
 
@@ -67,16 +67,16 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
         return rows.Select(row => row.GetString(0)).ToHashSet(StringComparer.Ordinal);
     }
 
-    public Task ProvisionAsync(IEnumerable<string> collections, CancellationToken cancellationToken) =>
-        database.BatchAsync([.. Schema(collections)], cancellationToken);
+    public Task ProvisionAsync(IEnumerable<string> tables, CancellationToken cancellationToken) =>
+        database.BatchAsync([.. Schema(tables)], cancellationToken);
 
-    public async Task<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+    public async Task<StoredRow?> GetAsync(string table, string id, CancellationToken cancellationToken)
     {
-        var rows = await database.QueryAsync($"SELECT id, body, version FROM {Table(collection)} WHERE id = ?", [id], cancellationToken).ConfigureAwait(false);
+        var rows = await database.QueryAsync($"SELECT id, body, version FROM {Table(table)} WHERE id = ?", [id], cancellationToken).ConfigureAwait(false);
         return rows.Count == 0 ? null : Read(rows[0]);
     }
 
-    public async Task<StoredPage> QueryAsync(string collection, string? instanceId, JsonElement? filter, IReadOnlyList<StoreSort>? sort, int limit, string? cursor, bool count, CancellationToken cancellationToken)
+    public async Task<StoredPage> QueryAsync(string table, string? instanceId, JsonElement? filter, IReadOnlyList<StoreSort>? sort, int limit, string? cursor, bool count, CancellationToken cancellationToken)
     {
         if (limit is < 1 or > 1000)
         {
@@ -110,11 +110,11 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
         };
         var sortExpression = key is null ? "NULL" : "json_extract(body, ?)";
         var sortPath = key is null ? null : JsonPath(key.Path);
-        var digest = Digest(collection, where.ToString(), args, key?.Path, descending);
+        var digest = Digest(table, where.ToString(), args, key?.Path, descending);
         long? total = null;
         if (count)
         {
-            var counted = await database.QueryAsync($"SELECT count(*) FROM {Table(collection)} WHERE {where}", args, cancellationToken).ConfigureAwait(false);
+            var counted = await database.QueryAsync($"SELECT count(*) FROM {Table(table)} WHERE {where}", args, cancellationToken).ConfigureAwait(false);
             total = counted[0].GetInt64(0);
         }
 
@@ -136,7 +136,7 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
         var order = sortPath is null ? $"id {direction}" : $"s {direction}, id {direction}";
         pageArgs.Add(limit + 1);
         var rows = await database.QueryAsync(
-            $"SELECT id, body, version, {sortExpression} AS s FROM {Table(collection)} WHERE {page} ORDER BY {order} LIMIT ?", pageArgs, cancellationToken).ConfigureAwait(false);
+            $"SELECT id, body, version, {sortExpression} AS s FROM {Table(table)} WHERE {page} ORDER BY {order} LIMIT ?", pageArgs, cancellationToken).ConfigureAwait(false);
         var items = rows.Take(limit).Select(Read).ToList();
         string? next = null;
         if (rows.Count > limit)
@@ -158,20 +158,20 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
         for (var index = 0; index < operations.Count; index++)
         {
             var operation = operations[index];
-            var table = Table(operation.Collection);
+            var table = Table(operation.Table);
             switch (operation.Op)
             {
                 case "create":
                     versions[index] = AuthStore.NewId();
                     guards.Add(Guard(request, index, $"NOT EXISTS (SELECT 1 FROM {table} WHERE id = ?)", [operation.Id]));
                     writes.Add(new($"INSERT INTO {table} (id, instance_id, version, body) SELECT ?, ?, ?, ? WHERE {Passed}",
-                        [operation.Id, InstanceOf(operation.Document!.Value), versions[index], operation.Document!.Value.GetRawText(), request]));
+                        [operation.Id, InstanceOf(operation.Body!.Value), versions[index], operation.Body!.Value.GetRawText(), request]));
                     break;
                 case "put":
                     versions[index] = AuthStore.NewId();
                     guards.Add(Guard(request, index, $"EXISTS (SELECT 1 FROM {table} WHERE id = ? AND version = ?)", [operation.Id, operation.IfMatch]));
                     writes.Add(new($"UPDATE {table} SET instance_id = ?, version = ?, body = ? WHERE id = ? AND {Passed}",
-                        [InstanceOf(operation.Document!.Value), versions[index], operation.Document!.Value.GetRawText(), operation.Id, request]));
+                        [InstanceOf(operation.Body!.Value), versions[index], operation.Body!.Value.GetRawText(), operation.Id, request]));
                     break;
                 case "delete":
                     guards.Add(Guard(request, index, $"EXISTS (SELECT 1 FROM {table} WHERE id = ? AND version = ?)", [operation.Id, operation.IfMatch]));
@@ -235,14 +235,14 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
         return "\"" + name + "\"";
     }
 
-    private static StoredDocument Read(TerraBaseSqlRecord row)
+    private static StoredRow Read(TerraBaseSqlRecord row)
     {
         using var body = JsonDocument.Parse(row.GetString("body"));
-        return new StoredDocument(row.GetString("id"), body.RootElement.Clone(), row.GetString("version"));
+        return new StoredRow(row.GetString("id"), body.RootElement.Clone(), row.GetString("version"));
     }
 
-    private static string? InstanceOf(JsonElement document) =>
-        document.ValueKind == JsonValueKind.Object && document.TryGetProperty("instanceId", out var instance) && instance.ValueKind == JsonValueKind.String
+    private static string? InstanceOf(JsonElement record) =>
+        record.ValueKind == JsonValueKind.Object && record.TryGetProperty("instanceId", out var instance) && instance.ValueKind == JsonValueKind.String
             ? instance.GetString()
             : null;
 
@@ -419,9 +419,9 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
         return $"({s} > ? OR ({s} = ? AND id > ?))";
     }
 
-    private static string Digest(string collection, string where, IReadOnlyList<TerraBaseSqlValue> args, string? sort, bool descending)
+    private static string Digest(string table, string where, IReadOnlyList<TerraBaseSqlValue> args, string? sort, bool descending)
     {
-        var text = new StringBuilder(collection).Append('\n').Append(where).Append('\n').Append(sort).Append('\n').Append(descending);
+        var text = new StringBuilder(table).Append('\n').Append(where).Append('\n').Append(sort).Append('\n').Append(descending);
         foreach (var arg in args)
         {
             text.Append('\n').Append(arg.Value switch
@@ -437,7 +437,7 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
     }
 
     private static string EncodeCursor(CursorPosition position) =>
-        Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(position, SqlDocumentsJson.Default.CursorPosition)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(position, SqlRecordsJson.Default.CursorPosition)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private static CursorPosition DecodeCursor(string cursor, string digest)
     {
@@ -445,7 +445,7 @@ internal sealed class SqlDocuments(TerraBaseSqlDatabase database)
         {
             var text = cursor.Replace('-', '+').Replace('_', '/');
             text = text.PadRight(text.Length + (4 - text.Length % 4) % 4, '=');
-            var position = JsonSerializer.Deserialize(Convert.FromBase64String(text), SqlDocumentsJson.Default.CursorPosition);
+            var position = JsonSerializer.Deserialize(Convert.FromBase64String(text), SqlRecordsJson.Default.CursorPosition);
             return position is not null && position.Digest == digest && !string.IsNullOrEmpty(position.Id)
                 && position.Value.ValueKind is JsonValueKind.Null or JsonValueKind.String or JsonValueKind.Number
                 ? position

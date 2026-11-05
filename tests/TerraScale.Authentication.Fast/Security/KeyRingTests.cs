@@ -117,9 +117,9 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
             var store = services.GetRequiredService<AuthStore>();
             foreach (var project in Projects)
             {
-                if (await store.GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project) is null)
+                if (await store.GetAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, project) is null)
                 {
-                    await store.CreateAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project, TerraBaseFixture.Json($$"""{"id":"{{project}}"}"""));
+                    await store.CreateAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, project, TerraBaseFixture.Json($$"""{"id":"{{project}}"}"""));
                 }
             }
         });

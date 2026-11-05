@@ -56,11 +56,11 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
 
         // Simulate completed history and an expired credential fence: dashboard acknowledgement still owns retention.
         var restartedStore = restarted.App.Services.GetRequiredService<AuthStore>();
-        var document = (await restartedStore.GetAsync(AuthStore.DeletionJobCollection, "terrascale", job.Id))!;
+        var record = (await restartedStore.GetAsync(AuthStore.DeletionJobTable, "terrascale", job.Id))!;
         clock.UtcNow = job.RequestedAt.AddDays(16);
         var complete = job with { HistoryCompletedAt = clock.UtcNow, HistoryStatus = "retire", NextAttemptAt = clock.UtcNow };
-        await Assert.That(await restartedStore.CompareAndPutAsync(AuthStore.DeletionJobCollection, "terrascale", job.Id,
-            JsonSerializer.SerializeToElement(complete, DeletionJson.Default.DeletionJob), document.Version)).IsTrue();
+        await Assert.That(await restartedStore.CompareAndPutAsync(AuthStore.DeletionJobTable, "terrascale", job.Id,
+            JsonSerializer.SerializeToElement(complete, DeletionJson.Default.DeletionJob), record.Version)).IsTrue();
         await restartedCleanup.RunHistoryOnceAsync();
         await Assert.That((await JobAsync(restartedStore, proof)).DashboardVerifiedAt).IsNull();
         await Assert.That((await ListAsync(restarted.Client)).Any(item => item.Id == proof.Id)).IsTrue();
@@ -74,11 +74,11 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
         await Assert.That((await JobAsync(restartedStore, proof)).DashboardVerifiedAt).IsEqualTo(clock.UtcNow);
         await Assert.That((await ListAsync(restarted.Client)).Any(item => item.Id == proof.Id)).IsFalse();
         await restartedCleanup.RunHistoryOnceAsync();
-        await Assert.That(await restartedStore.GetAsync(AuthStore.DeletionJobCollection, "terrascale", job.Id)).IsNull();
+        await Assert.That(await restartedStore.GetAsync(AuthStore.DeletionJobTable, "terrascale", job.Id)).IsNull();
     }
 
     private static async Task<DeletionJob> JobAsync(AuthStore store, DashboardDeletionProof proof) =>
-        (await store.GetAsync(AuthStore.DeletionJobCollection, "terrascale", DeletionJob.Key("terrascale", proof.Scope, proof.SubjectId)))!.Document.Deserialize(DeletionJson.Default.DeletionJob)!;
+        (await store.GetAsync(AuthStore.DeletionJobTable, "terrascale", DeletionJob.Key("terrascale", proof.Scope, proof.SubjectId)))!.Body.Deserialize(DeletionJson.Default.DeletionJob)!;
 
     private static string AckRoute(DashboardDeletionProof proof) => $"{Route}/{proof.Id}/acknowledge";
 

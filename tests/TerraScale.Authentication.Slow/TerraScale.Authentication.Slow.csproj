@@ -13,7 +13,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
-    <!-- Stopped-copy recovery scenarios inspect the fixture-owned Turso file. -->
+    <!-- Stopped-copy recovery scenarios inspect the fixture-owned SQL engine file. -->
     <ProjectReference Include="../../src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </ItemGroup>
   <ItemGroup>

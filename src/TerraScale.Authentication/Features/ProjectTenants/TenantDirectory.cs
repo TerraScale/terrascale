@@ -14,7 +14,7 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
 /// <summary>A live session of a project tenant.</summary>
-/// <param name="Id">Its TerraBase document id; never the token or its hash.</param>
+/// <param name="Id">Its TerraBase record id; never the token or its hash.</param>
 /// <param name="Session">The session.</param>
 /// <param name="Email">Its user's email.</param>
 public sealed record ProjectSession(string Id, SessionRecord Session, string Email);
@@ -40,8 +40,8 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
     public Task<Page<UserRecord>> UsersAsync(string projectId, string? query, int limit, string? after, CancellationToken cancellationToken)
     {
         var needle = string.IsNullOrWhiteSpace(query) ? null : query.Trim().ToLowerInvariant();
-        return this.ScanAsync(AuthStore.UserCollection, projectId, [], limit, after, document => Task.FromResult(
-            document.Document.Deserialize(IdentityJson.Default.UserRecord) is { } user && user.InstanceId == projectId
+        return this.ScanAsync(AuthStore.UserTable, projectId, [], limit, after, record => Task.FromResult(
+            record.Body.Deserialize(IdentityJson.Default.UserRecord) is { } user && user.InstanceId == projectId
             && (needle is null || user.Email.Contains(needle, StringComparison.Ordinal)) ? user : null), cancellationToken);
     }
 
@@ -53,7 +53,7 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
     public async Task<UserRecord> SetDisabledAsync(string projectId, string userId, bool disabled, CancellationToken cancellationToken) =>
         await users.SetDisabledAsync(projectId, userId, disabled, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
 
-    /// <summary>A page of the tenant's live sessions (unrevoked, unexpired, of an enabled user at its current epoch), with each document id.</summary>
+    /// <summary>A page of the tenant's live sessions (unrevoked, unexpired, of an enabled user at its current epoch), with each record id.</summary>
     public async Task<Page<ProjectSession>> SessionsAsync(string projectId, string? userId, int limit, string? after, CancellationToken cancellationToken)
     {
         var lifetime = await sessions.GetLifetimeAsync(projectId, cancellationToken).ConfigureAwait(false);
@@ -65,9 +65,9 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
         }
 
         var owners = new Dictionary<string, UserRecord?>(StringComparer.Ordinal);
-        return await this.ScanAsync(AuthStore.SessionCollection, projectId, conditions, limit, after, async document =>
+        return await this.ScanAsync(AuthStore.SessionTable, projectId, conditions, limit, after, async record =>
         {
-            if (document.Document.Deserialize(IdentityJson.Default.SessionRecord) is not { } session || session.InstanceId != projectId)
+            if (record.Body.Deserialize(IdentityJson.Default.SessionRecord) is not { } session || session.InstanceId != projectId)
             {
                 return null;
             }
@@ -85,16 +85,16 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
             }
 
             return user is { Disabled: false } && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp
-                ? new ProjectSession(document.Id, session, user.Email) : null;
+                ? new ProjectSession(record.Id, session, user.Email) : null;
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Revokes the tenant's session with document id <paramref name="id"/>; false when there is none.</summary>
+    /// <summary>Revokes the tenant's session with record id <paramref name="id"/>; false when there is none.</summary>
     public async Task<bool> RevokeSessionAsync(string projectId, string id, CancellationToken cancellationToken)
     {
         var filter = PlatformDirectory.Filter("and", new JsonArray(PlatformDirectory.Equal("/instanceId", projectId), PlatformDirectory.Equal("$id", id)));
-        return await store.QueryAsync(AuthStore.SessionCollection, filter, 1, cancellationToken).ConfigureAwait(false) is [var document]
-            && document.Document.Deserialize(IdentityJson.Default.SessionRecord) is { } session && session.InstanceId == projectId
+        return await store.QueryAsync(AuthStore.SessionTable, filter, 1, cancellationToken).ConfigureAwait(false) is [var record]
+            && record.Body.Deserialize(IdentityJson.Default.SessionRecord) is { } session && session.InstanceId == projectId
             && await sessions.RevokeStoredAsync(projectId, session.TokenHash, cancellationToken).ConfigureAwait(false);
     }
 
@@ -102,9 +102,9 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
     public async Task<IReadOnlyList<OidcApplication>> ClientsAsync(string projectId, CancellationToken cancellationToken)
     {
         List<OidcApplication> clients = [];
-        await foreach (var document in store.QueryAsync(AuthStore.OidcApplicationCollection, projectId, "/instanceId", projectId, cancellationToken).ConfigureAwait(false))
+        await foreach (var record in store.QueryAsync(AuthStore.OidcApplicationTable, projectId, "/instanceId", projectId, cancellationToken).ConfigureAwait(false))
         {
-            if (document.Document.Deserialize(OidcJson.Default.OidcApplication) is { ClientId: { } clientId } client && client.InstanceId == projectId && client.Id == clientId)
+            if (record.Body.Deserialize(OidcJson.Default.OidcApplication) is { ClientId: { } clientId } client && client.InstanceId == projectId && client.Id == clientId)
             {
                 clients.Add(client);
             }
@@ -166,13 +166,13 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
 
     /// <summary>Deletes the tenant's client; false when there is none.</summary>
     public async Task<bool> DeleteClientAsync(string projectId, string clientId, CancellationToken cancellationToken) =>
-        await store.GetAsync(AuthStore.OidcApplicationCollection, projectId, clientId, cancellationToken).ConfigureAwait(false) is { } document
-        && document.Document.Deserialize(OidcJson.Default.OidcApplication) is { } client && client.InstanceId == projectId && client.ClientId == clientId
-        && await store.CompareAndDeleteAsync(AuthStore.OidcApplicationCollection, projectId, clientId, document.Version, cancellationToken).ConfigureAwait(false);
+        await store.GetAsync(AuthStore.OidcApplicationTable, projectId, clientId, cancellationToken).ConfigureAwait(false) is { } record
+        && record.Body.Deserialize(OidcJson.Default.OidcApplication) is { } client && client.InstanceId == projectId && client.ClientId == clientId
+        && await store.CompareAndDeleteAsync(AuthStore.OidcApplicationTable, projectId, clientId, record.Version, cancellationToken).ConfigureAwait(false);
 
-    // Reads pages of the instance's matching documents in id order, each exactly as large as the items still missing,
-    // so the answered cursor never skips an unread document.
-    private async Task<Page<T>> ScanAsync<T>(string collection, string projectId, IReadOnlyList<JsonObject> conditions, int limit, string? after, Func<StoredDocument, Task<T?>> select, CancellationToken cancellationToken)
+    // Reads pages of the instance's matching records in id order, each exactly as large as the items still missing,
+    // so the answered cursor never skips an unread record.
+    private async Task<Page<T>> ScanAsync<T>(string table, string projectId, IReadOnlyList<JsonObject> conditions, int limit, string? after, Func<StoredRow, Task<T?>> select, CancellationToken cancellationToken)
         where T : class
     {
         List<T> items = [];
@@ -181,10 +181,10 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
         {
             for (var round = 0; round < MaxRounds && items.Count < limit; round++)
             {
-                var page = await store.PageAsync(collection, projectId, conditions, [], limit - items.Count, cursor, cancellationToken: cancellationToken).ConfigureAwait(false);
-                foreach (var document in page.Items)
+                var page = await store.PageAsync(table, projectId, conditions, [], limit - items.Count, cursor, cancellationToken: cancellationToken).ConfigureAwait(false);
+                foreach (var record in page.Items)
                 {
-                    if (await select(document).ConfigureAwait(false) is { } item)
+                    if (await select(record).ConfigureAwait(false) is { } item)
                     {
                         items.Add(item);
                     }

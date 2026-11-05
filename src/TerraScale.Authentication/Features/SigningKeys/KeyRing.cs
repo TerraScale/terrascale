@@ -39,7 +39,7 @@ public sealed record KeyRingRefresh
 }
 
 /// <summary>
-/// Per-instance ES256 signing keys, one TerraBase document per key in <see cref="AuthStore.SigningKeyCollection"/>, each
+/// Per-instance ES256 signing keys, one TerraBase record per key in <see cref="AuthStore.SigningKeyTable"/>, each
 /// private key sealed under the master key. The JWKS and the signer come from the same read, so a key signs only once it
 /// is published: the newest key whose activation time has passed signs, and every key activates after it is stored, by
 /// <see cref="Overlap"/> for a scheduled rotation and by one <see cref="KeyRingRefresh"/> interval (when every replica's
@@ -77,8 +77,8 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     // The authority's reads serve every security use: signing, signature checks, readiness, rotation and first keys. This
     // region's copy's serve only GetPublishedAsync. Each source has its own cache, shared in-flight reads and failure
     // backoff, so a JWKS read never becomes a security decision and an authority outage never fails a healthy JWKS.
-    private readonly Reads authority = new((instanceId, cancellationToken) => store.QueryAsync(AuthStore.SigningKeyCollection, instanceId, [], cancellationToken));
-    private readonly Reads published = new((instanceId, cancellationToken) => store.QueryLocalAsync(AuthStore.SigningKeyCollection, instanceId, cancellationToken));
+    private readonly Reads authority = new((instanceId, cancellationToken) => store.QueryAsync(AuthStore.SigningKeyTable, instanceId, [], cancellationToken));
+    private readonly Reads published = new((instanceId, cancellationToken) => store.QueryLocalAsync(AuthStore.SigningKeyTable, instanceId, cancellationToken));
     private readonly ConcurrentDictionary<string, Lazy<Task<Snapshot>>> pendingFirstKeys = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, long> unknownKeyReads = new(StringComparer.Ordinal);
 
@@ -258,7 +258,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         {
             var version = current.Keys.First(stored => stored.Key.Id == record.Id).Version;
             // False: another replica retired it first.
-            _ = await Guard(() => store.CompareAndDeleteAsync(AuthStore.SigningKeyCollection, instanceId, record.Id, version, cancellationToken), cancellationToken).ConfigureAwait(false);
+            _ = await Guard(() => store.CompareAndDeleteAsync(AuthStore.SigningKeyTable, instanceId, record.Id, version, cancellationToken), cancellationToken).ConfigureAwait(false);
         }
 
         var key = await this.CreateAsync(instanceId, scheduled ? Overlap : this.refreshInterval, cancellationToken).ConfigureAwait(false);
@@ -324,14 +324,14 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
             var record = JsonSerializer.SerializeToElement(this.Seal(instanceId, key, now.ToUnixTimeSeconds(), activatesAt));
             if (instanceId == OidcIssuer.InstanceId)
             {
-                await Guard(() => store.CreateAsync(AuthStore.SigningKeyCollection, instanceId, key.KeyId, record, cancellationToken), cancellationToken).ConfigureAwait(false);
+                await Guard(() => store.CreateAsync(AuthStore.SigningKeyTable, instanceId, key.KeyId, record, cancellationToken), cancellationToken).ConfigureAwait(false);
             }
             // A project tenant's key is stored only while its project exists at the authority, checked in the same
             // transaction: a copy that still lists a deleted project never adds a key for it.
             else if (await Guard(() => store.TransactAsync(
             [
-                AuthStore.Require(AuthStore.ProjectCollection, OidcIssuer.InstanceId, instanceId, PlatformDirectory.Filter("exists", "/id")),
-                AuthStore.Create(AuthStore.SigningKeyCollection, instanceId, key.KeyId, record),
+                AuthStore.Require(AuthStore.ProjectTable, OidcIssuer.InstanceId, instanceId, PlatformDirectory.Filter("exists", "/id")),
+                AuthStore.Create(AuthStore.SigningKeyTable, instanceId, key.KeyId, record),
             ], cancellationToken), cancellationToken).ConfigureAwait(false) is int failed)
             {
                 throw failed == 0 ? new ApiException(404, "not_found", "The project does not exist.") : ApiException.Unavailable();
@@ -355,7 +355,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         if (fresh)
         {
             var read = source.Cached[instanceId] = await this.LoadAsync(source, instanceId, cancellationToken).ConfigureAwait(false);
-            // Successful provisioning supersedes an earlier readiness read before the collections existed.
+            // Successful provisioning supersedes an earlier readiness read before the tables existed.
             source.Failed.TryRemove(instanceId, out _);
             return this.Current(read);
         }
@@ -405,22 +405,22 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     {
         var sent = clock.GetTimestamp();
         var keys = new List<(SigningKey Key, string Version)>();
-        await foreach (var document in source.Query(instanceId, cancellationToken).ConfigureAwait(false))
+        await foreach (var record in source.Query(instanceId, cancellationToken).ConfigureAwait(false))
         {
-            var key = document.Document.Deserialize<SigningKey>() ?? throw new JsonException("A signing key document is empty.");
+            var key = record.Body.Deserialize<SigningKey>() ?? throw new JsonException("A signing key record is empty.");
             // A key copied to another address, as a storage writer could, is never served.
-            if (keys.Count >= MaxKeys || key.InstanceId != instanceId || document.Id != AuthStore.NaturalKeyId(instanceId, AuthStore.SigningKeyCollection, key.Id))
+            if (keys.Count >= MaxKeys || key.InstanceId != instanceId || record.Id != AuthStore.NaturalKeyId(instanceId, AuthStore.SigningKeyTable, key.Id))
             {
                 throw new CryptographicException("The instance's signing keys have an invalid count or address.");
             }
 
-            keys.Add((key, document.Version));
+            keys.Add((key, record.Version));
         }
 
         return new Snapshot(keys, sent);
     }, cancellationToken);
 
-    // Storage failures, malformed documents included, fail closed with 503; tampering found later answers 500.
+    // Storage failures, malformed records included, fail closed with 503; tampering found later answers 500.
     private static async Task<T> Guard<T>(Func<Task<T>> operation, CancellationToken cancellationToken)
     {
         try
@@ -594,9 +594,9 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     private sealed record Snapshot(IReadOnlyList<(SigningKey Key, string Version)> Keys, long Sent);
 
     // One source's reads by instance: the last snapshot, the read in flight and when a read last failed.
-    private sealed class Reads(Func<string, CancellationToken, IAsyncEnumerable<StoredDocument>> query)
+    private sealed class Reads(Func<string, CancellationToken, IAsyncEnumerable<StoredRow>> query)
     {
-        public Func<string, CancellationToken, IAsyncEnumerable<StoredDocument>> Query { get; } = query;
+        public Func<string, CancellationToken, IAsyncEnumerable<StoredRow>> Query { get; } = query;
 
         public ConcurrentDictionary<string, Snapshot> Cached { get; } = new(StringComparer.Ordinal);
 

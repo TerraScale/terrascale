@@ -19,83 +19,83 @@ internal sealed record ClosureMark(string Generation, DateTimeOffset? CommittedA
 
 public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
 {
-    private readonly SqlDocuments sql = new(local);
+    private readonly SqlRecords sql = new(local);
 
     public const int MaxCredentialBindings = 64;
 
-    public const string UniqueCollection = "uniques";
+    public const string UniqueTable = "uniques";
 
-    public const string ChallengeCollection = "verification_tokens";
+    public const string ChallengeTable = "verification_tokens";
 
-    public const string HealthCollection = "storage_health";
+    public const string HealthTable = "storage_health";
 
-    public const string UserCollection = "users";
+    public const string UserTable = "users";
 
-    public const string SessionCollection = "sessions";
+    public const string SessionTable = "sessions";
 
-    public const string PasscodeCollection = "passcodes";
+    public const string PasscodeTable = "passcodes";
 
-    public const string MfaCollection = "mfa_credentials";
+    public const string MfaTable = "mfa_credentials";
 
-    public const string OidcApplicationCollection = "oidc_applications";
+    public const string OidcApplicationTable = "oidc_applications";
 
-    public const string OidcAuthorizationCollection = "oidc_authorizations";
+    public const string OidcAuthorizationTable = "oidc_authorizations";
 
-    public const string OidcTokenCollection = "oidc_tokens";
+    public const string OidcTokenTable = "oidc_tokens";
 
-    public const string OrganizationCollection = "organizations";
+    public const string OrganizationTable = "organizations";
 
-    public const string MembershipCollection = "memberships";
+    public const string MembershipTable = "memberships";
 
-    public const string ProjectCollection = "projects";
+    public const string ProjectTable = "projects";
 
-    public const string ProjectMemberCollection = "project_members";
+    public const string ProjectMemberTable = "project_members";
 
-    public const string ApiKeyCollection = "api_keys";
+    public const string ApiKeyTable = "api_keys";
 
-    public const string ApiKeyUsageCollection = "api_key_usage";
+    public const string ApiKeyUsageTable = "api_key_usage";
 
-    public const string InvitationCollection = "invitations";
+    public const string InvitationTable = "invitations";
 
-    public const string SigningKeyCollection = "signing_keys";
+    public const string SigningKeyTable = "signing_keys";
 
-    public const string DeletionJobCollection = "deletion_jobs";
+    public const string DeletionJobTable = "deletion_jobs";
 
-    public const string DashboardDeletionCursorCollection = "dashboard_deletion_cursors";
+    public const string DashboardDeletionCursorTable = "dashboard_deletion_cursors";
 
-    public const string AccountDeletionReceiptCollection = "account_deletion_receipts";
+    public const string AccountDeletionReceiptTable = "account_deletion_receipts";
 
-    public const string StepUpProofCollection = "step_up_proofs";
+    public const string StepUpProofTable = "step_up_proofs";
 
-    public const string StepUpDeletionGrantCollection = "step_up_deletion_grants";
+    public const string StepUpDeletionGrantTable = "step_up_deletion_grants";
 
-    public const string StepUpPasscodeCollection = "step_up_passcodes";
+    public const string StepUpPasscodeTable = "step_up_passcodes";
 
-    public const string EmailChangeCollection = "email_changes";
+    public const string EmailChangeTable = "email_changes";
 
-    public const string ClosureJobCollection = "closure_jobs";
+    public const string ClosureJobTable = "closure_jobs";
 
-    public const string ClosureCancellationCollection = "closure_cancellations";
+    public const string ClosureCancellationTable = "closure_cancellations";
 
-    public const string ClosureCommitCollection = "closure_commits";
+    public const string ClosureCommitTable = "closure_commits";
 
-    public const string AuditEventCollection = "audit_events";
+    public const string AuditEventTable = "audit_events";
 
-    public const string ProjectAuthSettingsCollection = "project_auth_settings";
+    public const string ProjectAuthSettingsTable = "project_auth_settings";
 
-    public const string MailOutboxCollection = "auth_mail_outbox";
+    public const string MailOutboxTable = "auth_mail_outbox";
 
-    public const string OrganizationSsoCollection = "organization_sso";
+    public const string OrganizationSsoTable = "organization_sso";
 
-    public static IReadOnlyList<string> RequiredCollections { get; } =
+    public static IReadOnlyList<string> RequiredTables { get; } =
     [
-        UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
-        SigningKeyCollection, OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
+        UniqueTable, ChallengeTable, HealthTable, UserTable, SessionTable, PasscodeTable,
+        SigningKeyTable, OidcApplicationTable, OidcAuthorizationTable, OidcTokenTable,
         "email_admission", "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries", "email_alert_deliveries", "email_support_deliveries",
-        OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
-        InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, DashboardDeletionCursorCollection, ClosureJobCollection,
-        ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection, OrganizationSsoCollection, AccountDeletionReceiptCollection,
-        StepUpProofCollection, StepUpDeletionGrantCollection, StepUpPasscodeCollection, EmailChangeCollection, MailOutboxCollection,
+        OrganizationTable, MembershipTable, ProjectTable, ProjectMemberTable, ApiKeyTable, ApiKeyUsageTable,
+        InvitationTable, AuditEventTable, MfaTable, DeletionJobTable, DashboardDeletionCursorTable, ClosureJobTable,
+        ClosureCancellationTable, ClosureCommitTable, ProjectAuthSettingsTable, OrganizationSsoTable, AccountDeletionReceiptTable,
+        StepUpProofTable, StepUpDeletionGrantTable, StepUpPasscodeTable, EmailChangeTable, MailOutboxTable,
     ];
 
     private static readonly TerraScaleIdGenerator Ids = new();
@@ -104,7 +104,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
-    public Task ProvisionAsync(CancellationToken cancellationToken = default) => this.sql.ProvisionAsync(RequiredCollections, cancellationToken);
+    public Task ProvisionAsync(CancellationToken cancellationToken = default) => this.sql.ProvisionAsync(RequiredTables, cancellationToken);
 
     public static string NaturalKeyId(string instanceId, string kind, string key)
     {
@@ -122,41 +122,41 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         return email.Trim().ToLowerInvariant();
     }
 
-    public Task<StoredDocument?> GetAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
-        AuthStorageTelemetry.ReadAsync(collection, "get", () => this.sql.GetAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken));
+    public Task<StoredRow?> GetAsync(string table, string instanceId, string key, CancellationToken cancellationToken = default) =>
+        AuthStorageTelemetry.ReadAsync(table, "get", () => this.sql.GetAsync(table, NaturalKeyId(instanceId, table, key), cancellationToken));
 
-    public Task<StoredDocument?> GetLocalAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
-        this.GetAsync(collection, instanceId, key, cancellationToken);
+    public Task<StoredRow?> GetLocalAsync(string table, string instanceId, string key, CancellationToken cancellationToken = default) =>
+        this.GetAsync(table, instanceId, key, cancellationToken);
 
     public async Task<string> CancelAccountClosureAsync(ClosureJob job, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(job);
         var generation = job.Generation ?? throw new InvalidOperationException("An account closure needs a generation.");
-        var jobId = NaturalKeyId(job.InstanceId, ClosureJobCollection, ClosureJob.Key("account", job.SubjectId));
+        var jobId = NaturalKeyId(job.InstanceId, ClosureJobTable, ClosureJob.Key("account", job.SubjectId));
         for (var attempt = 0; attempt < 4; attempt++)
         {
-            if (await this.sql.GetAsync(ClosureCommitCollection, generation, cancellationToken).ConfigureAwait(false) is not null)
+            if (await this.sql.GetAsync(ClosureCommitTable, generation, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return "committed";
             }
 
-            var current = await this.sql.GetAsync(ClosureJobCollection, jobId, cancellationToken).ConfigureAwait(false);
-            var live = current?.Document.Deserialize(ClosureJson.Default.ClosureJob) is { } stored && stored.Generation == generation ? stored : null;
+            var current = await this.sql.GetAsync(ClosureJobTable, jobId, cancellationToken).ConfigureAwait(false);
+            var live = current?.Body.Deserialize(ClosureJson.Default.ClosureJob) is { } stored && stored.Generation == generation ? stored : null;
             if (live?.CommittedAt is not null)
             {
                 return "committed";
             }
 
-            List<SqlWrite> operations = [SqlWrite.AssertAbsent(ClosureCommitCollection, generation)];
-            if (await this.sql.GetAsync(ClosureCancellationCollection, generation, cancellationToken).ConfigureAwait(false) is null)
+            List<SqlWrite> operations = [SqlWrite.AssertAbsent(ClosureCommitTable, generation)];
+            if (await this.sql.GetAsync(ClosureCancellationTable, generation, cancellationToken).ConfigureAwait(false) is null)
             {
-                operations.Add(SqlWrite.Create(ClosureCancellationCollection,
+                operations.Add(SqlWrite.Create(ClosureCancellationTable,
                     JsonSerializer.SerializeToElement(new ClosureMark(generation), StoreJsonContext.Default.ClosureMark), generation));
             }
 
             if (live is not null)
             {
-                operations.Add(SqlWrite.Delete(ClosureJobCollection, jobId, current!.Version));
+                operations.Add(SqlWrite.Delete(ClosureJobTable, jobId, current!.Version));
             }
 
             if (await this.sql.WriteAsync(operations, null, cancellationToken).ConfigureAwait(false) is not null)
@@ -169,12 +169,12 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
     }
 
     public async Task<bool> IsClosureCancellingAsync(ClosureJob job, CancellationToken cancellationToken = default) =>
-        job.Generation is { } generation && await this.sql.GetAsync(ClosureCancellationCollection, generation, cancellationToken).ConfigureAwait(false) is not null;
+        job.Generation is { } generation && await this.sql.GetAsync(ClosureCancellationTable, generation, cancellationToken).ConfigureAwait(false) is not null;
 
     public async Task<DateTimeOffset?> ClosureCommittedAtAsync(ClosureJob job, CancellationToken cancellationToken = default)
     {
-        var mark = job.Generation is { } generation ? await this.sql.GetAsync(ClosureCommitCollection, generation, cancellationToken).ConfigureAwait(false) : null;
-        return mark?.Document.Deserialize(StoreJsonContext.Default.ClosureMark)?.CommittedAt;
+        var mark = job.Generation is { } generation ? await this.sql.GetAsync(ClosureCommitTable, generation, cancellationToken).ConfigureAwait(false) : null;
+        return mark?.Body.Deserialize(StoreJsonContext.Default.ClosureMark)?.CommittedAt;
     }
 
     public async Task<string?> CommitAccountClosureAsync(ClosureJob job, string version, CancellationToken cancellationToken = default)
@@ -187,38 +187,38 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
 
         var versions = await this.sql.WriteAsync(
         [
-            SqlWrite.Put(ClosureJobCollection, NaturalKeyId(job.InstanceId, ClosureJobCollection, ClosureJob.Key("account", job.SubjectId)),
+            SqlWrite.Put(ClosureJobTable, NaturalKeyId(job.InstanceId, ClosureJobTable, ClosureJob.Key("account", job.SubjectId)),
                 JsonSerializer.SerializeToElement(job, ClosureJson.Default.ClosureJob), version),
-            SqlWrite.Create(ClosureCommitCollection, JsonSerializer.SerializeToElement(new ClosureMark(generation, job.CommittedAt), StoreJsonContext.Default.ClosureMark), generation),
-            SqlWrite.AssertAbsent(ClosureCancellationCollection, generation),
+            SqlWrite.Create(ClosureCommitTable, JsonSerializer.SerializeToElement(new ClosureMark(generation, job.CommittedAt), StoreJsonContext.Default.ClosureMark), generation),
+            SqlWrite.AssertAbsent(ClosureCancellationTable, generation),
         ], null, cancellationToken).ConfigureAwait(false);
         return versions?[0];
     }
 
-    public Task<IReadOnlyList<StoredDocument>> QueryAsync(string collection, JsonElement filter, int limit, CancellationToken cancellationToken = default) =>
-        this.QueryAsync(collection, filter, limit, null, cancellationToken);
+    public Task<IReadOnlyList<StoredRow>> QueryAsync(string table, JsonElement filter, int limit, CancellationToken cancellationToken = default) =>
+        this.QueryAsync(table, filter, limit, null, cancellationToken);
 
-    public async Task<IReadOnlyList<StoredDocument>> QueryAsync(string collection, JsonElement filter, int limit, IReadOnlyList<StoreSort>? sort, CancellationToken cancellationToken = default) =>
-        (await AuthStorageTelemetry.ReadAsync(collection, "query", () => this.sql.QueryAsync(collection, null, filter, sort, limit, null, false, cancellationToken)).ConfigureAwait(false)).Items;
+    public async Task<IReadOnlyList<StoredRow>> QueryAsync(string table, JsonElement filter, int limit, IReadOnlyList<StoreSort>? sort, CancellationToken cancellationToken = default) =>
+        (await AuthStorageTelemetry.ReadAsync(table, "query", () => this.sql.QueryAsync(table, null, filter, sort, limit, null, false, cancellationToken)).ConfigureAwait(false)).Items;
 
-    public async Task<long> CountAsync(string collection, string instanceId, CancellationToken cancellationToken = default) =>
-        (await this.sql.QueryAsync(collection, instanceId, null, null, 1, null, true, cancellationToken).ConfigureAwait(false)).Count ?? 0;
+    public async Task<long> CountAsync(string table, string instanceId, CancellationToken cancellationToken = default) =>
+        (await this.sql.QueryAsync(table, instanceId, null, null, 1, null, true, cancellationToken).ConfigureAwait(false)).Count ?? 0;
 
-    public Task<StoreWrite> CreateAsync(string collection, string instanceId, string key, JsonElement record, CancellationToken cancellationToken = default)
+    public Task<StoreWrite> CreateAsync(string table, string instanceId, string key, JsonElement record, CancellationToken cancellationToken = default)
     {
-        RequireEntityCollection(collection);
-        return this.WriteFencedAsync(SqlWrite.Create(collection, record, NaturalKeyId(instanceId, collection, key)), cancellationToken);
+        RequireEntityTable(table);
+        return this.WriteFencedAsync(SqlWrite.Create(table, record, NaturalKeyId(instanceId, table, key)), cancellationToken);
     }
 
-    public async Task<bool> CompareAndPutAsync(string collection, string instanceId, string key, JsonElement record, string expectedVersion, CancellationToken cancellationToken = default) =>
-        await this.ReplaceAsync(collection, instanceId, key, record, expectedVersion, cancellationToken).ConfigureAwait(false) is not null;
+    public async Task<bool> CompareAndPutAsync(string table, string instanceId, string key, JsonElement record, string expectedVersion, CancellationToken cancellationToken = default) =>
+        await this.ReplaceAsync(table, instanceId, key, record, expectedVersion, cancellationToken).ConfigureAwait(false) is not null;
 
-    public async Task<string?> ReplaceAsync(string collection, string instanceId, string key, JsonElement record, string expectedVersion, CancellationToken cancellationToken = default)
+    public async Task<string?> ReplaceAsync(string table, string instanceId, string key, JsonElement record, string expectedVersion, CancellationToken cancellationToken = default)
     {
-        RequireEntityCollection(collection);
+        RequireEntityTable(table);
         try
         {
-            return (await this.WriteFencedAsync(SqlWrite.Put(collection, NaturalKeyId(instanceId, collection, key), record, expectedVersion), cancellationToken).ConfigureAwait(false)).Version;
+            return (await this.WriteFencedAsync(SqlWrite.Put(table, NaturalKeyId(instanceId, table, key), record, expectedVersion), cancellationToken).ConfigureAwait(false)).Version;
         }
         catch (StorePreconditionFailedException)
         {
@@ -226,16 +226,16 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         }
     }
 
-    public async Task<string?> ReplaceClaimedAsync(string collection, string instanceId, string key, JsonElement record, string expectedVersion, string kind, string normalizedKey, CancellationToken cancellationToken = default)
+    public async Task<string?> ReplaceClaimedAsync(string table, string instanceId, string key, JsonElement record, string expectedVersion, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        RequireEntityCollection(collection);
+        RequireEntityTable(table);
         var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, key), StoreJsonContext.Default.UniqueClaim);
         try
         {
             return (await this.TransactFencedAsync(
             [
-                SqlWrite.Put(collection, NaturalKeyId(instanceId, collection, key), record, expectedVersion),
-                SqlWrite.Create(UniqueCollection, claim, NaturalKeyId(instanceId, kind, normalizedKey)),
+                SqlWrite.Put(table, NaturalKeyId(instanceId, table, key), record, expectedVersion),
+                SqlWrite.Create(UniqueTable, claim, NaturalKeyId(instanceId, kind, normalizedKey)),
             ], cancellationToken).ConfigureAwait(false))[0];
         }
         catch (StorePreconditionFailedException error) when (error.OperationIndex == 0)
@@ -244,17 +244,17 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         }
     }
 
-    public async Task<bool> CommitVersionAsync(string collection, string instanceId, string key, JsonElement record, string? expectedVersion, string historyCollection, string historyKey, CancellationToken cancellationToken = default)
+    public async Task<bool> CommitVersionAsync(string table, string instanceId, string key, JsonElement record, string? expectedVersion, string historyTable, string historyKey, CancellationToken cancellationToken = default)
     {
-        RequireEntityCollection(collection);
-        RequireEntityCollection(historyCollection);
-        var id = NaturalKeyId(instanceId, collection, key);
+        RequireEntityTable(table);
+        RequireEntityTable(historyTable);
+        var id = NaturalKeyId(instanceId, table, key);
         try
         {
             await this.TransactFencedAsync(
             [
-                expectedVersion is null ? SqlWrite.Create(collection, record, id) : SqlWrite.Put(collection, id, record, expectedVersion),
-                SqlWrite.Create(historyCollection, record, NaturalKeyId(instanceId, historyCollection, historyKey)),
+                expectedVersion is null ? SqlWrite.Create(table, record, id) : SqlWrite.Put(table, id, record, expectedVersion),
+                SqlWrite.Create(historyTable, record, NaturalKeyId(instanceId, historyTable, historyKey)),
             ], cancellationToken).ConfigureAwait(false);
             return true;
         }
@@ -264,16 +264,16 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         }
     }
 
-    public IAsyncEnumerable<StoredDocument> QueryAsync(string collection, string instanceId, string field, string value, CancellationToken cancellationToken = default) =>
-        this.QueryAsync(collection, instanceId, [(field, value)], cancellationToken);
+    public IAsyncEnumerable<StoredRow> QueryAsync(string table, string instanceId, string field, string value, CancellationToken cancellationToken = default) =>
+        this.QueryAsync(table, instanceId, [(field, value)], cancellationToken);
 
-    public IAsyncEnumerable<StoredDocument> QueryAsync(string collection, string instanceId, IReadOnlyList<(string Field, string Value)> equals, CancellationToken cancellationToken = default) =>
-        this.ScanAsync(collection, instanceId, equals, cancellationToken);
+    public IAsyncEnumerable<StoredRow> QueryAsync(string table, string instanceId, IReadOnlyList<(string Field, string Value)> equals, CancellationToken cancellationToken = default) =>
+        this.ScanAsync(table, instanceId, equals, cancellationToken);
 
-    public IAsyncEnumerable<StoredDocument> QueryLocalAsync(string collection, string instanceId, CancellationToken cancellationToken = default) =>
-        this.ScanAsync(collection, instanceId, [], cancellationToken);
+    public IAsyncEnumerable<StoredRow> QueryLocalAsync(string table, string instanceId, CancellationToken cancellationToken = default) =>
+        this.ScanAsync(table, instanceId, [], cancellationToken);
 
-    private async IAsyncEnumerable<StoredDocument> ScanAsync(string collection, string instanceId, IReadOnlyList<(string Field, string Value)> equals, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private async IAsyncEnumerable<StoredRow> ScanAsync(string table, string instanceId, IReadOnlyList<(string Field, string Value)> equals, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(equals);
         ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
@@ -292,7 +292,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         string? cursor = null;
         do
         {
-            var page = await this.sql.QueryAsync(collection, instanceId, filter, null, 100, cursor, false, cancellationToken).ConfigureAwait(false);
+            var page = await this.sql.QueryAsync(table, instanceId, filter, null, 100, cursor, false, cancellationToken).ConfigureAwait(false);
             foreach (var item in page.Items)
             {
                 yield return item;
@@ -303,10 +303,10 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         while (cursor is not null);
     }
 
-    public async Task<bool> CompareAndDeleteAsync(string collection, string instanceId, string key, string expectedVersion, CancellationToken cancellationToken = default)
+    public async Task<bool> CompareAndDeleteAsync(string table, string instanceId, string key, string expectedVersion, CancellationToken cancellationToken = default)
     {
-        RequireEntityCollection(collection);
-        return await this.sql.WriteAsync([SqlWrite.Delete(collection, NaturalKeyId(instanceId, collection, key), expectedVersion)], null, cancellationToken).ConfigureAwait(false) is not null;
+        RequireEntityTable(table);
+        return await this.sql.WriteAsync([SqlWrite.Delete(table, NaturalKeyId(instanceId, table, key), expectedVersion)], null, cancellationToken).ConfigureAwait(false) is not null;
     }
 
     public async Task<bool> RetireDeletionFenceAsync(DeletionJob job, string expectedVersion, CancellationToken cancellationToken = default)
@@ -317,7 +317,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
             return false;
         }
 
-        return await this.sql.WriteAsync([SqlWrite.Delete(DeletionJobCollection, NaturalKeyId(job.InstanceId, DeletionJobCollection, job.Id), expectedVersion)], null, cancellationToken).ConfigureAwait(false) is not null;
+        return await this.sql.WriteAsync([SqlWrite.Delete(DeletionJobTable, NaturalKeyId(job.InstanceId, DeletionJobTable, job.Id), expectedVersion)], null, cancellationToken).ConfigureAwait(false) is not null;
     }
 
     public async Task<bool> ClaimUniqueAsync(string instanceId, string kind, string normalizedKey, string ownerId, CancellationToken cancellationToken = default)
@@ -326,7 +326,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         var record = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, ownerId), StoreJsonContext.Default.UniqueClaim);
         try
         {
-            await this.WriteFencedAsync(SqlWrite.Create(UniqueCollection, record, NaturalKeyId(instanceId, kind, normalizedKey)), cancellationToken).ConfigureAwait(false);
+            await this.WriteFencedAsync(SqlWrite.Create(UniqueTable, record, NaturalKeyId(instanceId, kind, normalizedKey)), cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (StorePreconditionFailedException)
@@ -335,16 +335,16 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         }
     }
 
-    public async Task<bool> CreateClaimedAsync(string collection, string instanceId, string key, JsonElement record, string kind, string normalizedKey, CancellationToken cancellationToken = default)
+    public async Task<bool> CreateClaimedAsync(string table, string instanceId, string key, JsonElement record, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        RequireEntityCollection(collection);
+        RequireEntityTable(table);
         var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, key), StoreJsonContext.Default.UniqueClaim);
         try
         {
             await this.TransactFencedAsync(
             [
-                SqlWrite.Create(UniqueCollection, claim, NaturalKeyId(instanceId, kind, normalizedKey)),
-                SqlWrite.Create(collection, record, NaturalKeyId(instanceId, collection, key)),
+                SqlWrite.Create(UniqueTable, claim, NaturalKeyId(instanceId, kind, normalizedKey)),
+                SqlWrite.Create(table, record, NaturalKeyId(instanceId, table, key)),
             ], cancellationToken).ConfigureAwait(false);
             return true;
         }
@@ -365,19 +365,19 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
             return false;
         }
 
-        return await this.sql.WriteAsync([SqlWrite.Delete(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), found.Version)], null, cancellationToken).ConfigureAwait(false) is not null;
+        return await this.sql.WriteAsync([SqlWrite.Delete(UniqueTable, NaturalKeyId(instanceId, kind, normalizedKey), found.Version)], null, cancellationToken).ConfigureAwait(false) is not null;
     }
 
     public async Task<int?> TransactAsync(IReadOnlyList<StoreOperation> operations, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operations);
         var pinned = operations.Where(operation => operation.Operation.IfMatch is not null)
-            .ToDictionary(operation => (operation.Operation.Collection, operation.Operation.Id), operation => operation.Operation.IfMatch);
+            .ToDictionary(operation => (operation.Operation.Table, operation.Operation.Id), operation => operation.Operation.IfMatch);
         var sent = new List<(SqlWrite Operation, int Index)>();
         for (var index = 0; index < operations.Count; index++)
         {
             var operation = operations[index];
-            if (operation.Operation.Op == "assert" && pinned.TryGetValue((operation.Operation.Collection, operation.Operation.Id), out var version))
+            if (operation.Operation.Op == "assert" && pinned.TryGetValue((operation.Operation.Table, operation.Operation.Id), out var version))
             {
                 if (operation.CheckedVersion is null)
                 {
@@ -403,7 +403,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
             var revokes = operations[index].Revokes;
             foreach (var fence in DeletionFences(operation).Concat(revokes ? Enumerable.Empty<SqlWrite>() : ClosureFences(operation)))
             {
-                if (fenceIds.Add((fence.Collection, fence.Id)))
+                if (fenceIds.Add((fence.Table, fence.Id)))
                 {
                     sent.Add((fence, index));
                 }
@@ -415,56 +415,56 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         return versions is null ? failed : null;
     }
 
-    public static StoreOperation Create(string collection, string instanceId, string key, JsonElement record)
+    public static StoreOperation Create(string table, string instanceId, string key, JsonElement record)
     {
-        RequireEntityCollection(collection);
-        return new(SqlWrite.Create(collection, record, NaturalKeyId(instanceId, collection, key)));
+        RequireEntityTable(table);
+        return new(SqlWrite.Create(table, record, NaturalKeyId(instanceId, table, key)));
     }
 
-    public static StoreOperation Replace(string collection, string instanceId, string key, JsonElement record, string version)
+    public static StoreOperation Replace(string table, string instanceId, string key, JsonElement record, string version)
     {
-        RequireEntityCollection(collection);
+        RequireEntityTable(table);
         ArgumentException.ThrowIfNullOrEmpty(version);
-        return new(SqlWrite.Put(collection, NaturalKeyId(instanceId, collection, key), record, version));
+        return new(SqlWrite.Put(table, NaturalKeyId(instanceId, table, key), record, version));
     }
 
-    public static StoreOperation Delete(string collection, string instanceId, string key, string version)
+    public static StoreOperation Delete(string table, string instanceId, string key, string version)
     {
-        RequireEntityCollection(collection);
+        RequireEntityTable(table);
         ArgumentException.ThrowIfNullOrEmpty(version);
-        return new(SqlWrite.Delete(collection, NaturalKeyId(instanceId, collection, key), version));
+        return new(SqlWrite.Delete(table, NaturalKeyId(instanceId, table, key), version));
     }
 
-    public static StoreOperation Absent(string collection, string instanceId, string key)
+    public static StoreOperation Absent(string table, string instanceId, string key)
     {
-        RequireEntityCollection(collection);
-        return new(SqlWrite.AssertAbsent(collection, NaturalKeyId(instanceId, collection, key)));
+        RequireEntityTable(table);
+        return new(SqlWrite.AssertAbsent(table, NaturalKeyId(instanceId, table, key)));
     }
 
-    public static StoreOperation Require(string collection, string instanceId, string key, JsonElement filter, string? checkedVersion = null)
+    public static StoreOperation Require(string table, string instanceId, string key, JsonElement filter, string? checkedVersion = null)
     {
-        RequireEntityCollection(collection);
-        return new(SqlWrite.Assert(collection, NaturalKeyId(instanceId, collection, key), filter)) { CheckedVersion = checkedVersion };
+        RequireEntityTable(table);
+        return new(SqlWrite.Assert(table, NaturalKeyId(instanceId, table, key), filter)) { CheckedVersion = checkedVersion };
     }
 
-    public Task<StoredPage> PageAsync(string collection, string instanceId, IReadOnlyList<JsonObject> conditions, IReadOnlyList<string> sort, int limit, string? cursor, bool descending = false, CancellationToken cancellationToken = default)
+    public Task<StoredPage> PageAsync(string table, string instanceId, IReadOnlyList<JsonObject> conditions, IReadOnlyList<string> sort, int limit, string? cursor, bool descending = false, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(conditions);
         ArgumentNullException.ThrowIfNull(sort);
         ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
         JsonElement? filter = conditions.Count == 0 ? null
             : JsonSerializer.SerializeToElement(new JsonObject { ["and"] = new JsonArray([.. conditions.Select(condition => condition.DeepClone())]) });
-        return this.sql.QueryAsync(collection, instanceId, filter, [.. sort.Select(path => new StoreSort(path, descending ? "desc" : null))], limit, cursor, false, cancellationToken);
+        return this.sql.QueryAsync(table, instanceId, filter, [.. sort.Select(path => new StoreSort(path, descending ? "desc" : null))], limit, cursor, false, cancellationToken);
     }
 
-    public Task<StoredPage> PageAsync(string collection, JsonElement filter, int limit, string? cursor, CancellationToken cancellationToken = default) =>
-        this.sql.QueryAsync(collection, null, filter, null, limit, cursor, false, cancellationToken);
+    public Task<StoredPage> PageAsync(string table, JsonElement filter, int limit, string? cursor, CancellationToken cancellationToken = default) =>
+        this.sql.QueryAsync(table, null, filter, null, limit, cursor, false, cancellationToken);
 
     public static StoreOperation Claim(string instanceId, string kind, string normalizedKey, string ownerId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
         var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, ownerId), StoreJsonContext.Default.UniqueClaim);
-        return new(SqlWrite.Create(UniqueCollection, claim, NaturalKeyId(instanceId, kind, normalizedKey)));
+        return new(SqlWrite.Create(UniqueTable, claim, NaturalKeyId(instanceId, kind, normalizedKey)));
     }
 
     public static StoreOperation Reclaim(string instanceId, string kind, string normalizedKey, string ownerId, string version)
@@ -472,21 +472,21 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
         ArgumentException.ThrowIfNullOrEmpty(version);
         var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, ownerId), StoreJsonContext.Default.UniqueClaim);
-        return new(SqlWrite.Put(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), claim, version));
+        return new(SqlWrite.Put(UniqueTable, NaturalKeyId(instanceId, kind, normalizedKey), claim, version));
     }
 
     public static StoreOperation Release(string instanceId, string kind, string normalizedKey, string version)
     {
         ArgumentException.ThrowIfNullOrEmpty(version);
-        return new(SqlWrite.Delete(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), version));
+        return new(SqlWrite.Delete(UniqueTable, NaturalKeyId(instanceId, kind, normalizedKey), version));
     }
 
     public async Task<(string OwnerId, string Version)?> FindUniqueAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        var document = await AuthStorageTelemetry.ReadAsync(UniqueCollection, "get", () => this.sql.GetAsync(UniqueCollection,
+        var record = await AuthStorageTelemetry.ReadAsync(UniqueTable, "get", () => this.sql.GetAsync(UniqueTable,
             NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken)).ConfigureAwait(false);
-        var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
-        return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? (claim.OwnerId, document!.Version) : null;
+        var claim = record?.Body.Deserialize(StoreJsonContext.Default.UniqueClaim);
+        return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? (claim.OwnerId, record!.Version) : null;
     }
 
     public static CredentialBinding NewCredentialBinding(string kind, string key) => new("credential:" + kind, key, NewId());
@@ -517,11 +517,11 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         List<StoreOperation> operations = [];
         foreach (var binding in bindings.Distinct())
         {
-            var (collection, id, field, value) = binding.Kind switch
+            var (table, id, field, value) = binding.Kind switch
             {
-                "credential:user-state" => (UserCollection, NaturalKeyId(instanceId, UserCollection, binding.Key), "/authStamp", binding.OwnerId),
-                "credential:authorization" when binding.OwnerId == binding.Key => (OidcAuthorizationCollection, NaturalKeyId(instanceId, OidcAuthorizationCollection, binding.Key), "/status", "valid"),
-                _ when binding.Kind.StartsWith("credential:", StringComparison.Ordinal) => (UniqueCollection, NaturalKeyId(instanceId, binding.Kind, binding.Key), "/ownerId", binding.OwnerId),
+                "credential:user-state" => (UserTable, NaturalKeyId(instanceId, UserTable, binding.Key), "/authStamp", binding.OwnerId),
+                "credential:authorization" when binding.OwnerId == binding.Key => (OidcAuthorizationTable, NaturalKeyId(instanceId, OidcAuthorizationTable, binding.Key), "/status", "valid"),
+                _ when binding.Kind.StartsWith("credential:", StringComparison.Ordinal) => (UniqueTable, NaturalKeyId(instanceId, binding.Kind, binding.Key), "/ownerId", binding.OwnerId),
                 _ => throw new ArgumentException("Invalid credential binding.", nameof(bindings)),
             };
             var filter = JsonSerializer.SerializeToElement(new JsonObject
@@ -529,7 +529,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
                 ["and"] = new JsonArray(new JsonObject { ["eq"] = new JsonArray("/instanceId", instanceId) },
                     new JsonObject { ["eq"] = new JsonArray(field, value) }),
             });
-            operations.Add(new StoreOperation(SqlWrite.Assert(collection, id, filter)));
+            operations.Add(new StoreOperation(SqlWrite.Assert(table, id, filter)));
         }
 
         return operations;
@@ -557,21 +557,21 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
     {
         if (binding.Kind == "credential:user-state")
         {
-            var user = await this.GetAsync(UserCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
-            return user is not null && user.Document.TryGetProperty("instanceId", out var scope) && scope.GetString() == instanceId
-                && user.Document.TryGetProperty("id", out var id) && id.GetString() == binding.Key
-                && user.Document.TryGetProperty("authStamp", out var stamp) && stamp.GetString() == binding.OwnerId
-                && user.Document.TryGetProperty("email", out var email) && email.GetString() is { } address
+            var user = await this.GetAsync(UserTable, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
+            return user is not null && user.Body.TryGetProperty("instanceId", out var scope) && scope.GetString() == instanceId
+                && user.Body.TryGetProperty("id", out var id) && id.GetString() == binding.Key
+                && user.Body.TryGetProperty("authStamp", out var stamp) && stamp.GetString() == binding.OwnerId
+                && user.Body.TryGetProperty("email", out var email) && email.GetString() is { } address
                 && await this.FindUniqueOwnerAsync(instanceId, "email", address, cancellationToken).ConfigureAwait(false) == binding.Key;
         }
 
         if (binding.Kind == "credential:authorization")
         {
-            var authorization = await this.GetAsync(OidcAuthorizationCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
+            var authorization = await this.GetAsync(OidcAuthorizationTable, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
             return binding.OwnerId == binding.Key && authorization is not null
-                && authorization.Document.TryGetProperty("instanceId", out var scope) && scope.GetString() == instanceId
-                && authorization.Document.TryGetProperty("id", out var id) && id.GetString() == binding.Key
-                && authorization.Document.TryGetProperty("status", out var status) && status.GetString() == "valid";
+                && authorization.Body.TryGetProperty("instanceId", out var scope) && scope.GetString() == instanceId
+                && authorization.Body.TryGetProperty("id", out var id) && id.GetString() == binding.Key
+                && authorization.Body.TryGetProperty("status", out var status) && status.GetString() == "valid";
         }
 
         return binding.Kind.StartsWith("credential:", StringComparison.Ordinal)
@@ -588,7 +588,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         }
 
         var challenge = new StoredChallenge(instanceId, purpose, tokenHash, subjectId, expiresAt);
-        await this.WriteFencedAsync(SqlWrite.Create(ChallengeCollection,
+        await this.WriteFencedAsync(SqlWrite.Create(ChallengeTable,
             JsonSerializer.SerializeToElement(challenge, StoreJsonContext.Default.StoredChallenge), NaturalKeyId(instanceId, purpose, tokenHash)), cancellationToken).ConfigureAwait(false);
     }
 
@@ -597,8 +597,8 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         ValidateTokenHash(tokenHash);
         ArgumentException.ThrowIfNullOrWhiteSpace(subjectId);
         var id = NaturalKeyId(instanceId, purpose, tokenHash);
-        var document = await this.sql.GetAsync(ChallengeCollection, id, cancellationToken).ConfigureAwait(false);
-        var challenge = document?.Document.Deserialize(StoreJsonContext.Default.StoredChallenge);
+        var record = await this.sql.GetAsync(ChallengeTable, id, cancellationToken).ConfigureAwait(false);
+        var challenge = record?.Body.Deserialize(StoreJsonContext.Default.StoredChallenge);
         if (challenge is null || challenge.Consumed || challenge.ExpiresAt <= clock.GetUtcNow()
             || challenge.InstanceId != instanceId || challenge.Purpose != purpose || challenge.TokenHash != tokenHash || challenge.SubjectId != subjectId)
         {
@@ -612,7 +612,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
             await this.TransactFencedAsync(
             [
                 CredentialClaim(instanceId, binding).Operation,
-                SqlWrite.Put(ChallengeCollection, id, JsonSerializer.SerializeToElement(consumed, StoreJsonContext.Default.StoredChallenge), document!.Version),
+                SqlWrite.Put(ChallengeTable, id, JsonSerializer.SerializeToElement(consumed, StoreJsonContext.Default.StoredChallenge), record!.Version),
             ], cancellationToken).ConfigureAwait(false);
             return challenge.ExpiresAt > clock.GetUtcNow() ? consumed : null;
         }
@@ -627,7 +627,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
 
     private async Task<IReadOnlyList<string>> TransactFencedAsync(IReadOnlyList<SqlWrite> operations, CancellationToken cancellationToken)
     {
-        var fences = operations.SelectMany(operation => DeletionFences(operation).Concat(ClosureFences(operation))).DistinctBy(operation => (operation.Collection, operation.Id));
+        var fences = operations.SelectMany(operation => DeletionFences(operation).Concat(ClosureFences(operation))).DistinctBy(operation => (operation.Table, operation.Id));
         int failed = -1;
         return await this.sql.WriteAsync([.. operations, .. fences], at => failed = at, cancellationToken).ConfigureAwait(false)
             ?? throw new StorePreconditionFailedException(failed);
@@ -635,114 +635,114 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
 
     private static IEnumerable<SqlWrite> DeletionFences(SqlWrite operation)
     {
-        if (operation.Document is not { ValueKind: JsonValueKind.Object } document
-            || !document.TryGetProperty("instanceId", out var instance) || instance.GetString() is not { } instanceId)
+        if (operation.Body is not { ValueKind: JsonValueKind.Object } record
+            || !record.TryGetProperty("instanceId", out var instance) || instance.GetString() is not { } instanceId)
         {
             yield break;
         }
 
-        (string Scope, string Field)[] references = operation.Collection switch
+        (string Scope, string Field)[] references = operation.Table switch
         {
-            UserCollection => [("account", "id")],
-            OrganizationCollection => [("organization", "id")],
-            ProjectCollection => [("organization", "organizationId"), ("project", "id")],
-            MembershipCollection => [("organization", "organizationId"), ("account", "userId")],
-            ProjectMemberCollection => [("organization", "organizationId"), ("project", "projectId"), ("account", "userId")],
-            ApiKeyCollection or ApiKeyUsageCollection or InvitationCollection => [("organization", "organizationId"), ("project", "projectId")],
-            AuditEventCollection => [("organization", "organizationId"), ("account", "actor")],
-            SessionCollection or PasscodeCollection or MfaCollection or StepUpProofCollection or StepUpDeletionGrantCollection or StepUpPasscodeCollection or EmailChangeCollection => [("account", "userId")],
-            OidcTokenCollection or OidcAuthorizationCollection => [("account", "subject")],
-            UniqueCollection => [("account", "ownerId")],
-            ChallengeCollection => [("account", "subjectId")],
+            UserTable => [("account", "id")],
+            OrganizationTable => [("organization", "id")],
+            ProjectTable => [("organization", "organizationId"), ("project", "id")],
+            MembershipTable => [("organization", "organizationId"), ("account", "userId")],
+            ProjectMemberTable => [("organization", "organizationId"), ("project", "projectId"), ("account", "userId")],
+            ApiKeyTable or ApiKeyUsageTable or InvitationTable => [("organization", "organizationId"), ("project", "projectId")],
+            AuditEventTable => [("organization", "organizationId"), ("account", "actor")],
+            SessionTable or PasscodeTable or MfaTable or StepUpProofTable or StepUpDeletionGrantTable or StepUpPasscodeTable or EmailChangeTable => [("account", "userId")],
+            OidcTokenTable or OidcAuthorizationTable => [("account", "subject")],
+            UniqueTable => [("account", "ownerId")],
+            ChallengeTable => [("account", "subjectId")],
             _ => [],
         };
         foreach (var (scope, field) in references)
         {
-            if (document.TryGetProperty(field, out var property) && property.ValueKind == JsonValueKind.String && property.GetString() is { } subjectId)
+            if (record.TryGetProperty(field, out var property) && property.ValueKind == JsonValueKind.String && property.GetString() is { } subjectId)
             {
-                yield return SqlWrite.AssertAbsent(DeletionJobCollection,
-                    NaturalKeyId(instanceId, DeletionJobCollection, DeletionJob.Key(instanceId, scope, subjectId)));
+                yield return SqlWrite.AssertAbsent(DeletionJobTable,
+                    NaturalKeyId(instanceId, DeletionJobTable, DeletionJob.Key(instanceId, scope, subjectId)));
             }
         }
     }
 
     private static IEnumerable<SqlWrite> ClosureFences(SqlWrite operation)
     {
-        if (operation.Document is not { ValueKind: JsonValueKind.Object } document
-            || !document.TryGetProperty("instanceId", out var instance) || instance.GetString() is not { } instanceId)
+        if (operation.Body is not { ValueKind: JsonValueKind.Object } record
+            || !record.TryGetProperty("instanceId", out var instance) || instance.GetString() is not { } instanceId)
         {
             yield break;
         }
 
-        if (operation.Collection == ClosureJobCollection && document.TryGetProperty("scope", out var scopeField) && scopeField.GetString() == "account"
-            && document.TryGetProperty("generation", out var generation) && generation.ValueKind == JsonValueKind.String && generation.GetString() is { } creation
-            && (!document.TryGetProperty("committedAt", out var committed) || committed.ValueKind == JsonValueKind.Null))
+        if (operation.Table == ClosureJobTable && record.TryGetProperty("scope", out var scopeField) && scopeField.GetString() == "account"
+            && record.TryGetProperty("generation", out var generation) && generation.ValueKind == JsonValueKind.String && generation.GetString() is { } creation
+            && (!record.TryGetProperty("committedAt", out var committed) || committed.ValueKind == JsonValueKind.Null))
         {
-            yield return SqlWrite.AssertAbsent(ClosureCancellationCollection, creation);
+            yield return SqlWrite.AssertAbsent(ClosureCancellationTable, creation);
         }
 
-        (string Scope, string Field)[] references = operation.Collection switch
+        (string Scope, string Field)[] references = operation.Table switch
         {
-            ProjectCollection => [("organization", "organizationId"), ("project", "id")],
-            MembershipCollection => [("organization", "organizationId"), ("account", "userId")],
-            ProjectMemberCollection => [("organization", "organizationId"), ("project", "projectId"), ("account", "userId")],
-            ApiKeyCollection => [("organization", "organizationId"), ("project", "projectId")],
-            InvitationCollection when operation.Op == "create" => [("organization", "organizationId"), ("project", "projectId")],
+            ProjectTable => [("organization", "organizationId"), ("project", "id")],
+            MembershipTable => [("organization", "organizationId"), ("account", "userId")],
+            ProjectMemberTable => [("organization", "organizationId"), ("project", "projectId"), ("account", "userId")],
+            ApiKeyTable => [("organization", "organizationId"), ("project", "projectId")],
+            InvitationTable when operation.Op == "create" => [("organization", "organizationId"), ("project", "projectId")],
             _ => [],
         };
         foreach (var (scope, field) in references)
         {
-            if (document.TryGetProperty(field, out var property) && property.ValueKind == JsonValueKind.String && property.GetString() is { } subjectId)
+            if (record.TryGetProperty(field, out var property) && property.ValueKind == JsonValueKind.String && property.GetString() is { } subjectId)
             {
-                yield return SqlWrite.AssertAbsent(ClosureJobCollection,
-                    NaturalKeyId(instanceId, ClosureJobCollection, ClosureJob.Key(scope, subjectId)));
+                yield return SqlWrite.AssertAbsent(ClosureJobTable,
+                    NaturalKeyId(instanceId, ClosureJobTable, ClosureJob.Key(scope, subjectId)));
             }
         }
     }
 
-    public async Task<bool> DeleteWithClaimsAsync(string collection, string instanceId, string key, string version, string ownerId, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteWithClaimsAsync(string table, string instanceId, string key, string version, string ownerId, CancellationToken cancellationToken = default)
     {
-        RequireEntityCollection(collection);
-        List<SqlWrite> operations = [SqlWrite.Delete(collection, NaturalKeyId(instanceId, collection, key), version)];
-        await foreach (var claim in this.QueryAsync(UniqueCollection, instanceId, "/ownerId", ownerId, cancellationToken).ConfigureAwait(false))
+        RequireEntityTable(table);
+        List<SqlWrite> operations = [SqlWrite.Delete(table, NaturalKeyId(instanceId, table, key), version)];
+        await foreach (var claim in this.QueryAsync(UniqueTable, instanceId, "/ownerId", ownerId, cancellationToken).ConfigureAwait(false))
         {
-            if (claim.Document.Deserialize(StoreJsonContext.Default.UniqueClaim) is { } value && value.InstanceId == instanceId && value.OwnerId == ownerId)
+            if (claim.Body.Deserialize(StoreJsonContext.Default.UniqueClaim) is { } value && value.InstanceId == instanceId && value.OwnerId == ownerId)
             {
                 if (operations.Count >= 100)
                 {
                     throw new InvalidOperationException("A cleanup record has more owned claims than the bounded transaction permits.");
                 }
 
-                operations.Add(SqlWrite.Delete(UniqueCollection, claim.Id, claim.Version));
+                operations.Add(SqlWrite.Delete(UniqueTable, claim.Id, claim.Version));
             }
         }
 
         return await this.sql.WriteAsync(operations, null, cancellationToken).ConfigureAwait(false) is not null;
     }
 
-    public async Task<bool> DeleteOwnedInfrastructureAsync(string collection, string instanceId, string subjectId, StoredDocument document, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteOwnedInfrastructureAsync(string table, string instanceId, string subjectId, StoredRow record, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(document);
-        var owned = collection switch
+        ArgumentNullException.ThrowIfNull(record);
+        var owned = table switch
         {
-            UniqueCollection => document.Document.Deserialize(StoreJsonContext.Default.UniqueClaim) is { } claim && claim.InstanceId == instanceId && claim.OwnerId == subjectId,
-            ChallengeCollection => document.Document.Deserialize(StoreJsonContext.Default.StoredChallenge) is { } challenge && challenge.InstanceId == instanceId && challenge.SubjectId == subjectId,
+            UniqueTable => record.Body.Deserialize(StoreJsonContext.Default.UniqueClaim) is { } claim && claim.InstanceId == instanceId && claim.OwnerId == subjectId,
+            ChallengeTable => record.Body.Deserialize(StoreJsonContext.Default.StoredChallenge) is { } challenge && challenge.InstanceId == instanceId && challenge.SubjectId == subjectId,
             _ => false,
         };
         if (!owned)
         {
-            throw new ArgumentException("The infrastructure record is outside the deletion scope.", nameof(document));
+            throw new ArgumentException("The infrastructure record is outside the deletion scope.", nameof(record));
         }
 
-        return await this.sql.WriteAsync([SqlWrite.Delete(collection, document.Id, document.Version)], null, cancellationToken).ConfigureAwait(false) is not null;
+        return await this.sql.WriteAsync([SqlWrite.Delete(table, record.Id, record.Version)], null, cancellationToken).ConfigureAwait(false) is not null;
     }
 
-    private static void RequireEntityCollection(string collection)
+    private static void RequireEntityTable(string table)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(collection);
-        if (collection is UniqueCollection or ChallengeCollection or HealthCollection)
+        ArgumentException.ThrowIfNullOrWhiteSpace(table);
+        if (table is UniqueTable or ChallengeTable or HealthTable)
         {
-            throw new ArgumentException("Infrastructure records require their dedicated operations.", nameof(collection));
+            throw new ArgumentException("Infrastructure records require their dedicated operations.", nameof(table));
         }
     }
 

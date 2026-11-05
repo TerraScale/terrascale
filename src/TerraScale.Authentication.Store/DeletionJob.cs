@@ -37,10 +37,10 @@ public sealed record DeletionJob(
     public static readonly TimeSpan CredentialBound = TimeSpan.FromDays(15);
 
     /// <summary>
-    /// The fence's document id in the auth database (a natural-key hash). TerraBase never stores it: it reads it from the auth
-    /// request document <see cref="ErasureId"/> (a random ULID, the only id TerraBase keeps) names.
+    /// The fence's record id in the auth database (a natural-key hash). TerraBase never stores it: it reads it from the auth
+    /// request record <see cref="ErasureId"/> (a random ULID, the only id TerraBase keeps) names.
     /// </summary>
-    public string FenceId => AuthStore.NaturalKeyId(this.InstanceId, AuthStore.DeletionJobCollection, this.Id);
+    public string FenceId => AuthStore.NaturalKeyId(this.InstanceId, AuthStore.DeletionJobTable, this.Id);
 
     /// <summary>A stable ULID also used as the permanent write fence for this erased identity.</summary>
     public static string Key(string instanceId, string scope, string subjectId) => AuthStore.NaturalKeyId(instanceId, "deletion-" + scope, subjectId);
@@ -51,7 +51,7 @@ public sealed record DeletionJob(
         var now = clock.GetUtcNow();
         var job = new DeletionJob(Key(instanceId, scope, subjectId), instanceId, scope, subjectId, organizationId, now, now.AddDays(30), now,
             FenceExpiresAt: now + CredentialBound, ErasureId: AuthStore.NewId(), ClosureGeneration: closureGeneration);
-        return AuthStore.Create(AuthStore.DeletionJobCollection, instanceId, job.Id, JsonSerializer.SerializeToElement(job, DeletionJson.Default.DeletionJob));
+        return AuthStore.Create(AuthStore.DeletionJobTable, instanceId, job.Id, JsonSerializer.SerializeToElement(job, DeletionJson.Default.DeletionJob));
     }
 }
 

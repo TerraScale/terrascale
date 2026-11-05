@@ -18,7 +18,7 @@ using Versioned = TerraScale.Authentication.Features.Platform.Versioned<TerraSca
 namespace TerraScale.Authentication.Features.Sso;
 
 /// <summary>
-/// An organization's single sign-on connection (collection <c>organization_sso</c>), keyed by its email domain, so a
+/// An organization's single sign-on connection (table <c>organization_sso</c>), keyed by its email domain, so a
 /// domain has at most one. Until <paramref name="VerifiedAt"/> is set it changes nothing about sign-in, and another
 /// organization may take the domain over.
 /// </summary>
@@ -67,7 +67,7 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
     /// <summary>The redirect URI identity providers return to, under the platform's hosted pages.</summary>
     public const string CallbackPath = $"/ui/{OidcIssuer.Slug}/sso/callback";
 
-    private const string Collection = AuthStore.OrganizationSsoCollection;
+    private const string Table = AuthStore.OrganizationSsoTable;
     private const string Instance = PlatformDirectory.Instance;
     private const int MaxDiscoveries = 1024;
     private readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> discoveries = new(StringComparer.Ordinal);
@@ -91,9 +91,9 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
 
     /// <summary>The connection for <paramref name="domain"/>, whatever its organization.</summary>
     public async Task<Versioned?> ForDomainAsync(string domain, CancellationToken cancellationToken) =>
-        await store.GetAsync(Collection, Instance, domain, cancellationToken).ConfigureAwait(false) is { } document
-        && document.Document.Deserialize(SsoJson.Default.SsoConnectionRecord) is { } connection && connection.InstanceId == Instance && connection.Domain == domain
-            ? new(connection, document.Version)
+        await store.GetAsync(Table, Instance, domain, cancellationToken).ConfigureAwait(false) is { } record
+        && record.Body.Deserialize(SsoJson.Default.SsoConnectionRecord) is { } connection && connection.InstanceId == Instance && connection.Domain == domain
+            ? new(connection, record.Version)
             : null;
 
     /// <summary>The verified connection that governs sign-in for <paramref name="email"/>, when its organization still exists.</summary>
@@ -106,9 +106,9 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
     /// <summary>The organization's connection, or null.</summary>
     public async Task<Versioned?> ForOrganizationAsync(string organizationId, CancellationToken cancellationToken)
     {
-        await foreach (var document in store.QueryAsync(Collection, Instance, "/organizationId", organizationId, cancellationToken).ConfigureAwait(false))
+        await foreach (var record in store.QueryAsync(Table, Instance, "/organizationId", organizationId, cancellationToken).ConfigureAwait(false))
         {
-            if (document.Document.Deserialize(SsoJson.Default.SsoConnectionRecord) is { } connection && connection.OrganizationId == organizationId
+            if (record.Body.Deserialize(SsoJson.Default.SsoConnectionRecord) is { } connection && connection.OrganizationId == organizationId
                 && await this.ForDomainAsync(connection.Domain, cancellationToken).ConfigureAwait(false) is { Value.OrganizationId: var owner } current && owner == organizationId)
             {
                 return current;
@@ -145,7 +145,7 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
             var record = JsonSerializer.SerializeToElement(updated, SsoJson.Default.SsoConnectionRecord);
             if (await store.TransactAsync(
                 [
-                    existing is null ? AuthStore.Create(Collection, Instance, domain, record) : AuthStore.Replace(Collection, Instance, domain, record, existing.Version),
+                    existing is null ? AuthStore.Create(Table, Instance, domain, record) : AuthStore.Replace(Table, Instance, domain, record, existing.Version),
                     platform.Audit(organizationId, actor, "sso.updated", null, domain),
                 ], cancellationToken).ConfigureAwait(false) is null)
             {
@@ -173,7 +173,7 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
         var verified = found.Value with { VerifiedAt = clock.GetUtcNow(), UpdatedAt = clock.GetUtcNow() };
         return await store.TransactAsync(
             [
-                AuthStore.Replace(Collection, Instance, verified.Domain, JsonSerializer.SerializeToElement(verified, SsoJson.Default.SsoConnectionRecord), found.Version),
+                AuthStore.Replace(Table, Instance, verified.Domain, JsonSerializer.SerializeToElement(verified, SsoJson.Default.SsoConnectionRecord), found.Version),
                 platform.Audit(organizationId, actor, "sso.verified", null, verified.Domain),
             ], cancellationToken).ConfigureAwait(false) is null
             ? verified
@@ -186,7 +186,7 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
         var found = await this.ForOrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
         if (await store.TransactAsync(
             [
-                AuthStore.Delete(Collection, Instance, found.Value.Domain, found.Version),
+                AuthStore.Delete(Table, Instance, found.Value.Domain, found.Version),
                 platform.Audit(organizationId, actor, "sso.deleted", null, found.Value.Domain),
             ], cancellationToken).ConfigureAwait(false) is not null)
         {
