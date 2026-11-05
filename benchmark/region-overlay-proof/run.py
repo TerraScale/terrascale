@@ -272,8 +272,10 @@ def main():
     result = {"database": database, "writer_region": "sjc", "reader_region": "fra", "warmup": [], "repeats": [],
               "held_home_repeats": [], "revert_attempts": [], "read_retries": READ_RETRIES}
     try:
-        status, body, _ = sql(database, "CREATE TABLE items (id TEXT PRIMARY KEY, v TEXT); CREATE TABLE blockers (id TEXT PRIMARY KEY)")
+        status, body, _ = sql(database, "CREATE TABLE items (id TEXT PRIMARY KEY, v TEXT)")
         require(status, 200, body, "create table")
+        status, body, _ = sql(database, "CREATE TABLE blockers (id TEXT PRIMARY KEY)")
+        require(status, 200, body, "create blocker table")
         tail = Tail(database)
         print("fra shape bootstrapped", file=sys.stderr, flush=True)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
