@@ -37,9 +37,9 @@ internal interface ILocalTransaction : IAsyncDisposable
     ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Publishes the transaction to the push stream, holds it on the region's second node and commits it. With
-    /// <paramref name="homeDurable"/>, or when the second node did not hold it, it answers after the home applied it, with the
-    /// home's result: a local acknowledgement is never on one node (D16).
+    /// Publishes the transaction to the durable push stream, holds it on a discovered regional partner and commits it.
+    /// A discovered one-node region acknowledges on that node; a region with a partner requires both copies. With
+    /// <paramref name="homeDurable"/>, or when the required partner did not hold it, it answers after the home applied it.
     /// </summary>
     ValueTask<LocalCommit> CommitAsync(bool homeDurable, CancellationToken cancellationToken);
 }
@@ -93,8 +93,10 @@ internal sealed class HomePush(
 
     public bool Ready(TenantContext database) => _ready && _js is not null;
 
-    public bool TwoNodeAck => _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
-        && partner.PartnerHealthy && services.GetService<ILocalWriteClock>() is { Allowed: true };
+    public bool TwoNodeAck => LocalAckAvailable && partner.PartnerHealthy;
+
+    public bool LocalAckAvailable => _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
+        && partner.QuorumHealthy && services.GetService<ILocalWriteClock>() is { Allowed: true };
 
     private IInRegionAck Partner => partner;
 
@@ -118,8 +120,8 @@ internal sealed class HomePush(
             _applies = _meter.CreateCounter<long>("terrabase.push.applies", "{transaction}", "Home applies of pushed transactions by state.");
             _reverts = _meter.CreateCounter<long>("terrabase.push.reverts", "{transaction}", "Local transactions the home reverted.");
             _ = _meter.CreateObservableGauge("terrabase.push.pending", () => _overlay.Count, "{transaction}", "Local transactions the home has not confirmed.");
-            _ = _meter.CreateObservableGauge("terrabase.localwrites.available", () => TwoNodeAck ? 1 : 0, "{node}",
-                "1 while this node acknowledges local writes on two nodes of its region (D16).");
+            _ = _meter.CreateObservableGauge("terrabase.localwrites.available", () => LocalAckAvailable ? 1 : 0, "{node}",
+                "1 while this node can acknowledge local writes with its discovered regional quorum.");
             replicas.Overlay = _overlay.RestoreAsync;
             _overlay.Held += (database, through) =>
             {
