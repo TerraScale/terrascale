@@ -31,23 +31,33 @@ monotonic order across restarts and backward wall-clock changes, refuse unknown
 or over-50-ms local skew, and export the node's skew and admission state. These
 contracts land separately so R6 and R4 can compile against the same source.
 
-`NodeHlcClock` is registered as the singleton `IHlcClock`. Each call reads and
-advances its versioned high-water mark in the system database's `node_clocks`
-collection, committing durably before returning. Durable write transactions
-serialize concurrent issuers. Restarting with an earlier wall clock advances the
-logical counter beyond the persisted stamp. Observing a remote stamp also
-persists advancement before returning. Invalid persisted state fails closed.
-Local write admission is checked separately through `ILocalWriteClock` by the
-router. Local capture checks admission before issuing the stamp and again before
-committing capture, so a clock jump during issuance forwards the whole transaction.
-Home apply can still observe accepted remote timestamps.
+`NodeHlcClock` is the singleton timestamp issuer. A semaphore serializes issuance,
+observation and initialization. It loads the versioned `node_clocks` record once
+and advances timestamps in memory. Before issuing beyond its durable reservation,
+it commits an upper bound five seconds ahead, with the maximum logical counter,
+using a durable system-database transaction. A failed reservation returns no
+stamp. All returned stamps are covered by an already durable upper bound;
+concurrent issuers and accepted remote observations preserve HLC ordering.
+This removes per-stamp system commits and their catalog-cache invalidations.
 
-The guard samples every five seconds. Each pass reads the persisted high-water
-mark without issuing a stamp, so sampling an untrusted clock cannot persist a
-false future timestamp. Issuance and observation update the shared in-memory
-high-water mark after durable commit. Admission reads that current mark, so a
-restart behind a previously issued stamp keeps local writes closed until wall
-time recovers, and observing a future stamp closes admission immediately.
+On restart, the persisted upper bound becomes the previous timestamp. Every new
+stamp exceeds all stamps the former process could have issued, including after
+an abrupt stop. The guard includes that recovered bound in its high-water mark:
+local writes stay closed until UTC is within the existing 50 ms limit. A normal
+restart can therefore delay local admission by up to five seconds; requests can
+still forward home. A larger backward clock jump remains closed until recovery.
+Invalid persisted state fails closed. Within the running process, admission
+tracks issued and observed time, not the unused reservation. Observation of a
+future stamp still closes admission immediately.
+
+Local capture and the internal `Next` method retain their checks before and after
+issuance. The router still forwards refused local transactions home. Home apply
+can observe accepted remote timestamps without weakening the skew check.
+
+The guard samples every five seconds. Each pass ensures persisted state was
+loaded without issuing a stamp, so sampling an untrusted clock cannot persist a
+false future timestamp. Once initialized it reads the shared in-memory high-water
+mark. Unknown/stale time and the 50 ms admission limit remain unchanged.
 It reads the local chrony daemon's tracking report over UDP on `127.0.0.1:323`,
 using the same version-6 monitoring protocol and signed `current_correction`
 field as `chronyc tracking`'s System time value. No chronyc executable or daemon
@@ -80,9 +90,10 @@ when the most recent NATS report was acknowledged as stored. Reports go to
 replicas and a 15-second TTL. Admission continues to depend on local measurement
 if JetStream or the report bridge is unavailable.
 
-The Fast proof contains two integration tests over the real gRPC listener and
+The Slow proof contains two integration tests over the real gRPC listener and
 real Turso storage. The happy path admits a healthy clock despite an unreachable
-WAN peer and preserves stamp order across a backward-clock restart. The critical
+WAN peer and proves concurrent issuance and remote observation use the durable reservation
+without rewriting it, then preserves stamp order across a backward-clock restart. The critical
 path refuses a local-write stamp at an injected 100 ms offset.
 R4 owns forwarding the entire refused transaction to home; R6 owns column LWW
 and must compare the original stamp rather than mint a new one on receipt.
