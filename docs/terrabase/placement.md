@@ -78,7 +78,7 @@ writes) a move took 512 ms: 227 ms catch-up and a 276 ms write pause.
 ## Tests
 
 - Slow `HomeMoveTests`: gru and sjc nodes; a writer commits rows through REST during a move from gru to sjc; every
-  acknowledged row is in sjc afterwards, sjc takes writes, and a WebSocket session opened on gru before the move is
+  acknowledged row is in sjc afterwards, sjc takes writes, and a Postgres session opened on gru before the move is
   refused a write after it (`08004`).
 
 All-regions placement remains authoritative when a lease observation carries an empty explicit replica list.
