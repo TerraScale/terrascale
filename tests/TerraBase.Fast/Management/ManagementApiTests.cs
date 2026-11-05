@@ -115,9 +115,9 @@ public sealed class ManagementApiTests
         await Assert.That(noDataAccess.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
-    // Seeds current-format system documents after real-server bootstrap.
+    // Seeds current-format system records after real-server bootstrap.
     // In a data directory a server of this build already started on: an unprepared directory with files is refused.
-    // Every document of the _system database, as "collection|id|body" lines in key order.
+    // Every record of the _system database, as "prefix|id|body" lines in key order.
     // Every route under one organization from `from` down, addressing the given project and database ids.
     private static async Task<List<HttpStatusCode>> AllStatusesAsync(
         HttpClient client, string organization, string project, string database, Level from = Level.Organization)
