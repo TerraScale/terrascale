@@ -31,7 +31,7 @@ public sealed class FunctionTests
     [Test]
     public async Task A_deployed_function_inserts_and_selects_through_sql_over_https_and_logs_the_run()
     {
-        await using var db = await StartSharedAsync();
+        await using var db = await StartAsync();
         using var client = Project(db);
         var path = db.Database.Data + "/functions/hello";
         await DeployAsync(client, path, Hello);
@@ -52,7 +52,7 @@ public sealed class FunctionTests
     [Test]
     public async Task A_function_is_refused_by_the_sql_sandbox_with_the_rest_error_model()
     {
-        await using var db = await StartSharedAsync();
+        await using var db = await StartAsync();
         using var client = Project(db);
         var path = db.Database.Data + "/functions/escape";
         await DeployAsync(client, path, Escape);

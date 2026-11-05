@@ -83,13 +83,12 @@ public sealed class TcpRelay : IAsyncDisposable
 
     private async Task RelayAsync(TcpClient client)
     {
-        using var upstream = new TcpClient { NoDelay = true };
+        using var upstream = new TcpClient();
         Task[] forwarding = [];
         this.open[client] = 0;
         this.open[upstream] = 0;
         try
         {
-            client.NoDelay = true;
             if (this.stopped)
             {
                 // Accepted just before Stop, which may not have seen it.

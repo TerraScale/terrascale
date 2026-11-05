@@ -33,14 +33,9 @@ internal sealed class SqlNativeDatabase : IAsyncDisposable
 
     public NpgsqlDataSource ReadOnlyPostgres { get; }
 
-    public static Task<SqlNativeDatabase> StartAsync(Action<IServiceCollection>? services = null, Action<Dictionary<string, string>>? configure = null) =>
-        StartCoreAsync(ManagementApi.StartAsync(configure, services));
-
-    public static Task<SqlNativeDatabase> StartSharedAsync() => StartCoreAsync(ManagementApi.StartSharedAsync());
-
-    private static async Task<SqlNativeDatabase> StartCoreAsync(Task<ManagementApi> start)
+    public static async Task<SqlNativeDatabase> StartAsync(Action<IServiceCollection>? services = null, Action<Dictionary<string, string>>? configure = null)
     {
-        var api = await start;
+        var api = await ManagementApi.StartAsync(configure, services);
         try
         {
             var database = await api.CreateManagedDatabaseAsync();

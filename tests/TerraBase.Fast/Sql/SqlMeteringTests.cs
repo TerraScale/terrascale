@@ -16,7 +16,6 @@ public sealed class SqlMeteringTests
     [Test]
     public async Task Sql_writes_are_billed_sql_reads_count_toward_fair_use_and_shape_reads_are_free()
     {
-        // This case flushes the host-wide meter; keep that lifecycle isolated from other tests.
         await using var db = await StartAsync();
         await db.OkAsync("CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT NOT NULL)");
         await db.OkAsync(Stmt("INSERT INTO notes VALUES (?, ?), (?, ?), (?, ?)",
