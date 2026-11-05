@@ -21,7 +21,7 @@ namespace TerraBase.Features.Shapes;
 /// <param name="After">The after record, or null.</param>
 internal sealed record ProvisionalRow(int Type, string Table, long RowId, byte[]? Before, byte[]? After);
 
-/// <summary>A transaction of this region that the replica's pages do not hold yet.</summary>
+/// <summary>A transaction that the replica’s home pages do not hold yet.</summary>
 /// <param name="Id">The RegionTransaction id, or a new id for a forwarded write.</param>
 /// <param name="Origin">The machine that committed it, or that received the forwarded answer.</param>
 /// <param name="Rows">Its row changes, in commit order.</param>
@@ -60,7 +60,9 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
     private NatsConnection? _nats;
     private readonly TaskCompletionSource _subscribed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    internal Task Subscribed => _subscribed.Task;
+    private readonly TaskCompletionSource _streamReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal Task Ready => Task.WhenAll(_subscribed.Task, _streamReady.Task);
 
     /// <summary>The home's answer to a forwarded write carries its commits' rows here; the region strips it.</summary>
     internal const string CommitHeader = "X-TerraBase-Commit-Rows";
@@ -233,6 +235,7 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
                     NumReplicas = 1,
                     Placement = nats.ServerInfo?.Cluster is { Length: > 0 } ? new Placement { Tags = [$"region:{options.Region}"] } : null,
                 }, cancellationToken).ConfigureAwait(false);
+                _streamReady.TrySetResult();
                 break;
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
