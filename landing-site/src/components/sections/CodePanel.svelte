@@ -4,7 +4,7 @@
   import { dict } from '@/lib/i18n'
   import { reveal } from '@/lib/reveal'
 
-  let lang: Lang = 'csharp'
+  let lang: Lang = 'python'
   let copied = false
   let copyTimer: ReturnType<typeof setTimeout> | null = null
 

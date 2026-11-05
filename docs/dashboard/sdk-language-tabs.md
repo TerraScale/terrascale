@@ -4,7 +4,8 @@ Dashboard, documentation and landing use one flat language selector: a 16 px
 self-hosted language mark, its name, and a blue underline for the selected tab.
 Buttons have no individual background, border box or shadow. The surrounding
 snippet may retain its surface and hairline border. Controls are at least 44 px
-high and scroll within their row on narrow screens.
+high and scroll within their row on narrow screens. Select the first language
+initially so the active tab is visible on narrow screens.
 
 The canonical stylesheet is
 `src/TerraScale.Dashboard/web/assets/css/sdk-tabs.css`; docs and landing import
