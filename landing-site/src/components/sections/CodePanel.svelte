@@ -10,7 +10,6 @@
 
   $: code = CODE_SAMPLES[lang]
   $: tokens = tokenize(code, lang)
-  $: file = LANG_META.find((l) => l.id === lang)?.file ?? ''
   $: bullets = $dict.code.bullets
   $: agent = $dict.code.agent
 
@@ -71,7 +70,6 @@
 
       <div class="code__terminal">
         <div class="code__head sdk-tabs-header">
-          <span class="code__filename">{file}</span>
           <div class="sdk-tabs" role="tablist" aria-label={$dict.code.tablistLabel}>
             {#each LANG_META as l (l.id)}
               <button
@@ -81,7 +79,7 @@
                 aria-controls="landing-sdk-panel"
                 tabindex={lang === l.id ? 0 : -1}
                 aria-selected={lang === l.id}
-                on:click={() => (lang = l.id)}
+                on:click={() => { lang = l.id; copied = false }}
               >
                 {#if l.icon}
                   <img src={l.icon} alt="" width="16" height="16" aria-hidden="true" />
@@ -260,7 +258,6 @@
 
   .code__head {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     min-height: 48px;
@@ -269,16 +266,6 @@
     color: var(--ts-text-muted);
     font-family: var(--ts-font-mono);
     font-size: 12px;
-  }
-
-  .code__filename {
-    display: none;
-    white-space: nowrap;
-  }
-
-  .code__panel :global(.code__copy-icon) {
-    width: var(--ts-icon-sm);
-    height: var(--ts-icon-sm);
   }
 
   .code__copy-btn {
@@ -349,9 +336,6 @@
     }
     .code__head {
       padding-inline: 8px;
-    }
-    .code__filename {
-      display: none;
     }
     .code__pre {
       height: 380px;
