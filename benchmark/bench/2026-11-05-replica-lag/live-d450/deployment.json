@@ -1,0 +1,11 @@
+{
+  "verifiedAt": "2026-11-05T13:09:15Z",
+  "revision": "d450cbe3b439b79f3b9710e1d7fe11e03e1a50d7",
+  "image": "ghcr.io/terrascale/terrabase@sha256:b4fab3f1dd8363d4be5d8bd19decd20b6057084fb096aa54073f1b6b4b84fd12",
+  "regions": [
+    "gru",
+    "sjc",
+    "fra"
+  ],
+  "benchmarkSha256": "940be8ebfbdf25b874cdb71b3aa528ebd8625214b5558cb08e3340d0808c65ed"
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "region": "sjc",
+    "repeat": 1,
+    "writes": 500,
+    "local": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 107.379,
+    "commitToVisibleP99": 141.263,
+    "commitToVisibleMax": 344.345,
+    "commitToNoticeP99": 119.477,
+    "noticeToVisibleP99": 30.571
+  },
+  {
+    "region": "sjc",
+    "repeat": 2,
+    "writes": 500,
+    "local": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 107.4,
+    "commitToVisibleP99": 143.62,
+    "commitToVisibleMax": 345.411,
+    "commitToNoticeP99": 113.403,
+    "noticeToVisibleP99": 32.206
+  },
+  {
+    "region": "sjc",
+    "repeat": 3,
+    "writes": 500,
+    "local": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 107.348,
+    "commitToVisibleP99": 153.987,
+    "commitToVisibleMax": 361.33,
+    "commitToNoticeP99": 116.563,
+    "noticeToVisibleP99": 42.187
+  }
+]
