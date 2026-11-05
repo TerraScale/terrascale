@@ -219,7 +219,7 @@ func (c *client) one(ctx context.Context, id int, arrivals chan arrival) (sample
 	for {
 		before := time.Now()
 		rows, err := c.exec(ctx, c.read, query)
-		traceLine(map[string]any{"poll": id, "at": before.UnixMicro(), "ms": ms(time.Since(before)), "rows": rows, "error": err != nil})
+		traceLine(map[string]any{"poll": id, "at": before.UnixMicro(), "ms": ms(time.Since(before)), "rows": rows, "error": err != nil, "headers": lastHeaders})
 		if err == nil && rows > 0 {
 			break
 		}
@@ -395,6 +395,9 @@ func (c *client) call(ctx context.Context, h *http.Client, method, path string, 
 
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if h == c.read {
+		lastHeaders = resp.Header.Get("X-Terrabase-Machine") + " " + resp.Header.Get("Server-Timing") + " " + resp.Header.Get("TerraScale-Write-Route") + " " + resp.Header.Get("Ts-Replay") + " " + resp.Header.Get("Via")
+	}
 	if resp.StatusCode != want {
 		return fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, code(data))
 	}
@@ -477,8 +480,9 @@ func newHTTP(dial string) *http.Client {
 }
 
 var (
-	traceOut io.Writer
-	traceMu  sync.Mutex
+	lastHeaders string
+	traceOut    io.Writer
+	traceMu     sync.Mutex
 )
 
 func traceLine(v map[string]any) {

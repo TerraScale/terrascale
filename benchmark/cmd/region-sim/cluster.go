@@ -251,6 +251,17 @@ func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 		c.toA.close()
 		return c, err
 	}
+	natsB := c.nats.url()
+	if peerDelay > 0 {
+		port, err := freePort("127.0.0.1")
+		if err != nil {
+			return c, err
+		}
+		if _, err := startForwarder(net.JoinHostPort("127.0.0.1", itoa(port)), net.JoinHostPort("127.0.0.1", itoa(c.nats.port))); err != nil {
+			return c, err
+		}
+		natsB = "nats://127.0.0.1:" + itoa(port)
+	}
 	secrets := map[string]string{"peer-secret": randomHex(32), "nats-token": c.natsToken}
 	masterKey := make([]byte, 32)
 	if _, err := rand.Read(masterKey); err != nil {
@@ -296,7 +307,7 @@ func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 			"TS_REGION=" + region,
 			"TS_NODE=" + name,
 			"TS_PEERS_FILE=" + peers,
-			"TS_NATS_URL=" + c.nats.url(),
+			"TS_NATS_URL=" + map[bool]string{true: natsB, false: c.nats.url()}[region == "sjc"],
 			"TERRABASE_NATS_TOKEN_FILE=" + filepath.Join(cfg.dir, "nats-token"),
 			"TERRABASE_PEER_SECRET_FILE=" + filepath.Join(cfg.dir, "peer-secret"),
 			"TERRABASE_MASTER_KEY_FILE=" + filepath.Join(cfg.dir, "master-key"),
