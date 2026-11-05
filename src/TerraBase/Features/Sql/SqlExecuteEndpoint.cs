@@ -180,7 +180,8 @@ internal sealed class SqlExecuteEndpoint(
         IReplicaReader? reader;
         try
         {
-            reader = await replicas.BeginReadAsync(database, cancellationToken);
+            // A forced-home write needs no replica snapshot or schema: do not wait behind a local pull to forward it.
+            reader = writes && preference == WriteOverride.Home ? null : await replicas.BeginReadAsync(database, cancellationToken);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
