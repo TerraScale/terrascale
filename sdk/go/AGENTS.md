@@ -7,7 +7,7 @@ Run area commands from `sdk/go` in the monorepo.
 - Go module: `terrascale.tech/sdk`. Root files implement clients; `v1/` holds database contracts, `tsauth/` identity support, `cmd/` command-line tools and `contracts/` fixtures.
 - Use Go and the go-modern-guidelines plugin.
 - Fast: `go test ./...`.
-- Full tests: `go test -race -count=1 ./...`; build: `go build ./...`.
+- Full tests (including isolated package installation): `go test -tags slow -race -count=1 ./...`; build: `go build ./...`.
 
 ## API rules
 
