@@ -70,6 +70,15 @@ public sealed class HomeMoveLocalWritesTests
             var targetRegion = round % 2 == 0 ? "fra" : "gru";
             old.Server.Services.GetRequiredService<DelayedApply>().Hold = true;
             target.Server.Services.GetRequiredService<DelayedApply>().Hold = false;
+            for (var before = 0; before < 2; before++)
+            {
+                var row = EntityIds.New().ToString();
+                using var response = await ExecuteAsync(viaSjc, sql, $"INSERT INTO acked (id) VALUES ('{row}')", token);
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync(token));
+                await Assert.That(string.Join(";", response.Headers.GetValues("TerraScale-Write-Route"))).Contains("commit=local");
+                expected.Add(row);
+            }
+
             // A remote commit can publish to the old home's subject after its fence. Keep one
             // transaction open across promotion, independently of catalog refresh timing.
             await using var delayed = await local.BeginAsync(tenant, token) ?? throw new InvalidOperationException("SJC lost its local commit path");
