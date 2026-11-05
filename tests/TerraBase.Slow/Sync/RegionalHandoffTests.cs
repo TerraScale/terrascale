@@ -33,8 +33,10 @@ public sealed class RegionalHandoffTests
         await File.WriteAllTextAsync(peers, "gru-1 gru 127.0.0.2\ngru-2 gru 127.0.0.3\n", token);
         try
         {
-            await using var first = await StartAsync("gru-1", "127.0.0.2");
             await using var second = await StartAsync("gru-2", "127.0.0.3");
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(second.Server.Services.GetRequiredService<RegionalOwners>().Find("gru")?.Node == "gru-1"), TimeSpan.FromSeconds(10));
+            await Assert.That(second.Server.Services.GetRequiredService<RegionalOwners>().Writer).IsFalse();
+            await using var first = await StartAsync("gru-1", "127.0.0.2");
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(first.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
             var organization = await first.CreateOrganizationAsync("Org " + EntityIds.New());
             var project = await first.CreateProjectAsync(organization, "Project");
