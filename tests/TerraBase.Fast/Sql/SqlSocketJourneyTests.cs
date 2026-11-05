@@ -9,7 +9,7 @@ public sealed class SqlSocketJourneyTests
     [Test]
     public async Task A_project_token_creates_reads_updates_and_deletes_rows_over_websocket()
     {
-        await using var database = await StartAsync();
+        await using var database = await StartSharedAsync();
         await using var socket = await database.BrowserSocketAsync();
         var admitted = await socket.AuthAsync(database.Api.ProjectToken(database.Database.Project, "sql:read sql:write"));
         var name = new Faker().Name.FirstName();
