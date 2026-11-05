@@ -20,7 +20,7 @@ internal sealed partial class EngineManagementService
         var organization = await CatalogTables.OrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
         if (organization is { Plan: not PlanTier.Hobby } or { CreatedBy: not OperatorHandler.KeyId }
             || await IsPlanPublishedAsync(transaction, organizationId, PlanTier.Hobby, cancellationToken).ConfigureAwait(false)
-            || (await regionPeers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Count == 0)
+            || options.PeersFile is null && (await regionPeers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Count == 0)
         {
             return organization?.Plan ?? PlanTier.Hobby;
         }
