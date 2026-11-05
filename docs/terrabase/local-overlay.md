@@ -79,6 +79,21 @@ the sequence consumption resumes at, or nothing when the stream no longer holds 
 that the home already applied is answered from `_ts_applied` by transaction id and changes nothing, so a replay
 from any earlier position applies each transaction exactly once.
 
+## Ordering with forwarded writes
+
+A region's local writes and the writes it forwards home stay in the order its clients sent them (found by R13's
+differential test):
+
+- **Push-through fence.** Every write a replica region forwards home (SQL REST, and every call of a SQL WebSocket or
+  Postgres-wire session) carries the last push stream sequence the region published for that database, in the
+  internal `TerraBase-Push-Through: <origin> <sequence>` header or the session frame. A client cannot send it: the
+  region strips it from client requests, and the home honours it only on a peer-forwarded request. Before running
+  the write, the home waits until its consumer has applied that region's messages for the database through that
+  sequence (a sequence at or below the consumer's ack floor is already applied). After 30 seconds it answers
+  `503 unavailable` and the client retries.
+- **Pull fence.** After a region forwards a write, its next local transaction on that database first pulls from the
+  home, so the local transaction sees the forwarded write.
+
 ## Applied notice
 
 Core NATS subject `terrabase.applied.<origin>.<organization>.<project>.<database>` carries the transaction id, its

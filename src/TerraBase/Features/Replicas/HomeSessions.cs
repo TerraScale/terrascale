@@ -14,11 +14,12 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Replicas;
 
 /// <summary>The first frame of a home session: the database, the replica region asking, and whether the session may write.</summary>
-internal sealed record HomeSessionOpen(string Organization, string Project, string Database, string Region, bool CanWrite);
+internal sealed record HomeSessionOpen(string Organization, string Project, string Database, string Region, bool CanWrite, ulong? PushThrough = null);
 
 /// <summary>One call on a home session: <c>execute</c> or <c>describe</c> one statement.</summary>
 internal sealed record HomeSessionCall(
-    string Op, string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named, IReadOnlyList<HomeSessionCall>? Batch = null);
+    string Op, string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named, IReadOnlyList<HomeSessionCall>? Batch = null,
+    ulong? PushThrough = null);
 
 /// <summary>A statement's result as the home answered it.</summary>
 internal sealed record HomeSessionResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid);
@@ -109,7 +110,8 @@ internal static class HomeSessionFrames
 /// Opens home sessions: the writes, transactions and lagging reads of a replica region's SQL session run on one SQL session at
 /// the database's home, reached over the private mesh on its internal listener with the peer credential.
 /// </summary>
-internal sealed class HomeSessions(TerraBaseOptions options, IReplicaPeers peers, InternalCredential credential, IMemoryBudget memory) : IDisposable
+internal sealed class HomeSessions(
+    TerraBaseOptions options, IReplicaPeers peers, InternalCredential credential, IMemoryBudget memory, HomePush.ILocalWrites local) : IDisposable
 {
     internal const string Path = "/v1/internal/sql/session";
 
@@ -131,7 +133,7 @@ internal sealed class HomeSessions(TerraBaseOptions options, IReplicaPeers peers
         try
         {
             await HomeSessionFrames.WriteAsync(upstream.Writer,
-                new HomeSessionOpen(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, canWrite),
+                new HomeSessionOpen(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, canWrite, local.LastPushed(database)),
                 TerraBaseJsonContext.Default.HomeSessionOpen, cancellationToken).ConfigureAwait(false);
             var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stop.Token).WaitAsync(cancellationToken).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
@@ -141,7 +143,7 @@ internal sealed class HomeSessions(TerraBaseOptions options, IReplicaPeers peers
             }
 
             var downstream = PipeReader.Create(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
-            var session = new HomeSqlSession(request, response, upstream.Writer, downstream, stop, memory, database, unreachable);
+            var session = new HomeSqlSession(request, response, upstream.Writer, downstream, stop, memory, database, unreachable, local);
             switch (await session.ReceiveAsync(cancellationToken).ConfigureAwait(false))
             {
                 case HomeSessionAnswer { Error: { } refused }:
@@ -218,7 +220,7 @@ internal readonly union HomeSessionOutcome(HomeSqlSession, SqlError);
 /// </summary>
 internal sealed class HomeSqlSession(
     HttpRequestMessage request, HttpResponseMessage response, PipeWriter upstream, PipeReader downstream, CancellationTokenSource stop,
-    IMemoryBudget memory, TenantContext database, SqlError unreachable) : ISqlSession
+    IMemoryBudget memory, TenantContext database, SqlError unreachable, HomePush.ILocalWrites local) : ISqlSession
 {
     private static readonly IReadOnlyDictionary<string, SqlValue> NoNamed = new Dictionary<string, SqlValue>();
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -324,8 +326,11 @@ internal sealed class HomeSqlSession(
 
             try
             {
-                await HomeSessionFrames.WriteAsync(upstream, call, TerraBaseJsonContext.Default.HomeSessionCall, cancellationToken).ConfigureAwait(false);
-                return await ReceiveAsync(cancellationToken).ConfigureAwait(false) ?? Break();
+                await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database) }, TerraBaseJsonContext.Default.HomeSessionCall,
+                    cancellationToken).ConfigureAwait(false);
+                var answer = await ReceiveAsync(cancellationToken).ConfigureAwait(false) ?? Break();
+                local.Forwarded(database);
+                return answer;
             }
             catch (Exception error) when (error is IOException or InvalidDataException or HttpRequestException or OperationCanceledException or ObjectDisposedException)
             {
