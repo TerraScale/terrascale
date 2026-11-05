@@ -12,7 +12,7 @@ public sealed class DeleteProjectProviderEndpoint(TenantDirectory tenants, Proje
     public override void Configure()
     {
         Delete(Root + "/providers/{provider}");
-        this.Document("delete_project_provider", "Remove a social sign-in provider",
+        this.Describe("delete_project_provider", "Remove a social sign-in provider",
             "Removes the provider and its stored secret; its button leaves the hosted pages. Users who signed in with it keep their accounts and can use the other methods. Needs the admin project role.",
             "Project tenants", null, StatusCodes.Status200OK, typeof(SettingsBody));
     }

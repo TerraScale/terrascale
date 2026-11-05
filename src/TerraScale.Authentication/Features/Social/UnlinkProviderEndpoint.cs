@@ -19,7 +19,7 @@ public sealed class UnlinkProviderEndpoint(PlatformAuthentication authentication
     public override void Configure()
     {
         Delete("/v1/terrascale/account/providers/{provider}");
-        this.Document("account_unlink_provider", "Unlink my sign-in provider", "Requires a live sign-in token and a fresh emailed sign-in code. Email-code sign-in remains available. Success revokes every prior session and token; sign in again.",
+        this.Describe("account_unlink_provider", "Unlink my sign-in provider", "Requires a live sign-in token and a fresh emailed sign-in code. Email-code sign-in remains available. Success revokes every prior session and token; sign in again.",
             "Account", typeof(UnlinkProviderRequest), StatusCodes.Status204NoContent, null, roleChecked: false, scoped: false);
         Produces<OAuthErrorBody>(StatusCodes.Status429TooManyRequests);
     }

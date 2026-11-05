@@ -73,7 +73,7 @@ public sealed class CreateOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
     public override void Configure()
     {
         Post($"{Organization}/api-keys");
-        this.Document("create_organization_api_key", "Create an organization API key", "Needs admin. The key reaches every project of the organization, one project per token. The key string is answered once.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
+        this.Describe("create_organization_api_key", "Create an organization API key", "Needs admin. The key reaches every project of the organization, one project per token. The key string is answered once.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
     }
 
     /// <inheritdoc />
@@ -87,7 +87,7 @@ public sealed class ListOrganizationApiKeysEndpoint(ApiKeys keys, PlatformAuthen
     public override void Configure()
     {
         Get($"{Organization}/api-keys");
-        this.Document("list_organization_api_keys", "List organization API keys", "Needs admin. Unrevoked keys, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
+        this.Describe("list_organization_api_keys", "List organization API keys", "Needs admin. Unrevoked keys, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
     }
 
     /// <inheritdoc />
@@ -101,7 +101,7 @@ public sealed class GetOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthenti
     public override void Configure()
     {
         Get($"{Organization}/api-keys/{{key}}");
-        this.Document("get_organization_api_key", "Get an organization API key", "Needs admin.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyBody));
+        this.Describe("get_organization_api_key", "Get an organization API key", "Needs admin.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyBody));
     }
 
     /// <inheritdoc />
@@ -115,7 +115,7 @@ public sealed class RevokeOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
     public override void Configure()
     {
         Delete($"{Organization}/api-keys/{{key}}");
-        this.Document("revoke_organization_api_key", "Revoke an organization API key", "Needs admin. No token is issued for it afterwards; TerraBase refuses tokens already issued within 3 seconds in every region.", "API keys", null, StatusCodes.Status204NoContent, null);
+        this.Describe("revoke_organization_api_key", "Revoke an organization API key", "Needs admin. No token is issued for it afterwards; TerraBase refuses tokens already issued within 3 seconds in every region.", "API keys", null, StatusCodes.Status204NoContent, null);
     }
 
     /// <inheritdoc />
@@ -129,7 +129,7 @@ public sealed class RotateOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
     public override void Configure()
     {
         Post($"{Organization}/api-keys/{{key}}/rotate");
-        this.Document("rotate_organization_api_key", "Rotate an organization API key", "Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. 409 rotation_pending while the previous secret's grace is active.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
+        this.Describe("rotate_organization_api_key", "Rotate an organization API key", "Needs admin. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. 409 rotation_pending while the previous secret's grace is active.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
     }
 
     /// <inheritdoc />
@@ -143,7 +143,7 @@ public sealed class SetOrganizationApiKeyAllowedCidrsEndpoint(ApiKeys keys, Plat
     public override void Configure()
     {
         Put($"{Organization}/api-keys/{{key}}/allowed-cidrs");
-        this.Document("set_organization_api_key_allowed_cidrs", "Set an organization API key's IP allowlist", AllowedCidrsDescription, "API keys", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ApiKeyBody));
+        this.Describe("set_organization_api_key_allowed_cidrs", "Set an organization API key's IP allowlist", AllowedCidrsDescription, "API keys", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ApiKeyBody));
     }
 
     /// <inheritdoc />
@@ -157,7 +157,7 @@ public sealed class CreateProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
     public override void Configure()
     {
         Post($"{Project}/api-keys");
-        this.Document("create_project_api_key", "Create a project API key", "Needs the project's member role; scopes must be within the caller's. The key string is answered once.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
+        this.Describe("create_project_api_key", "Create a project API key", "Needs the project's member role; scopes must be within the caller's. The key string is answered once.", "API keys", typeof(CreateApiKeyRequest), StatusCodes.Status201Created, typeof(ApiKeySecretBody));
     }
 
     /// <inheritdoc />
@@ -171,7 +171,7 @@ public sealed class ListProjectApiKeysEndpoint(ApiKeys keys, PlatformAuthenticat
     public override void Configure()
     {
         Get($"{Project}/api-keys");
-        this.Document("list_project_api_keys", "List project API keys", "Needs the project's member role. Unrevoked keys, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
+        this.Describe("list_project_api_keys", "List project API keys", "Needs the project's member role. Unrevoked keys, never secrets, in creation order.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyPageBody), paged: true);
     }
 
     /// <inheritdoc />
@@ -185,7 +185,7 @@ public sealed class GetProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthenticatio
     public override void Configure()
     {
         Get($"{Project}/api-keys/{{key}}");
-        this.Document("get_project_api_key", "Get a project API key", "Needs the project's member role.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyBody));
+        this.Describe("get_project_api_key", "Get a project API key", "Needs the project's member role.", "API keys", null, StatusCodes.Status200OK, typeof(ApiKeyBody));
     }
 
     /// <inheritdoc />
@@ -199,7 +199,7 @@ public sealed class RevokeProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
     public override void Configure()
     {
         Delete($"{Project}/api-keys/{{key}}");
-        this.Document("revoke_project_api_key", "Revoke a project API key", "Needs the project's member role. No token is issued for it afterwards; TerraBase refuses tokens already issued within 3 seconds in every region.", "API keys", null, StatusCodes.Status204NoContent, null);
+        this.Describe("revoke_project_api_key", "Revoke a project API key", "Needs the project's member role. No token is issued for it afterwards; TerraBase refuses tokens already issued within 3 seconds in every region.", "API keys", null, StatusCodes.Status204NoContent, null);
     }
 
     /// <inheritdoc />
@@ -213,7 +213,7 @@ public sealed class RotateProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
     public override void Configure()
     {
         Post($"{Project}/api-keys/{{key}}/rotate");
-        this.Document("rotate_project_api_key", "Rotate a project API key", "Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. 409 rotation_pending while the previous secret's grace is active.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
+        this.Describe("rotate_project_api_key", "Rotate a project API key", "Needs the project's member role. Issues a new secret for the same id; the previous one keeps working for previous_secret_ttl seconds. 409 rotation_pending while the previous secret's grace is active.", "API keys", typeof(RotateApiKeyRequest), StatusCodes.Status200OK, typeof(ApiKeySecretBody), conflict: true);
     }
 
     /// <inheritdoc />
@@ -227,7 +227,7 @@ public sealed class SetProjectApiKeyAllowedCidrsEndpoint(ApiKeys keys, PlatformA
     public override void Configure()
     {
         Put($"{Project}/api-keys/{{key}}/allowed-cidrs");
-        this.Document("set_project_api_key_allowed_cidrs", "Set a project API key's IP allowlist", AllowedCidrsDescription, "API keys", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ApiKeyBody));
+        this.Describe("set_project_api_key_allowed_cidrs", "Set a project API key's IP allowlist", AllowedCidrsDescription, "API keys", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ApiKeyBody));
     }
 
     /// <inheritdoc />
