@@ -46,7 +46,7 @@ internal sealed partial class ShapeOverlayJsonContext : JsonSerializerContext;
 /// through <see cref="ILocalCommitFeed"/>; other nodes and regions send theirs directly over the origin's JetStream
 /// subjects. Live tails show these as <c>provisional</c> until the home's pages confirm or revert them.
 /// </summary>
-internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, ILogger<ShapeOverlay> logger) : BackgroundService, ILocalCommitFeed
+internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, ITransactionCrypto crypto, ILogger<ShapeOverlay> logger) : BackgroundService, ILocalCommitFeed
 {
     internal const int MaxPerDatabase = 1024;
     internal const long MaxBytes = 64L << 20;
@@ -155,6 +155,21 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
         }
     }
 
+    internal async Task PurgeDeletedAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        Held(database, Snapshot(database).Select(transaction => transaction.Id).ToArray());
+        if (_nats is not { } nats)
+        {
+            return;
+        }
+
+        await _streamReady.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        _ = await new NatsJSContext(nats).PurgeStreamAsync(StreamName, new StreamPurgeRequest
+        {
+            Filter = Subject(database),
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
     internal bool Add(TenantContext database, ProvisionalTransaction transaction)
     {
         if (transaction.Rows.Count == 0)
@@ -222,7 +237,7 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
             try
             {
                 await nats.ConnectAsync().ConfigureAwait(false);
-                _ = await js.CreateOrUpdateStreamAsync(new StreamConfig("TERRABASE_PROVISIONAL_" + options.Region.ToUpperInvariant(),
+                _ = await js.CreateOrUpdateStreamAsync(new StreamConfig(StreamName,
                     [$"terrabase.local.{options.Region}.>"])
                 {
                     Storage = StreamConfigStorage.File,
@@ -248,13 +263,14 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
         await foreach (var (database, transaction) in _outgoing.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
             var payload = JsonSerializer.SerializeToUtf8Bytes(transaction, ShapeOverlayJsonContext.Default.ProvisionalTransaction);
-            if (payload.Length > MaxMessageBytes)
+            if (payload.Length > MaxMessageBytes - TransactionCrypto.Overhead)
             {
                 continue;
             }
 
             try
             {
+                payload = await crypto.SealAsync(database, payload, cancellationToken).ConfigureAwait(false);
                 // Live subscribers receive this publish directly, without a pull via the home or a storage-ack round trip.
                 // JetStream retains a bounded copy; R7 remains the durable write path, independently of this publication.
                 var ack = await js.PublishAsync(Subject(database), payload, opts: new NatsJSPubOpts { MsgId = transaction.Id },
@@ -287,7 +303,8 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
                     ProvisionalTransaction? transaction;
                     try
                     {
-                        transaction = JsonSerializer.Deserialize(data, ShapeOverlayJsonContext.Default.ProvisionalTransaction);
+                        var plain = await crypto.OpenAsync(database, data, cancellationToken).ConfigureAwait(false);
+                        transaction = plain is null ? null : JsonSerializer.Deserialize(plain, ShapeOverlayJsonContext.Default.ProvisionalTransaction);
                     }
                     catch (JsonException)
                     {
@@ -311,6 +328,8 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
 
     private string Subject(TenantContext database) =>
         $"terrabase.local.{options.Region}.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}";
+
+    private string StreamName => "TERRABASE_PROVISIONAL_" + options.Region.ToUpperInvariant();
 
     private static TenantContext? Database(string subject) =>
         subject.Split('.') is [_, _, _, _, _, _] ? PushNames.Database(subject) : null;
