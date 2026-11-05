@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @import "./tokens.css";
 @import "./components.css";
+@import "../../src/TerraScale.Dashboard/web/assets/css/sdk-tabs.css";
+
+.sdk-tabs { --sdk-ink: var(--ts-text); --sdk-muted: var(--ts-text-muted); --sdk-accent: var(--ts-primary); }
 
 /* Self-hosted fonts (OFL, see static/fonts/OFL-*.txt). Oxanium is only used when a direction sets it as display. */
 @font-face {
