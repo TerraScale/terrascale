@@ -33,6 +33,10 @@ TERRASCALE_ACCESS_TOKEN="$(
 
 The token lasts 60 seconds (`expires_in: 60`) and carries the key's scopes. Run the exchange again when requests start answering `401`. [Authentication](/guides/authentication) explains the contract.
 
+## Query from your application
+
+<SdkQueryTabs />
+
 ## Next steps
 
 Run your first query with the [SQL quickstart](/concepts/sql#quickstart) from the CLI, psql or HTTP. Read [errors and safe retries](/guides/errors) before you build an application that depends on error handling. [Dashboard usage](/guides/dashboard) covers the rest of the customer workflow.
