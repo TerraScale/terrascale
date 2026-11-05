@@ -34,6 +34,7 @@ namespace TerraScale.Dashboard.E2E
         private WebApplication? first;
         private WebApplication? second;
         private DeliveredIdentity? identity;
+        private string? statePeers;
         public Uri ProviderOrigin { get; private set; } = null!;
         public Uri Origin { get; private set; } = null!;
         public Uri ReplicaOrigin { get; private set; } = null!;
@@ -48,7 +49,7 @@ namespace TerraScale.Dashboard.E2E
             this.root = root;
         }
 
-        public static async Task<StateSdkScenario> PrepareAsync(string root)
+        public static async Task<StateSdkScenario> PrepareAsync(string root, bool regional = false)
         {
             var scenario = new StateSdkScenario(root);
             try
@@ -65,9 +66,19 @@ namespace TerraScale.Dashboard.E2E
                 scenario.producer.MapMethods("/{**path}", ["GET", "POST", "PUT", "DELETE"], (Func<HttpContext, Task<IResult>>)scenario.protocol.DispatchAsync);
                 await scenario.producer.StartAsync();
                 scenario.ProviderOrigin = Address(scenario.producer);
+                if (regional)
+                {
+                    scenario.statePeers = Path.GetTempFileName();
+                    await File.WriteAllTextAsync(scenario.statePeers, "home gru 127.0.0.1\nlocal fra 127.0.0.2\n");
+                }
                 return scenario;
             }
             catch { await scenario.DisposeAsync(); throw; }
+        }
+
+        public Task RemoveStateHomePeerAsync()
+        {
+            return File.WriteAllTextAsync(statePeers ?? throw new InvalidOperationException("Regional state is not configured."), "local fra 127.0.0.2\n");
         }
 
         public HttpClient CreateClient(bool replica = false)
@@ -165,7 +176,9 @@ namespace TerraScale.Dashboard.E2E
             transports.Add(transport);
             builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
             builder.Services.Replace(ServiceDescriptor.Singleton<TerraBaseRpcClient>(services => new(
-                services.GetRequiredService<IDashboardIdentity>(), ProviderOrigin, "gru", null, services.GetRequiredService<IMeterFactory>())));
+                services.GetRequiredService<IDashboardIdentity>(),
+                statePeers is null ? ProviderOrigin : new UriBuilder(ProviderOrigin) { Host = "127.0.0.2" }.Uri,
+                statePeers is null ? "gru" : "fra", statePeers, services.GetRequiredService<IMeterFactory>())));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(services =>
             {
                 var factory = new StateFactory(transport);
@@ -237,6 +250,7 @@ namespace TerraScale.Dashboard.E2E
             }
 
             transports.Clear();
+            if (statePeers is not null) { File.Delete(statePeers); }
         }
 
         private sealed class StateFactory(StateTransport transport) : IHttpClientFactory

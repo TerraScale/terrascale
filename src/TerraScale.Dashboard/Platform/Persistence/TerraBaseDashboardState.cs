@@ -112,7 +112,9 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
         private async Task<IReadOnlyList<StateResult>> ExecuteAsync(IReadOnlyList<StateStatement> statements, CancellationToken cancellationToken)
         {
-            var answer = await rpc.Platform<IManagementService>().WithCancellationToken(cancellationToken).ExecuteSqlAsync(DashboardStateSchema.ProjectId,
+            // Platform databases are independent regional stores. Keep sessions, identity claims and CAS writes on
+            // their single home; reading the local store would create a second workspace for the same user.
+            var answer = await rpc.Platform<IManagementService>("gru").WithCancellationToken(cancellationToken).ExecuteSqlAsync(DashboardStateSchema.ProjectId,
                 DashboardStateSchema.Database, JsonSerializer.SerializeToElement(new StateRequest(statements), StateJson.Default.StateRequest));
             var results = answer.Deserialize(StateJson.Default.StateResponse)?.Results;
             if (results is null || results.Count != statements.Count || results.Any(result => result is null || result.Rows is null || result.Rows.Any(row => row is null)))

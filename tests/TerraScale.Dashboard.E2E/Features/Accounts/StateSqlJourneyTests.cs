@@ -7,6 +7,23 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
     public sealed class StateSqlJourneyTests(DashboardRootFixture fixture)
     {
         [Test]
+        public async Task RegionalStateUsesGruAndRefusesAMissingHomePeer()
+        {
+            await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root, regional: true);
+            await Assert.That(await scenario.StartHostsAsync()).IsTrue();
+            using var client = scenario.CreateClient();
+            using (var ready = await client.GetAsync("/readyz"))
+            {
+                await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            }
+
+            await scenario.RemoveStateHomePeerAsync();
+            using var unavailable = await client.GetAsync("/readyz");
+            await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(await unavailable.Content.ReadAsStringAsync()).Contains("\"terrabase\":\"unavailable\"");
+        }
+
+        [Test]
         public async Task SignUpStateSurvivesAColdRestartOfBothReplicas()
         {
             await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
