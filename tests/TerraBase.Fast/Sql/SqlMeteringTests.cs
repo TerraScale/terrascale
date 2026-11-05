@@ -77,6 +77,6 @@ public sealed class SqlMeteringTests
         }
         while (after is not null);
 
-        throw new InvalidOperationException("the organization is missing from the allowance feed");
+        throw new InvalidOperationException("the organization is missing from the allowance stream");
     }
 }
