@@ -3,6 +3,7 @@ using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts
 {
+    [Category("Slow")]
     [ClassDataSource<DashboardRootFixture>]
     public sealed class AccountEnrollmentJourneyTests(DashboardRootFixture fixture)
     {

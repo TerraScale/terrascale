@@ -9,6 +9,7 @@ using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.E2E.Features.Backups
 {
+    [Category("Slow")]
     [ClassDataSource<DashboardRootFixture>]
     public sealed class BackupJourneyTests(DashboardRootFixture fixture)
     {
