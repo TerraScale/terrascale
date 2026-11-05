@@ -527,7 +527,7 @@ internal sealed partial class EngineManagementService
 
         var result = await ShareMissAsync("plan", (organizationId, incarnation.ToString(), ""), sequence, token => ReadAsync<TenantPlanResult>(async transaction =>
             Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, token).ConfigureAwait(false))
-                ? await PlanUncheckedAsync(transaction, organizationId, token).ConfigureAwait(false)
+                ? await AdmissionPlanAsync(transaction, organizationId, token).ConfigureAwait(false)
                 : UnreadableCatalog,
             static error => error, token), cancellationToken).ConfigureAwait(false);
         if (result is PlanTier plan && store.Incarnation == incarnation && store.CommitSequence == sequence)
