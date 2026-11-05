@@ -31,6 +31,7 @@ output = open(args.output, 'w')
 REGIONS = ['gru', 'sjc', 'fra']
 events = []
 lock = threading.Lock()
+write_phase = threading.Barrier(len(REGIONS), timeout=120)
 
 def emit(value):
     with lock:
@@ -96,6 +97,8 @@ def worker(source):
                 timing=last.get('headers',{}).get('server-timing','')
                 if ok and (r=='gru' or 'home;dur=' not in timing and 'replica_open;dur=' in timing): break
             else: raise RuntimeError('replica did not become ready')
+        # All regions finish their baseline and readiness phase before any measured write.
+        write_phase.wait()
         c,h,last=clients[source]
         for repeat in range(1,4):
             failures=0
