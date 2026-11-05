@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.Authentication.Contracts;
 
-/// <summary>An organization of the platform tenant (collection <c>organizations</c>).</summary>
+/// <summary>An organization of the platform tenant (table <c>organizations</c>).</summary>
 /// <param name="Id">Canonical ULID.</param>
 /// <param name="InstanceId">Always the platform tenant.</param>
 /// <param name="Name">Display name; not unique.</param>
@@ -22,7 +22,7 @@ public sealed record OrganizationRecord(string Id, string InstanceId, string Nam
 public sealed record OwnershipTransferRecord(string FromUserId, string ToUserId, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt);
 
 /// <summary>
-/// A user's place in an organization (collection <c>memberships</c>, addressed by organization and user): a member's
+/// A user's place in an organization (table <c>memberships</c>, addressed by organization and user): a member's
 /// organization role, or a collaborator's record without one. Every write that gives or takes a project role also
 /// rewrites or deletes this record, so a removal and a grant never both succeed on stale reads.
 /// </summary>
@@ -33,7 +33,7 @@ public sealed record OwnershipTransferRecord(string FromUserId, string ToUserId,
 /// <param name="JoinedAt">When the user joined.</param>
 public sealed record MembershipRecord(string InstanceId, string OrganizationId, string UserId, string? Role, DateTimeOffset JoinedAt);
 
-/// <summary>A project (collection <c>projects</c>); its id is also its end users' tenant.</summary>
+/// <summary>A project (table <c>projects</c>); its id is also its end users' tenant.</summary>
 /// <param name="Id">Canonical ULID.</param>
 /// <param name="InstanceId">Always the platform tenant.</param>
 /// <param name="OrganizationId">The owning organization; never changes.</param>
@@ -47,7 +47,7 @@ public sealed record MembershipRecord(string InstanceId, string OrganizationId, 
 /// <param name="AllowedCidrs">Canonical CIDRs every API key token of the project must be used from; null or empty allows any address.</param>
 public sealed record ProjectRecord(string Id, string InstanceId, string OrganizationId, string Name, string CreatedBy, DateTimeOffset CreatedAt, string? ClosureId = null, IReadOnlyList<string>? AllowedCidrs = null);
 
-/// <summary>An explicit project role (collection <c>project_members</c>, addressed by project and user).</summary>
+/// <summary>An explicit project role (table <c>project_members</c>, addressed by project and user).</summary>
 /// <param name="InstanceId">Always the platform tenant.</param>
 /// <param name="OrganizationId">The project's organization.</param>
 /// <param name="ProjectId">The project.</param>
@@ -57,7 +57,7 @@ public sealed record ProjectRecord(string Id, string InstanceId, string Organiza
 public sealed record ProjectMemberRecord(string InstanceId, string OrganizationId, string ProjectId, string UserId, string Role, DateTimeOffset GrantedAt);
 
 /// <summary>
-/// An API key (collection <c>api_keys</c>, addressed by its id): an OAuth client credential owned by an organization or a
+/// An API key (table <c>api_keys</c>, addressed by its id): an OAuth client credential owned by an organization or a
 /// project. Only SHA-256 digests of the key string are stored. Revoking deletes the record.
 /// </summary>
 /// <param name="Id">Canonical ULID: the client id and the <c>sub</c> of its tokens.</param>
@@ -106,7 +106,7 @@ public sealed record ApiKeyRecord(
 }
 
 /// <summary>
-/// When an API key last exchanged a token (collection <c>api_key_usage</c>, addressed by key id). It is kept apart from the
+/// When an API key last exchanged a token (table <c>api_key_usage</c>, addressed by key id). It is kept apart from the
 /// key so a usage write never races a rotation or revocation of the key record itself.
 /// </summary>
 /// <param name="KeyId">The key.</param>
@@ -117,7 +117,7 @@ public sealed record ApiKeyRecord(
 public sealed record ApiKeyUsageRecord(string KeyId, string InstanceId, string OrganizationId, string? ProjectId, DateTimeOffset LastUsedAt);
 
 /// <summary>
-/// An invitation (collection <c>invitations</c>, addressed by id) to an organization role, or with a project to that
+/// An invitation (table <c>invitations</c>, addressed by id) to an organization role, or with a project to that
 /// project's role. Only the SHA-256 of its token is stored; <c>uniques</c> maps that digest to the invitation and holds
 /// one pending invitation per email and target.
 /// </summary>
@@ -149,7 +149,7 @@ public sealed record InvitationRecord(
     DateTimeOffset? DecidedAt = null,
     string? DecidedBy = null);
 
-/// <summary>An audit event of an organization (collection <c>audit_events</c>), written with the change it records.</summary>
+/// <summary>An audit event of an organization (table <c>audit_events</c>), written with the change it records.</summary>
 /// <param name="Id">Monotonic canonical ULID.</param>
 /// <param name="InstanceId">Always the platform tenant.</param>
 /// <param name="OrganizationId">The organization.</param>

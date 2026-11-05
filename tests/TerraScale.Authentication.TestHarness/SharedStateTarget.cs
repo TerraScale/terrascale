@@ -7,7 +7,7 @@ namespace TerraScale.Authentication.Tests;
 
 /// <summary>
 /// A fresh tenant database on the real TerraBase fixture, provisioned with the infrastructure
-/// collections and the attempt-limit collection. Several servers bound to one
+/// tables and the attempt-limit table. Several servers bound to one
 /// target are replicas of one deployment.
 /// </summary>
 public sealed class SharedStateTarget
@@ -35,9 +35,9 @@ public sealed class SharedStateTarget
 
     public void Register(IServiceCollection services, string? apiKey = null) => this.fixture.UseStorage(services, this.tenant, apiKey: apiKey);
 
-    public async Task<JsonElement?> ReadAsync(string collection, string instanceId, string key)
+    public async Task<JsonElement?> ReadAsync(string table, string instanceId, string key)
     {
-        var rows = await this.Database.QueryAsync($"SELECT body FROM \"{collection}\" WHERE id = ?", [AuthStore.NaturalKeyId(instanceId, collection, key)]);
+        var rows = await this.Database.QueryAsync($"SELECT body FROM \"{table}\" WHERE id = ?", [AuthStore.NaturalKeyId(instanceId, table, key)]);
         if (rows.Count == 0)
         {
             return null;
@@ -47,8 +47,8 @@ public sealed class SharedStateTarget
         return body.RootElement.Clone();
     }
 
-    public async Task<int> CountAsync(string collection) =>
-        (int)(await this.Database.QueryAsync($"SELECT count(*) FROM \"{collection}\""))[0].GetInt64(0);
+    public async Task<int> CountAsync(string table) =>
+        (int)(await this.Database.QueryAsync($"SELECT count(*) FROM \"{table}\""))[0].GetInt64(0);
 }
 
 /// <summary>A wall clock the test moves by hand.</summary>

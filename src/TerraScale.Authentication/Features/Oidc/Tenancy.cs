@@ -72,8 +72,8 @@ public static class Tenancy
             // tokens read the project itself, so a deleted project stops serving them at once.
             var metadata = rest is OidcIssuer.ConfigurationPath or OidcIssuer.JwksPath;
             var project = metadata
-                ? await store.GetLocalAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false)
-                : await store.GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false);
+                ? await store.GetLocalAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false)
+                : await store.GetAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false);
             return project is null ? null : tenant;
         }
         catch (Exception error) when (error is not (OperationCanceledException or OutOfMemoryException))
