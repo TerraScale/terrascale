@@ -8,7 +8,10 @@ high and scroll within their row on narrow screens.
 
 The canonical stylesheet is
 `src/TerraScale.Dashboard/web/assets/css/sdk-tabs.css`; docs and landing import
-that source directly. `.sdk-tabs` contains buttons with `role="tab"`. Sites use
+that source directly. Changes to shared CSS, keyboard handling or examples must
+also update the importing docs and landing entry points so path-filtered Fast and
+deploy pipelines run for every consumer. Workflow dependency changes belong to
+the CI owner. `.sdk-tabs` contains buttons with `role="tab"`. Sites use
 their own theme tokens through `--sdk-ink`, `--sdk-muted` and `--sdk-accent` where
 their token names differ. Dashboard and docs use the Graphite Blue tokens directly.
 
