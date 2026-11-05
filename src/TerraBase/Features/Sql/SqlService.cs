@@ -1,4 +1,5 @@
 using System.Text;
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -45,16 +46,18 @@ internal sealed class SqlService(
 
     public async ValueTask<ReplicaSqlOutcome> ExecuteOnCopyAsync(
         TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements,
-        bool write, CancellationToken cancellationToken)
+        bool write, CancellationToken cancellationToken, Action<string, double>? timing = null)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(statements);
         var results = new List<SqlResult>(statements.Count);
         long units = 0;
+        double allowanceMs = 0, nativeMs = 0;
         for (var i = 0; i < statements.Count; i++)
         {
             var (plan, command) = statements[i];
+            var started = Stopwatch.GetTimestamp();
             if (plan.ReadsTables || plan.Kind == SqlStatementKind.Write)
             {
                 switch (await allowance.CheckAsync(database, plan.Kind == SqlStatementKind.Write ? MeteredOperation.Write : MeteredOperation.SqlRead, cancellationToken)
@@ -66,6 +69,7 @@ internal sealed class SqlService(
                         return new ReplicaSqlFailure(SqlErrors.Busy("usage accounting is unavailable; retry"), i);
                 }
             }
+            allowanceMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 
             if (command.Args.Concat(command.Named.Values).Any(value => value.Kind == SqlValueKind.Real && !double.IsFinite(value.Real)))
             {
@@ -75,10 +79,12 @@ internal sealed class SqlService(
             SqlStatementResult raw;
             try
             {
+                started = Stopwatch.GetTimestamp();
                 raw = await run(
                     new SqlStatement(await SqlSession.RunTextAsync(plan, run).ConfigureAwait(false), [.. command.Args.Select(SqlSession.Bound)],
                         command.Named.ToDictionary(pair => pair.Key, pair => SqlSession.Bound(pair.Value), StringComparer.Ordinal),
                         SqlSession.MaxRows, SqlSession.MaxBytes, SqlLimits.MaxRequestTime)).ConfigureAwait(false);
+                nativeMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             }
             catch (SqlStatementException error)
             {
@@ -108,6 +114,8 @@ internal sealed class SqlService(
             results.Add(result);
         }
 
+        timing?.Invoke("local_allowance", allowanceMs);
+        timing?.Invoke("local_native", nativeMs);
         if (units > 0)
         {
             usage.RecordRead(database, units);

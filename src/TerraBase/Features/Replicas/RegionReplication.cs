@@ -10,6 +10,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
 using TerraBase.Features.Memory;
 using TerraBase.Features.HomePush;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -25,7 +26,7 @@ namespace TerraBase.Features.Replicas;
 internal sealed class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
-    ITransactionCrypto crypto) : BackgroundService
+    ITransactionCrypto crypto, IOperationAllowance allowance) : BackgroundService
 {
     /// <summary>How often every replica pulls and every home's catalog is read again without a notice.</summary>
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
@@ -63,6 +64,8 @@ internal sealed class RegionReplication(
     private IDatabaseReplicas Replicas => replicas;
 
     private ITransactionCrypto Crypto => crypto;
+
+    private IOperationAllowance Allowance => allowance;
 
     private ILogger Logger => logger;
 
@@ -810,6 +813,7 @@ internal sealed class RegionReplication(
             await RetryAsync(async () =>
             {
                 await _owner.Crypto.PrepareAsync(Database, cancellationToken).ConfigureAwait(false);
+                _ = await _owner.Allowance.CheckAsync(Database, MeteredOperation.Write, cancellationToken).ConfigureAwait(false);
                 await _owner.Replicas.OpenAsync(Database, _source, _owner._http, cancellationToken).ConfigureAwait(false);
                 return true;
             }, "open", cancellationToken).ConfigureAwait(false);

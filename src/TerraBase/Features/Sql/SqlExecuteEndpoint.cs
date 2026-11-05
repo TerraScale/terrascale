@@ -279,7 +279,8 @@ internal sealed class SqlExecuteEndpoint(
 
         await using (transaction.ConfigureAwait(false))
         {
-            var outcome = await sql.ExecuteOnCopyAsync(database, statement => transaction.ExecuteAsync(statement, cancellationToken), statements, write: true, cancellationToken);
+            var outcome = await sql.ExecuteOnCopyAsync(database, statement => transaction.ExecuteAsync(statement, cancellationToken), statements, write: true, cancellationToken,
+                (stage, milliseconds) => SqlRequestTiming.Record(HttpContext, stage, milliseconds));
             SqlRequestTiming.Mark(HttpContext, "local_execute");
             if (outcome is ReplicaSqlFailure failed)
             {

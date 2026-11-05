@@ -108,7 +108,7 @@ internal interface ISqlService
 
     ValueTask<ReplicaSqlOutcome> ExecuteOnCopyAsync(
         TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements,
-        bool write, CancellationToken cancellationToken);
+        bool write, CancellationToken cancellationToken, Action<string, double>? timing = null);
 
     void RecordLocalWrites(TenantContext database, long rows);
 
