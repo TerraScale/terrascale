@@ -26,7 +26,7 @@ public sealed class TerraBaseClosureCancellationTests
             return response;
         });
         using var http = new HttpClient(handler);
-        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        var database = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions
         {
             BaseAddress = new Uri("http://100.64.0.1:8081"),
         }).Database(Generation, "auth");

@@ -28,7 +28,7 @@ if (databases.Items is not [{ Name: "platform-dashboard", HomeRegion: "gru" }])
 
 // TerraBase's regional contract: the region's own host, the pin on the request, and a typed 421.
 using var regionalHttp = new HttpClient(new WrongRegionStub());
-var regional = new TerraBaseDocumentsClient(regionalHttp, new TerraBaseDocumentsClientOptions { Region = "sjc", ApiKey = "tb_consumer" }).Database("project", "app");
+var regional = new TerraBaseDatabaseClient(regionalHttp, new TerraBaseDatabaseClientOptions { Region = "sjc", ApiKey = "tb_consumer" }).Database("project", "app");
 try
 {
     _ = await regional.GetUsageAsync();
@@ -42,7 +42,7 @@ foreach (var invalid in new[] { "GRU", "Gru", "gru-" })
 {
     try
     {
-        _ = new TerraBaseDocumentsClient(regionalHttp, new TerraBaseDocumentsClientOptions { Region = invalid, ApiKey = "tb_consumer" });
+        _ = new TerraBaseDatabaseClient(regionalHttp, new TerraBaseDatabaseClientOptions { Region = invalid, ApiKey = "tb_consumer" });
         throw new InvalidOperationException($"Region {invalid} was accepted.");
     }
     catch (ArgumentException)
