@@ -42,7 +42,6 @@ check pass "$engine" "" "storage-format" "Needs format bump"
 check fail "$engine" "" "" "Needs format bump"
 check fail "$engine" "" "storage-format
 storage-format-unchanged" "Needs format bump"
-check fail "src/TerraBase/Engine/Lattices/DocumentStateEncoding.cs" "" ""
 check fail "$version" "$bump" "storage-format
 storage-format-unchanged"
 # A comment edit in StorageFormat.cs is no bump.

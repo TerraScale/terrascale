@@ -140,7 +140,7 @@ watch_pid=$!
 set +m
 
 # Publish only once this run's own server answers on the port: its OpenAPI
-# document names this run's unique origin, so an unrelated listener that
+# metadata names this run's unique origin, so an unrelated listener that
 # already held the port is never exposed to the tailnet.
 for _ in $(seq 1 300); do
   kill -0 "$watch_pid" 2>/dev/null || { echo "dotnet watch exited before the server started" >&2; exit 1; }

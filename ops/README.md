@@ -22,7 +22,7 @@ contains no secret values, and does not prove deployed Vault state.
 
 Tigris remains connected to its organization through Fly. This storage
 integration is retained independently of OCI compute ownership. Authenticate
-with `flyctl auth login`, then use
+with the storage organization account, then use
 `fly storage create` / `flyctl storage create` for bucket provisioning.
 The installed CLI supports organization-scoped creation without a compute app:
 

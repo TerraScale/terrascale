@@ -46,7 +46,7 @@ public sealed class SseTests
     }
 
     [Test]
-    public async Task ProducesSseDocumentsTextEventStreamResponses()
+    public async Task ProducesSseDescribesTextEventStreamResponses()
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
