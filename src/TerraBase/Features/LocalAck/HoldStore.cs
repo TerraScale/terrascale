@@ -129,6 +129,14 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
         }
     }
 
+    internal async Task DeleteDatabaseAsync(TerraBase.Tenancy.TenantContext database, CancellationToken cancellationToken)
+    {
+        foreach (var origin in await OriginsAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await ReleaseAsync(origin, database.OrganizationId, database.ProjectId!, database.DatabaseId!, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Drops one held transaction once the home answered it.</summary>
     public async ValueTask DropAsync(HeldTransaction held, CancellationToken cancellationToken)
     {
@@ -175,7 +183,7 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
             limit, PageBytes, cancellationToken).ConfigureAwait(false);
         return [.. page.Records.TakeWhile(record => record.Id.StartsWith(prefix, StringComparison.Ordinal))
             .Select(record => JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.HeldTransaction))
-            .Where(held => held is { Version: 1, Transaction: not null })
+            .Where(held => held is { Version: 1, Payload: not null })
             .Select(held => held!)];
     }
 

@@ -160,6 +160,7 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
             Key = key,
             InputStream = content,
             AutoCloseStream = false,
+            Headers = { CacheControl = "private, no-store" },
             // A signed payload hash rather than aws-chunked encoding, which S3-compatible services do not all accept.
             UseChunkEncoding = false,
         }, cancellationToken)).ConfigureAwait(false);

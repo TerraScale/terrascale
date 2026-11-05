@@ -257,6 +257,39 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         return new(handle, entries);
     }
 
+    // The cursor is persisted by the deletion pass; owner metadata isolates other tenants' immutable objects.
+    internal async Task<(string? After, bool Complete)> DeleteDatabaseAsync(TenantContext database, string? after, CancellationToken token)
+    {
+        if (_objects is null)
+        {
+            return (null, true);
+        }
+        var owner = ShapeObjectStore.Owner(database);
+        var count = 0;
+        await foreach (var stored in _objects.ListAsync(null, after, token).ConfigureAwait(false))
+        {
+            var head = await _objects.HeadAsync(stored.Key, token).ConfigureAwait(false);
+            if (head?.Owner == owner)
+            {
+                if (!await _objects.DeleteAsync(stored.Key, token).ConfigureAwait(false))
+                {
+                    return (after, false);
+                }
+                Remove(stored.Key);
+            }
+            after = stored.Key;
+            if (++count == ScanItems)
+            {
+                return (after, false);
+            }
+        }
+        lock (_gate)
+        {
+            // A publisher already sealing a chunk must drain before this authority can be certified.
+            return (_pending.Count == 0 ? null : after, _pending.Count == 0);
+        }
+    }
+
     public async ValueTask<int> TrimAsync(TenantContext database, string handle, long floor, CancellationToken cancellationToken)
     {
         ValidateHandle(handle);
@@ -675,6 +708,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         floor = await FloorAsync(pending.Database, pending.Handle, linked.Token).ConfigureAwait(false);
         if (floor == long.MaxValue)
         {
+            _ = await _objects.DeleteAsync(key, linked.Token).ConfigureAwait(false);
             return;
         }
 
@@ -899,13 +933,11 @@ internal sealed class ShapeObjectStore : IDisposable
     /// <summary>Deletes the object; on an R2 bucket its Cloudflare copies are then purged in the background.</summary>
     public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken)
     {
-        var deleted = await _objects.DeleteAsync(key, cancellationToken).ConfigureAwait(false);
-        if (deleted && _cdn is not null)
+        if (_cdn is not null && !await _purge.QueueAsync(_cdn.AbsoluteUri + key, cancellationToken).ConfigureAwait(false))
         {
-            _ = _purge.Queue(_cdn.AbsoluteUri + key);
+            return false;
         }
-
-        return deleted;
+        return await _objects.DeleteAsync(key, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ShapeObjectHead?> HeadAsync(string key, CancellationToken cancellationToken)

@@ -1,5 +1,3 @@
-using TerraBase.Features.HomeApply;
-
 namespace TerraBase.Features.LocalAck;
 
 /// <summary>
@@ -7,7 +5,7 @@ namespace TerraBase.Features.LocalAck;
 /// its in-region partner until the home has it (docs/terrabase/in-region-ack.md). <see cref="Version"/> is 1.
 /// </summary>
 internal sealed record HeldTransaction(
-    int Version, string? Origin, string? Home, string? Organization, string? Project, string? Database, ulong Sequence, RegionTransaction? Transaction);
+    int Version, string? Origin, string? Home, string? Organization, string? Project, string? Database, ulong Sequence, byte[]? Payload);
 
 /// <summary>The home holds every transaction of the database up to <see cref="Through"/>: the partner drops them.</summary>
 internal sealed record HoldRelease(string? Origin, string? Organization, string? Project, string? Database, ulong Through);

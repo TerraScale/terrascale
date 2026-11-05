@@ -49,6 +49,25 @@ internal sealed partial class EngineManagementService
         await PutAsync(transaction, DatabasePurge.Kind, database.Id, record, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
     }
 
+    internal async ValueTask<bool> ObserveShreddedAsync(TenantContext database, DateTimeOffset deletedAt, CancellationToken token) =>
+        await WriteAsync<bool>(async transaction =>
+        {
+            if (await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false) is { } known)
+            {
+                return DatabasePurge.SameDatabase(known.Database, database);
+            }
+            if (await CatalogTables.DatabaseAsync(transaction, database.ProjectId!, database.DatabaseId!, token).ConfigureAwait(false) is { } registered)
+            {
+                _ = await UnregisterRecordAsync(transaction, database, registered, token, customerDeletion: true).ConfigureAwait(false);
+            }
+            else
+            {
+                var record = new DatabasePurgeRecord(database, deletedAt, deletedAt.AddDays(30), deletedAt.AddDays(60), null, [options.MachineId]);
+                await PutAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, record, TerraBaseJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false);
+            }
+            return true;
+        }, static _ => false, token).ConfigureAwait(false);
+
     private async ValueTask ConvergePurgesAsync(CancellationToken cancellationToken)
     {
         var page = await ReadAsync<RecordPage?>(async transaction => await transaction.ListAsync(DatabasePurge.Kind, _purgeAfter,
