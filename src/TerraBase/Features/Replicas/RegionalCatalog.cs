@@ -25,7 +25,7 @@ internal static class RegionalCatalog
     private static readonly Dictionary<string, object?> NoNamed = [];
 
     private static bool Shared(string kind) => kind is "catalog" or "api_keys" or "api_key_hashes"
-        or "project_closures" or "database_expiry" or "retired_databases"
+        or "project_closures" or "database_expiry" or "retired_databases" or "database_purges"
         || kind.StartsWith("projects/", StringComparison.Ordinal) && (kind.EndsWith("/api_keys", StringComparison.Ordinal)
             || kind.EndsWith("/backup_destination", StringComparison.Ordinal) || kind.EndsWith("/file-buckets", StringComparison.Ordinal))
         || kind.StartsWith("databases/", StringComparison.Ordinal) && (kind.EndsWith("/functions", StringComparison.Ordinal)
@@ -80,11 +80,11 @@ internal static class RegionalCatalog
                         }
                         records.Add(new RegionalRecord(kind.Name, record.Id, record.Json.ToArray()));
                     }
-                    after = entries.Records.LastOrDefault()?.Id;
+                    after = entries.Records.Count > 0 ? entries.Records[^1].Id : null;
                 }
                 while (entries.HasMore && after is not null);
             }
-            afterKind = page.HasMore ? page.Kinds.LastOrDefault()?.Name : null;
+            afterKind = page.HasMore && page.Kinds.Count > 0 ? page.Kinds[^1].Name : null;
         }
         while (afterKind is not null);
         if (bytes > MaxBytes)
@@ -120,7 +120,7 @@ internal static class RegionalCatalog
             {
                 _ = await transaction.DropKindAsync(kind.Name, cancellationToken).ConfigureAwait(false);
             }
-            after = page.HasMore ? page.Kinds.LastOrDefault()?.Name : null;
+            after = page.HasMore && page.Kinds.Count > 0 ? page.Kinds[^1].Name : null;
         }
         while (after is not null);
         foreach (var record in snapshot.Records)
