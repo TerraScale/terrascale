@@ -43,7 +43,7 @@ internal static class SqlSandbox
 
     private static readonly HashSet<string> WriteTargets = [with(StringComparer.OrdinalIgnoreCase), "INTO", "UPDATE", "TABLE", "ON"];
 
-    public static SqlError Reserved { get; } = Denied("names starting with _tb_, _ts_ or turso_, and the engine's own tables, are reserved");
+    public static SqlError Reserved { get; } = Denied("the engine's internal table names and prefixes are reserved");
 
     public static SqlError Denied(string message) => new(SqlErrors.Sandbox, message);
 

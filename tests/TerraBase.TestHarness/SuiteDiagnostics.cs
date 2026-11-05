@@ -70,8 +70,8 @@ public static partial class SuiteDiagnostics
             return;
         }
 
-        // Each row holds only the latest completed collection; a gap in gc_index means unobserved collections.
-        // Heap/load values describe that collection, not current live objects; allocation totals are approximate.
+        // Each row holds only the latest completed GC cycle; a gap in gc_index means unobserved GC cycles.
+        // Heap/load values describe that GC cycle, not current live objects; allocation totals are approximate.
         // Pressure/throttling totals are cumulative microseconds; cgroup counters/bytes are -1 when unavailable.
         write(string.Create(CultureInfo.InvariantCulture,
             $"Suite runtime pid={Environment.ProcessId} cpus={Environment.ProcessorCount} server_gc={GCSettings.IsServerGC}: elapsed_s,cpu_s,gc_pause_s,gen2,threads,queued_work,monitor_contentions,gc_index,gc_gen,gc_promoted_bytes,gc_pause0_ms,gc_pause1_ms,host_cpu_some_us,cgroup_cpu_some_us,cgroup_throttled_us,load1,allocated_bytes,heap_bytes,fragmented_bytes,committed_bytes,memory_load_bytes,memory_load_threshold_bytes,working_set_bytes,cgroup_memory_current_bytes,cgroup_swap_current_bytes,cgroup_memory_low,cgroup_memory_high,cgroup_memory_max,cgroup_memory_oom,cgroup_memory_oom_kill,cgroup_memory_oom_group_kill,host_memory_some_us,host_memory_full_us,cgroup_memory_some_us,cgroup_memory_full_us,cgroup_pgmajfault"));

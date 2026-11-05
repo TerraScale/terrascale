@@ -19,7 +19,7 @@ namespace TerraBase.Testing;
 
 /// <summary>
 /// An in-process stand-in for ts-auth: its OIDC discovery document and JWKS, and access tokens signed with its keys.
-/// Starts with one published ES256 key that signs every token. <see cref="Route"/> serves the documents through a message
+/// Starts with one published ES256 key that signs every token. <see cref="Route"/> serves the JSON metadata through a message
 /// handler that replaces the server's transport (no socket); <see cref="ListenAsync"/> serves them over TLS on a loopback
 /// port to the server's own transport.
 /// </summary>
@@ -78,10 +78,10 @@ public sealed class TestIssuer : IDisposable
     /// <summary>Whether the JWKS answers <c>302</c> to <see cref="MovedJwks"/>, which serves a valid key set.</summary>
     public bool RedirectJwks { get; set; }
 
-    /// <summary>Bytes of filler added to the JWKS document, to make it larger than the server reads.</summary>
+    /// <summary>Bytes of filler added to the JWKS response, to make it larger than the server reads.</summary>
     public int JwksPaddingBytes { get; set; }
 
-    /// <summary>The <c>issuer</c> the discovery document names; tests change it to serve a mismatched document.</summary>
+    /// <summary>The <c>issuer</c> the discovery document names; tests change it to serve mismatched metadata.</summary>
     public string DiscoveryIssuer { get; set; } = Issuer;
 
     /// <summary>Requests for the discovery document, including those that failed because ts-auth was unavailable.</summary>
