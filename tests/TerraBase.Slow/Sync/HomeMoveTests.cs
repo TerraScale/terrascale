@@ -79,20 +79,21 @@ public sealed class HomeMoveTests
         var homeMoved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var moved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var afterMove = 0;
+        var lastRetry = "none";
         var writer = Task.Run(async () =>
         {
             var target = viaGru;
             while (!stop.IsCancellationRequested)
             {
-                // REST can forward successfully after demotion without returning a 421.
-                if (homeMoved.Task.IsCompletedSuccessfully)
-                {
-                    target = viaSjc;
-                }
-
                 var row = EntityIds.New().ToString();
                 while (true)
                 {
+                    // A paused request can stay in this retry loop across move completion.
+                    if (homeMoved.Task.IsCompletedSuccessfully)
+                    {
+                        target = viaSjc;
+                    }
+
                     using var response = await target.PostAsJsonAsync(sql, new { statements = new[] { new { sql = "INSERT INTO acked (id) VALUES (?)", args = new[] { row } } } }, stop.Token);
                     if (response.StatusCode == HttpStatusCode.OK)
                     {
@@ -110,6 +111,7 @@ public sealed class HomeMoveTests
                         break;
                     }
 
+                    Volatile.Write(ref lastRetry, $"{(target == viaSjc ? "sjc" : "gru")}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(stop.Token)}");
                     if (response.StatusCode == HttpStatusCode.MisdirectedRequest)
                     {
                         target = viaSjc;
@@ -131,6 +133,10 @@ public sealed class HomeMoveTests
             body = await move.Content.ReadFromJsonAsync<JsonElement>(token);
             homeMoved.SetResult();
             await (await Task.WhenAny(moved.Task, writer).WaitAsync(TimeSpan.FromSeconds(60), token));
+        }
+        catch (TimeoutException error)
+        {
+            throw new InvalidOperationException($"move writer stalled: acked={acked.Count}, afterMove={Volatile.Read(ref afterMove)}, lastRetry={Volatile.Read(ref lastRetry)}", error);
         }
         finally
         {
