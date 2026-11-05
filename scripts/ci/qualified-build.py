@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Publish source-bound checked-build receipts; runtime payloads stay in CI artifacts."""
 import hashlib
+import functools
 from decimal import Decimal
 import json
 import os
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import xml.etree.ElementTree as ET
 
 REPO = 'TerraScale/terrascale'
 
@@ -66,8 +68,99 @@ def git(*args):
     return subprocess.check_output(['git', *args], text=True).strip()
 
 
+@functools.lru_cache(maxsize=32)
+def project_inputs(area, checkout, revision):
+    """Follow project references and source-linked files before excluding code.
+
+    Unknown MSBuild expressions fail closed. The cache is bound to this exact
+    checkout/revision, so adding a dependency changes subsequent ownership.
+    """
+    root = Path(checkout)
+    try:
+        projects = json.loads((root / (area + '.slnf')).read_text())['solution']['projects']
+        if area == 'auth':
+            projects.append('src/TerraBase/TerraBase.csproj')
+        pending = [root / path for path in projects]
+        directories, linked, seen = set(), set(), set()
+        while pending:
+            project = pending.pop().resolve()
+            project.relative_to(root)
+            if project in seen:
+                continue
+            seen.add(project)
+            if project.suffix == '.csproj':
+                directories.add(project.parent.relative_to(root).as_posix() + '/')
+            for node in ET.fromstring(project.read_text()).iter():
+                kind = node.tag.rsplit('}', 1)[-1]
+                value = node.get('Project' if kind == 'Import' else 'Include')
+                if kind not in {'ProjectReference', 'Compile', 'Import'} or value is None:
+                    continue
+                for entry in value.split(';'):
+                    entry = entry.replace('$(TsDotnetRoot)', str(root / 'sdk/dotnet'))
+                    entry = entry.replace('$(MSBuildThisFileDirectory)', str(project.parent) + '/')
+                    if '$' in entry or '%' in entry:
+                        return None
+                    prefix = re.split(r'[*?]', entry, maxsplit=1)[0]
+                    path = (project.parent / prefix).resolve()
+                    relative = path.relative_to(root).as_posix()
+                    if kind == 'ProjectReference':
+                        if '*' in entry or '?' in entry:
+                            return None
+                        pending.append(path)
+                    elif kind == 'Import':
+                        linked.add(relative)
+                        pending.append(path)
+                    else:
+                        linked.add(relative + '/' if prefix.endswith('/') else relative)
+        return directories, linked
+    except (OSError, ValueError, KeyError, ET.ParseError):
+        return None
+
+
+def area_input(area, path):
+    """Conservative input ownership for the three checked build/Fast graphs.
+
+    Root configuration, shared libraries, vendor code, dotnet SDK and unknown
+    paths always invalidate proof. Only known independent graphs are excluded.
+    This does not change the workflow's event/path selection.
+    """
+    if documentation(path):
+        return False
+    def independent():
+        if not path.startswith(('src/', 'tests/', 'sdk/', 'benchmark/dotnet/')):
+            return False
+        inputs = project_inputs(area, str(Path.cwd().resolve()), git('rev-parse', 'HEAD'))
+        if inputs is None:
+            return True  # Unresolved graph: require fresh proof.
+        directories, linked = inputs
+        return (any(path.startswith(prefix) for prefix in directories)
+                or any(path.startswith(item) if item.endswith('/') else path == item for item in linked))
+    owners = (
+        (('src/TerraBase', 'tests/TerraBase', 'scripts/terrabase/', 'docs/terrabase/'), {'auth', 'terrabase'}),
+        (('src/TerraScale.Authentication', 'tests/TerraScale.Authentication', 'scripts/auth/', 'docs/auth/'), {'auth'}),
+        (('src/TerraScale.CLI/',), {'libs'}),
+        (('src/TerraScale.Dashboard', 'tests/TerraScale.Dashboard', 'scripts/dashboard/',
+          'docs-site/', 'scripts/docs/', 'landing-site/', 'scripts/landing/',
+          'sdk/go/', 'sdk/js/', 'sdk/python/', 'sdk/rust/'), set()),
+    )
+    for prefixes, affected in owners:
+        if path.startswith(prefixes):
+            return area in affected or independent()
+    if path.startswith(('benchmark/', 'scripts/benchmark/')):
+        # libs.slnf includes these two benchmark projects. The Go benchmark
+        # and independent TerraBase drills are not inputs to its checked graph.
+        if Path(path).name in {'Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props'}:
+            return True
+        return (area == 'libs' and path.startswith((
+            'benchmark/dotnet/TerraScale.Endpoints.Benchmarks/',
+            'benchmark/dotnet/TerraScale.Logging.Benchmarks/'))) or independent()
+    if path in {'libs.slnf', 'auth.slnf', 'terrabase.slnf'}:
+        return path == area + '.slnf'
+    return True
+
+
 def proof_source(area, sha):
-    """Find proof across docs-only parents; never replace a newer area result."""
+    """Find proof across unchanged area inputs; never replace a newer result."""
     current = sha
     rows = statuses(current)
     contexts = {'ci-build/' + area, 'ts-ship/' + area}
@@ -85,13 +178,13 @@ def proof_source(area, sha):
             break  # Roots, shallow boundaries and merges need their own proof.
         parent = parents[0]
         paths = git('diff', '--name-only', '--no-renames', '-z', parent, current).split('\0')
-        if any(not documentation(path) for path in paths if path):
+        if any(area_input(area, path) for path in paths if path):
             break
         current = parent
         rows = statuses(current)
         if contexts & rows.keys():
             return current, rows
-    raise ValueError(f'No checked-build proof across documentation-only parents for {area} at {sha}; run ts-ship on a dev host')
+    raise ValueError(f'No checked-build proof across unchanged area inputs for {area} at {sha}; run ts-ship on a dev host')
 
 
 def verify(area, sha, directory, require_fast=True, rows=None):
@@ -196,7 +289,7 @@ def main():
             source, rows = proof_source(area, sha)
             verify(area, source, Path(scratch), rows=rows)
             if source != sha:
-                print(f'{area}: reused checked build and Fast proof from {source} for {sha}; documentation-only ancestry', flush=True)
+                print(f'{area}: reused checked build and Fast proof from {source} for {sha}; area inputs unchanged', flush=True)
     else:
         raise ValueError('Expected prepare or verify')
 
