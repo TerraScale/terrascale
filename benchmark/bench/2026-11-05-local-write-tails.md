@@ -108,7 +108,7 @@ Acceptance handoff: server deployed readiness and shipped SDK pin were delivered
 
 ## Independent acceptance failure; previous completion withdrawn
 
-The independent fresh Pro run after this handoff failed: 898/900 default writes succeeded, with two failed writes and four cross-read HTTP 400 responses in SJC/FRA. Original error messages were not retained; status/code, request IDs, timing and UTC intervals were retained. Therefore the earlier pooled completion claim does not establish Milestone B acceptance. #1105 is reopened and remains open pending a new stable deployment proof.
+The independent fresh Pro run after this handoff failed: 898/900 default writes succeeded, with two failed writes and four cross-read HTTP 400 responses in SJC/FRA. Original error messages were not retained; status/code, request IDs, timing and UTC intervals were retained in the [failed independent cohort](local-write-tails-20261105/independent-failed-cohort.jsonl.gz). Therefore the earlier pooled completion claim does not establish Milestone B acceptance. #1105 is reopened and remains open pending a new stable deployment proof.
 
 SJC cold first insert was 436.084 ms client /239.85 ms server app, including 177.68 ms server authentication. Its read warmup had let the two-second KeyAuthority answer age out; this was a server status check, not SDK token exchange. The candidate keeps recently used, validated key tokens warm in a bounded background set through signed expiry, sharing existing single-flight checks. It preserves the two-second revocation/fail-closed bound.
 
