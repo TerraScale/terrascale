@@ -8,7 +8,7 @@ using TerraScale.TerraBase.Contracts;
 namespace TerraScale.Dashboard.Features.Profile
 {
     // Local fences guard CAS writers; immutable authorization and enrollment references
-    // replay forever after ACK to repair later regional LWW joins and delayed writes.
+    // replay after ACK to repair delayed regional writes.
     public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDashboardState state, DashboardSessions sessions,
         AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ILogger<DeletionReconciler> logger) : BackgroundService
     {
