@@ -103,16 +103,15 @@ internal sealed class HomePush(
 
     public bool TwoNodeAck => LocalAckAvailable && partner.PartnerHealthy;
 
-    public bool LocalAckAvailable => _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
+    public bool LocalAckAvailable => (services.GetService<RegionalOwners>()?.Writer ?? true) && _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
         && partner.QuorumHealthy && services.GetService<ILocalWriteClock>() is { Allowed: true };
 
     private IInRegionAck Partner => partner;
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        // A holder runs no push: it commits no local write and the region's founder consumes for the home.
-        var holder = await new PeersFile(options).IsHolderAsync(cancellationToken).ConfigureAwait(false);
-        if (!holder && options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
+        // Every node rebuilds its overlay; only the fenced regional writer consumes and commits.
+        if (options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
         {
             _nats = new NatsConnection(new NatsOpts
             {
@@ -140,7 +139,7 @@ internal sealed class HomePush(
             };
             _overlay.Reverted += OnReverted;
         }
-        else if (!holder && (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Count > 0)
+        else if ((await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Count > 0)
         {
             logger.ZLogWarning($"TS_NATS_URL or TERRABASE_NATS_TOKEN_FILE is missing; writes for databases homed in other regions go home");
         }
@@ -421,6 +420,16 @@ internal sealed class HomePush(
         _ = await js.CreateOrUpdateStreamAsync(config, cancellationToken).ConfigureAwait(false);
     }
 
+    internal async Task RebuildForPromotionAsync(CancellationToken cancellationToken)
+    {
+        if (_js is not { } js || !_ready)
+        {
+            throw new IOException("the candidate's push recovery is not ready");
+        }
+
+        await RebuildAsync(js, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task RebuildAsync(NatsJSContext js, CancellationToken cancellationToken)
     {
         var consumer = await js.CreateOrderedConsumerAsync(PushNames.Stream(options.Region), new NatsJSOrderedConsumerOpts
@@ -533,6 +542,11 @@ internal sealed class HomePush(
         var backoff = TimeSpan.FromMilliseconds(200);
         while (!cancellationToken.IsCancellationRequested)
         {
+            if (!(services.GetService<RegionalOwners>()?.Writer ?? true))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100), time, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
             try
             {
                 var name = PushNames.Consumer(options.Region);
@@ -557,6 +571,12 @@ internal sealed class HomePush(
                 await foreach (var message in consumer.ConsumeAsync<byte[]>(opts: new NatsJSConsumeOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken)
                     .ConfigureAwait(false))
                 {
+                    if (!(services.GetService<RegionalOwners>()?.Writer ?? true))
+                    {
+                        await message.NakAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+                        break;
+                    }
+
                     Dispatch(nats, message, cancellationToken);
                 }
             }
@@ -653,6 +673,12 @@ internal sealed class HomePush(
         HomeApplyResult result;
         while (true)
         {
+            if (!(services.GetService<RegionalOwners>()?.Writer ?? true))
+            {
+                await message.NakAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             // Subjects contain the home observed when the remote transaction began. The
             // lease/catalog decides where it applies now, including late old-epoch pushes.
             if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }

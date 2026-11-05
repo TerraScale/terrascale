@@ -30,7 +30,8 @@ internal interface IHomeWriteLease
 
 internal sealed class HomeLeases(
     TerraBaseOptions options, IReplicaCatalog catalog, IReplicaPeers peers, IDatabaseReplicas replicas, DatabaseFences fences, HomeLeaseGate leaseGate,
-    RegionReplication replication, IStorageEngine engine, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger) : BackgroundService, IHomeWriteLease
+    RegionReplication replication, IStorageEngine engine, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger,
+    RegionalOwners? owners = null) : BackgroundService, IHomeWriteLease
 {
     internal const string Bucket = "terrabase-homes";
     internal static readonly TimeSpan Ttl = TimeSpan.FromSeconds(10);
@@ -207,6 +208,48 @@ internal sealed class HomeLeases(
 
     internal HomeLease? Find(string database) => _homes.TryGetValue(database, out var entry) ? entry.Lease : null;
 
+    internal async Task<bool> TakeRegionalAsync(TenantContext database, string source, CancellationToken cancellationToken)
+    {
+        if (_kv is not { } kv || !Ready)
+        {
+            return false;
+        }
+
+        await _confirming.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            NatsKVEntry<byte[]>? current;
+            try
+            {
+                current = await kv.GetEntryAsync<byte[]>(HomeKey(database.DatabaseId!), cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is NatsKVKeyNotFoundException or NatsKVKeyDeletedException)
+            {
+                current = null;
+            }
+
+            var previous = current?.Value is { } bytes ? Decode(bytes) : null;
+            if (previous is not null && (previous.Home != options.Region || previous.Node != source && previous.Node != options.MachineId))
+            {
+                return false;
+            }
+
+            var next = new HomeLease(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region,
+                options.MachineId, (previous?.Epoch ?? 0) + 1, _session);
+            var value = JsonSerializer.SerializeToUtf8Bytes(next, TerraBaseJsonContext.Default.HomeLease);
+            var revision = current is null
+                ? await kv.CreateAsync(HomeKey(next.DatabaseId), value, cancellationToken: cancellationToken).ConfigureAwait(false)
+                : await kv.UpdateAsync(HomeKey(next.DatabaseId), value, current.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
+            _homes[next.DatabaseId] = (next, revision);
+            leaseGate.Lease(next.DatabaseId, held: true);
+            return true;
+        }
+        finally
+        {
+            _confirming.Release();
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (_js is not { } js || _nats is not { } nats)
@@ -356,6 +399,11 @@ internal sealed class HomeLeases(
 
     private async Task ConfirmAllAsync(INatsKVStore kv, CancellationToken cancellationToken)
     {
+        if (owners is { Writer: false })
+        {
+            return;
+        }
+
         await _confirming.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -396,6 +444,11 @@ internal sealed class HomeLeases(
 
     private async Task ConfirmAsync(INatsKVStore kv, TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
     {
+        if (owners is { Writer: false })
+        {
+            return;
+        }
+
         var id = database.DatabaseId!;
         if (_homes.TryGetValue(id, out var known) && known.Lease is { Node: var node, Session: var session } && node == options.MachineId && session == _session)
         {
@@ -615,6 +668,14 @@ internal sealed class HomeLeases(
     private async Task DemoteAsync(TenantContext database, HomeLease home, CancellationToken cancellationToken)
     {
         var id = database.DatabaseId!;
+        if (home.Home == options.Region)
+        {
+            // Same-region promotion changes the writer, never the database's placement.
+            // Keep the old primary readable until its peer proves the final position.
+            leaseGate.Lease(id, held: false);
+            return;
+        }
+
         fences.Moved(id, home.Home);
         leaseGate.Unlease(id);
         if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement } && placement.Version <= home.Epoch)
