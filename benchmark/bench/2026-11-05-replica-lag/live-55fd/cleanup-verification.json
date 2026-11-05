@@ -1,0 +1,7 @@
+{
+  "accountDeleted": true,
+  "sjcCredentialAbsent": true,
+  "fraCredentialAbsent": true,
+  "sjcTraceRecoveredAfterScpTimeout": true,
+  "rawAndTraceRemoteHashesMatched": true
+}

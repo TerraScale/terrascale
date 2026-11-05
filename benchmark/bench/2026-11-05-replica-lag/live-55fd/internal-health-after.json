@@ -1,0 +1,137 @@
+{
+  "capturedAt": "2026-11-05T17:30:50.126971+00:00",
+  "nodes": [
+    {
+      "node": "ts-gru-1",
+      "path": "healthz",
+      "response": {
+        "status": "ok",
+        "region": "gru",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-gru-1"
+      }
+    },
+    {
+      "node": "ts-gru-1",
+      "path": "readyz",
+      "response": {
+        "status": "ready",
+        "region": "gru",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-gru-1"
+      }
+    },
+    {
+      "node": "ts-gru-2",
+      "path": "healthz",
+      "response": {
+        "status": "ok",
+        "region": "gru",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-gru-2"
+      }
+    },
+    {
+      "node": "ts-gru-2",
+      "path": "readyz",
+      "response": {
+        "status": "ready",
+        "region": "gru",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-gru-2"
+      }
+    },
+    {
+      "node": "ts-sjc-1",
+      "path": "healthz",
+      "response": {
+        "status": "ok",
+        "region": "sjc",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-sjc-1"
+      }
+    },
+    {
+      "node": "ts-sjc-1",
+      "path": "readyz",
+      "response": {
+        "status": "ready",
+        "region": "sjc",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-sjc-1"
+      }
+    },
+    {
+      "node": "ts-sjc-2",
+      "path": "healthz",
+      "response": {
+        "status": "ok",
+        "region": "sjc",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-sjc-2"
+      }
+    },
+    {
+      "node": "ts-sjc-2",
+      "path": "readyz",
+      "response": {
+        "status": "ready",
+        "region": "sjc",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-sjc-2"
+      }
+    },
+    {
+      "node": "ts-fra-1",
+      "path": "healthz",
+      "response": {
+        "status": "ok",
+        "region": "fra",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-fra-1"
+      }
+    },
+    {
+      "node": "ts-fra-1",
+      "path": "readyz",
+      "response": {
+        "status": "ready",
+        "region": "fra",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-fra-1"
+      }
+    },
+    {
+      "node": "ts-fra-2",
+      "path": "healthz",
+      "response": {
+        "status": "ok",
+        "region": "fra",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-fra-2"
+      }
+    },
+    {
+      "node": "ts-fra-2",
+      "path": "readyz",
+      "response": {
+        "status": "ready",
+        "region": "fra",
+        "storageFormat": "23-41a88901325a",
+        "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+        "machine": "ts-fra-2"
+      }
+    }
+  ]
+}

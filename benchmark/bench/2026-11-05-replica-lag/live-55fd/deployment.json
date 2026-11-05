@@ -1,0 +1,14 @@
+{
+  "verifiedAt": "2026-11-05T17:16:44.902052+00:00",
+  "revision": "55fd5cb60be844ed31a157775d1c6c18ed985cdc",
+  "nodes": 6,
+  "format": "23-41a88901325a",
+  "healthEvidence": "internal-health.json",
+  "benchmarkSha256": "940be8ebfbdf25b874cdb71b3aa528ebd8625214b5558cb08e3340d0808c65ed",
+  "fabricFrozenUntil": "2026-11-05T17:35:00Z",
+  "order": [
+    "fra",
+    "sjc"
+  ],
+  "rolloutState": "all six ready55fd; latestCIrolloutjobsfinishedRED, no runningrollout; userexplicitQ-LAG55all6authorized"
+}

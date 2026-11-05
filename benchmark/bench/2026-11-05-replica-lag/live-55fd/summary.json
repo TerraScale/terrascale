@@ -1,0 +1,80 @@
+[
+  {
+    "region": "fra",
+    "repeat": 1,
+    "writes": 500,
+    "local": 500,
+    "attributedNotices": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 112.918,
+    "commitToVisibleP99": 164.698,
+    "commitToVisibleMax": 384.907,
+    "commitToNoticeP99": 115.079,
+    "noticeToVisibleP99": 52.522
+  },
+  {
+    "region": "fra",
+    "repeat": 2,
+    "writes": 500,
+    "local": 500,
+    "attributedNotices": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 113.109,
+    "commitToVisibleP99": 136.861,
+    "commitToVisibleMax": 374.688,
+    "commitToNoticeP99": 104.559,
+    "noticeToVisibleP99": 36.032
+  },
+  {
+    "region": "fra",
+    "repeat": 3,
+    "writes": 500,
+    "local": 500,
+    "attributedNotices": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 113.341,
+    "commitToVisibleP99": 147.022,
+    "commitToVisibleMax": 378.55,
+    "commitToNoticeP99": 107.026,
+    "noticeToVisibleP99": 37.729
+  },
+  {
+    "region": "sjc",
+    "repeat": 1,
+    "writes": 500,
+    "local": 500,
+    "attributedNotices": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 116.921,
+    "commitToVisibleP99": 164.288,
+    "commitToVisibleMax": 371.931,
+    "commitToNoticeP99": 116.973,
+    "noticeToVisibleP99": 50.921
+  },
+  {
+    "region": "sjc",
+    "repeat": 2,
+    "writes": 500,
+    "local": 500,
+    "attributedNotices": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 116.947,
+    "commitToVisibleP99": 148.353,
+    "commitToVisibleMax": 370.095,
+    "commitToNoticeP99": 107.797,
+    "noticeToVisibleP99": 29.984
+  },
+  {
+    "region": "sjc",
+    "repeat": 3,
+    "writes": 500,
+    "local": 500,
+    "attributedNotices": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 116.57,
+    "commitToVisibleP99": 147.107,
+    "commitToVisibleMax": 400.803,
+    "commitToNoticeP99": 113.204,
+    "noticeToVisibleP99": 27.672
+  }
+]
