@@ -1,0 +1,6 @@
+Nov 05 13:17:07 ts-fra-1 terrascale-orchestrator[2085719]: installed a pushed release; exiting so systemd starts it
+Nov 05 13:17:08 ts-gru-1 terrascale-orchestrator[3105970]: installed a pushed release; exiting so systemd starts it
+Nov 05 13:17:08 ts-fra-1 systemd[1]: ts-orch.service: Scheduled restart job, restart counter is at 76.
+Nov 05 13:17:10 ts-fra-1 terrascale-orchestrator[2162886]: [2162886] [INF] Starting nats-server
+Nov 05 13:17:09 ts-gru-1 systemd[1]: ts-orch.service: Scheduled restart job, restart counter is at 13.
+Nov 05 13:17:10 ts-gru-1 terrascale-orchestrator[3201458]: [3201458] [INF] Starting nats-server
