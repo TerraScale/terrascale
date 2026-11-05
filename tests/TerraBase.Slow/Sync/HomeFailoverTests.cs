@@ -168,6 +168,8 @@ public sealed class HomeFailoverTests
         await Assert.That(acked[all.Id].Where(row => !allStored.Contains(row))).IsEmpty();
         await Assert.That(ackedAfterCut).IsEqualTo(0);
         await Assert.That(pushed.Where(row => !allStored.Contains(row))).IsEmpty().Because("the new home applies the pushes its former home never consumed");
+        await TerraBaseTestServer.EventuallyAsync(async _ => (await TryRowsAsync(viaGru, all, token))?.IsSupersetOf(acked[all.Id].Concat(pushed)) == true,
+            TimeSpan.FromSeconds(60));
         await Assert.That(pushedDuringCut).IsGreaterThan(0).Because(string.Join(" | ", sjcStatuses.Select(pair => $"{pair.Value}x {pair.Key}")));
         var tally = await TallyAsync(viaSjc, all, token);
         await Assert.That(tally).IsBetween((long)pushed.Count, (long)pushed.Count + Volatile.Read(ref unknown)).Because("_ts_applied applies each pushed transaction once");

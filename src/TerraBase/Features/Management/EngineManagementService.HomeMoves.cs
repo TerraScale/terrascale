@@ -27,6 +27,9 @@ internal interface IHomeMoveCatalog
 
     ValueTask AbortHomeMoveAsync(HomeMoveMarker marker, CancellationToken cancellationToken);
 
+    /// <summary>Records the newer home established by the shared lease after this region lost its lease.</summary>
+    ValueTask<UpdatePlacementResult> FollowHomeLeaseAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken);
+
     ValueTask<IReadOnlyList<HomeMoveMarker>> PendingHomeMovesAsync(CancellationToken cancellationToken);
 
     ValueTask<int> FollowServingRegionsAsync(IReadOnlyList<string> serving, CancellationToken cancellationToken);
@@ -119,6 +122,36 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
 
             return new Done();
         }, static _ => new Done(), cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask<UpdatePlacementResult> FollowHomeLeaseAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentNullException.ThrowIfNull(placement);
+        return WriteAsync<UpdatePlacementResult>(async transaction =>
+        {
+            if (!Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false)))
+            {
+                return UnreadableCatalog;
+            }
+
+            if (database.ProjectId is null || database.DatabaseId is null || placement.Home == options.Region
+                || await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is not { } record
+                || record.Home(options.Region) != options.Region || placement.Version <= record.PlacementVersion)
+            {
+                return new PlacementUpdate(Updated: false);
+            }
+
+            await CatalogTables.PutDatabaseAsync(transaction, record with
+            {
+                HomeRegion = placement.Home,
+                ReplicaRegions = placement.Replicas.Count == 0 ? null : [.. placement.Replicas],
+                PlacementVersion = placement.Version,
+                AllRegions = placement.AllRegions,
+            }, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken).ConfigureAwait(false);
+            return new PlacementUpdate(Updated: true);
+        }, static error => error, cancellationToken);
     }
 
     public ValueTask<int> FollowServingRegionsAsync(IReadOnlyList<string> serving, CancellationToken cancellationToken)
