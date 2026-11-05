@@ -235,8 +235,7 @@ internal sealed class RegionalHandoff(
 
     private async Task<bool> PrepareCoreAsync(RegionalPrepare request, CancellationToken cancellationToken)
     {
-        if (request.Positions.Count > 10_000 || !await PreparingAsync(request, cancellationToken).ConfigureAwait(false)
-            || !await PrimeAsync(request.Source, cancellationToken).ConfigureAwait(false))
+        if (request.Positions.Count > 10_000 || !await PreparingAsync(request, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }
@@ -257,9 +256,22 @@ internal sealed class RegionalHandoff(
                 continue;
             }
 
-            if (!DatabaseRevision.TryParse(position.Revision, out var expected)
-                || !await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false)
-                || replicas.HeldRevision(database) is not { } actual || actual.Incarnation != expected.Incarnation
+            if (!DatabaseRevision.TryParse(position.Revision, out var expected))
+            {
+                return false;
+            }
+            // Bulk priming happens before the edge barrier. Reuse an already
+            // applied replica; only the final missing suffix needs a fenced pull.
+            var held = replicas.HeldRevision(database);
+            if (held is not { } current || current.Incarnation != expected.Incarnation
+                || DatabaseRevision.Compare(current, expected) < 0)
+            {
+                if (!await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
+                {
+                    return false;
+                }
+            }
+            if (replicas.HeldRevision(database) is not { } actual || actual.Incarnation != expected.Incarnation
                 || DatabaseRevision.Compare(actual, expected) < 0)
             {
                 return false;
