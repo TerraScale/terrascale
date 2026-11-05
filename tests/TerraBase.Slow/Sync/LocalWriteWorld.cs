@@ -125,9 +125,8 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
             var replicas = new TursoReplicas(options, new TestMasterKey(), api.Server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<TursoReplicas>.Instance);
             IInRegionAck ack = mode switch
             {
-                LocalPartner.Alone => new Holds(healthy: false),
                 LocalPartner.Held => new Holds(healthy: true),
-                _ => new InRegionAck(options, new Partners(partner!.BaseAddress), new NoReplicas(),
+                _ => new InRegionAck(options, new Partners(partner?.BaseAddress), new NoReplicas(),
                     new HoldStore(api.Server.Services.GetRequiredService<IStorageEngine>(), TimeProvider.System),
                     api.Server.Services.GetRequiredService<InternalCredential>(), services.GetRequiredService<IMeterFactory>(), TimeProvider.System,
                     NullLogger<InRegionAck>.Instance),
@@ -332,6 +331,8 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
     {
         public bool PartnerHealthy => healthy;
 
+        public bool QuorumHealthy => healthy;
+
         public ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, RegionTransaction transaction, CancellationToken cancellationToken) =>
             ValueTask.FromResult(healthy);
 
@@ -340,10 +341,10 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
         }
     }
 
-    private sealed class Partners(Uri partner) : IRegionPartners
+    private sealed class Partners(Uri? partner) : IRegionPartners
     {
         public ValueTask<IReadOnlyList<RegionPartner>> ListAsync(CancellationToken cancellationToken) =>
-            ValueTask.FromResult<IReadOnlyList<RegionPartner>>([new RegionPartner("sjc-2", partner)]);
+            ValueTask.FromResult<IReadOnlyList<RegionPartner>>(partner is null ? [] : [new RegionPartner("sjc-2", partner)]);
     }
 
     private sealed class HomeAt(Uri home) : IReplicaPeers

@@ -10,15 +10,18 @@ using ZLogger;
 
 namespace TerraBase.Features.LocalAck;
 
-/// <summary>The second in-region copy of every local write (PIVOT D16, docs/terrabase/in-region-ack.md).</summary>
+/// <summary>The discovered regional quorum for local writes (docs/terrabase/in-region-ack.md).</summary>
 internal interface IInRegionAck
 {
     /// <summary>Whether this node's in-region partner answered within the last 3 s. A one-node region never has one.</summary>
     bool PartnerHealthy { get; }
 
+    /// <summary>One discovered node needs its own durable push; a region with a partner needs both nodes.</summary>
+    bool QuorumHealthy { get; }
+
     /// <summary>
     /// Stores the published transaction on the partner and answers true once it is synced there; false when the partner
-    /// did not store it, and the write then waits for the home instead.
+    /// did not store it, and the write then waits for the home instead. A discovered one-node region needs no partner copy.
     /// </summary>
     ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, RegionTransaction transaction, CancellationToken cancellationToken);
 
@@ -40,12 +43,15 @@ internal sealed class InRegionAck(
         new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private HttpClient? _http;
-    private volatile RegionPartner? _partner;
+    private volatile IReadOnlyList<RegionPartner>? _partners;
+    private volatile RegionPartner? _answeredPartner;
     private long _lastAnswerTicks;
     private Counter<long>? _finished;
 
-    public bool PartnerHealthy => _partner is not null
+    public bool PartnerHealthy => _partners is [var partner, ..] && partner == _answeredPartner
         && time.GetUtcNow().UtcTicks - Interlocked.Read(ref _lastAnswerTicks) < HealthyWithin.Ticks;
+
+    public bool QuorumHealthy => _partners is [] || PartnerHealthy;
 
     private HttpClient Http => _http ??= PeerHttp.Create(credential);
 
@@ -67,7 +73,13 @@ internal sealed class InRegionAck(
 
     public async ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, RegionTransaction transaction, CancellationToken cancellationToken)
     {
-        if (_partner is not { } partner || !PartnerHealthy)
+        var members = _partners;
+        if (members is [])
+        {
+            return true;
+        }
+
+        if (members is not [var partner, ..] || !PartnerHealthy)
         {
             return false;
         }
@@ -82,7 +94,7 @@ internal sealed class InRegionAck(
             using var response = await Http.PostAsync(new Uri(partner.Internal, "v1/sync/holds"), body, timeout.Token).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
-                Answered();
+                Answered(partner);
                 return true;
             }
 
@@ -108,8 +120,8 @@ internal sealed class InRegionAck(
         {
             try
             {
-                _partner = (await partners.ListAsync(cancellationToken).ConfigureAwait(false)) is [var first, ..] ? first : null;
-                if (_partner is { } partner)
+                _partners = await partners.ListAsync(cancellationToken).ConfigureAwait(false);
+                if (_partners is [var partner, ..])
                 {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     timeout.CancelAfter(HoldTimeout);
@@ -117,7 +129,7 @@ internal sealed class InRegionAck(
                         .ConfigureAwait(false);
                     if (response.IsSuccessStatusCode)
                     {
-                        Answered();
+                        Answered(partner);
                     }
                 }
 
@@ -131,6 +143,7 @@ internal sealed class InRegionAck(
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
+                _partners = null;
                 logger.ZLogInformation($"The in-region partner check retries: {error.GetType().Name:@Error}");
             }
 
@@ -203,7 +216,7 @@ internal sealed class InRegionAck(
     {
         await foreach (var release in _releases.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (_partner is not { } partner)
+            if (_partners is not [var partner, ..])
             {
                 continue;
             }
@@ -228,5 +241,9 @@ internal sealed class InRegionAck(
         return content;
     }
 
-    private void Answered() => Interlocked.Exchange(ref _lastAnswerTicks, time.GetUtcNow().UtcTicks);
+    private void Answered(RegionPartner partner)
+    {
+        Interlocked.Exchange(ref _lastAnswerTicks, time.GetUtcNow().UtcTicks);
+        _answeredPartner = partner;
+    }
 }
