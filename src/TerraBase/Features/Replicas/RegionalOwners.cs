@@ -4,7 +4,7 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed record RegionalOwner(string Region, string Node, long Epoch);
+internal sealed record RegionalOwner(string Region, string Node, long Epoch, string? Previous = null);
 
 /// <summary>Observed ownership, independent of reachability and peers-file ordering.</summary>
 internal sealed class RegionalOwners(TerraBaseOptions options)
@@ -19,7 +19,15 @@ internal sealed class RegionalOwners(TerraBaseOptions options)
 
     internal RegionalOwner? Find(string region) => _owners.GetValueOrDefault(region);
 
-    internal void Observe(RegionalOwner owner) => _owners[owner.Region] = owner;
+    internal void Observe(RegionalOwner owner)
+    {
+        if (owner.Region == options.Region && Find(owner.Region) != owner)
+        {
+            // A former writer's unexpired renewal must never admit a new epoch before activation.
+            Volatile.Write(ref _until, 0);
+        }
+        _owners[owner.Region] = owner;
+    }
 
     internal void Renew() => Volatile.Write(ref _until, TimeProvider.System.GetTimestamp() + 6 * TimeProvider.System.TimestampFrequency);
 
