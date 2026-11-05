@@ -3,7 +3,7 @@
 ## Node identity
 
 Node and region identity must be inferred from the running environment. Verify the
-identity reported by the deployed OCI runtime; this document does not prescribe a
+identity reported by the deployed OCI runtime; this guide does not prescribe a
 provider-specific environment variable or establish that ts-orch migration is complete.
 The region's bounded syntax is a lowercase ASCII letter followed by letters, digits
 or hyphens, at most 63 characters, without a trailing hyphen; malformed values stop startup.

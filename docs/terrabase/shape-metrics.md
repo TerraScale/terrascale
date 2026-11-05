@@ -21,21 +21,7 @@ both process and organization limits; null charges system work only. Reservation
 
 ## Origin storage reads
 
-`terrabase.storage.reads` counts backend document/feed SELECT executions, rather than returned rows or HTTP requests.
-Its only application label is `path`, whose bounded values are `point`, `query`, `feed`, `shape` and `shape_body`. Each instrument
-update adds one immediately before an attempted SELECT; misses and empty results
-count, while reads answered from a document or sealed-body cache do not execute those storage sites.
-
-Feed enumeration, continuation, head/floor, retention and prefix-verification SELECTs count individually, as does each
-document body SELECT performed for a feed event. A feed page can therefore increment the counter many times.
-Outside shapes, collection existence checks, schema-admission metadata size queries, state-only/repair scans, replication-log reads and general
-accounting scans are outside this counter. State lookups that materialize document JSON count as point reads, including
-write/join preconditions; an in-transaction pending state skips that SELECT. PUT admission shares one collection-state
-lookup between schema validation and the retained drop barrier. Point version and size lookups and
-write/join uniqueness document lookups are included because they perform document SELECTs. System-database document
-reads and collection-metadata documents fetched through the document helper also count. A query or document-list reader counts one execution,
-independently of the rows returned; an additional sort-budget pre-scan counts separately. Query body-fetch SELECTs
-also count individually under `path="query"`, so a query can perform more than one backend read.
+`terrabase.storage.reads` counts attempted backend SELECT executions rather than returned rows or HTTP requests. Misses and empty results count. Reusing an already-loaded sealed body avoids its payload SELECT, but metadata and generation checks can still read storage.
 
 Shape sealing and snapshots count their table definition and generation checks, change capture scans, head and
 boundary lookups and table row reads under `path="shape"`, as do persisted chunk/page
@@ -43,7 +29,7 @@ metadata reads and shape retention's floor/candidate SELECTs. Persisted payload
 SELECTs use `path="shape_body"`, so a shared flight's one body read can be distinguished from its metadata and
 proof reads. One payload read does not mean one total SQL statement. Reusing a stored
 seal counts its generation, head and stored-chunk lookups; an absent chunk counts its attempted size SELECT.
-The exporter reserves six series for the five bounded paths and its overflow sentinel.
+The exporter retains its bounded label policy and overflow sentinel.
 
 This is origin storage work even when SQLite serves it from its page cache; it does not measure physical disk I/O.
 Benchmark comparisons must take before/after deltas on the same node-scoped metrics listener and name their sampling

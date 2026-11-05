@@ -24,7 +24,7 @@ sole organizations are removed only under their own organization proofs.
 
 Every session, credential, session-index and PAT enrollment first writes a minimal
 immutable reference to `dashboard_account_enrollments`. References contain only
-subject, collection and record IDs and remain indefinitely. Replay follows these
+subject, table and record IDs and remain indefinitely. Replay follows these
 references even after mutable indexes disappear. It decrypts sessions and
 credentials to validate ownership without requiring an active auth grant. Pending
 MCP authorization codes and their owned credentials, and encrypted account deletion
@@ -69,13 +69,11 @@ closed, preserving unrelated projects, organizations and notifications.
 
 ACK follows successful scoped cleanup and verification of terminal roots and
 absent account indexes. Failed conditional writes remain pending; lost ACK
-responses retry idempotently. Local CAS fences cannot exclude later regional LWW
-joins. Indefinite journal and enrollment replay repairs those late values; this
-implementation does not claim a finite global deletion barrier. Operational
+responses retry idempotently. Conditional SQL guards protect each cleanup against competing mutations. Journal and enrollment replay rechecks retained references; this implementation does not claim a finite global physical-erasure barrier. Operational
 evidence at 2026-10-24 18:44:45 UTC places auth and dashboard in gru for the fresh
 wipe, which does not establish such a barrier for every future serving topology.
 
-The two new collections are initialized through the existing dashboard schema.
+The two new tables are initialized through the existing dashboard schema.
 `account_deletions` now stores `{ Key, UserId, Payload }`, with its operation still
 AES-GCM encrypted and authenticated to its natural key; cleanup verifies the
 sealed subject before deleting it. This is a fresh-state storage shape change,

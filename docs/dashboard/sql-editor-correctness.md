@@ -17,7 +17,7 @@ read access. PRAGMA assignments and unknown forms require write access.
 TerraBase remains responsible for validating and authorizing the SQL itself.
 
 New saved queries use ULIDs. Saved-query links work with and without a selected
-collection. Database-specific queries are listed and restored only in their original database;
+table. Database-specific queries are listed and restored only in their original database;
 project templates remain available across the project. No stored records are rewritten and no migration is introduced.
 
 Run and check coverage lives in `SqlCheckJourneyTests` and

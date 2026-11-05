@@ -23,8 +23,8 @@ notifications and the public endpoint's error response.
   the old handle has no rows. Rotation never raises another handle's floor.
 
 The engine adapter runs through a write transaction with capture suspended.
-Retention never trims `turso_cdc`. The floor is the persisted per-handle floor only; a sealer still refuses an
-offset whose commit record `turso_cdc` no longer retains, answering `409 must_refetch`.
+Retention never trims the native capture table. The floor is the persisted per-handle floor only; a sealer still refuses an
+offset whose commit record the native capture table no longer retains, answering `409 must_refetch`.
 
 Before deleting a chunk, the transaction persists the greatest deleted end
 offset for that handle. This bookkeeping uses a reserved `_tb_shape_chunk` key:

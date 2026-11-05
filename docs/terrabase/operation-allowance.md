@@ -34,21 +34,21 @@ One unit is each started 4 KiB (4,096 bytes), `OperationUnits.Of`.
 ## One month, every region
 
 Each node meters only the work it serves, once: a write at the database's home (also when another region forwarded
-the request or relayed the session), a replica read in the replica region. It adds those units to its own documents
+the request or relayed the session), a replica read in the replica region. It adds those units to its own records
 `yyyy-MM~node` of `projects/{project}/usage-months` and `organizations/{organization}/usage-months` in its system
-database, in the usage flush (every 10 s). No other region holds those documents, so every total sums the regions:
+database, in the usage flush (every 10 s). No other region holds those records, so every total sums the regions:
 
 - **Project usage** (`GET …/projects/{project}/usage`): the answering node sends the same client request, with the
   peer credential and `X-TerraBase-Usage-Scope: node`, to every node of the other regions (`TS_PEERS_FILE`). Each
   answers its own share (its databases, its units of the project; `404` when it does not hold the project), and the
   organization's units come from `GET /v1/internal/usage/months` of every region. A region that cannot answer within
   3 seconds makes the request answer `503`, never a smaller count.
-- **Allowance feed** (`GET /v1/usage/allowances`): every region answers its own page; the merged page ends at the
+- **Allowance page** (`GET /v1/usage/allowances`): every region answers its own page; the merged page ends at the
   smallest last organization of a region with more to page, so every listed organization sums every region.
 - **Plan limits:** a node adds every other region's units of the organization, asked on its first check and on every
   usage flush tick, to its own. A region that does not answer keeps its last answer until the next tick.
 
-A month reads every node's own document plus its unflushed units. Units of databases deleted since stay in the month.
+A month reads every node's own record plus its unflushed units. Units of databases deleted since stay in the month.
 
 `GET /v1/management/organizations/{organization}/projects/{project}/usage` returns `month`:
 
@@ -69,7 +69,7 @@ listener (shared peer credential) pages every organization, 25 at a time in id o
 (`stored-byte-hours-global-v1`). `operations` is the billed write units; `sqlReads` the fair-use read
 units; `storageByteHours` the stored bytes times hours this month. Once an hour each node measures the
 stored bytes of every organization's databases it holds and adds bytes × hours since its last sample
-(one hour for its first sample of the month) to its own month document, so a restart in the same hour
+(one hour for its first sample of the month) to its own month record, so a restart in the same hour
 adds nothing. ts-dashboard bills the month's average stored bytes over the plan allowance per
 GB-month, in MB-months. `month` selects the previous UTC month,
 so ts-dashboard bills a month's last units during the first three days after it closes. A scan

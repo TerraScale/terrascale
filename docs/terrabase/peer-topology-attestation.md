@@ -21,7 +21,7 @@ requires a matching listener. Link identities are copied under the replication
 lock without refreshing or rewriting links; a temporarily disconnected stream
 does not remove its peer. Readiness and client requests fail closed on drift,
 as do new wire operations and PostgreSQL messages. Established ordinary and end-user change
-feeds recheck before subsequent reads and sends, closing without further data
+streams recheck before subsequent reads and sends, closing without further data
 when refused. Peer replication and repair, liveness,
 metrics and internal diagnostics remain available, permitting automatic
 recovery when all views agree again. Without a ts-orch cluster identity, startup

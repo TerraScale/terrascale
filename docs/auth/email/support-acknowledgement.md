@@ -5,8 +5,8 @@ platform user lookup, current organization/project access checks and the
 per-user rate limit. Repeated requests pass the same authorization checks before
 reading the ledger; a request ID belonging to another user returns 404.
 
-The existing `email_support_deliveries` collection tracks two independent
-outcomes in the same document. `status` describes the message to support.
+The existing `email_support_deliveries` table tracks two independent
+outcomes in the same record. `status` describes the message to support.
 After provider acceptance, a conditional write persists `status: accepted`
 and reserves the acknowledgement with `acknowledgementStatus: sending` before
 calling its sender. A failed or cancelled acknowledgement cannot replace the
@@ -27,7 +27,7 @@ acknowledgement recorded as retryable. Only a support outcome of `retryable`
 (the provider confirms no send occurred) deletes the reservation and permits a
 later request with that ID to attempt support delivery again. Rejected and
 ambiguous support outcomes retain their reservation. There is no automatic
-provider retry, recovery worker, storage migration or new collection.
+provider retry, recovery worker, storage migration or new table.
 
 A process interruption or storage failure after a provider call can still lose
 its final outcome. If the support acceptance write did not complete, repeats

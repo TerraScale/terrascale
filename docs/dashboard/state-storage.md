@@ -12,8 +12,7 @@ Every call goes over MagicOnion to `IManagementService.ExecuteSqlAsync`, the RPC
 of `POST /v1/projects/{project}/databases/ts-dashboard/sql/execute`, on TerraBase's
 private listener with the shared peer credential. On that listener TerraBase treats the
 call as the platform operator with every scope of the project. One RPC is one SQL
-transaction. The dashboard uses no document, collection or transaction API for its
-own data.
+transaction.
 
 ## Schema
 
@@ -63,6 +62,6 @@ during a production re-bootstrap, then re-seeds it.
 ## Tests
 
 `tests/TerraScale.Dashboard.E2E/Demo/StateSdkScenario.cs` serves the SQL RPC from a
-real Turso engine (`TestSqlEngine`, the vendored `Turso.Data.Sqlite` driver) behind
+real SQL engine (`TestSqlEngine`, through the vendored native driver) behind
 the real MagicOnion services. Every other journey uses the in-memory `TestState`, as
 does the `DEMO=true` host.

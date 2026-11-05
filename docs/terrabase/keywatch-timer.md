@@ -10,8 +10,8 @@ question's send time; refused/unavailable answers and expired authority still te
 retains the deadline at the previous answer's Until, and normal completion never cancels another request.
 There is no shared watch, new cache, option, token retention, or change to token renewal on Postgres sessions.
 
-The Fast integration case opens an authenticated HTTP changes feed and verifies it still receives a change after
+The Fast integration case opens an authenticated SQL WebSocket stream and verifies it still receives a change after
 one poll interval. It then withdraws key authority or makes status unavailable, advances the test clock to the
-existing 2.25-second bound, and requires the established feed to end.
+existing 2.25-second bound, and requires the established stream to end.
 Existing admission and Postgres revocation cases remain active. Benchmark first-chance exception counts are
 process-wide mechanism evidence, not a substitute for revocation integration coverage or latency measurements.

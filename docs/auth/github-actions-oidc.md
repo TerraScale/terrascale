@@ -35,15 +35,15 @@ its own tokens. The parameter names follow RFC 8693.
   - `job_workflow_ref`, when present, the same value
 - The numeric ids stop a renamed or re-created repository from matching. Pull requests, forks, other branches and
   `workflow_dispatch` never match.
-- `job_workflow_ref`: GitHub documents it only "for jobs using a reusable workflow" (the ref path of the called workflow;
+- `job_workflow_ref`: GitHub specifies it only "for jobs using a reusable workflow" (the ref path of the called workflow;
   `workflow_ref` and the other standard claims describe the caller). Sources:
   [OIDC reference](https://docs.github.com/en/actions/reference/security/oidc),
   [OIDC with reusable workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-with-reusable-workflows).
   A job of `ci.yml` itself may carry none, so absence is accepted; present with any other value (a reusable workflow
   here or in another repository, another ref, empty, JSON null, a number, an array or an object) is refused. The check
   reads the raw payload, so no typed lookup can hide a non-string value.
-- `jti` is single-use on every replica: a unique claim in ts-auth's `uniques` collection. `run_id` is required.
-  Shortcut: the claims are never pruned. That is one small document per e2e run; prune them if runs grow.
+- `jti` is single-use on every replica: a unique claim in ts-auth's `uniques` table. `run_id` is required.
+  Shortcut: the claims are never pruned. That is one small record per e2e run; prune them if runs grow.
 - Every refusal logs only the name of the claim that failed, never the token. A successful token logs an audit line with
   organization, project, `run_id`, `run_attempt`, `sha`, `jti` and scopes.
 
@@ -83,7 +83,7 @@ The credential exchange:
    when it exists. It then reads the placement back (`GET …/databases/ci-e2e`). Wrong replicas are set with
    `PATCH …/databases/ci-e2e` at the home region and checked again; a wrong home cannot change, so the step fails naming
    the project, the database and its placement (never a body). It is kept between runs; each test creates and deletes
-   its own collection (and any database it creates) in the project;
+   its own table (and any database it creates) in the project;
 A token lives 60 seconds, so each step builds first (`make terrabase-build`, then `make -o terrabase-build terrabase-e2e`)
 and mints its own after the build; a step running longer fails with 401 rather than reusing anything. The script's
 self-check (`scripts/e2e/ci-oidc-credential-test.sh`, a fake curl: no request leaves the runner) runs in the `test` job.

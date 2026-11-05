@@ -2,12 +2,12 @@
 
 `GET /v1/{project}/settings` and `PUT /v1/{project}/settings` use the existing
 platform access token and project viewer/admin authorization. Settings remain
-one TerraBase `project_auth_settings` document per project. These additions do
+one TerraBase `project_auth_settings` record per project. These additions do
 not change TerraBase's storage format. No provider secrets are returned.
 
 A PUT replaces each supplied `branding` or `configuration` object; omitted
 objects remain unchanged. Methods retain their existing partial-update behavior.
-Existing stored documents use the default appearance and fourteen-day session
+Existing stored records use the default appearance and fourteen-day session
 policy until an administrator changes them.
 
 ```json

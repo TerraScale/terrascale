@@ -3,7 +3,7 @@
 Production runs under ts-orch on OCI gru. Images come from
 `ghcr.io/terrascale/ts-dashboard`, pinned by digest in the serving service spec.
 The source contract is `deploy/m1/services/ts-dashboard.json` in ts-orchestrator.
-No infrastructure, credentials or billing changes are authorized by this document.
+No infrastructure, credentials or billing changes are authorized by this guide.
 
 ## Runtime contract
 

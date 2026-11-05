@@ -1,135 +1,65 @@
 # Native SQL
 
-- Status: implemented, 2026-10-29 (PIVOT task E1, PR 1). Replaces the SQL-to-document bridge.
-- Surfaces: `POST /v1/projects/{project}/databases/{database}/sql/execute`, the [SQL WebSocket](websocket.md)
-  (`GET …/sql/ws`) and the PostgreSQL wire all run on `ISqlService` (`src/TerraBase/Features/Sql/SqlService.cs`).
-  REST and the WebSocket share one batch runner (`SqlBatch.cs`); all three answer the same results and the same
-  errors (`SqlErrors.cs`), proven by `tests/TerraBase.Fast/Sql/SqlSurfaceParityTests.cs`.
+Each customer database holds real SQL tables using the SQLite dialect. `CREATE`, `ALTER` and `DROP TABLE`, indexes (including unique, partial and expression indexes), views and triggers run through the database engine. Foreign keys are always enforced, including `ON DELETE CASCADE`. JSON values use `TEXT` and the native JSON functions.
 
-## Storage
+## Surfaces
 
-A SQL table is a real table in the database's own Turso file, beside the engine's tables. `CREATE`, `ALTER` and
-`DROP TABLE`, `CREATE [UNIQUE] INDEX` (partial and expression indexes), views and triggers pass through to the engine.
-JSON columns are plain `TEXT`; `json_extract`, `->`, `->>` and `json_each` work on them. Every client connection runs
-with `PRAGMA foreign_keys = ON`, so foreign keys, `ON DELETE CASCADE` included, are always enforced.
+| Surface | Contract |
+|---|---|
+| HTTP | `POST /v1/projects/{project}/databases/{database}/sql/execute` |
+| WebSocket | `GET …/sql/ws`, subprotocol `terrascale.sql.v1` |
+| PostgreSQL | TLS PostgreSQL listener, SQLite statements |
 
-SQL tables are not document collections: they do not appear in the documents API, and they do not replicate to other
-regions yet. Continuous backup captures their changes like any other table of the file.
+All surfaces share SQL validation, types and error mapping. HTTP requires `sql:read`; writes and DDL also require `sql:write`. End-user shape grants do not authorize SQL execution. See [TLS and authentication](../transport-security.md).
 
-## Engine boundary
+HTTP accepts `{"statements":[{"sql":"SELECT ?","args":[1]}]}`. Each statement may also bind named parameters through `named`. Values are null, integers, floating-point numbers, strings and blobs. HTTP represents a blob as `{"base64":"…"}`; the PostgreSQL surface uses `bytea`. Booleans bind as 1 or 0.
 
-Features never see Turso types. `IStorageTransaction` exposes two engine-neutral primitives
-(`src/TerraBase/Engine/SqlStatement.cs`): run one statement (text, positional and named arguments, row and byte bounds)
-and describe one statement (prepare without stepping: parameter names, result columns and declared types). Both use
-Turso's `prepare_first`, so statement boundaries come from the engine's own parser: a single statement call refuses any
-text after its first statement, and a script runs one statement at a time from the engine-reported tail, so later
-statements see earlier DDL. Failures carry a stable kind (constraint kinds, syntax, no such table or column,
-busy, too big, interrupted, read-only) with messages that may name a table or column but never values or statement
-text.
+Each result has `columns`, `rows`, `rows_affected` and `last_insert_rowid`. SQL failures carry a TerraScale `code`, safe `message`, failing `statement` index and PostgreSQL `sqlstate`; HTTP wraps these under `error`.
 
-## Sessions and transactions
+## Transactions and limits
 
-- Autocommit: each statement runs in its own storage transaction, a write transaction when it writes, and commits.
-- `BEGIN [DEFERRED|IMMEDIATE|EXCLUSIVE] [TRANSACTION]`, `START TRANSACTION`, `BEGIN READ ONLY`, `COMMIT`/`END` and
-  `ROLLBACK` control one storage transaction pinned to the session across requests. It opens at the first statement
-  after `BEGIN`: a write transaction unless the key cannot write or the transaction is read-only.
-- A pinned transaction lives at most 5 seconds (`SqlLimits.MaxTransactionTime`). A timer then interrupts any running
-  statement, rolls the transaction back and releases the writer even when the client is idle; the next statement, and
-  `COMMIT`, answer `query_canceled` (57014), and `ROLLBACK` ends it.
-- Every statement runs with a native query timeout of min(5 s, the plan's statement timeout, the request's remaining
-  time, the transaction's remaining life; [shared-process tenancy](../shared-process-tenancy.md)), and a cancelled request interrupts it (`turso_connection_interrupt`, sqlite3_interrupt semantics).
-  An interrupted statement answers `query_canceled` (57014). Turso clears the interrupt once the connection is idle, so a
-  pooled connection runs its next statement normally.
-- A write transaction takes the organization's storage-quota lease before the database writer (the same order as
-  every other writer), holds it until commit, rollback or expiry, and never waits for the lease while holding the
-  writer.
-- Inside a transaction every write runs under a savepoint: a failed statement undoes only itself. `SAVEPOINT`,
-  `RELEASE` and `ROLLBACK TO` pass through inside a transaction, also over the PostgreSQL wire, where `ROLLBACK TO`
-  clears the aborted state. If the engine itself ends the transaction after a failure, the session answers
-  `transaction_rolled_back` (40000) until `ROLLBACK`.
-- A transaction's statements change at most 1024 rows and grow the file by at most 8 MiB in total, rolled-back
-  work included (`too_large`, 54000). A result holds at most 10,000 rows and 8 MiB: value sizes are read natively before a
-  value is copied, and the connection's native value-length bound (`turso_connection_set_max_value_length`) refuses
-  `zeroblob`, `randomblob`, `||` and function results past 8 MiB before or as they are built.
-- A deferred foreign key (`DEFERRABLE INITIALLY DEFERRED`) violated at `COMMIT` is a definite rejection: the
-  transaction rolls back without faulting the copy, and the commit answers `foreign_key_violation` (23503).
+- One HTTP request is one atomic batch of 1–256 statements, all or nothing. `BEGIN`, `COMMIT` and `ROLLBACK` are refused; savepoint statements are supported.
+- WebSocket transaction frames and PostgreSQL transactions pin one session. Transactions live at most five seconds, then roll back and release the writer. See [WebSocket](websocket.md).
+- A failed statement inside an explicit transaction uses the session's savepoint/error rules; PostgreSQL aborted transactions require rollback or rollback to a savepoint.
+- Statement text is at most 16 KiB, the HTTP body at most 1 MiB, results at most 10,000 rows and 8 MiB, and a transaction changes at most 1,024 rows or grows the file by at most 8 MiB.
+- Native query cancellation and value-length bounds apply before large results are materialized. Request cancellation retains resource ownership until the running native work drains.
+
+A batch runs one parsed statement at a time, so later statements see earlier DDL. The parser supplies boundaries; a single-statement call refuses trailing statements. Every write holds the organization's storage-quota lease before the database writer and retains it through commit or rollback.
 
 ## Sandbox
 
-Every customer statement on every surface (`/v1` SQL execution, the PostgreSQL wire and SQL over WebSocket) is
-classified by one sandbox before the engine sees it (`src/TerraBase/Features/Sql/SqlSandbox.cs`, called from
-`SqlScript.Classify`). The pinned Turso core has no authorizer hook (its `sqlite3_set_authorizer` returns an error), so
-the sandbox works on the statement's tokens with SQLite quoting and comments respected
-(`src/TerraBase/Engine/SqlText.cs`), on every name anywhere, trigger and view bodies included.
+Every surface applies the same sandbox before execution. It respects SQL quoting and comments and checks view and trigger bodies.
 
-- Denied with `sql_sandbox` (SQLSTATE 42501, HTTP 403): `ATTACH`, `DETACH`, `VACUUM` (with or without `INTO`),
-  `ANALYZE`, the same behind `EXPLAIN`, temporary and virtual tables, `load_extension`, the file functions
-  (`readfile`, `writefile`, `edit`, `fsdir`, `lsdir`, `zipfile`, `sqlar_*`, `csv`, `completion`), the engine's page
-  tables (`sqlite_dbpage`, `btree_dump`, `dbstat`, `sqlite_stmt`), the temp schema, writes to `sqlite_schema` or
-  `sqlite_sequence`, triggers that read the schema, creating or renaming to an internal name, and every `PRAGMA` except
-  `table_info`, `table_xinfo`, `table_list`, `index_list`, `index_info`, `index_xinfo`, `foreign_key_list`,
-  `foreign_key_check` and `foreign_keys` (read, or set to on). PRAGMAs read only the main schema.
-- Internal tables do not exist for customer SQL: the names in `TerraBaseSqlNames`
-  (`src/TerraScale.TerraBase.Contracts/TerraBaseSqlNames.cs`): prefixes `_tb_`, `_ts_`, `turso_` (so `turso_cdc`,
-  `turso_cdc_version` and `turso_sync_cdc`), `__turso_`, `tb_index_`, `fts_dir_`, `pragma_` and `sqlite_stat`, and the
-  engine tables `collections`, `commit_offset`, `_collections`, `_indexes` and `_unique`. A statement naming one, even
-  as a string literal, answers `undefined_table` (42P01) with the message `no such table`, which never echoes the
-  internal name.
-- Schema listings show only customer objects: every read of `sqlite_schema`, `sqlite_master` or `sqlite_sequence` runs
-  on a filtered subquery under the same name, so aliases, qualified columns and views over it work; the engine's
-  `sqlite_sequence` is left out of the listings; `PRAGMA table_list` and `PRAGMA foreign_key_check` drop rows of
-  internal tables; the PostgreSQL catalog and the table listing use the same names.
-- In a write, a name equal to one of the database's document collections is refused (`sql_error`).
+Refused operations include `ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary/virtual tables, extension loading, file access functions and page-inspection tables. Schema-reading PRAGMAs and the enforced foreign-key setting are the supported PRAGMA boundary. Customer SQL cannot name internal tables. Catalog listings and introspection filter them out, and reserved objects return a non-disclosing refusal. The implementation's reserved-name list is authoritative; callers must not rely on internal prefixes or names.
 
-## Values, errors and metering
+Schema listings expose only customer objects. A table or column mentioned in an error is never permission to inspect another tenant. Statement text, bound values and engine diagnostics are not echoed into errors.
 
-- Values are null, 64-bit integers, doubles, text and blobs. Over HTTP a blob is `{"base64":"…"}` in arguments and
-  rows; over the PostgreSQL wire it is `bytea`.
-- Errors carry a TerraScale code and its PostgreSQL SQLSTATE, never an engine name or an engine code. REST and the
-  WebSocket answer `{"code","message","statement","sqlstate"}`; the PostgreSQL wire sends the same SQLSTATE and
-  message in its `ErrorResponse`.
+## Regions and conflicts
 
-  | Code | SQLSTATE | HTTP |
-  |---|---|---|
-  | `syntax_error` | 42601 | 400 |
-  | `undefined_table` | 42P01 | 400 |
-  | `undefined_column` | 42703 | 400 |
-  | `duplicate_object` | 42P07 | 400 |
-  | `primary_key_violation`, `unique_violation` | 23505 | 400 |
-  | `not_null_violation` | 23502 | 400 |
-  | `check_violation` | 23514 | 400 |
-  | `foreign_key_violation` | 23503 | 400 |
-  | `constraint_violation` | 23000 | 400 |
-  | `forbidden_scope` | 42501 | 403 |
-  | `sql_sandbox` (see Sandbox) | 42501 | 403 |
-  | `serialization_conflict` (retry) | 40001 | 409 |
-  | `too_large` | 54000 | 413 |
-  | `query_canceled` | 57014 | 400 |
-  | `transaction_rolled_back` | 40000 | 400 |
-  | `transaction_aborted` | 25P02 | 400 |
-  | `read_only_transaction` | 25006 | 400 |
-  | `transaction_state` | 25000 | 400 |
-  | `invalid_request` | 22023 | 400 |
-  | `quota_exceeded` | 53100 | 429 |
-  | `tenant_busy` | 53300 | 429 |
-  | `unauthorized` | 28000 | 401 |
-  | `unavailable` | 57P03 | 503 |
-  | `wrong_region` (WebSocket auth frame) | 08004 | 421 |
-  | `sql_error` (other refusals) | 0A000 | 400 |
+[Write routing](write-routing.md) selects local or home execution from SQL structure, schema facts and runtime readiness. A routing preference alone does not prove a local commit. A read-then-write transaction that cannot retain its original snapshot fails with `serialization_conflict` (`40001`); retry the whole transaction.
 
-- Reads of tables are charged per returned row by bytes, once the protocol accepts the rows. Writes are charged after
-  commit for surviving rows only: `ROLLBACK TO` restores the billing state of its savepoint (client savepoints and
-  the per-statement ones). One write unit and one operation per row a statement inserted, updated or deleted; rows a
-  trigger or a cascade changes are not billed separately.
-- SQL storage counts against the organization's storage quota. A write transaction measures the file's used bytes
-  ((page_count − freelist_count) × page_size) when it opens and at commit; the net change is checked against the quota
-  (`quota_exceeded` past it) and kept in the database's `_tb_collection_stats` row `_sql`, committed with the
-  transaction, so it survives restarts, never counts rolled-back work, and shrinks when deletes free pages. SQL commits
-  advance the database's commit sequence, which keeps the accounting cache current.
+[Home apply](../home-apply.md) owns transaction acceptance and HLC column conflict resolution. [Regional replicas](../region-replicas.md) and [local overlay](../local-overlay.md) describe regional reads, pending writes and home durability.
 
-## Native exports
+## Errors
 
-`src/vendor/Turso.Native/patches/0004-export-interrupt-query-timeout-and-value-length.patch` adds
-`turso_connection_interrupt`, `turso_connection_set_query_timeout_ms` and `turso_connection_set_max_value_length` to
-the pinned Turso 0.8.2 build; the vendored driver binds them (patch 0013). See `src/vendor/Turso.Native/README.md`
-for the release that carries them.
+| Code | SQLSTATE |
+|---|---|
+| `syntax_error` | 42601 |
+| `undefined_table`, `undefined_column` | 42P01, 42703 |
+| `primary_key_violation`, `unique_violation` | 23505 |
+| `not_null_violation`, `check_violation`, `foreign_key_violation` | 23502, 23514, 23503 |
+| `forbidden_scope`, `sql_sandbox` | 42501 |
+| `serialization_conflict` | 40001 |
+| `too_large`, `query_canceled` | 54000, 57014 |
+| `transaction_rolled_back`, `transaction_aborted` | 40000, 25P02 |
+| `read_only_transaction`, `transaction_state` | 25006, 25000 |
+| `quota_exceeded`, `tenant_busy` | 53100, 53300 |
+| `unauthorized`, `unavailable` | 28000, 57P03 |
+
+The served [API reference](../api-reference.md) includes HTTP statuses and the complete response schemas.
+
+## Metering and storage
+
+SQL reads are free with monthly fair use. Shape reads are free and unmetered. Committed writes bill the larger of changed rows and started 4 KiB of database growth; rollback and refused statements add no write units. See [operation allowances](../operation-allowance.md).
+
+SQL storage counts toward the organization quota. The used-page delta is checked at commit and persisted in `_tb_sql_storage`; SQL commit offsets invalidate cached accounting. [Continuous backup](../backup.md) captures committed SQL changes, including schema changes, for recovery.

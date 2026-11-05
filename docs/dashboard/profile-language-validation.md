@@ -14,7 +14,7 @@ and language saves keep their explicit success confirmations.
 Both forms use the existing submit-once and busy-button behavior. While a save
 is pending, the button announces its busy state and repeated submissions are
 blocked. A validation response allows correction and retry. No shared UI,
-document-language declaration, translation, storage or API-version change is
+page-language declaration, translation, storage or API-version change is
 included. HTTP journeys cover preference persistence and rejected field state;
 browser journeys observe native submit events and real HTTP requests to verify
 busy and duplicate-submit behavior, then check correction and retry against

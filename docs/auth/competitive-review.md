@@ -49,7 +49,7 @@ composed API catalog is available in OpenAPI and Scalar.
 | OAuth session revocation | An authorization code could lose its session binding on redemption; access checks ignored `sid` | Redemption now rejects an inactive bound session; access-token verification checks a supplied `sid` |
 | Sign out everywhere | Browser-session cleanup left OAuth refresh grants usable | Hosted and management revoke-all advance the credential epoch before cleanup, invalidating outstanding OAuth grants as well |
 | Federation | Generic OIDC, GitHub and SAML implemented | Google/Microsoft/OIDC and SAML routes need real-provider interoperability evidence |
-| SCIM, invitations, audit and webhooks | Implemented | Existing contract fixtures; real provider, recovery and delivery acceptance remain necessary |
+| SCIM, invitations and audit | Implemented | Existing contract fixtures; real provider, recovery and delivery acceptance remain necessary |
 | Billing and quotas | Implemented | Guest accounts reuse existing seat ownership; live Stripe acceptance remains unverified |
 | Storage and production operations | Contract adapter and fixtures | Live TerraBase query compatibility, durability, regional failure handling and recovery are not established |
 
@@ -104,7 +104,7 @@ authorization or a replacement for application resource ownership checks.
   version preconditions, permanent retirement, identity/membership eligibility
   and all-of permission decisions.
 - Existing workspace tests cover the pre-existing auth, federation, directory,
-  quota, audit, webhook and operational surfaces.
+  quota, audit and operational surfaces.
 
 Validation on the pinned Rust 1.98.1 toolchain and `ts-rust` revision
 `c590cd41eabf05bbd5982a1580c1bb01880c346a`: 245 workspace tests passed, with the
@@ -116,7 +116,7 @@ so no live TerraBase acceptance is claimed.
 
 The optimized release binary built and passed a local process smoke check:
 `/healthz` returned 200, `/scalar` returned 200, `/readyz` returned 503 with
-storage deliberately unavailable, and the served OpenAPI document contained
+storage deliberately unavailable, and the served OpenAPI specification contained
 121 paths, the new operations, and resolvable local schema references.
 
 These changes close specific gaps. They do not establish feature parity with

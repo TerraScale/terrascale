@@ -25,4 +25,4 @@ The cancel link opens `/ui/terrascale/email-change/cancel`, which only renders a
 it from that page cancels the change by signing the account out everywhere (the epoch advance voids the
 pending change) and answers the same whether or not the link was still live. Linked social providers keep
 signing in by their stable subject. No storage-format bump is needed: `email_changes` is a new auth-owned
-collection.
+table.

@@ -4,7 +4,7 @@ The [zero-configuration contract](zero-configuration.md) requires billing to be
 always available. Production runtime secrets come from OCI Vault through ts-orch
 using instance principal, delivered as protected files; CI secrets are GitHub Actions secrets. The
 complete inventory lives in the terrascale repository under `ops/secrets/`.
-This document retains the authorization, data-integrity and financial
+This guide retains the authorization, data-integrity and financial
 acceptance boundaries; it does not introduce a billing enable switch.
 The production binary has no demo or billing mode switches. Preparation alone does not authorize charges, refunds or destructive resets.
 
@@ -31,7 +31,7 @@ and identity bootstrap belongs to ts-auth. See [OCI deployment](oci-deployment.m
 
 `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` arrive through ts-orch's OCI Vault
 delivery as files named by `<NAME>_FILE`. CI credentials belong in GitHub Actions
-secrets. Never assemble dotenv files or record secret values. This documentation
+secrets. Never assemble dotenv files or record secret values. This guideation
 does not provision secrets; see [identity-descriptor.md](identity-descriptor.md).
 
 Verify account authorization, restricted-key permissions, six distinct recurring
@@ -53,7 +53,7 @@ independent of replica clocks. A stale projection re-reads Stripe and retries;
 exhaustion returns a webhook failure so Stripe can redeliver.
 Explicit demo configuration now suppresses Stripe while retaining TerraBase
 persistence and keeping simulated billing and security operations unavailable.
-Missing billing collections or databases now return retryable webhook failures;
+Missing billing tables or databases now return retryable webhook failures;
 the default persistence HTTP client limits each request to 15 seconds. Real
 TerraBase regressions cover clock skew, competing saves and reversed projections.
 Verified Stripe sandbox deliveries remain required before live approval.
@@ -78,13 +78,9 @@ Verified Stripe sandbox deliveries remain required before live approval.
    compatibility shims. Confirm the resulting billing bindings, checkout
    records and organization entitlements contain no test references. Dashboard
    entity IDs must be plain ULIDs, and uniqueness must use TerraBase native
-   constraints rather than claim documents. These bootstrap prerequisites are
-   not yet satisfied on dashboard main `24c44cf3` (Go application, not
-   re-checked against the C# state schema), which still uses
-   `DocumentIDFor` and `unique_claim`; complete the separate TS-754/TS-755
-   rollout before resetting and re-bootstrapping production data.
+   constraints rather than claim records. Bootstrap uses the current [SQL state schema](state-storage.md). Production resets require the assigned data lane and verified backup/recovery evidence.
 4. Require the live audit to pass and verify credentials can read/write the
-   existing TerraBase billing collections. Require their separate staging evidence before claiming in-place plan
+   existing TerraBase billing tables. Require their separate staging evidence before claiming in-place plan
    changes are financially qualified; the runtime mode gate is a removal gap.
 5. Ask the user to confirm **activating live billing on `ts-dashboard`** with
    the verified target, configuration versions, runtime hardening, clean data
@@ -96,7 +92,7 @@ Verified Stripe sandbox deliveries remain required before live approval.
 Deploy the reviewed runtime through its normal quality and integrity gates.
 OCI Vault delivery must supply the verified runtime credentials automatically; manual
 secret import and demo-switch recipes are retired. Existing delivery and switch paths
-remain runtime gaps, so this document cannot certify a completed cutover.
+remain runtime gaps, so this guide cannot certify a completed cutover.
 
 Explicit authorization remains required for actual charges/refunds and approved
 obsolete-data resets. Record the resulting release identity and verify readiness,
