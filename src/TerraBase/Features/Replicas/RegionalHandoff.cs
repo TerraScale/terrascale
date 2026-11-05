@@ -259,6 +259,11 @@ internal sealed class RegionalHandoff(
                             position = replicas.HeldRevision(database);
                         }
 
+                        if (region == options.Region && position is null)
+                        {
+                            return false;
+                        }
+
                         if (position is { } applied)
                         {
                             positions.Add(new RegionalPosition(database.OrganizationId, database.ProjectId!, database.DatabaseId!, region, applied.ToString()));

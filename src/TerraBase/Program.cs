@@ -168,6 +168,7 @@ try
     app.UseTerraBaseProjectCheck();
     app.UseAuthorization();
     SqlRequestTiming.Checkpoint(app, "auth");
+    app.UseTerraBaseRegionalWriter();
     app.UseTerraBaseHomeForwarding();
     SqlRequestTiming.Checkpoint(app, "home_lookup");
     app.UseTerraBaseQos();
