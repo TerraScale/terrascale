@@ -7,6 +7,8 @@ internal sealed class HomeLeaseGate
     private readonly ConcurrentDictionary<string, bool> _leased = new(StringComparer.Ordinal);
     private long _until;
 
+    internal Func<bool>? RegionalWriter { get; set; }
+
     public IReadOnlyCollection<string> Leased => [.. _leased.Keys];
 
     public void Lease(string database, bool held) => _leased[database] = held;
@@ -16,7 +18,8 @@ internal sealed class HomeLeaseGate
     public void Renewed(long until) => Volatile.Write(ref _until, until);
 
     public bool Holds(string database) =>
-        !_leased.TryGetValue(database, out var held) || (held && TimeProvider.System.GetTimestamp() < Volatile.Read(ref _until));
+        (RegionalWriter?.Invoke() ?? true)
+        && (!_leased.TryGetValue(database, out var held) || (held && TimeProvider.System.GetTimestamp() < Volatile.Read(ref _until)));
 
     public void ThrowIfUnleased(string database)
     {
