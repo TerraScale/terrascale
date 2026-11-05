@@ -7,7 +7,7 @@ import sys
 groups = (
     {"Management", "Import", "Tenancy"},
     {"Backup", "Storage", "Qos"},
-    {"Shapes", "Documents", "Sql"},
+    {"Shapes", "Sql"},
 )
 shard = int(sys.argv[1])
 if shard not in range(1, 5):

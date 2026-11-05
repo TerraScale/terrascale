@@ -14,7 +14,7 @@ cat > "$tmp/results.jsonl" <<'JSON'
 {"test":"Kill","category":"pass","detail":"","nodes":"separate OS processes","faults":"ProcessKill"}
 {"test":"E1","category":"expected-failure","detail":"the CDC source (R3)","nodes":"in-process nodes","faults":"none"}
 {"test":"E2","category":"expected-failure","detail":"the CDC source (R3)","nodes":"in-process nodes","faults":"none"}
-{"test":"E10","category":"expected-failure","detail":"the changes feed (R8)","nodes":"in-process nodes","faults":"none"}
+{"test":"E10","category":"expected-failure","detail":"the changes stream (R8)","nodes":"in-process nodes","faults":"none"}
 {"test":"Partition","category":"not-supported","detail":"R3; no local link","nodes":"in-process nodes","faults":"SimulatedPartition"}
 {"test":"Outage","category":"skip","detail":"Outage test requires a live endpoint","nodes":"in-process nodes","faults":"NodeStop"}
 JSON

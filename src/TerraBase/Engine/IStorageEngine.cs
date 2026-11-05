@@ -4,7 +4,7 @@ namespace TerraBase.Engine;
 
 /// <summary>
 /// The database engine TerraBase stores its databases in. Each database is isolated; one
-/// implementation per substrate (Turso today, or others later) lives under <c>Engine/&lt;Name&gt;/</c>.
+/// implementation per substrate (the SQL engine) lives under <c>Engine/&lt;Name&gt;/</c>.
 /// </summary>
 /// <remarks>
 /// A client database is addressed only by a <see cref="TenantContext"/> naming its organization, project and
@@ -14,7 +14,7 @@ namespace TerraBase.Engine;
 /// </remarks>
 public interface IStorageEngine : IAsyncDisposable
 {
-    /// <summary>Short substrate name, for diagnostics (for example <c>turso</c>).</summary>
+    /// <summary>Short substrate name, for diagnostics (for internal diagnostics).</summary>
     string Name { get; }
 
     /// <summary>Returns the last immutable physical-storage snapshot without scanning files. Unknown until the first complete refresh.</summary>

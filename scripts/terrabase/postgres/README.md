@@ -43,7 +43,7 @@ key). Plaintext connections are refused with SQLSTATE `28000`, so keep `sslmode=
 Locally, prefix installs and runs with `nice -n 19`. The Python lock targets CPython 3.14
 (`uv pip compile --generate-hashes --python-version 3.14 requirements.in -o requirements.txt`).
 
-`dotnet/` is a standalone console project, like `benchmark/dotnet/TursoSpike`: its empty `Directory.*` files keep
+`dotnet/` is a standalone console project, like the standalone benchmark projects: its empty `Directory.*` files keep
 it out of `TerraScale.slnx`, central package management and the repository analyzers, and it commits its own
 `packages.lock.json`. It pins the same Npgsql version as `tests/TerraBase.Fast`.
 

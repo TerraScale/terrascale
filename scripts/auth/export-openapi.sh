@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start the built service with throwaway Development settings on a free loopback
-# port, save the OpenAPI document it serves, and stop it. The document is the
+# port, save the OpenAPI document it serves, and stop it. The schema is the
 # exact contract Scalar loads at /scalar.
 set -euo pipefail
 
