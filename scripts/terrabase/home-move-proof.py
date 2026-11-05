@@ -93,6 +93,8 @@ def main():
                 moved = threading.Event()
                 accepted = []
                 attempts = []
+                record({"kind": "baseline", "trial": trial, "database": database.id,
+                        "expected_ids": sorted(expected)})
 
                 def writer():
                     for sequence in range(12):
@@ -104,12 +106,14 @@ def main():
                             completed = utc()
                             expected[row] = values
                             accepted.append({"id": row, "sequence": sequence, "started": started, "completed": completed, **last.response})
+                            record({"kind": "accepted", "trial": trial, "database": database.id, **accepted[-1]})
                             if "commit=local" not in (last.response["route"] or ""):
                                 raise AssertionError("SJC write did not receive a local commit acknowledgement")
                             if len(accepted) == 3:
                                 third.set()
                         except APIError as error:
                             attempts.append({"id": row, "sequence": sequence, "status": error.status, "code": error.code})
+                            record({"kind": "refused", "trial": trial, "database": database.id, **attempts[-1]})
                         if moved.is_set() and len(accepted) >= 6:
                             break
                         threading.Event().wait(0.5)
@@ -125,6 +129,8 @@ def main():
                         if result.home_region != "fra":
                             raise AssertionError("move did not record FRA")
                         home = fra
+                        record({"kind": "move", "trial": trial, "database": database.id,
+                                "started": move_started, "completed": utc(), **last.response})
                     finally:
                         move_completed = utc()
                         moved.set()
