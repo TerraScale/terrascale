@@ -161,6 +161,7 @@ try
 
         return next(context);
     });
+    app.UseTerraBaseRegionalWriter();
     app.UseTerraBaseQosMemory();
     app.UseTerraBaseCatalogGate();
     SqlRequestTiming.Checkpoint(app, "admission");
@@ -168,7 +169,6 @@ try
     app.UseTerraBaseProjectCheck();
     app.UseAuthorization();
     SqlRequestTiming.Checkpoint(app, "auth");
-    app.UseTerraBaseRegionalWriter();
     app.UseTerraBaseHomeForwarding();
     SqlRequestTiming.Checkpoint(app, "home_lookup");
     app.UseTerraBaseQos();

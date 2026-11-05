@@ -8,6 +8,7 @@ public static class ReplicaExtensions
     public static IServiceCollection AddTerraBaseRegionReplicas(this IServiceCollection services)
     {
         services.AddSingleton<RegionalOwners>();
+        services.AddSingleton<RegionalIngress>();
         services.AddSingleton<RegionalHandoff>();
         services.AddHostedService(provider => provider.GetRequiredService<RegionalHandoff>());
         services.TryAddSingleton<IReplicaPeers, PeersFileReplicaPeers>();
