@@ -30,9 +30,10 @@ public sealed class HomeFailoverTests
         await using var nats = await JetStreamServer.StartAsync(token);
         await using var gruNats = new TcpGate(nats.Url.Port);
         using var issuer = new TestIssuer();
+        var storage = new FakeS3();
         var mesh = new Mesh { Nodes = [("gru", Unreachable), ("sjc", Unreachable)] };
-        await using var gru = await StartAsync("gru", issuer, mesh, new Uri($"nats://127.0.0.1:{gruNats.Port}"), nats.Token);
-        await using var sjc = await StartAsync("sjc", issuer, mesh, nats.Url, nats.Token);
+        await using var gru = await StartAsync("gru", issuer, storage, mesh, new Uri($"nats://127.0.0.1:{gruNats.Port}"), nats.Token);
+        await using var sjc = await StartAsync("sjc", issuer, storage, mesh, nats.Url, nats.Token);
         mesh.Nodes = [("gru", gru.Server.BaseAddress), ("sjc", sjc.Server.BaseAddress)];
 
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
@@ -270,10 +271,15 @@ public sealed class HomeFailoverTests
             .Select(row => row[0].GetString()!).ToHashSet(StringComparer.Ordinal);
     }
 
-    private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, Mesh mesh, Uri natsUrl, string natsToken) => ManagementApi.StartAsync(
-        settings => settings["region"] = region,
+    private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, FakeS3 storage, Mesh mesh, Uri natsUrl, string natsToken) => ManagementApi.StartAsync(
+        settings =>
+        {
+            settings["region"] = region;
+            storage.Configure(settings);
+        },
         services =>
         {
+            storage.Route(services);
             var options = (TerraBaseOptions)services.Last(descriptor => descriptor.ServiceType == typeof(TerraBaseOptions)).ImplementationInstance!;
             services.Replace(ServiceDescriptor.Singleton(options with { MachineId = region + "-1", NatsUrl = natsUrl, NatsToken = natsToken }));
             services.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new RegionView(region, mesh)));
