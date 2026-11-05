@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Buffers.Binary;
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Text.Json;
 using System.Threading.Channels;
 using NativeCompressions;
@@ -337,6 +338,11 @@ internal sealed class HomePush(
                     await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
                         JsonSerializer.SerializeToUtf8Bytes(result, TerraBaseJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
                     _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
+                    if (message.Metadata is { } metadata)
+                    {
+                        Progressed(transaction.Region!, database, metadata.Sequence.Stream);
+                    }
+
                     applied++;
                 }
             }
