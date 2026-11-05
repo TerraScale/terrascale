@@ -1,0 +1,9 @@
+2026-11-05T16:52:16+00:00 ts-gru-1 terrascale-orchestrator[3236466]: installed a pushed release; exiting so systemd starts it
+2026-11-05T16:52:18+00:00 ts-gru-1 terrascale-orchestrator[3241055]: [3241055] [INF] Starting nats-server
+2026-11-05T16:52:18+00:00 ts-gru-1 terrascale-orchestrator[3241055]: [3241055] [INF] Server is ready
+2026-11-05T16:52:14+00:00 ts-sjc-1 terrascale-orchestrator[2473881]: installed a pushed release; exiting so systemd starts it
+2026-11-05T16:52:17+00:00 ts-sjc-1 terrascale-orchestrator[2479866]: [2479866] [INF] Starting nats-server
+2026-11-05T16:52:17+00:00 ts-sjc-1 terrascale-orchestrator[2479866]: [2479866] [INF] Server is ready
+2026-11-05T16:52:15+00:00 ts-fra-1 terrascale-orchestrator[2193461]: installed a pushed release; exiting so systemd starts it
+2026-11-05T16:52:18+00:00 ts-fra-1 terrascale-orchestrator[2198040]: [2198040] [INF] Starting nats-server
+2026-11-05T16:52:19+00:00 ts-fra-1 terrascale-orchestrator[2198040]: [2198040] [INF] Server is ready

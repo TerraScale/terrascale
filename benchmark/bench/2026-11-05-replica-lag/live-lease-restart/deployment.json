@@ -1,0 +1,11 @@
+{
+  "verifiedAt": "2026-11-05T16:48:05.152901+00:00",
+  "format": "23-41a88901325a",
+  "healthEvidence": "internal-health.json",
+  "benchmarkSha256": "940be8ebfbdf25b874cdb71b3aa528ebd8625214b5558cb08e3340d0808c65ed",
+  "sourceRevisions": [
+    "20609ac990218fad93978b2121dc94b1d750ba5b",
+    "ca30634800bba781f99ce3846dca6b37723fab02"
+  ],
+  "window": "User terrascale push hold until2026-11-05T17:12Z; FRAfirst"
+}

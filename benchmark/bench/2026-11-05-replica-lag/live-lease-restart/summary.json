@@ -1,0 +1,22 @@
+[
+  {
+    "region": "fra",
+    "repeat": 1,
+    "writes": 500,
+    "local": 500,
+    "pushed": 500,
+    "commitToVisibleP50": 113.038,
+    "commitToVisibleP99": 140.576,
+    "accepted": true
+  },
+  {
+    "region": "fra",
+    "repeat": 2,
+    "writes": 371,
+    "local": 371,
+    "pushed": 371,
+    "commitToVisibleP50": 113.033,
+    "commitToVisibleP99": 291.792,
+    "accepted": false
+  }
+]
