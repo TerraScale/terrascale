@@ -110,9 +110,9 @@ internal sealed class HomeLeases(
 
     internal bool Active => _js is not null;
 
-    internal Func<TenantContext, string, long, CancellationToken, Task<bool>>? FailOver { get; set; }
+    internal Func<TenantContext, HomeLease, CancellationToken, Task<bool>>? FailOver { get; set; }
 
-    internal async ValueTask<bool> TakeAsync(TenantContext database, string fromRegion, long epoch, bool fromDeadNode, CancellationToken cancellationToken)
+    internal async ValueTask<bool> TakeAsync(TenantContext database, string fromRegion, long epoch, HomeLease? failedHome, CancellationToken cancellationToken)
     {
         if (_js is null)
         {
@@ -136,7 +136,12 @@ internal sealed class HomeLeases(
         }
 
         var existing = current?.Value is { } bytes ? Decode(bytes) : null;
-        if (existing is not null && (existing.Home != fromRegion || existing.Epoch >= epoch || fromDeadNode && _nodes.ContainsKey(existing.Node)))
+        if (failedHome is not null && existing != failedHome)
+        {
+            return false;
+        }
+
+        if (existing is not null && (existing.Home != fromRegion || existing.Epoch >= epoch || failedHome is not null && _nodes.ContainsKey(existing.Node)))
         {
             return false;
         }
@@ -266,6 +271,13 @@ internal sealed class HomeLeases(
                 try
                 {
                     await ConfirmAllAsync(kv, cancellationToken).ConfigureAwait(false);
+                    foreach (var home in _homes.Values.Select(entry => entry.Lease).DistinctBy(home => home.Node))
+                    {
+                        if (home.Node != options.MachineId && !_nodes.ContainsKey(home.Node))
+                        {
+                            Expired(new NodeLease(home.Node, home.Home, home.Session), cancellationToken);
+                        }
+                    }
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
@@ -494,7 +506,7 @@ internal sealed class HomeLeases(
                 }
 
                 var epoch = lease.Epoch + 1;
-                if (FailOver is { } failOver && await failOver(database, lease.Home, epoch, cancellationToken).ConfigureAwait(false))
+                if (FailOver is { } failOver && await failOver(database, lease, cancellationToken).ConfigureAwait(false))
                 {
                     _failovers?.Add(1);
                     logger.ZLogWarning($"This node took over a database from {lease.Home:@From} at epoch {epoch:@Epoch}, holding {mine.ToString():@Revision}");

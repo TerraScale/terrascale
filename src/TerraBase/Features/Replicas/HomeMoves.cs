@@ -282,7 +282,7 @@ internal sealed class HomeMoves(
             }
 
             IReadOnlyList<string> next = [.. request.ReplicaRegions.Where(region => region != options.Region)];
-            return await AdoptAsync(database, request.FromRegion, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), fromDeadNode: false)
+            return await AdoptAsync(database, request.FromRegion, new DatabasePlacement(options.Region, next, request.Version, request.AllRegions), failedHome: null)
                 .ConfigureAwait(false);
         }
         finally
@@ -291,8 +291,10 @@ internal sealed class HomeMoves(
         }
     }
 
-    public async Task<bool> FailOverAsync(TenantContext database, string fromRegion, long version, CancellationToken cancellationToken)
+    public async Task<bool> FailOverAsync(TenantContext database, HomeLease failedHome, CancellationToken cancellationToken)
     {
+        var fromRegion = failedHome.Home;
+        var version = failedHome.Epoch + 1;
         var gate = _locks.GetOrAdd(database.DatabaseId!, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -312,7 +314,7 @@ internal sealed class HomeMoves(
             await replication.SuspendAsync(database).ConfigureAwait(false);
             try
             {
-                return await AdoptAsync(database, fromRegion, new DatabasePlacement(options.Region, next, version, placement.AllRegions), fromDeadNode: true)
+                return await AdoptAsync(database, fromRegion, new DatabasePlacement(options.Region, next, version, placement.AllRegions), failedHome)
                     .ConfigureAwait(false) is HomePromoteAnswer { Promoted: true };
             }
             finally
@@ -326,7 +328,7 @@ internal sealed class HomeMoves(
         }
     }
 
-    private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, bool fromDeadNode)
+    private async Task<PromoteResult> AdoptAsync(TenantContext database, string fromRegion, DatabasePlacement placement, HomeLease? failedHome)
     {
         string? detached = null;
         try
@@ -345,7 +347,7 @@ internal sealed class HomeMoves(
 
             await imports.ImportDatabaseAsync(database, detached, CancellationToken.None).ConfigureAwait(false);
             detached = null;
-            if (!await leases.TakeAsync(database, fromRegion, placement.Version, fromDeadNode, CancellationToken.None).ConfigureAwait(false))
+            if (!await leases.TakeAsync(database, fromRegion, placement.Version, failedHome, CancellationToken.None).ConfigureAwait(false))
             {
                 leaseGate.Unlease(database.DatabaseId!);
                 _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
