@@ -282,7 +282,7 @@ public sealed class PreflightTests
         await Assert.That(string.CompareOrdinal(first, second) < 0).IsTrue();
         var resolver = new TerraBaseStaticEndpointResolver(new Uri("https://gru.api.terrascale.tech"));
         await Assert.That((await resolver.ResolveAsync()).Host).IsEqualTo("gru.api.terrascale.tech");
-        await Assert.That(SdkPrerequisites.Version).IsEqualTo(typeof(TerraBaseDocumentsClient).Assembly.GetName().Version!.ToString());
+        await Assert.That(SdkPrerequisites.Version).IsEqualTo(typeof(TerraBaseDatabaseClient).Assembly.GetName().Version!.ToString());
     }
 
     private static Workload Parse(string json) => Workload.Parse(Encoding.UTF8.GetBytes(json));

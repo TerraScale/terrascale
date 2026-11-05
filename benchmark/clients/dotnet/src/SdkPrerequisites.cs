@@ -5,7 +5,7 @@ namespace BenchClient;
 internal static class SdkPrerequisites
 {
     internal static string Revision => ReadRevision();
-    internal static string Version => typeof(TerraBaseDocumentsClient).Assembly.GetName().Version?.ToString()
+    internal static string Version => typeof(TerraBaseDatabaseClient).Assembly.GetName().Version?.ToString()
         ?? throw new PreflightException("PREFLIGHT_FAILED", "SDK assembly version is missing; rebuild the client.");
 
     internal static PreflightException BlockedRun() => new("SDK_BLOCKED",

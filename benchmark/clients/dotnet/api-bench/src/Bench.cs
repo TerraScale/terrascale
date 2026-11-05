@@ -22,7 +22,7 @@ internal sealed class Bench : IDisposable
     private readonly TerraScaleIdGenerator ids = new();
     private readonly CountingHandler sdkCounter;
     private readonly HttpClient sdk;
-    private readonly TerraBaseDocumentsClient documents;
+    private readonly TerraBaseDatabaseClient documents;
     private readonly RawTransport raw2;
     private readonly RawTransport raw1;
     private readonly HashSet<int> seeded = [];
@@ -43,7 +43,7 @@ internal sealed class Bench : IDisposable
         tokens = new Tokens(auth.Oidc, apiKey);
         sdkCounter = new CountingHandler(TerraBaseHttp.CreateHandler());
         sdk = new HttpClient(sdkCounter);
-        documents = new TerraBaseDocumentsClient(sdk, new TerraBaseDocumentsClientOptions { BaseAddress = endpoint, AccessTokenProvider = tokens.GetAsync });
+        documents = new TerraBaseDatabaseClient(sdk, new TerraBaseDatabaseClientOptions { BaseAddress = endpoint, AccessTokenProvider = tokens.GetAsync });
         raw2 = Raw(HttpVersion.Version20);
         raw1 = Raw(HttpVersion.Version11);
     }
@@ -54,7 +54,7 @@ internal sealed class Bench : IDisposable
     internal TerraBaseDatabase Db => documents.Database(project, database);
 
     /// <summary>Project-token create (<c>POST</c>) on every serving region; the legacy <c>PUT</c> route refuses project tokens.</summary>
-    internal static Task<TerraBaseManagedDatabase> CreateDatabaseAsync(TerraBaseDocumentsClient documents, string project, string name, CancellationToken ct) =>
+    internal static Task<TerraBaseManagedDatabase> CreateDatabaseAsync(TerraBaseDatabaseClient documents, string project, string name, CancellationToken ct) =>
         documents.Project(project).CreateDatabaseAsync(name, allRegions: true, cancellationToken: ct);
 
     /// <summary>Token exchange, then database create. Nothing else is untimed setup.</summary>

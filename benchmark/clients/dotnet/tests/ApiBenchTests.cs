@@ -142,7 +142,7 @@ public sealed class ProtocolTests
     public async Task DatabaseCreateUsesTheProjectRoute()
     {
         var handler = new FakeHandler(HttpStatusCode.BadRequest, """{"error":{"code":"invalid_request","message":"stop"}}""");
-        var documents = new TerraBaseDocumentsClient(new HttpClient(handler), new TerraBaseDocumentsClientOptions
+        var documents = new TerraBaseDatabaseClient(new HttpClient(handler), new TerraBaseDatabaseClientOptions
         {
             BaseAddress = new Uri("https://gru.api.terrascale.tech"),
             AccessTokenProvider = _ => ValueTask.FromResult("token"),
@@ -176,9 +176,9 @@ public sealed class ProtocolTests
         await Assert.That(counter.BytesIn).IsEqualTo(body.Length);
     }
 
-    private static TerraBaseDocumentsClient Documents(HttpStatusCode status, string body) => new(
+    private static TerraBaseDatabaseClient Documents(HttpStatusCode status, string body) => new(
         new HttpClient(new FakeHandler(status, body)),
-        new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("https://gru.api.terrascale.tech"), AccessTokenProvider = _ => ValueTask.FromResult("token") });
+        new TerraBaseDatabaseClientOptions { BaseAddress = new Uri("https://gru.api.terrascale.tech"), AccessTokenProvider = _ => ValueTask.FromResult("token") });
 
     private sealed class FakeHandler(HttpStatusCode status, string body) : HttpMessageHandler
     {

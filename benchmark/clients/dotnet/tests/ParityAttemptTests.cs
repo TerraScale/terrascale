@@ -86,8 +86,8 @@ public sealed class ParityAttemptTests
         await Assert.That(after.RejectionSince(after, 0)).IsEqualTo("empty");
     }
 
-    private static TerraBaseDocumentsClient Documents(HttpClient http) => new(http,
-        new TerraBaseDocumentsClientOptions { BaseAddress = Origin, Region = "gru", AccessTokenProvider = _ => ValueTask.FromResult("synthetic-control") });
+    private static TerraBaseDatabaseClient Documents(HttpClient http) => new(http,
+        new TerraBaseDatabaseClientOptions { BaseAddress = Origin, Region = "gru", AccessTokenProvider = _ => ValueTask.FromResult("synthetic-control") });
 
     private sealed class FrameHandler(string variant) : HttpMessageHandler
     {

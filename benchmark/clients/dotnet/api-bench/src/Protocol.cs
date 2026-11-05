@@ -107,6 +107,6 @@ internal static class Protocol
         using var stream = typeof(Protocol).Assembly.GetManifestResourceStream("ApiBench.sdk.rev")
             ?? throw new InvalidOperationException("sdk.rev is not embedded");
         using var reader = new StreamReader(stream);
-        return $"{typeof(TerraBaseDocumentsClient).Assembly.GetName().Version} ({reader.ReadToEnd().Trim()})";
+        return $"{typeof(TerraBaseDatabaseClient).Assembly.GetName().Version} ({reader.ReadToEnd().Trim()})";
     }
 }
