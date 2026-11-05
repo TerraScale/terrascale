@@ -104,7 +104,7 @@ claude mcp add --transport http terrascale https://mcp.terrascale.tech/ \\
 claude -p "Which customers in the app database have 10 or more seats?"`,
 }
 
-export const LANG_META: Array<{ id: Lang; label: string; file: string; icon?: string }> = [
+export const LANG_META: Array<{ id: Lang; label: string; file: string; icon: string }> = [
   ...SDK_LANGUAGES as Array<{ id: Lang; label: string; file: string; icon: string }>,
   { id: 'json', label: 'MCP', file: '~/app/.mcp.json', icon: '/language-icons/mcp.svg' },
   { id: 'shell', label: 'CLI', file: '~/app $', icon: '/language-icons/terminal.svg' },

@@ -81,9 +81,7 @@
                 aria-selected={lang === l.id}
                 on:click={() => { lang = l.id; copied = false }}
               >
-                {#if l.icon}
-                  <img src={l.icon} alt="" width="16" height="16" aria-hidden="true" />
-                {/if}
+                <img src={l.icon} alt="" width="16" height="16" aria-hidden="true" />
                 {l.label}
               </button>
             {/each}
