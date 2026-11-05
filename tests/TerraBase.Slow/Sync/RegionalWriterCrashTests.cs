@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -30,6 +31,12 @@ public sealed class RegionalWriterCrashTests
         }
         await using var nats = await JetStreamServer.StartAsync(token);
         var root = Directory.CreateTempSubdirectory("regional-crash-").FullName;
+        var master = Path.Combine(root, "master-key");
+        await File.WriteAllTextAsync(master, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), token);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(master, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
         using var reservation = new TcpListener(IPAddress.Any, 0);
         reservation.Start();
         var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
@@ -129,14 +136,24 @@ public sealed class RegionalWriterCrashTests
         var directory = config["directory"]!.GetValue<string>();
         var node = config["node"]!.GetValue<string>();
         var storage = new FakeS3();
+        var objects = directory + ".objects";
+        if (File.Exists(objects))
+        {
+            foreach (var (key, value) in JsonSerializer.Deserialize<Dictionary<string, byte[]>>(await File.ReadAllBytesAsync(objects, token))!)
+            {
+                storage.StoreObject(key, value);
+            }
+        }
         await using var api = await ManagementApi.StartAsync(settings =>
         {
             settings["region"] = "gru";
             settings["data-directory"] = directory;
             storage.Configure(settings);
+            settings["master-key"] = File.ReadAllText(Path.Combine(Path.GetDirectoryName(directory)!, "master-key"));
         }, services =>
         {
             storage.Route(services);
+            services.AddHttpClient("backup-s3").AddHttpMessageHandler(() => new PersistObjects(storage, objects));
             var options = (TerraBaseOptions)services.Last(descriptor => descriptor.ServiceType == typeof(TerraBaseOptions)).ImplementationInstance!;
             services.Replace(ServiceDescriptor.Singleton(options with
             {
@@ -167,6 +184,36 @@ public sealed class RegionalWriterCrashTests
     private sealed class Serving : IRegionCatalog
     {
         public ValueTask<IReadOnlyList<string>> ServingAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IReadOnlyList<string>>(["gru", "sjc"]);
+    }
+
+    // Keep the fake external bucket alive across the app's SIGKILL. A successful
+    // fake object-store response persists its objects before catalog anchoring returns.
+    private sealed class PersistObjects(FakeS3 storage, string path) : DelegatingHandler
+    {
+        private static readonly SemaphoreSlim Saving = new(1, 1);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Saving.WaitAsync(cancellationToken);
+            try
+            {
+                var response = await base.SendAsync(request, cancellationToken);
+                if (request.Method == HttpMethod.Put || request.Method == HttpMethod.Delete || request.Method == HttpMethod.Post)
+                {
+                    var temporary = path + ".new";
+                    await File.WriteAllBytesAsync(temporary, JsonSerializer.SerializeToUtf8Bytes(storage.Objects), cancellationToken);
+                    if (!OperatingSystem.IsWindows())
+                    {
+                        File.SetUnixFileMode(temporary, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    }
+                    File.Move(temporary, path, overwrite: true);
+                }
+                return response;
+            }
+            finally
+            {
+                Saving.Release();
+            }
+        }
     }
 
     private sealed class Node(string root, string name, string address, int port, string peers, JetStreamServer nats) : IAsyncDisposable
