@@ -257,8 +257,8 @@ public static class OidcIssuer
 /// Resolves OpenIddict's base and request URIs against the configured public origin instead of the request's Host
 /// header and scheme, so discovery, issuer checks and endpoint matching never trust request headers. The base URI is the
 /// tenant's issuer, as <see cref="Tenancy"/> resolved it: <c>terrascale</c> for every endpoint, an existing project for
-/// its discovery document, JWKS and authorization-code endpoints. Any other request gets the bare origin, under which no endpoint matches, so it
-/// falls through to routing and answers 404.
+/// its discovery document, JWKS and authorization-code endpoints. Any other request names no tenant, so it is skipped
+/// and falls through to routing, which answers 404: the bare origin is no tenant's issuer.
 /// </summary>
 public sealed class TrustPublicOrigin(AuthOptions options) : IOpenIddictServerHandler<ProcessRequestContext>
 {
@@ -272,7 +272,13 @@ public sealed class TrustPublicOrigin(AuthOptions options) : IOpenIddictServerHa
         var request = context.Transaction.GetHttpRequest() ?? throw new InvalidOperationException("OpenIddict ran outside an HTTP request.");
         var host = new HostString(options.PublicOrigin.Authority);
         var tenant = TenantOf(request);
-        var basePath = tenant is null ? request.PathBase : request.PathBase.Add(new PathString("/" + tenant));
+        if (tenant is null)
+        {
+            context.SkipRequest();
+            return ValueTask.CompletedTask;
+        }
+
+        var basePath = request.PathBase.Add(new PathString("/" + tenant));
         context.BaseUri = Uri.TryCreate(UriHelper.BuildAbsolute(options.PublicOrigin.Scheme, host, basePath), UriKind.Absolute, out var baseUri) ? baseUri : null;
         context.RequestUri = Uri.TryCreate(UriHelper.BuildAbsolute(options.PublicOrigin.Scheme, host, request.PathBase, request.Path, request.QueryString), UriKind.Absolute, out var requestUri) ? requestUri : null;
         context.Transaction.SetProperty(TenantProperty, tenant);
