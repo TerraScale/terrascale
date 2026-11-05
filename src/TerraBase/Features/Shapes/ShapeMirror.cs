@@ -69,7 +69,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         SingleReader = true,
     });
     private readonly Lock _gate = new();
-    private readonly HashSet<string> _pending = [];
+    private readonly Dictionary<string, string> _pending = [];
     private readonly HashSet<string> _trimming = [];
     private readonly Dictionary<string, Cached> _cache = [];
     private readonly Dictionary<string, Proven> _proofs = [];
@@ -171,7 +171,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         IMemoryReservation? admission;
         lock (_gate)
         {
-            if (_cache.ContainsKey(key) || _pending.Contains(key))
+            if (_cache.ContainsKey(key) || _pending.ContainsKey(key))
             {
                 return true;
             }
@@ -188,7 +188,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             }
 
             // The claimed slot keeps duplicates and the byte bound exact while the body is copied outside the lock.
-            _pending.Add(key);
+            _pending.Add(key, ShapeObjectStore.Owner(database));
             _queuedBytes += sealedBody.Length;
         }
 
@@ -266,27 +266,37 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         }
         var owner = ShapeObjectStore.Owner(database);
         var count = 0;
-        await foreach (var stored in _objects.ListAsync(null, after, token).ConfigureAwait(false))
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
+        try
         {
-            var head = await _objects.HeadAsync(stored.Key, token).ConfigureAwait(false);
-            if (head?.Owner == owner)
+            await foreach (var stored in _objects.ListAsync(null, after, linked.Token).ConfigureAwait(false))
             {
-                if (!await _objects.DeleteAsync(stored.Key, token).ConfigureAwait(false))
+                var head = await _objects.HeadAsync(stored.Key, linked.Token).ConfigureAwait(false);
+                if (head?.Owner == owner)
+                {
+                    if (!await _objects.DeleteAsync(stored.Key, linked.Token).ConfigureAwait(false))
+                    {
+                        return (after, false);
+                    }
+                    Remove(stored.Key);
+                }
+                after = stored.Key;
+                if (++count == ScanItems)
                 {
                     return (after, false);
                 }
-                Remove(stored.Key);
             }
-            after = stored.Key;
-            if (++count == ScanItems)
-            {
-                return (after, false);
-            }
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            return (after, false);
         }
         lock (_gate)
         {
-            // A publisher already sealing a chunk must drain before this authority can be certified.
-            return (_pending.Count == 0 ? null : after, _pending.Count == 0);
+            // Only this database's publishers must drain before certifying its cleanup.
+            var complete = !_pending.ContainsValue(owner);
+            return (complete ? null : after, complete);
         }
     }
 

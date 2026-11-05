@@ -170,18 +170,7 @@ internal sealed class LocalOverlay
             }
         }
 
-        internal void DeleteDatabase(TenantContext database)
-    {
-        if (_databases.TryRemove(Key(database), out var pending))
-        {
-            foreach (var entry in pending.Snapshot())
-            {
-                entry.Home.TrySetCanceled();
-            }
-        }
-    }
-
-    public RegionTransaction? Find(string id)
+        public RegionTransaction? Find(string id)
         {
             lock (_lock)
             {
