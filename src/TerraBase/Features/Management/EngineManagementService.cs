@@ -11,6 +11,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Regions;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -22,7 +23,7 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, IOrphanDatabaseFiles orphanFiles, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
-    IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota,
+    IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota, IRegionPeers regionPeers,
     Lazy<ICatalogGate> catalogGate, DatabaseAllowance databaseAllowance, Lazy<IBackupKeyShredding> shredding)
     : IManagementService, ITenantDirectory, IHostedService, ICatalogGuard, IDatabaseFileCatalog
 {
