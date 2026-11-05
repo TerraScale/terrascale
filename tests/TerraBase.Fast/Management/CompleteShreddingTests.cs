@@ -35,6 +35,11 @@ public sealed class CompleteShreddingTests
             [new RegionChange("insert", "items", null, new Dictionary<string, JsonElement> { ["value"] = JsonSerializer.SerializeToElement(sentinel) })]);
         var packed = HomePush.Encode(transaction);
         var payload = await crypto.SealAsync(tenant, packed, token);
+        using var backup = await api.Client.PostAsync(ManagementApi.Uri(database.Path + "/backups"), null, token);
+        await Assert.That(backup.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        using var backupBody = JsonDocument.Parse(await backup.Content.ReadAsByteArrayAsync(token));
+        var snapshot = tenant with { DatabaseId = backupBody.RootElement.GetProperty("id").GetString()! };
+        var snapshotPayload = await crypto.SealAsync(snapshot, packed, token);
         using var holdBody = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(
             new HeldTransaction(1, "sjc-1", "gru", tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, 1, payload), TerraBaseJsonContext.Default.HeldTransaction));
         holdBody.Headers.ContentType = new("application/json");
@@ -53,11 +58,13 @@ public sealed class CompleteShreddingTests
             api.Server.Services.GetRequiredService<IMasterKey>(), TimeProvider.System, api.Server.Services.GetRequiredService<TerraBase.Configuration.BackupSettings>());
         var other = new TransactionCrypto(otherKeys);
         await Assert.That(await other.OpenAsync(tenant, payload, token)).IsEquivalentTo(packed);
+        await Assert.That(await other.OpenAsync(snapshot, snapshotPayload, token)).IsEquivalentTo(packed);
         using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(s3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Keys(BackupLayout.KeyScope(tenant)), StringComparison.Ordinal)
             && !key.EndsWith("/shredded", StringComparison.Ordinal))).IsEmpty();
         await Assert.That(await other.OpenAsync(tenant, payload, token)).IsNull();
+        await Assert.That(await other.OpenAsync(snapshot, snapshotPayload, token)).IsNull();
         await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);
         await Assert.That(api.Server.Services.GetRequiredService<HoldStore>().Count).IsEqualTo(0);
     }
@@ -78,14 +85,22 @@ public sealed class CompleteShreddingTests
         var database = await api.CreateManagedDatabaseAsync();
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
         var scope = BackupLayout.KeyScope(tenant);
-        _ = await api.Server.Services.GetRequiredService<DataKeys>().CurrentAsync(scope, token);
-        s3.FailPut = key => key == BackupLayout.Shredded(scope);
+        var keys = api.Server.Services.GetRequiredService<DataKeys>();
+        _ = await keys.CurrentAsync(scope, token);
+        using var backup = await api.Client.PostAsync(ManagementApi.Uri(database.Path + "/backups"), null, token);
+        await Assert.That(backup.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        using var backupBody = JsonDocument.Parse(await backup.Content.ReadAsByteArrayAsync(token));
+        var snapshot = tenant with { DatabaseId = backupBody.RootElement.GetProperty("id").GetString()! };
+        var snapshotScope = BackupLayout.KeyScope(snapshot);
+        _ = await keys.CurrentAsync(snapshotScope, token);
+        s3.FailPut = key => key == BackupLayout.Shredded(snapshotScope);
         using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await api.Server.Services.GetRequiredService<SystemCatalog>().ListDatabasePurgesAsync(null, 16, token))!.Items.Single().BackupVerifiedAt).IsNull();
         s3.FailPut = _ => false;
         await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);
         await Assert.That(() => api.Server.Services.GetRequiredService<DataKeys>().CurrentAsync(scope, token)).Throws<DatabaseShreddedException>();
+        await Assert.That(() => keys.CurrentAsync(snapshotScope, token)).Throws<DatabaseShreddedException>();
 
         // A durable entry survives both an interrupted object delete and a refused Cloudflare request.
         var services = api.Server.Services;
