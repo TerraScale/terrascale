@@ -341,7 +341,7 @@ export const es: Messages = {
     regionsAria: 'Regiones en servicio',
     missionTitle: 'Una plataforma para bases de datos, claves y facturación.',
     pillars: [
-      { title: 'SQL sobre Turso' },
+      { title: 'Bases de datos SQL' },
       { title: 'Una región de escritura y réplicas cifradas' },
       { title: 'Topes de escritura por plan' },
     ],
