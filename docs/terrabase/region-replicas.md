@@ -74,8 +74,12 @@ eventual consistency.
    page answer holds the final content of every page changed after its base. A pull that needs the home (the sweep, a
    reconnect, read-your-writes, or no pushed answer that covers the replica) first fetches the home's answer for the
    revision it holds, up to 1 MiB reserved against the memory budget, and then applies it as a pushed answer; a larger or
-   full answer is fetched by the sync client itself. Readers wait for a pull only while it applies, never while it waits
-   on the home, and a pull that finds the home unchanged applies nothing. Replica checkpoints drain readers through
+   full answer is fetched by the sync client itself. The bounded prefetch owns its answer outside both the reader gate
+   and native writer semaphore, so local writes and pushed answers continue during its round trip. Before applying it,
+   the replica checks its current revision again; an overtaken home answer certifies only its original request position
+   and never replaces newer pages. One home prefetch runs per replica, and shutdown cancels and drains it. Native
+   bootstrap and larger answers still serialize their fetch with native apply. A pull that finds the home unchanged
+   applies nothing. Replica checkpoints drain readers through
    the same gate as page apply, so a reader never begins while the checkpoint changes its WAL generation.
    A node keeps at most 8 pushed answers per replica, reserved against its memory budget. A notice for a revision the
    replica already holds is ignored. A failed pull is retried with backoff from 50 ms to 2 s until it succeeds. Every

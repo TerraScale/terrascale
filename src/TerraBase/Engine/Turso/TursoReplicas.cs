@@ -375,9 +375,9 @@ internal sealed partial class TursoReplicas(
 
     private sealed class PushedAnswer(DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, IMemoryReservation reservation, long? cdcPosition) : IDisposable
     {
-        public DatabaseRevision To => to;
+        private IMemoryReservation? _reservation = reservation;
 
-        public bool FromHome { get; init; }
+        public DatabaseRevision To => to;
 
         public long? CdcPosition => cdcPosition;
 
@@ -389,7 +389,8 @@ internal sealed partial class TursoReplicas(
         public HttpResponseMessage Answer(HttpRequestMessage request)
         {
             var bytes = MemoryMarshal.TryGetArray(answer, out var segment) ? segment : new ArraySegment<byte>(answer.ToArray());
-            var content = new PushedContent(bytes, reservation);
+            var content = new PushedContent(bytes, Interlocked.Exchange(ref _reservation, null)
+                ?? throw new InvalidOperationException("a page answer can only be consumed once"));
             content.Headers.ContentType = new MediaTypeHeaderValue(PullAnswer.MediaType);
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content, RequestMessage = request };
             _ = response.Headers.TryAddWithoutValidation(DatabaseRevision.Header, to.ToString());
@@ -400,7 +401,7 @@ internal sealed partial class TursoReplicas(
             return response;
         }
 
-        public void Dispose() => reservation.Dispose();
+        public void Dispose() => Interlocked.Exchange(ref _reservation, null)?.Dispose();
     }
 
     private sealed class PushedContent(ArraySegment<byte> bytes, IMemoryReservation reservation) : ByteArrayContent(bytes.Array!, bytes.Offset, bytes.Count)
@@ -416,11 +417,13 @@ internal sealed partial class TursoReplicas(
         }
     }
 
-    private enum Prefetch
+    private sealed class Prefetched(DatabaseRevision revision, PushedAnswer? answer) : IDisposable
     {
-        None,
-        Unchanged,
-        Offered,
+        public DatabaseRevision Revision => revision;
+
+        public PushedAnswer? Answer => answer;
+
+        public void Dispose() => answer?.Dispose();
     }
 
     private sealed class RevisionObserver(HttpClient http, Uri pull) : HttpMessageHandler
@@ -433,21 +436,23 @@ internal sealed partial class TursoReplicas(
         private bool _pushedAllowed;
         private bool _served;
         private bool _servedFromHome;
+        private PushedAnswer? _prefetched;
 
         internal sealed record Observation(string Revision, long? CdcPosition);
 
         public Observation? Take() => Interlocked.Exchange(ref _seen, null);
 
-        public void Begin(bool pushedAllowed) => (_pushedAllowed, _served, _servedFromHome) = (pushedAllowed, false, false);
+        public void Begin(bool pushedAllowed, PushedAnswer? prefetched) =>
+            (_pushedAllowed, _served, _servedFromHome, _prefetched) = (pushedAllowed, false, false, prefetched);
 
         public bool ServedFromHome => _servedFromHome;
 
-        public async Task<Prefetch> PrefetchAsync(DatabaseRevision held, IMemoryBudget memory, TenantContext tenant, CancellationToken cancellationToken)
+        public async Task<Prefetched?> PrefetchAsync(DatabaseRevision held, IMemoryBudget memory, TenantContext tenant, CancellationToken cancellationToken)
         {
             using var reservation = memory.TryReserve(MemoryLane.Bulk, MaxPrefetchBytes, tenant);
             if (reservation is null)
             {
-                return Prefetch.None;
+                return null;
             }
 
             using var request = new HttpRequestMessage(HttpMethod.Post, pull)
@@ -459,12 +464,12 @@ internal sealed partial class TursoReplicas(
             if (!response.IsSuccessStatusCode || !response.Headers.TryGetValues(DatabaseRevision.Header, out var values)
                 || !DatabaseRevision.TryParse(values.FirstOrDefault(), out var to) || to.Incarnation != held.Incarnation || response.Content.Headers.ContentLength > MaxPrefetchBytes)
             {
-                return Prefetch.None;
+                return null;
             }
 
             if (DatabaseRevision.Compare(to, held) <= 0)
             {
-                return Prefetch.Unchanged;
+                return new Prefetched(held, null);
             }
 
             var position = response.Headers.TryGetValues(RevisionPullStart.CdcHeader, out var positions)
@@ -479,23 +484,24 @@ internal sealed partial class TursoReplicas(
                     length += read;
                     if (length == buffer.Length)
                     {
-                        return Prefetch.None;
+                        return null;
                     }
                 }
             }
 
             if (memory.TryReserve(MemoryLane.Bulk, length, tenant) is not { } kept)
             {
-                return Prefetch.None;
+                return null;
             }
 
-            Offer(new PushedAnswer(held, to, buffer.AsMemory(0, length), kept, position) { FromHome = true });
-            return Prefetch.Offered;
+            // Retain only the bytes accounted for by the kept reservation, not the entire 1 MiB scratch buffer.
+            return new Prefetched(to, new PushedAnswer(held, to, buffer.AsSpan(0, length).ToArray(), kept, position));
         }
 
         public bool End()
         {
             _pushedAllowed = false;
+            _prefetched = null;
             return _served;
         }
 
@@ -564,10 +570,9 @@ internal sealed partial class TursoReplicas(
             if (_pushedAllowed && request.Method == HttpMethod.Post && request.Content is { } body
                 && request.RequestUri?.AbsolutePath.EndsWith("/pull-updates", StringComparison.Ordinal) == true
                 && PullAnswer.TryClientRevision(await body.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false), out var client)
-                && DatabaseRevision.TryParse(client, out var held) && Covering(held) is { } push)
+                && DatabaseRevision.TryParse(client, out var held) && TakeAnswer(held) is { } push)
             {
                 _served = true;
-                _servedFromHome = push.FromHome;
                 Volatile.Write(ref _seen, new Observation(push.To.ToString(), push.CdcPosition));
                 return push.Answer(request);
             }
@@ -600,11 +605,25 @@ internal sealed partial class TursoReplicas(
                 copy.Content = null;
             }
         }
+
+        private PushedAnswer? TakeAnswer(DatabaseRevision held)
+        {
+            if (_prefetched is { } home && home.Covers(held))
+            {
+                _prefetched = null;
+                _servedFromHome = true;
+                return home;
+            }
+
+            return Covering(held);
+        }
     }
 
     private sealed partial class Replica(TursoReplicas owner, TenantContext database, TursoSyncDatabase sync, string path, RevisionObserver observer, HttpClient observed, ILogger logger, bool pulled) : IAsyncDisposable
     {
         private readonly SemaphoreSlim _pulls = new(1, 1);
+        private readonly SemaphoreSlim _prefetches = new(1, 1);
+        private readonly CancellationTokenSource _closing = new();
         private readonly ReplicaGate _gate = new();
         private readonly ConcurrentQueue<TursoDatabaseHandle> _idle = new();
         private int _idleCount;
@@ -626,6 +645,7 @@ internal sealed partial class TursoReplicas(
             await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
                 // Local writes not yet in the pulled revision make the replica differ from the home on purpose.
                 if (Held != revision || Local)
                 {
@@ -684,90 +704,144 @@ internal sealed partial class TursoReplicas(
 
         public async Task<ReplicaPullResult> PullAsync(bool fromHome, CancellationToken cancellationToken)
         {
-            await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closing.Token);
+            var token = linked.Token;
+            await _pulls.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                var position = owner.NextPosition();
-                _ = observer.Take();
-                var prefetch = Prefetch.None;
-                if (Held is { } current && (fromHome || !observer.Pending(current)))
+                token.ThrowIfCancellationRequested();
+                if (Held is null || !fromHome && observer.Pending(Held))
                 {
-                    try
-                    {
-                        prefetch = await observer.PrefetchAsync(current, owner.Memory, database, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-                    {
-                        logger.ZLogInformation($"A replica prefetch failed; the pull fetches from the home itself: {error.GetType().Name:@Error}");
-                    }
+                    return await ApplyAsync(fromHome, null, owner.NextPosition(), token).ConfigureAwait(false);
                 }
-
-                if (prefetch == Prefetch.Unchanged)
-                {
-                    Volatile.Write(ref _applied, position);
-                    Pulled = true;
-                    return new ReplicaPullResult(false, false, false);
-                }
-
-                bool changed;
-                bool pushed;
-                using (await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    observer.Begin(pushedAllowed: !fromHome || prefetch == Prefetch.Offered);
-                    try
-                    {
-                        changed = await sync.PullAsync(cancellationToken).ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        Held = null;
-                        _shapeHead = null;
-                        throw;
-                    }
-                    finally
-                    {
-                        pushed = observer.End();
-                    }
-
-                    if (!pushed || observer.ServedFromHome || prefetch == Prefetch.Offered)
-                    {
-                        Volatile.Write(ref _applied, position);
-                    }
-
-                    var observation = observer.Take();
-                    Held = DatabaseRevision.TryParse(observation?.Revision, out var held) ? held : null;
-                    _shapeHead = observation?.CdcPosition;
-                    if (changed)
-                    {
-                        await RestoreOverlayAsync(cancellationToken).ConfigureAwait(false);
-                    }
-                }
-
-                Pulled = true;
-                var log = new FileInfo(path + "-wal");
-                if (log.Exists && log.Length > 4L * 1024 * 1024)
-                {
-                    try
-                    {
-                        // A checkpoint mutates the same pager as page apply. Drain readers before starting it,
-                        // rather than letting a pooled reader begin against its changing WAL generation.
-                        using (await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false))
-                        {
-                            await sync.CheckpointAsync(cancellationToken).ConfigureAwait(false);
-                        }
-                    }
-                    catch (TursoException error)
-                    {
-                        logger.ZLogInformation($"A replica checkpoint waits for its readers: {error.GetType().Name:@Error}");
-                    }
-                }
-
-                return new ReplicaPullResult(changed, pushed, observer.Pending(Held));
             }
             finally
             {
                 _pulls.Release();
             }
+
+            // Bound home requests independently of native apply. Writers and pushed answers may proceed while the
+            // home is across the WAN; only a completed page answer needs the native writer/reader gates.
+            await _prefetches.WaitAsync(token).ConfigureAwait(false);
+            try
+            {
+                DatabaseRevision current;
+                long position;
+                await _pulls.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    token.ThrowIfCancellationRequested();
+                    position = owner.NextPosition();
+                    if (Held is not { } held || !fromHome && observer.Pending(Held))
+                    {
+                        return await ApplyAsync(fromHome, null, position, token).ConfigureAwait(false);
+                    }
+
+                    current = held;
+                }
+                finally
+                {
+                    _pulls.Release();
+                }
+
+                Prefetched? fetched = null;
+                try
+                {
+                    fetched = await observer.PrefetchAsync(current, owner.Memory, database, token).ConfigureAwait(false);
+                }
+                catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !token.IsCancellationRequested)
+                {
+                    logger.ZLogInformation($"A replica prefetch failed; the pull fetches from the home itself: {error.GetType().Name:@Error}");
+                }
+
+                using (fetched)
+                {
+                    await _pulls.WaitAsync(token).ConfigureAwait(false);
+                    try
+                    {
+                        token.ThrowIfCancellationRequested();
+                        // A pushed answer may have overtaken this request. Certify only the revision returned by this
+                        // home request, with its original start position, and never apply older pages over newer ones.
+                        if (fetched is not null && Held is { } held && held.Incarnation == fetched.Revision.Incarnation
+                            && DatabaseRevision.Compare(held, fetched.Revision) >= 0)
+                        {
+                            Volatile.Write(ref _applied, Math.Max(_applied, position));
+                            Pulled = true;
+                            return new ReplicaPullResult(false, false, observer.Pending(Held));
+                        }
+
+                        return await ApplyAsync(fromHome, fetched?.Answer, position, token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _pulls.Release();
+                    }
+                }
+            }
+            finally
+            {
+                _prefetches.Release();
+            }
+        }
+
+        private async Task<ReplicaPullResult> ApplyAsync(bool fromHome, PushedAnswer? prefetched, long position, CancellationToken cancellationToken)
+        {
+            _ = observer.Take();
+            bool changed;
+            bool pushed;
+            using (await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false))
+            {
+                observer.Begin(pushedAllowed: !fromHome || prefetched is not null, prefetched);
+                try
+                {
+                    changed = await sync.PullAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    Held = null;
+                    _shapeHead = null;
+                    throw;
+                }
+                finally
+                {
+                    pushed = observer.End();
+                }
+
+                if (!pushed || observer.ServedFromHome)
+                {
+                    Volatile.Write(ref _applied, Math.Max(_applied, position));
+                }
+
+                var observation = observer.Take();
+                Held = DatabaseRevision.TryParse(observation?.Revision, out var held) ? held : null;
+                _shapeHead = observation?.CdcPosition;
+                if (changed)
+                {
+                    await RestoreOverlayAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            Pulled = true;
+            var log = new FileInfo(path + "-wal");
+            if (log.Exists && log.Length > 4L * 1024 * 1024)
+            {
+                try
+                {
+                    // A checkpoint mutates the same pager as page apply. Drain readers before starting it,
+                    // rather than letting a pooled reader begin against its changing WAL generation.
+                    using (await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        await sync.CheckpointAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                catch (TursoException error)
+                {
+                    logger.ZLogInformation($"A replica checkpoint waits for its readers: {error.GetType().Name:@Error}");
+                }
+            }
+
+            return new ReplicaPullResult(changed, pushed, observer.Pending(Held));
         }
 
         internal async ValueTask<IReplicaShapeReader?> BeginShapeReadAsync(TenantContext database, CancellationToken cancellationToken)
@@ -775,6 +849,7 @@ internal sealed partial class TursoReplicas(
             await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
                 return _shapeHead is { } head
                     ? await TursoReplicaShapeReader.OpenAsync(await sync.ConnectAsync(cancellationToken).ConfigureAwait(false), database, ShapeSchema, head, cancellationToken).ConfigureAwait(false)
                     : null;
@@ -861,9 +936,11 @@ internal sealed partial class TursoReplicas(
                 return;
             }
 
-            // A local write or a pull still running owns the writer connection: let it finish (a heal or delete waits
-            // for it) instead of closing the connection under it.
-            _ = await _pulls.WaitAsync(WriterWait).ConfigureAwait(false);
+            // Cancel and drain the independent WAN request before closing its observer, then drain native writers.
+            // A cancelled prefetch never reacquires the native writer, so this lock order cannot trap it at shutdown.
+            await _closing.CancelAsync().ConfigureAwait(false);
+            await _prefetches.WaitAsync().ConfigureAwait(false);
+            await _pulls.WaitAsync().ConfigureAwait(false);
             while (_idle.TryDequeue(out var native))
             {
                 Close(native);
@@ -878,7 +955,11 @@ internal sealed partial class TursoReplicas(
             sync.Dispose();
             observed.Dispose();
             observer.Clear();
-            _pulls.Dispose();
+            // Waiters already admitted before _disposed was set must still acquire, check it, and release safely.
+            // These semaphores have no wait handles; let the replica own their managed lifetime.
+            _pulls.Release();
+            _prefetches.Release();
+            _closing.Dispose();
             _gate.Dispose();
         }
 
@@ -914,8 +995,6 @@ internal sealed partial class TursoReplicas(
         }
 
         private static readonly TimeSpan LockedWait = TimeSpan.FromSeconds(5);
-        private static readonly TimeSpan WriterWait = TimeSpan.FromSeconds(30);
-
         private static bool Locked(TursoException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
 
         private static void Run(TursoDatabaseHandle native, string sql)
