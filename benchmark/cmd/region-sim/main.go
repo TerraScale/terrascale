@@ -314,6 +314,9 @@ func (s *sim) create() (string, string, error) {
 		return "", "", fmt.Errorf("projects create printed no project: %s", truncate(out, 200))
 	}
 	s.org, s.project = p.OrganizationID, p.ID
+	if err := s.publishPlan(); err != nil {
+		return "", "", err
+	}
 	s.api = newSQLAPI(s.auth, s.org, s.project, s.db)
 	out, _, err = s.ts("gru", "db", "create", s.db, "-replica-regions", "sjc", "-project", s.project, "-json")
 	if err != nil {

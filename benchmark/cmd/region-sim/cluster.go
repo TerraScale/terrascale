@@ -160,6 +160,7 @@ type node struct {
 	name, region, ip string
 	dir, logPath     string
 	clientPort       int
+	adminPort        int
 	env              []string
 	argv             []string
 	proc             *process
@@ -330,6 +331,7 @@ func newCluster(ctx context.Context, cfg clusterConfig) (*cluster, error) {
 			}
 		}
 		n.clientPort = ports["PORT"]
+		n.adminPort = ports["METRICS_PORT"]
 		n.env = []string{
 			"PATH=" + os.Getenv("PATH"),
 			"HOME=" + dir,
