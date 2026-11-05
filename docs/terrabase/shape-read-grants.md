@@ -9,6 +9,7 @@ checks the token offline and applies the grant on every read. Shape reads stay f
 A grant belongs to one table of one database. It is stored in the database's internal shape metadata,
 replicated with its pages, and deleted with its database. Regional shape reads check the local replicated grant.
 Full snapshots copy active grants while discarding derived shape history. Grant changes and revocations are captured in CDC so backup replay preserves them.
+Grant writes go to the database's home region; other regions answer `421 wrong_region`.
 
 | Route | Scope | Answer |
 |---|---|---|
@@ -63,3 +64,5 @@ End-user tokens cannot run SQL or reach management routes (`403`). An expired or
 
 `tests/TerraBase.Fast/Shapes/ShapeGrantTests.cs`: an end user reads only their own rows and the granted columns, also
 after live changes; an ungranted table, a table outside the token and an expired token are refused.
+`tests/TerraBase.Fast/Shapes/RegionShapeTailTests.cs`: a grant set in gru reaches the sjc replica, and an end user's live
+tail in sjc receives only their own new row without ungranted columns.
