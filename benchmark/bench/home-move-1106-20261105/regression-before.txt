@@ -1,0 +1,14 @@
+Source SHA: 734161545
+Host: mariogk-dev
+Command: ts-heavy-any (dotnet run --project tests/TerraBase.Slow -c Release --no-build -- --treenode-filter "/*/*/HomeMoveLocalWritesTests/*")
+
+failed Twenty_home_moves_preserve_every_remote_local_ack_and_keep_the_remote_replica_readable (55s 542ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] TaskCanceledException: A task was canceled.
+    at TerraBase.Testing.TerraBaseTestServer.EventuallyAsync(Func`2 condition, Nullable`1 timeout, TimeProvider time) in /home/mariogk/remote-builds/terrascale/t3-41b9f829-1cf119f3c8fe3424e38276a15f5b40cd2617df3bee50b5c2acac0be6463fc1c1/tests/TerraBase.TestHarness/TerraBaseTestServer.cs:282
+    at TerraBase.Slow.Sync.HomeMoveLocalWritesTests.Twenty_home_moves_preserve_every_remote_local_ack_and_keep_the_remote_replica_readable() in /home/mariogk/remote-builds/terrascale/t3-41b9f829-1cf119f3c8fe3424e38276a15f5b40cd2617df3bee50b5c2acac0be6463fc1c1/tests/TerraBase.Slow/Sync/HomeMoveLocalWritesTests.cs:112
+    at TerraBase.Slow.Sync.HomeMoveLocalWritesTests.Twenty_home_moves_preserve_every_remote_local_ack_and_keep_the_remote_replica_readable()
+    at TerraBase.Slow.Sync.HomeMoveLocalWritesTests.Twenty_home_moves_preserve_every_remote_local_ack_and_keep_the_remote_replica_readable() in /home/mariogk/remote-builds/terrascale/t3-41b9f829-1cf119f3c8fe3424e38276a15f5b40cd2617df3bee50b5c2acac0be6463fc1c1/tests/TerraBase.Slow/Sync/HomeMoveLocalWritesTests.cs:65
+    at TerraBase.Slow.Sync.HomeMoveLocalWritesTests.Twenty_home_moves_preserve_every_remote_local_ack_and_keep_the_remote_replica_readable() in /home/mariogk/remote-builds/terrascale/t3-41b9f829-1cf119f3c8fe3424e38276a15f5b40cd2617df3bee50b5c2acac0be6463fc1c1/tests/TerraBase.Slow/Sync/HomeMoveLocalWritesTests.cs:65
+    at TerraBase.Slow.Sync.HomeMoveLocalWritesTests.Twenty_home_moves_preserve_every_remote_local_ack_and_keep_the_remote_replica_readable() in /home/mariogk/remote-builds/terrascale/t3-41b9f829-1cf119f3c8fe3424e38276a15f5b40cd2617df3bee50b5c2acac0be6463fc1c1/tests/TerraBase.Slow/Sync/HomeMoveLocalWritesTests.cs:65
+    at TerraBase.Slow.Sync.HomeMoveLocalWritesTests.Twenty_home_moves_preserve_every_remote_local_ack_and_keep_the_remote_replica_readable() in /home/mariogk/remote-builds/terrascale/t3-41b9f829-1cf119f3c8fe3424e38276a15f5b40cd2617df3bee50b5c2acac0be6463fc1c1/tests/TerraBase.Slow/Sync/HomeMoveLocalWritesTests.cs:65
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
