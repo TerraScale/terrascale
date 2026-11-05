@@ -7,6 +7,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
 using TerraBase.Hosting;
+using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -19,7 +20,7 @@ internal sealed record RegionalDrain(string Target);
 
 /// <summary>
 /// Planned regional ownership transfer. The edge drains first; the old engine is fenced before its final applied
-/// positions are sampled. The candidate imports only proven replicas, takes the database leases, then the region CAS.
+/// positions are sampled. The candidate imports proven replicas; the regional CAS precedes database lease activation.
 /// An uncommitted preparation leaves database leases untouched; a quorum rollback resumes the old writer.
 /// </summary>
 internal sealed class RegionalHandoff(
@@ -376,6 +377,11 @@ internal sealed class RegionalHandoff(
                 return false;
             }
 
+            using var reservation = services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Bulk, 16L * 1024 * 1024, tenant: null);
+            if (reservation is null)
+            {
+                return false;
+            }
             owners.Drain();
             var catalog = services.GetRequiredService<IReplicaCatalog>();
             var revisions = services.GetRequiredService<IDatabaseRevisions>();
