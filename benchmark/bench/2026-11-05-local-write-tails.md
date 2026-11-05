@@ -104,3 +104,16 @@ Raw before/after JSONL, summaries, six-node health and bounded refresh counter s
 Parked: rare native writer-open busy fallback plus synchronous post-forward home catch-up; #1103 forwarding-pool investigation remains independent. The specified pooled p99 and first-insert targets are met, with maxima and the failed SJC per-repeat distribution explicitly retained above.
 
 Acceptance handoff: server deployed readiness and shipped SDK pin were delivered with `mode:steer` to beta acceptance `aeb225be` (environment `e70ee7fd-aace-4435-8419-2c2182950c48`) to rerun item 2 on a fresh Pro database using its own account. The user subsequently authorized mariogk-dev client placement with that host’s own measured path baselines. Its stronger exact-ID/value reconciliation and 100 SELECT-1 path baselines are independent proof, not results claimed here.
+
+
+## Independent acceptance failure; previous completion withdrawn
+
+The independent fresh Pro run after this handoff failed: 898/900 default writes succeeded, with two failed writes and four cross-read HTTP 400 responses in SJC/FRA. Original error messages were not retained; status/code, request IDs, timing and UTC intervals were retained. Therefore the earlier pooled completion claim does not establish Milestone B acceptance. #1105 is reopened and remains open pending a new stable deployment proof.
+
+SJC cold first insert was 436.084 ms client /239.85 ms server app, including 177.68 ms server authentication. Its read warmup had let the two-second KeyAuthority answer age out; this was a server status check, not SDK token exchange. The candidate keeps recently used, validated key tokens warm in a bounded background set through signed expiry, sharing existing single-flight checks. It preserves the two-second revocation/fail-closed bound.
+
+SJC failures at 19:34:36.61–19:34:55.05Z coincide with the afa0171a5 rollout: the old process stopped listening at 19:34:36.522Z and replacement listeners opened at 19:34:53.246Z. The failed requests have no replica-open span. Persisted placement was gated behind an already-open replica, so pre-replica requests attempted the absent primary instead of forwarding to the home. The candidate reads persisted placement before that gate. Zero-downtime routing/draining is owned by the separate ts-orchestrator worker.
+
+DECISION: retain the agreed server p99 <100 ms target and client p99 <the admitted client host’s measured SELECT-1 baseline median +100 ms, plus first insert <300 ms. Reason: beta’s SJC/FRA network path alone is about 195–210 ms, and the user authorized mariogk-dev placement with its own baseline. Load clients never run on serving nodes.
+
+The next proof retains 100 SELECT-1 baselines before writes, sanitized SQL messages, issuer-exchange durations and precise UTC receipt times. No replacement live result is claimed in this section yet.
