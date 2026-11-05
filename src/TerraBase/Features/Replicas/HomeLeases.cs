@@ -210,6 +210,20 @@ internal sealed class HomeLeases(
 
     internal async Task<bool> TakeRegionalAsync(TenantContext database, string source, CancellationToken cancellationToken)
     {
+        if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
+            || placement.Home != options.Region)
+        {
+            return false;
+        }
+        // Region-only builtins intentionally reuse IDs across regions. Their
+        // regional writer fence suffices; a global home lease would collide
+        // with another region's independent database carrying the same ID.
+        if (placement is { AllRegions: false, Replicas.Count: 0 })
+        {
+            leaseGate.Unlease(database.DatabaseId!);
+            return true;
+        }
+
         if (_kv is not { } kv || !Ready)
         {
             return false;

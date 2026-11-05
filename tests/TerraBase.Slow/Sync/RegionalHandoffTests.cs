@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using NATS.Client.Core;
+using NATS.Client.JetStream;
+using NATS.Client.KeyValueStore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
@@ -55,6 +58,16 @@ public sealed class RegionalHandoffTests
             var sql = ManagementApi.Uri(basePath + "/" + database + "/sql/execute");
             await ExecuteAsync(viaFirst, "CREATE TABLE acked(id TEXT PRIMARY KEY)");
             await ExecuteAsync(viaFirst, "INSERT INTO acked VALUES ('before')");
+            // Regional-only databases can reuse IDs in independent regions.
+            // A foreign global lease for that ID must not block promotion here.
+            using var regionalOnly = await viaFirst.PostAsJsonAsync(ManagementApi.Uri(basePath), new { name = "regional-only", replicaRegions = Array.Empty<string>() }, token);
+            await Assert.That(regionalOnly.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await regionalOnly.Content.ReadAsStringAsync(token));
+            var regionalId = (await regionalOnly.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
+            await using var connection = new NatsConnection(new NatsOpts { Url = nats.Url.ToString(), AuthOpts = new NatsAuthOpts { Token = nats.Token } });
+            await connection.ConnectAsync();
+            var homes = await new NatsKVContext(new NatsJSContext(connection)).CreateOrUpdateStoreAsync(new NatsKVConfig(HomeLeases.Bucket) { History = 1 }, token);
+            var foreign = new HomeLease(organization, project, regionalId, "sjc", "sjc-1", 1, EntityIds.New());
+            _ = await homes.PutAsync("home." + regionalId, JsonSerializer.SerializeToUtf8Bytes(foreign, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
             var handoff = first.Server.Services.GetRequiredService<RegionalHandoff>();
             await Assert.That(await handoff.DrainAsync("gru-2", token)).IsTrue();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(second.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
@@ -67,6 +80,8 @@ public sealed class RegionalHandoffTests
             await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().DrainAsync("gru-1", token)).IsTrue();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(first.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
             await ExecuteAsync(viaFirst, "INSERT INTO acked VALUES ('returned')");
+            var retained = await homes.GetEntryAsync<byte[]>("home." + regionalId, cancellationToken: token);
+            await Assert.That(JsonSerializer.Deserialize(retained.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(foreign);
 
             async Task ExecuteAsync(HttpClient client, string statement)
             {
