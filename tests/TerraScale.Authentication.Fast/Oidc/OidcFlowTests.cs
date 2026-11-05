@@ -13,8 +13,8 @@ public sealed class OidcFlowTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_browser_signs_in_with_a_passcode_and_the_client_redeems_a_pkce_code_for_verifiable_tokens()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        var user = await oidc.CreateUserAsync("alice@example.test");
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var user = await oidc.CreateUserAsync(oidc.UniqueEmail("alice"));
         var (verifier, challenge) = OidcHarness.Pkce();
         var authorize = OidcHarness.AuthorizePath(challenge);
 
@@ -30,7 +30,7 @@ public sealed class OidcFlowTests(TerraBaseFixture fixture)
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(page.Headers.GetValues("Content-Security-Policy").Single()).Contains("frame-ancestors 'none'");
 
-        var session = await oidc.SignInAsync("Alice@Example.test", next);
+        var session = await oidc.SignInAsync(user.Email.ToUpperInvariant(), next);
         using var resumed = await oidc.AuthorizeAsync(next, session);
         await Assert.That(resumed.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
         var callback = resumed.Headers.Location!;
@@ -58,7 +58,7 @@ public sealed class OidcFlowTests(TerraBaseFixture fixture)
         var identity = await handler.ValidateTokenAsync(body.GetProperty("id_token").GetString(), Parameters(keys, OidcIssuer.DashboardClientId));
         await Assert.That(identity.IsValid).IsTrue();
         await Assert.That(identity.Claims["sub"]).IsEqualTo(user.Id);
-        await Assert.That(identity.Claims["email"]).IsEqualTo("alice@example.test");
+        await Assert.That(identity.Claims["email"]).IsEqualTo(user.Email);
         await Assert.That(identity.Claims["nonce"]).IsEqualTo("nonce-1");
         await Assert.That(identity.Claims.ContainsKey(OidcIssuer.EpochClaim)).IsFalse();
         var access = await handler.ValidateTokenAsync(body.GetProperty("access_token").GetString(), Parameters(keys, audience: null));

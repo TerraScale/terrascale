@@ -30,17 +30,17 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_wrong_code_is_refused_and_the_right_one_sets_a_locked_down_session_cookie()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        await oidc.CreateUserAsync();
-        using var requested = await oidc.PostFormAsync(SignIn, new() { ["email"] = "alice@example.test", ["next"] = "https://evil.example/" });
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var user = await oidc.CreateUserAsync(oidc.UniqueEmail("alice"));
+        using var requested = await oidc.PostFormAsync(SignIn, new() { ["email"] = user.Email, ["next"] = "https://evil.example/" });
         await Assert.That(await requested.Content.ReadAsStringAsync()).DoesNotContain("evil.example");
-        var code = await oidc.Email.NextCodeAsync("alice@example.test");
+        var code = await oidc.Email.NextCodeAsync(user.Email);
 
-        using var wrong = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = "alice@example.test", ["code"] = code == "000000" ? "111111" : "000000", ["next"] = string.Empty });
+        using var wrong = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = user.Email, ["code"] = code == "000000" ? "111111" : "000000", ["next"] = string.Empty });
         await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(OidcHarness.SessionCookie(wrong)).IsNull();
 
-        using var verified = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = "alice@example.test", ["code"] = code, ["next"] = "//evil.example/terrascale/oauth/authorize?x=1" });
+        using var verified = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = user.Email, ["code"] = code, ["next"] = "//evil.example/terrascale/oauth/authorize?x=1" });
         var page = await verified.Content.ReadAsStringAsync();
         await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(page).Contains("You are signed in.");

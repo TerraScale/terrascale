@@ -15,8 +15,8 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
     [Test]
     public async Task Redirect_uris_pkce_and_client_secrets_must_match_exactly()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        var user = await oidc.CreateUserAsync();
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var user = await oidc.CreateUserAsync(oidc.UniqueEmail("alice"));
         var session = (await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user)).Token;
         var (verifier, challenge) = OidcHarness.Pkce();
 
