@@ -20,7 +20,7 @@ internal sealed class LocalOverlay
 
     public Task<HomeApplyResult> Add(TenantContext database, ulong sequence, RegionTransaction transaction)
     {
-        var entry = new Entry(sequence, transaction);
+        var entry = new Entry(transaction) { Sequence = sequence };
         _databases.GetOrAdd(Key(database), _ => new Pending()).Add(entry);
         return entry.Home.Task;
     }
@@ -30,6 +30,22 @@ internal sealed class LocalOverlay
         if (_databases.TryGetValue(Key(database), out var pending) && pending.Resolve(result) && result.State == WriteStates.Reverted)
         {
             Reverted?.Invoke(database, result);
+        }
+    }
+
+    public void Published(TenantContext database, string id, ulong sequence)
+    {
+        if (_databases.TryGetValue(Key(database), out var pending))
+        {
+            pending.Published(id, sequence);
+        }
+    }
+
+    public void Drop(TenantContext database, string id)
+    {
+        if (_databases.TryGetValue(Key(database), out var pending))
+        {
+            pending.Drop(id);
         }
     }
 
@@ -102,8 +118,10 @@ internal sealed class LocalOverlay
 
     private static (string, string, string) Key(TenantContext database) => (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
 
-    private sealed record Entry(ulong Sequence, RegionTransaction Transaction)
+    private sealed record Entry(RegionTransaction Transaction)
     {
+        public ulong Sequence { get; set; }
+
         public TaskCompletionSource<HomeApplyResult> Home { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public HomeApplyResult? Result { get; set; }
@@ -146,6 +164,25 @@ internal sealed class LocalOverlay
             lock (_lock)
             {
                 return _entries.Find(entry => entry.Transaction.Id == id)?.Transaction;
+            }
+        }
+
+        public void Published(string id, ulong sequence)
+        {
+            lock (_lock)
+            {
+                if (_entries.Find(entry => entry.Transaction.Id == id) is { } entry)
+                {
+                    entry.Sequence = sequence;
+                }
+            }
+        }
+
+        public void Drop(string id)
+        {
+            lock (_lock)
+            {
+                _ = _entries.RemoveAll(entry => entry.Transaction.Id == id);
             }
         }
 
