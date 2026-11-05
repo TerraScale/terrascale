@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-// sqlAPI calls the public relational SQL endpoint directly on a node's client listener. The lag loop and the bulk
-// load use it because a CLI process per statement would measure process startup and token exchange, not replication.
 type sqlAPI struct {
 	hc      *http.Client
 	auth    *authStandIn
@@ -102,7 +100,6 @@ func (s *sqlAPI) execDurable(ctx context.Context, n *node, durability string, st
 	return r, nil
 }
 
-// query runs one read and returns its rows encoded as compact JSON, for comparison with an expected value.
 func (s *sqlAPI) query(ctx context.Context, n *node, sql string, args ...any) (string, apiReply, error) {
 	r, err := s.exec(ctx, n, stmt{SQL: sql, Args: args})
 	if err != nil || r.status != http.StatusOK || len(r.results) != 1 {
@@ -112,19 +109,30 @@ func (s *sqlAPI) query(ctx context.Context, n *node, sql string, args ...any) (s
 	return string(b), r, nil
 }
 
-// mustExec runs statements and fails unless the node answers 200.
 func (s *sqlAPI) mustExec(ctx context.Context, n *node, statements ...stmt) error {
-	r, err := s.exec(ctx, n, statements...)
-	if err != nil {
-		return err
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var last error
+	err := pollEvery(ctx, 5*time.Second, 20*time.Millisecond, func() (bool, error) {
+		r, err := s.exec(ctx, n, statements...)
+		if err != nil {
+			return false, err
+		}
+		if r.status == http.StatusOK {
+			return true, nil
+		}
+		last = fmt.Errorf("%s answered %d %s: %s", n.name, r.status, r.code, r.body)
+		if r.status == http.StatusConflict && r.code == "serialization_conflict" {
+			return false, nil
+		}
+		return false, last
+	})
+	if err != nil && last != nil {
+		return fmt.Errorf("%w; last refusal: %v", err, last)
 	}
-	if r.status != http.StatusOK {
-		return fmt.Errorf("%s answered %d %s: %s", n.name, r.status, r.code, r.body)
-	}
-	return nil
+	return err
 }
 
-// waitFor polls a read on n every interval until its rows equal want, returning when it matched.
 func (s *sqlAPI) waitFor(ctx context.Context, n *node, timeout, interval time.Duration, want, sql string, args ...any) (time.Time, error) {
 	var last string
 	var at time.Time
