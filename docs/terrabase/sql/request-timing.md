@@ -6,7 +6,8 @@ processing from entry to response headers, including queueing, authentication,
 catalog resolution and execution. It excludes the client connection, TLS, edge
 and response-body transfer.
 
-The stage durations partition that origin interval:
+The stage durations partition that origin interval, except the acknowledgement
+substeps (`local_capture` through `home_wait`), which are nested inside `ack`:
 
 | Stage | Work since the previous checkpoint |
 | --- | --- |
@@ -22,6 +23,13 @@ The stage durations partition that origin interval:
 | `local_begin` | Releasing the routing reader, ordering fences and acquiring the replica writer |
 | `local_execute` | Write allowance checks and SQL execution on the replica |
 | `ack` | Capture, clock stamp, durable publish, local commit and requested acknowledgement |
+| `local_capture` | Capture and encode row changes inside `ack` |
+| `local_hlc` | Issue a timestamp, including any required durable HLC reservation |
+| `local_seal` | Encode and seal the push payload |
+| `push_publish` | Publish to JetStream and receive its durable acknowledgement |
+| `push_hold` | Hold the required copy on the discovered regional quorum |
+| `local_commit` | Commit and release the local writer |
+| `home_wait` | Remaining wait for the home's applied notice, when requested or required |
 | `execute` | Remaining endpoint work and response serialization |
 
 A forwarded response retains the home's timings and adds the entry region's

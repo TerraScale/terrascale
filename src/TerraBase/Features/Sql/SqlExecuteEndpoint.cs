@@ -296,6 +296,10 @@ internal sealed class SqlExecuteEndpoint(
             {
                 committed = await transaction.CommitAsync(homeDurable, cancellationToken);
                 SqlRequestTiming.Mark(HttpContext, "ack");
+                foreach (var timing in transaction.Timings)
+                {
+                    SqlRequestTiming.Record(HttpContext, timing.Key, timing.Value);
+                }
             }
             catch (LocalWriteRefusedException)
             {

@@ -44,6 +44,9 @@ internal sealed class SqlRequestTiming
 
     internal static void Mark(HttpContext context, string stage) => context.Features.Get<SqlRequestTiming>()?.Mark(stage);
 
+    internal static void Record(HttpContext context, string stage, double milliseconds) =>
+        context.Features.Get<SqlRequestTiming>()?._stages.Add(string.Create(CultureInfo.InvariantCulture, $"{stage};dur={milliseconds:0.00}"));
+
     private void Mark(string stage)
     {
         var now = Stopwatch.GetTimestamp();

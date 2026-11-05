@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Buffers.Binary;
 using System.Diagnostics.Metrics;
 using System.Globalization;
@@ -35,6 +36,8 @@ internal interface ILocalWrites
 
 internal interface ILocalTransaction : IAsyncDisposable
 {
+    IReadOnlyList<KeyValuePair<string, double>> Timings { get; }
+
     ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
     /// <summary>
@@ -82,6 +85,8 @@ internal sealed class HomePush(
     private Histogram<double>? _lag;
     private Counter<long>? _applies;
     private Counter<long>? _reverts;
+    private Counter<long>? _applyRetries;
+    private Histogram<double>? _applyTime;
 
     internal LocalOverlay Overlay => _overlay;
 
@@ -123,6 +128,8 @@ internal sealed class HomePush(
             _lag = _meter.CreateHistogram<double>("terrabase.push.lag", "ms", "Time from a local commit stamp to the home's applied notice reaching the origin.");
             _applies = _meter.CreateCounter<long>("terrabase.push.applies", "{transaction}", "Home applies of pushed transactions by state.");
             _reverts = _meter.CreateCounter<long>("terrabase.push.reverts", "{transaction}", "Local transactions the home reverted.");
+            _applyRetries = _meter.CreateCounter<long>("terrabase.push.apply_retries", "{retry}", "Temporary home apply failures by bounded reason.");
+            _applyTime = _meter.CreateHistogram<double>("terrabase.push.apply_time", "ms", "Time in each home apply attempt, excluding retry backoff and transport.");
             _ = _meter.CreateObservableGauge("terrabase.push.pending", () => _overlay.Count, "{transaction}", "Local transactions the home has not confirmed.");
             _ = _meter.CreateObservableGauge("terrabase.localwrites.available", () => LocalAckAvailable ? 1 : 0, "{node}",
                 "1 while this node can acknowledge local writes with its discovered regional quorum.");
@@ -637,6 +644,8 @@ internal sealed class HomePush(
         while (true)
         {
             HomeApplyResult? applied;
+            var started = Stopwatch.GetTimestamp();
+            var reason = "missing_database";
             try
             {
                 applied = await apply.ApplyAsync(database, transaction, cancellationToken).ConfigureAwait(false);
@@ -644,6 +653,11 @@ internal sealed class HomePush(
             catch (Exception error) when (error is StorageBusyException or IOException or TimeoutException)
             {
                 applied = null;
+                reason = error.GetType().Name;
+            }
+            finally
+            {
+                _applyTime?.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
 
             if (applied is not null)
@@ -653,6 +667,8 @@ internal sealed class HomePush(
             }
 
             _applies?.Add(1, new KeyValuePair<string, object?>("state", "unavailable"));
+            _applyRetries?.Add(1, new KeyValuePair<string, object?>("reason", reason));
+            logger.ZLogWarning($"A home push apply retries after {backoff.TotalMilliseconds} ms: {reason}");
             await message.AckProgressAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
             await Task.Delay(backoff, time, cancellationToken).ConfigureAwait(false);
             backoff = TimeSpan.FromTicks(Math.Min(MaxBackoff.Ticks, backoff.Ticks * 2));
@@ -749,10 +765,15 @@ internal sealed class HomePush(
 
     private sealed class LocalTransaction(HomePush push, TenantContext database, string home, long epoch, IReplicaWriter writer) : ILocalTransaction
     {
+        private readonly List<KeyValuePair<string, double>> _timings = new(8);
+
+        public IReadOnlyList<KeyValuePair<string, double>> Timings => _timings;
+
         public ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken) => writer.ExecuteAsync(statement, cancellationToken);
 
         public async ValueTask<LocalCommit> CommitAsync(bool homeDurable, CancellationToken cancellationToken)
         {
+            var started = Stopwatch.GetTimestamp();
             var captured = await writer.CaptureAsync(cancellationToken).ConfigureAwait(false);
             if (captured.Count == 0)
             {
@@ -766,9 +787,12 @@ internal sealed class HomePush(
             }
 
             var changes = await PushChanges.FromCapturedAsync(writer, captured, cancellationToken).ConfigureAwait(false);
+            Record("local_capture", ref started);
             var stamp = await push.Clock.NextAsync(cancellationToken).ConfigureAwait(false);
+            Record("local_hlc", ref started);
             var transaction = new RegionTransaction(Ulid.NewUlid().ToString(), push.Region, stamp, changes);
             var payload = await push.Crypto.SealAsync(database, Encode(transaction), cancellationToken).ConfigureAwait(false);
+            Record("local_seal", ref started);
             if (payload.Length > MaxPayloadBytes)
             {
                 throw new LocalWriteRefusedException("a transaction larger than 8 MiB commits at the database's home");
@@ -781,6 +805,7 @@ internal sealed class HomePush(
                 acknowledged = await push._js!.PublishAsync(PushNames.Subject(push.Region, home, database), payload,
                     opts: new NatsJSPubOpts { MsgId = transaction.Id }, headers: Headers(stamp, epoch), cancellationToken: cancellationToken).ConfigureAwait(false);
                 acknowledged.EnsureSuccess();
+                Record("push_publish", ref started);
             }
             catch (Exception error) when (error is NatsException or TimeoutException)
             {
@@ -796,6 +821,7 @@ internal sealed class HomePush(
             push._overlay.Published(database, transaction.Id!, acknowledged.Seq);
             _ = push._pushed.AddOrUpdate(Key(database), acknowledged.Seq, (_, known) => Math.Max(known, acknowledged.Seq));
             var held = await push.Partner.HoldAsync(database, home, acknowledged.Seq, payload, cancellationToken).ConfigureAwait(false);
+            Record("push_hold", ref started);
             try
             {
                 await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -806,6 +832,7 @@ internal sealed class HomePush(
             }
 
             await writer.DisposeAsync().ConfigureAwait(false);
+            Record("local_commit", ref started);
             push._feed.Value?.Committed(database, transaction.Id!, captured);
             if (!homeDurable && held)
             {
@@ -814,7 +841,9 @@ internal sealed class HomePush(
 
             try
             {
-                return new LocalCommit(transaction.Id, await homeApplied.WaitAsync(HomeWait, push.Time, cancellationToken).ConfigureAwait(false));
+                var result = await homeApplied.WaitAsync(HomeWait, push.Time, cancellationToken).ConfigureAwait(false);
+                Record("home_wait", ref started);
+                return new LocalCommit(transaction.Id, result);
             }
             catch (TimeoutException error)
             {
@@ -823,5 +852,12 @@ internal sealed class HomePush(
         }
 
         public ValueTask DisposeAsync() => writer.DisposeAsync();
+
+        private void Record(string stage, ref long started)
+        {
+            var now = Stopwatch.GetTimestamp();
+            _timings.Add(new(stage, Stopwatch.GetElapsedTime(started, now).TotalMilliseconds));
+            started = now;
+        }
     }
 }
