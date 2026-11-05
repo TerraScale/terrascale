@@ -11,18 +11,19 @@ Scope: PIVOT Milestone B F11 / D19. Audit and implementation in this worktree; l
 | Regional partner/system backup | Decoded transaction persisted | Reuses exact TBP1 ciphertext |
 | Shape R2/CDN | F6 TBS1 under DB envelope key | Owned-object removal, durable purge outbox, failed/restarted purge retry |
 | Continuous/customer backups | TBK1 per-database encryption | Keys moved outside every snapshotted destination |
+| Managed snapshots and their continuous copies | Separate engine database IDs and envelope-key scopes | Source deletion cascades to snapshot scopes; expiry shreds before removing ownership |
 | Key caches | Regional selection/unwrap caches | Historical decrypt consults shared permanent authority |
 | Tenant erasure | Version-2 project fences, local purge receipts | Closure acceptance waits for key-shredding certification |
 
 ## Gates
 
-TerraBase Fast: 62/62 passed, 19.600s; maximum7.715s. Analyzer/E2E checks passed. Shipped via `ts-ship` at `27431747eca955a9efa2a02fa860074703e61709`; final qualification TerraBase Fast12.627s (62 tests), Auth Fast7.928s (30 tests).
+Shipped via `ts-ship` at `27431747eca955a9efa2a02fa860074703e61709`. Final qualification: TerraBase Fast 62/62 in 12.627s; Auth Fast 30/30 in 8.251s. Analyzer/E2E checks passed. CI initially lacked an exact-commit Libraries receipt; real Libraries qualification through the ts-ship runner then passed 92/92, Fast 8.363s, build 62.224s, and published its checked-build receipt. The first isolated attempt passed the tests but could not qualify without the pinned native assets; the verified repository downloader supplied them for the successful retry. CI run [42041664040](https://github.com/TerraScale/terrascale/actions/runs/42041664040) then passed Libraries and aggregate test qualification, but its old-format rollout was cancelled while waiting for readiness: the legacy catalog anchor depended on Tigris key custody. The format-23 reset must replace that anchor with one sealed under R2 custody; this old run is not a green deployment proof.
 
 ## Custody verification
 
-R2 ts-terrabase-shapes-prod v1/keys: cf lifecycle abort multipart globally after86400s; only object deletion rule is v1/shapes after691200s. Migration jobs[], Super Slurper jobs[], Sippy disabled, local uploads disabled, locks[], event notification configuration404 (11015). R2 Get/PutBucketVersioning and Get/PutBucketReplication are unsupported per https://developers.cloudflare.com/r2/api/s3/api/ . Existing runtime identity returns403 to their GET config APIs, which is not proof of disabled settings. No new bucket, credentials, permission or capacity.
+[Cloudflare configuration evidence](2026-11-05-f11-custody-config.json), inspected at 13:41 UTC. R2 ts-terrabase-shapes-prod v1/keys: cf lifecycle abort multipart globally after86400s; only object deletion rule is v1/shapes after691200s. Migration jobs[], Super Slurper jobs[], Sippy disabled, local uploads disabled, locks[], event notification configuration404 (11015). R2 Get/PutBucketVersioning and Get/PutBucketReplication are unsupported per https://developers.cloudflare.com/r2/api/s3/api/ . Existing runtime identity returns403 to their GET config APIs, which is not proof of disabled settings. No new bucket, credentials, permission or capacity.
 
-Tigris pre-reset inventory: terrascale-gru-terrabase-backups-b12, HeadBucket200 snapshotEnabled=false; snapshot inventory400 InvalidArgument Wrong bucket type. 500 legacy v1/keys objects,142 wrapped keys. Reset owner receives exact prefix and local preserved snapshot directories; no bucket deletion.
+Tigris pre-reset inventory: terrascale-gru-terrabase-backups-b12, HeadBucket200 snapshotEnabled=false; snapshot inventory400 InvalidArgument Wrong bucket type. The first listing page contained 500 legacy v1/keys objects, including 142 wrapped keys (80 bytes each); the reset owner performs a fresh, complete manifest before deletion. Reset owner receives exact prefix and local preserved snapshot directories; no bucket deletion.
 
 ## Sealing cost
 

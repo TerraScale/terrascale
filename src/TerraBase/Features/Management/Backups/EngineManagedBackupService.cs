@@ -31,7 +31,7 @@ namespace TerraBase.Features.Management.Backups;
 /// </remarks>
 internal sealed class EngineManagedBackupService(
     IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, IDatabaseRewind rewind, TimeProvider time,
-    ILogger<EngineManagedBackupService> logger, TerraBaseOptions options)
+    ILogger<EngineManagedBackupService> logger, TerraBaseOptions options, Lazy<IBackupKeyShredding> shredding)
     : IManagedBackupService
 {
     /// <summary>Catalog kind: database id → <see cref="DatabaseOwner"/>, deleted with the database.</summary>
@@ -772,7 +772,16 @@ internal sealed class EngineManagedBackupService(
 
         var (record, plan) = state;
 
-        if (record is null || !await StorageSweep.DeleteFilesAsync(engine, record.Storage(plan), logger).ConfigureAwait(false))
+        if (record is null)
+        {
+            return new Done();
+        }
+
+        var storage = record.Storage(plan);
+        // The record is the durable link to the source database. Never discard it while a
+        // continuous snapshot/WAL copy could still be decrypted with this snapshot's own key.
+        if (!await shredding.Value.DestroyAsync(storage, CancellationToken.None).ConfigureAwait(false)
+            || !await StorageSweep.DeleteFilesAsync(engine, storage, logger).ConfigureAwait(false))
         {
             return new Done();
         }

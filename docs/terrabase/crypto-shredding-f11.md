@@ -23,6 +23,11 @@ then checks a fresh empty key listing. Missing custody access keeps destruction 
 first deletion timestamp. In-flight operations that already obtained key material may finish; retained client keys and
 plaintext already delivered to clients cannot be revoked.
 
+Managed backup snapshots have independent storage IDs and envelope-key scopes. Source deletion scans their ownership
+records in bounded pages, including pending and expiring snapshots, and destroys every snapshot scope before returning
+204. Snapshot expiry also destroys its keys before discarding the ownership record, so a concurrent sweep cannot hide
+a scope from source deletion. Each scope leaves the same permanent authority for regional and external-copy cleanup.
+
 This is a greenfield custody and push-format cutover. Old Tigris key objects and bucket snapshots are not a migration
 source. The deployment lane owns the required format bump and reset; historical restore points from the old format
 are outside the new guarantee and must not be presented as F11-protected.
@@ -31,7 +36,8 @@ are outside the new guarantee and must not be presented as F11-protected.
 
 | Copy | Protection and deletion |
 | --- | --- |
-| Primary and region database files, WAL, managed snapshots | Existing AEGIS-256 page encryption; permanent local cleanup closes handles and removes files and sidecars. |
+| Primary and region database files, WAL | Existing AEGIS-256 page encryption; permanent local cleanup closes handles and removes files and sidecars. |
+| Managed backup snapshots and their continuous copies | Source deletion also shreds each snapshot's independent envelope-key scope; snapshot sweep removes its local files and page-key sidecars. |
 | Continuous snapshots and logical segments | Existing TBK1 envelope; all destinations obtain keys from R2 custody. |
 | JetStream regional push messages | TBP1 envelope under the same per-database key; deletion also purges the database subject from the local origin stream. |
 | Regional partner holds and their system backups | The exact TBP1 ciphertext from JetStream; no decoded SQL is persisted in the hold record. |

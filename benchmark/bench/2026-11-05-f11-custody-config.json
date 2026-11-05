@@ -1,0 +1,60 @@
+{
+  "at": "2026-11-05T13:41:59.524Z",
+  "bucket": "ts-terrabase-shapes-prod",
+  "custodyPrefix": "v1/keys/",
+  "lifecycle": {
+    "rules": [
+      {
+        "id": "abort-multipart-1d",
+        "enabled": true,
+        "conditions": {
+          "prefix": ""
+        },
+        "abortMultipartUploadsTransition": {
+          "condition": {
+            "type": "Age",
+            "maxAge": 86400
+          }
+        }
+      },
+      {
+        "id": "shapes-expire-8d",
+        "enabled": true,
+        "conditions": {
+          "prefix": "v1/shapes/"
+        },
+        "deleteObjectsTransition": {
+          "condition": {
+            "type": "Age",
+            "maxAge": 691200
+          }
+        }
+      }
+    ]
+  },
+  "migrationJobs": {
+    "jobs": []
+  },
+  "sippy": {
+    "enabled": false
+  },
+  "locks": {
+    "rules": []
+  },
+  "superSlurperJobs": [],
+  "localUploads": {
+    "enabled": false
+  },
+  "eventNotifications": {
+    "status": 404,
+    "code": 11015,
+    "meaning": "No event notification configuration"
+  },
+  "versioningReplication": {
+    "reference": "https://developers.cloudflare.com/r2/api/s3/api/",
+    "GetPutBucketVersioning": "unsupported",
+    "GetPutBucketReplication": "unsupported",
+    "runtimeConfigGets": 403,
+    "runtime403ProvesDisabled": false
+  }
+}
