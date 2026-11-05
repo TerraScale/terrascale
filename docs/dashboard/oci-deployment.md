@@ -16,12 +16,14 @@ No infrastructure, credentials or billing changes are authorized by this documen
   Device approval URLs use the resulting public scheme and host.
 - The service owns `dash.terrascale.tech`, one replica, port 8085 and readiness
   path `/readyz`. `/readyz` and `/health/ready` answer the same JSON body:
-  `{"status":"ok","region":"gru","dependencies":{"ts-auth":"ok","terrabase":"ok"}}`,
+  `{"status":"ok","region":"gru","version":"<commit sha>","dependencies":{"ts-auth":"ok","terrabase":"ok"}}`,
   or 503 with `"status":"unavailable"` and the failing dependency marked
   `"unavailable"`. ts-auth is probed at its public `/readyz` (2 s deadline,
   result shared for 5 s); TerraBase state is reread per probe (2 s deadline).
-  `region` is `TS_REGION` as ts-orch sets it, `null` when unset. Public health
-  bodies never carry the build version or revision.
+  `region` is `TS_REGION` as ts-orch sets it, `null` when unset. `/health/live`
+  answers `{"status":"ok","region":"gru","version":"<commit sha>"}` without
+  probing dependencies. `version` and the `X-TerraScale-Revision` header both
+  carry the build revision; `version` is `unknown` outside an image build.
 
 ## Secrets and state
 
