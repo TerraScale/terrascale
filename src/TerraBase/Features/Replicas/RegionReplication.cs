@@ -26,7 +26,7 @@ namespace TerraBase.Features.Replicas;
 internal sealed class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
-    ITransactionCrypto crypto, IOperationAllowance allowance) : BackgroundService
+    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners? owners = null) : BackgroundService
 {
     /// <summary>How often every replica pulls and every home's catalog is read again without a notice.</summary>
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
@@ -80,12 +80,6 @@ internal sealed class RegionReplication(
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Holders keep local acknowledgements; only the region's data owner follows replicas.
-        if (await new PeersFile(options).IsHolderAsync(cancellationToken).ConfigureAwait(false))
-        {
-            return;
-        }
-
         _peers = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
         _lag = _meter.CreateHistogram<double>("terrabase.replica.lag", "ms",
             "Time from a home's commit, on its clock, to the replica holding it after the notice's pull.");
@@ -162,6 +156,14 @@ internal sealed class RegionReplication(
             logger.ZLogWarning($"The peers file could not be read; replicas keep the regions they know: {error.GetType().Name:@Error}");
         }
 
+        if (owners is { Writer: true })
+        {
+            foreach (var (key, follower) in _followers.Where(entry => entry.Value.Home.Region == options.Region).ToArray())
+            {
+                await StopFollowingAsync(key, follower.Database, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         foreach (var peer in _peers)
         {
             try
@@ -218,7 +220,7 @@ internal sealed class RegionReplication(
                 try
                 {
                     if (await catalog.FindAsync(revised.Database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-                        || placement.Home != options.Region || (!placement.AllRegions && placement.Replicas.Count == 0))
+                        || placement.Home != options.Region || !(owners?.Writer ?? true))
                     {
                         _ = _published.TryRemove(key, out _);
                         continue;
@@ -237,7 +239,7 @@ internal sealed class RegionReplication(
                     }
 
                     _published[key] = revision;
-                    foreach (var region in placement.AllRegions ? _peers.Select(peer => peer.Region).Distinct(StringComparer.Ordinal) : placement.Replicas)
+                    foreach (var region in (placement.AllRegions ? _peers.Select(peer => peer.Region) : placement.Replicas).Append(options.Region).Distinct(StringComparer.Ordinal))
                     {
                         await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database), push.Payload, cancellationToken: cancellationToken)
                             .ConfigureAwait(false);
@@ -328,7 +330,7 @@ internal sealed class RegionReplication(
 
     private void Notice(string subject, byte[]? data)
     {
-        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _] || replica != options.Region || home == options.Region || data is null
+        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _] || replica != options.Region || (home == options.Region && (owners?.Writer ?? true)) || data is null
             || !RevisionPush.TryRead(data, out var notice, out var answer) || notice is null)
         {
             return;
@@ -436,7 +438,7 @@ internal sealed class RegionReplication(
             {
                 var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
                 var replicated = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-                    && placement.Home == home.Region && placement.Includes(options.Region);
+                    && placement.Home == home.Region && (home.Region == options.Region || placement.Includes(options.Region));
                 try
                 {
                     if (replicated && (listed is null || listed.ContainsKey(key)))
@@ -511,7 +513,7 @@ internal sealed class RegionReplication(
 
             if (_followers.TryGetValue(key, out var current))
             {
-                if (current.Home.Region == home.Region)
+                if (current.Home.Region == home.Region && current.Home.Internal == home.Internal)
                 {
                     return;
                 }
@@ -601,7 +603,7 @@ internal sealed class RegionReplication(
                     return null;
                 }
 
-                foreach (var entry in page.Databases.Where(entry => entry.HomeRegion == home.Region && (entry.AllRegions || entry.ReplicaRegions.Contains(options.Region))))
+                foreach (var entry in page.Databases.Where(entry => entry.HomeRegion == home.Region && (home.Region == options.Region || entry.AllRegions || entry.ReplicaRegions.Contains(options.Region))))
                 {
                     listed[(entry.OrganizationId, entry.ProjectId, entry.DatabaseId)] = entry;
                 }
