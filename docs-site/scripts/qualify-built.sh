@@ -29,10 +29,40 @@ manifest = {"revision": sys.argv[2], "sourceDirectory": "docs-site", "sha256": h
 (output / "site-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 PY
 tag="docs/qualified-$revision"
-gh release create "$tag" "$output/site.tar.gz" "$output/site-manifest.json" \
+if ! gh release create "$tag" "$output/site.tar.gz" "$output/site-manifest.json" \
   --repo TerraScale/terrascale --target "$revision" --prerelease \
   --title "Documentation qualified $revision" \
-  --notes "Dev-host audit, build, example/starter tests and prebuilt dry-run passed for $revision."
+  --notes "Dev-host audit, build, example/starter tests and prebuilt dry-run passed for $revision."; then
+  mkdir "$output/existing"
+  gh release download "$tag" --repo TerraScale/terrascale --dir "$output/existing" \
+    --pattern site.tar.gz --pattern site-manifest.json
+  gh api --paginate --slurp "repos/TerraScale/terrascale/commits/$revision/statuses?per_page=100" > "$output/existing/statuses.json"
+  python3 - "$output" "$revision" <<'PY'
+import hashlib, json, pathlib, sys, tarfile
+output = pathlib.Path(sys.argv[1])
+existing = output / 'existing'
+manifest = json.loads((existing / 'site-manifest.json').read_text())
+assert manifest['revision'] == sys.argv[2] and manifest['sourceDirectory'] == 'docs-site'
+assert hashlib.sha256((existing / 'site.tar.gz').read_bytes()).hexdigest() == manifest['sha256']
+statuses = [status for page in json.loads((existing / 'statuses.json').read_text()) for status in page]
+proof = next(status for status in statuses if status['context'] == 'docs-release/docs')
+assert proof['state'] == 'success' and proof['creator']['login'].lower() == 'mariogk'
+assert proof['target_url'] == f'https://github.com/TerraScale/terrascale/releases/tag/docs/qualified-{sys.argv[2]}'
+with tarfile.open(existing / 'site.tar.gz') as package:
+    names = set()
+    for member in package.getmembers():
+        path = pathlib.PurePosixPath(member.name)
+        assert not path.is_absolute() and '..' not in path.parts
+        assert member.isdir() or member.isfile(), 'Only regular site files are permitted'
+        assert any(path == prefix or prefix in path.parents for prefix in (
+            pathlib.PurePosixPath('.cloudflare/output'), pathlib.PurePosixPath('docs/.vitepress/dist')))
+        assert member.name not in names, 'Duplicate site entry'
+        names.add(member.name)
+    for name in ('docs/.vitepress/dist/build-info.json', '.cloudflare/output/v0/workers/default/assets/build-info.json'):
+        assert json.load(package.extractfile(name))['commit'] == sys.argv[2]
+print('Verified existing qualified site and its successful exact-revision proof')
+PY
+fi
 gh api "repos/TerraScale/terrascale/statuses/$revision" -f state=success \
   -f context=docs-release/docs -f description='Dev-host site, examples and locked dependency audits qualified' \
   -f "target_url=https://github.com/TerraScale/terrascale/releases/tag/$tag" >/dev/null
