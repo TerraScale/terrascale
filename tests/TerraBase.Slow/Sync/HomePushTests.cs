@@ -23,7 +23,7 @@ namespace TerraBase.Fast.Sync;
 
 public sealed class HomePushTests
 {
-        [Test]
+    [Test]
     public async Task A_local_write_in_sjc_is_visible_at_once_and_durability_home_answers_after_gru_applied_it()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
