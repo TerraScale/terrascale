@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading.Channels;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Authentication.Contracts;
@@ -21,7 +21,8 @@ namespace TerraScale.Authentication.Tests;
 /// <summary>Captures sent mail so tests can read sign-in codes. Nothing leaves the process.</summary>
 public sealed partial class CapturingEmailSender : IEmailSender
 {
-    private readonly Channel<(string Recipient, EmailMessage Message)> sent = Channel.CreateUnbounded<(string, EmailMessage)>();
+    private readonly List<(string Recipient, EmailMessage Message)> sent = [];
+    private TaskCompletionSource delivered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Lock counting = new();
     private int inFlight;
     private int maxInFlight;
@@ -67,7 +68,12 @@ public sealed partial class CapturingEmailSender : IEmailSender
                 await gate.Task.WaitAsync(cancellationToken);
             }
 
-            await this.sent.Writer.WriteAsync((recipient, message), cancellationToken);
+            lock (this.counting)
+            {
+                this.sent.Add((recipient, message));
+                this.delivered.TrySetResult();
+                this.delivered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
         }
         finally
         {
@@ -81,26 +87,45 @@ public sealed partial class CapturingEmailSender : IEmailSender
     /// <summary>The next code mailed to <paramref name="recipient"/>; delivery happens after the response.</summary>
     public async Task<string> NextCodeAsync(string recipient)
     {
+        var (_, message) = await this.NextAsync(recipient);
+        return SixDigits().Match(message.Text).Value;
+    }
+
+    /// <summary>Waits for a recipient's mail without consuming another parallel journey's delivery.</summary>
+    public async Task<(string Recipient, EmailMessage Message)> NextAsync(string? recipient = null)
+    {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (true)
         {
-            var (to, message) = await this.sent.Reader.ReadAsync(timeout.Token);
-            if (string.Equals(to, recipient.Trim(), StringComparison.OrdinalIgnoreCase))
+            Task changed;
+            lock (this.counting)
             {
-                return SixDigits().Match(message.Text).Value;
+                var index = this.sent.FindIndex(mail => recipient is null || string.Equals(mail.Recipient, recipient.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (index >= 0)
+                {
+                    var mail = this.sent[index];
+                    this.sent.RemoveAt(index);
+                    return mail;
+                }
+
+                changed = this.delivered.Task;
             }
+
+            await changed.WaitAsync(timeout.Token);
         }
     }
 
-    /// <summary>The next mail sent to anyone.</summary>
-    public async Task<(string Recipient, EmailMessage Message)> NextAsync()
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        return await this.sent.Reader.ReadAsync(timeout.Token);
-    }
-
     /// <summary>Whether any mail is waiting.</summary>
-    public bool HasPending => this.sent.Reader.Count > 0;
+    public bool HasPending
+    {
+        get
+        {
+            lock (this.counting)
+            {
+                return this.sent.Count > 0;
+            }
+        }
+    }
 
     [GeneratedRegex(@"\b[0-9]{6}\b")]
     private static partial Regex SixDigits();
@@ -170,7 +195,12 @@ public sealed partial class OidcHarness : IAsyncDisposable
         {
             values["master-key"] = masterKey;
             settings?.Invoke(values);
-        }, logs, clock, services, runClosureWorker, configure);
+        }, logs, clock, replace: collection =>
+        {
+            // Ordinary journeys exercise the production cache; only key-mutation tests need immediate rereads.
+            collection.RemoveAll<KeyRingRefresh>();
+            services?.Invoke(collection);
+        }, runClosureWorker, configure);
         return new OidcHarness(fixture, tenant, masterKey, server, database, email);
     }
 

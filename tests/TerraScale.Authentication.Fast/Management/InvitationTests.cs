@@ -37,7 +37,7 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
         await Assert.That(invitation.GetProperty("invited_by").GetString()).IsEqualTo(alice.Id);
 
         // The invitee is emailed the dashboard's accept link with the token.
-        var (recipient, mail) = await NextInvitationAsync(oidc);
+        var (recipient, mail) = await NextInvitationAsync(oidc, bob.Email);
         await Assert.That(recipient).IsEqualTo(bob.Email);
         await Assert.That(mail.Text).Contains($"{AcceptPage}{token}");
         await Assert.That(mail.Text).Contains("Acme");
@@ -79,11 +79,11 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
     private Task<OidcHarness> StartAsync(TimeProvider? clock = null) =>
         clock is null ? OidcHarness.StartSharedManagementAsync(fixture) : OidcHarness.StartAsync(fixture, clock: clock);
 
-    private static async Task<(string Recipient, TerraScale.Authentication.Features.Email.EmailMessage Message)> NextInvitationAsync(OidcHarness oidc)
+    private static async Task<(string Recipient, TerraScale.Authentication.Features.Email.EmailMessage Message)> NextInvitationAsync(OidcHarness oidc, string email)
     {
         while (true)
         {
-            var (recipient, message) = await oidc.Email.NextAsync();
+            var (recipient, message) = await oidc.Email.NextAsync(email);
             if (message.Text.Contains(AcceptPage, StringComparison.Ordinal))
             {
                 return (recipient, message);

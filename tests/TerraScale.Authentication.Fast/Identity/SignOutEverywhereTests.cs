@@ -13,9 +13,8 @@ public sealed class SignOutEverywhereTests(TerraBaseFixture fixture)
     [Test]
     public async Task Signing_out_everywhere_ends_every_device_session_and_token_family()
     {
-        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        var user = await oidc.CreateUserAsync("dana@example.test");
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var user = await oidc.CreateUserAsync(oidc.UniqueEmail("dana"));
         var (laptop, laptopTokens) = await oidc.CreateSessionAndRedeemAsync(user);
         var (phone, phoneTokens) = await oidc.CreateSessionAndRedeemAsync(user);
         var (_, challenge) = OidcHarness.Pkce();
@@ -46,7 +45,6 @@ public sealed class SignOutEverywhereTests(TerraBaseFixture fixture)
         }
 
         // A new sign-in works again.
-        clock.UtcNow += HostedAuth.MailCooldown;
         var fresh = await oidc.SignInAsync(user.Email);
         var (verifier, freshChallenge) = OidcHarness.Pkce();
         using var again = await oidc.RedeemCodeAsync(await oidc.CodeAsync(fresh, freshChallenge), verifier);
