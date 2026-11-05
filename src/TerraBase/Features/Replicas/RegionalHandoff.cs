@@ -36,8 +36,8 @@ internal sealed class RegionalHandoff(
     private INatsKVStore? _kv;
     private NatsConnection? _nats;
 
-    internal async Task<RegionalStatus> StatusAsync(CancellationToken cancellationToken) => new(options.MachineId, owners.Find(options.Region)?.Node,
-        owners.Find(options.Region)?.Epoch ?? 0, owners.Writer,
+    internal async Task<RegionalStatus> StatusAsync(CancellationToken cancellationToken, string? region = null) => new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
+        owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
         await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false));
 
     public override Task StartAsync(CancellationToken cancellationToken)
@@ -90,9 +90,11 @@ internal sealed class RegionalHandoff(
             try
             {
                 var entry = await ReadAsync(kv, region, cancellationToken).ConfigureAwait(false);
-                if (entry is null && region == options.Region && nodes.First(node => node.Region == region).Name == options.MachineId)
+                if (entry is null && region == options.Region)
                 {
-                    var first = new RegionalOwner(region, options.MachineId, 1);
+                    // Any admitted local node may publish the same deterministic initial
+                    // owner. A follower can start first during the first rolling deployment.
+                    var first = new RegionalOwner(region, nodes.First(node => node.Region == region).Name, 1);
                     try
                     {
                         _ = await kv.CreateAsync(region, Encode(first), cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -473,6 +475,26 @@ internal sealed class RegionalHandoff(
                 }
                 await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
             }
+            // Remote forwarding uses the observed regional owner directly, outside this
+            // region's edge. Do not stop its old address while an admitted peer still routes there.
+            foreach (var observer in nodes.Where(node => node.Name != options.MachineId))
+            {
+                var observedAt = new UriBuilder(Uri.UriSchemeHttp, observer.Address.ToString(), options.InternalPort).Uri;
+                while (true)
+                {
+                    using var seen = await _http.GetAsync(new Uri(observedAt, "/v1/rollout/status?region=" + options.Region), cancellationToken).ConfigureAwait(false);
+                    if (seen.IsSuccessStatusCode && await seen.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, cancellationToken).ConfigureAwait(false)
+                        is { Node: var observedNode, Owner: var observedOwner, Epoch: var observedEpoch }
+                        && observedNode == observer.Name && observedOwner == target && observedEpoch >= next.Epoch)
+                    {
+                        break;
+                    }
+                    await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
+                }
+            }
+            admission.Dispose();
+            admission = null;
+            await services.GetRequiredService<RegionalIngress>().WaitIdleAsync(cancellationToken).ConfigureAwait(false);
             logger.ZLogInformation($"Regional writer moved to {target:@Node} at epoch {next.Epoch:@Epoch} after {positions.Count:@Databases} applied positions were proven");
             return true;
         }

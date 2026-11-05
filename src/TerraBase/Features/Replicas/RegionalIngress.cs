@@ -10,7 +10,9 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
     private readonly HttpClient _http = PeerHttp.Create(credential);
     private TaskCompletionSource _open = Completed();
     private TaskCompletionSource _empty = Completed();
+    private TaskCompletionSource _idle = Completed();
     private int _active;
+    private int _outstanding;
     private bool _held;
 
     internal async Task<IDisposable> EnterAsync(CancellationToken token)
@@ -18,6 +20,13 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
         if (!await _slots.WaitAsync(0, token).ConfigureAwait(false))
         {
             throw new Qos.QosMemoryException("regional ingress is full");
+        }
+        lock (_gate)
+        {
+            if (_outstanding++ == 0)
+            {
+                _idle = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
         }
         try
         {
@@ -41,8 +50,16 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
         }
         catch
         {
-            _slots.Release();
+            ReleaseOutstanding();
             throw;
+        }
+    }
+
+    internal Task WaitIdleAsync(CancellationToken token)
+    {
+        lock (_gate)
+        {
+            return _idle.Task.WaitAsync(token);
         }
     }
 
@@ -116,8 +133,20 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
         }
         if (!drain)
         {
-            _slots.Release();
+            ReleaseOutstanding();
         }
+    }
+
+    private void ReleaseOutstanding()
+    {
+        lock (_gate)
+        {
+            if (--_outstanding == 0)
+            {
+                _idle.TrySetResult();
+            }
+        }
+        _slots.Release();
     }
 
     private static TaskCompletionSource Completed()

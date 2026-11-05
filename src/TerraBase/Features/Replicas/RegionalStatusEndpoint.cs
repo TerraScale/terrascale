@@ -1,4 +1,5 @@
 using TerraBase.Hosting;
+using TerraBase.Configuration;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
@@ -21,6 +22,11 @@ internal sealed class RegionalStatusEndpoint(RegionalHandoff handoff) : Endpoint
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
-        return TypedResults.Json(await handoff.StatusAsync(cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.RegionalStatus);
+        var region = HttpContext.Request.Query["region"].ToString();
+        if (region.Length > 0 && !TerraBaseOptions.IsRegion(region))
+        {
+            return TypedResults.BadRequest();
+        }
+        return TypedResults.Json(await handoff.StatusAsync(cancellationToken, region.Length > 0 ? region : null).ConfigureAwait(false), TerraBaseJsonContext.Default.RegionalStatus);
     }
 }
