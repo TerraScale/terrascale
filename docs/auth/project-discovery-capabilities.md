@@ -12,4 +12,4 @@ platform capabilities advertised by `/terrascale/.well-known/openid-configuratio
 
 This corrects previously overbroad project metadata. It does not enable or remove
 runtime grants, change client permissions or SDK DTOs, or change stored records.
-Clients should use their project's discovery document for customer-app sign-in.
+Clients should use their project's discovery metadata for customer-app sign-in.

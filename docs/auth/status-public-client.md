@@ -12,7 +12,7 @@ registrar as the dashboard. No client secret or additional configuration is need
 | Scopes | `openid email profile` |
 | Token authentication | Public client: `client_id`, no client secret |
 
-Use the tenant's discovery document at
+Use the tenant's discovery metadata at
 `/terrascale/.well-known/openid-configuration`. Authorization and token endpoints
 are `/terrascale/oauth/authorize` and `/terrascale/oauth/token`. The status client
 has no refresh, client-credentials or token-exchange grant. Sign-in access

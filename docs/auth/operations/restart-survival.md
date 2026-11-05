@@ -19,6 +19,6 @@ refresh token and a new code still work.
 
 Adding a TerraBase-backed DataProtection key ring would protect nothing today, so none is added. If a future feature
 uses `IDataProtector`, antiforgery or cookie authentication, it must first persist the ring: an `IXmlRepository` on
-an auth-owned TerraBase collection, with keys encrypted by an `IXmlEncryptor` keyed from an HKDF subkey of the master
+an auth-owned TerraBase table, with keys encrypted by an `IXmlEncryptor` keyed from an HKDF subkey of the master
 key. If users are signed out by ts-auth restarts, look at the client's own session store, for example ts-dashboard's
 cookies.

@@ -1,7 +1,7 @@
 # API key lifecycle
 
 This note replaces the "Delegated API-key secrets" part of
-[`ts-757-winner-reconciliation.md`](ts-757-winner-reconciliation.md).
+[SQL credential fences](../pivot/p1-sql-storage.md).
 
 ## A key works until it is revoked or expires
 
@@ -35,13 +35,13 @@ the change. The SDK token sources read `expires_in` and refresh before expiry.
 
 ## Last use
 
-`api_key_usage` holds one document per key: `keyId`, `organizationId`,
+`api_key_usage` holds one record per key: `keyId`, `organizationId`,
 `projectId` and `lastUsedAt`. A successful client-credentials exchange
 updates it at most once per 5 minutes, best effort: a failed or lost write
-never fails the exchange. It is a separate collection so a usage write can
-never race the key record itself, where a last-writer-wins replay could undo a
+never fails the exchange. It is a separate table so a usage write can
+never race the key record itself, where an unrelated usage update must not undo a
 rotation or a revocation. API key bodies return it as `last_used_at`. Deleting
-an organization or project removes its usage documents with its keys.
+an organization or project removes its usage records with its keys.
 
-`api_key_usage` is a new required collection. ts-auth creates it at startup,
+`api_key_usage` is a new required table. ts-auth creates it at startup,
 so no storage format change or data reset is needed.

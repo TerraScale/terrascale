@@ -21,7 +21,7 @@ returns 502 with `error.code = email_acceptance_unknown`. Existing 429 responses
 with `Retry-After` cover admission and explicit provider rate limits. This is an
 intentional failure-status compatibility change: callers must handle 502 and
 must not automatically retry Unknown, because provider idempotency is unproven.
-The served OpenAPI contract documents the 502 `ErrorBody` response.
+The served OpenAPI contract describes the 502 `ErrorBody` response.
 
 Public signup, sign-in and recovery responses retain their anti-enumeration
 behavior. Allowance, alert and support ledgers retain Rejected or Unknown and

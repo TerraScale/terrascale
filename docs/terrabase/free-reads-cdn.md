@@ -1,6 +1,6 @@
 # Free reads T2: the shape CDN
 
-Shape reads ([shape-reads.md](shape-reads.md), [free-reads.md](free-reads.md) 3.8 and 3.9) are served by three tiers.
+Shape reads ([shape-reads.md](shape-reads.md), [live shape reads](free-reads-live.md) 3.8 and 3.9) are served by three tiers.
 Each one removes origin work for readers of the same shape.
 
 | Tier | Serves | Origin cost per extra reader |

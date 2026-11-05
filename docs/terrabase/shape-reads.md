@@ -5,21 +5,20 @@ sealed change chunks, then a live tail, Electric style (PIVOT D8). Every respons
 so identical URLs return identical bytes and any cache can serve many readers for the cost of one.
 
 End users read shapes from the browser under table read grants: [shape read grants](shape-read-grants.md). The local
-overlay (F7) and region-to-region provisional changes (F8) are later tasks. Protocol v1 (document collections over
-`_tb_feed`) is gone.
+overlay (F7) and region-to-region provisional changes (F8) are later tasks.
 
 ## 1. Source: the home database's change capture
 
-- Every TerraBase write connection runs Turso change capture in `full` mode
+- Every TerraBase write connection runs native change capture in `full` mode
   (`PRAGMA capture_data_changes_conn('full')`). Each committed transaction appends its row changes, with before and
-  after images, to the database file's `turso_cdc` table in the same transaction, then one commit record
-  (`change_type = 2`). Before images feed F2's move-in and move-out. `INSERT … ON CONFLICT DO UPDATE` needs native
+  after images, to the database file's native capture table in the same transaction, then one commit record
+  (`change_type = 2`). Before images support F2's move-in and move-out. `INSERT … ON CONFLICT DO UPDATE` needs native
   patch 0008 (the backport of upstream `26dbb464`), which the pinned native release carries.
-- Shapes read only `turso_cdc` and the table itself. The document feed (`_tb_feed`) is not read.
+- Shapes read only the native capture table and the table itself.
 - Only the database's home serves and seals shapes. Region replicas are not served yet (`replicas_unavailable`), so
   every sealed chunk holds only home-committed, home-confirmed changes. When region writes arrive (PIVOT R4 to R7),
   they reach shapes through the home apply, which commits through the same capture.
-- `turso_cdc` uses `AUTOINCREMENT` change ids, so ids are never reused, also after retention trims old rows.
+- The native capture table uses `AUTOINCREMENT` change ids, so ids are never reused, also after retention trims old rows.
 
 ## 2. Route
 
@@ -43,7 +42,7 @@ Validation answers `400 invalid_request`: unknown or repeated parameters, non-ca
 zeros, at most `9223372036854775807`), a malformed handle, `live` without a decimal offset, `cursor` without `live`.
 
 `table` names an ordinary rowid table: 1 to 63 ASCII letters, digits and underscores, not starting with a digit,
-`_tb_`, `turso_` or `sqlite_`, matched exactly against `sqlite_schema`. Errors:
+`_tb_`, `sqlite_` or other reserved engine prefixes, matched exactly against `sqlite_schema`. Errors:
 
 | Status | Code | When |
 | --- | --- | --- |
@@ -110,7 +109,7 @@ every table of the database file; commits that do not touch the table still adva
   `503 shape_too_large`.
 - A chunk is sealed once into `_tb_shape_chunk` by the first reader or the background sealer, and never recomputed.
   Its values are the captured after-images, so `values_at` equals `next_offset`.
-- An offset that is not a retained commit boundary (`turso_cdc` trimmed below it, or not a commit record) answers
+- An offset that is not a retained commit boundary (the native capture table trimmed below it, or not a commit record) answers
   `409 must_refetch`.
 
 ## 6. Body
@@ -128,7 +127,7 @@ every table of the database file; commits that do not touch the table still adva
   columns are omitted)): null, numbers, strings, or blobs as `{"base64":"…"}` (standard base64), as SQL over REST
   returns them. A non-finite real cannot be served and answers `503 unavailable`.
 - An `UPDATE` that changes the row id arrives as `delete` of the old key, then `insert` of the new one.
-  The pinned Turso captures that insert without an after-image, so the sealer reads the row's values as
+  The pinned engine captures that insert without an after-image, so the sealer reads the row's values as
   of sealing (or emits `delete` when the row is gone by then). Later changes to that key follow in order, so the
   client converges at every later offset.
 - **Apply rule:** apply ops in order. `insert` and `update` set `rows[key] = row`; `delete` removes `rows[key]`.
@@ -197,7 +196,7 @@ per-object key derived from the database data key, a 10-minute epoch and the bin
 
 Chunks and snapshots older than seven days leave in bounded passes and raise the handle's floor; the newest complete
 snapshot always keeps every page. Handles of retired generations are swept
-([shape-retention.md](shape-retention.md), [shape-sweep.md](shape-sweep.md)). Trimming `turso_cdc` itself belongs to
+([shape-retention.md](shape-retention.md), [shape-sweep.md](shape-sweep.md)). Trimming the native capture table itself belongs to
 PIVOT F5, tied to the shape floor and the backup position.
 
 ## 12. Proof

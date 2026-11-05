@@ -2,7 +2,7 @@
 
 A matching per-machine restore anchor proves only that machine's catalog did not roll back. Two catalogs that never received an acknowledged revocation can still match their own anchors. They cannot form a serving majority on that evidence alone.
 
-Before acknowledging a destructive management request, the catalog commits an opaque marker after that request's transaction. The encrypted external `catalog-anchor/<machine>` records its exact replica and committed stamp, alongside the existing incarnation and CDC head. No subject, key secret, email, or document content enters that witness. A failed anchor write leaves the response unacknowledged.
+Before acknowledging a destructive management request, the catalog commits an opaque marker after that request's transaction. The encrypted external `catalog-anchor/<machine>` records its exact replica and committed stamp, alongside the existing incarnation and CDC head. No subject, key secret, email, or record content enters that witness. A failed anchor write leaves the response unacknowledged.
 
 At startup, each gate checks the external witnesses of listed and recorded machines and the bucket's other anchors. Both anchor listing and reads request Tigris consistent reads. A remote witness requires received-prefix coverage through its stamp. Seeing its marker through ordinary bucket anti-entropy, or matching another stale peer's roots, proves nothing about the preceding deletion.
 
@@ -18,4 +18,4 @@ The Fast regressions include the one-restored-origin/two-uninformed-peer case th
 
 Bucket rollback or replay of the external authority itself is outside this proof. A per-machine anchor must remain outside the restored volume. There is no operator bypass.
 
-The existing `DatabasePurgeTests.A_stale_live_catalog_row_cannot_serve_restore_adopt_or_place_a_purged_database` exercises permanent database authority against replayed catalog rows. `AntiEntropyGcTests.Collected_documents_stay_absent_when_two_healthy_replicas_pull_a_stale_peer` covers deleted records before and after restart; the collecting-writer race test covers replay queued across collection. These protections remain separate from startup anchor admission.
+The existing `DatabasePurgeTests.A_stale_live_catalog_row_cannot_serve_restore_adopt_or_place_a_purged_database` exercises permanent database authority against replayed catalog rows. `AntiEntropyGcTests.Collected_documents_stay_absent_when_two_healthy_replicas_pull_a_stale_peer` covers deleted records before and after restart; the collecting-writer race test covers replay queued across table. These protections remain separate from startup anchor admission.

@@ -7,7 +7,7 @@ remain gaps. They are not production setup instructions. Tenant authorization,
 customer enrollment and storage safety/consistency requirements remain binding.
 
 ts-auth is the single owner of identity and access for TerraScale (epic TS-597,
-umbrella `AGENTS.md`, "Service ownership"). This document is the contract that
+umbrella `AGENTS.md`, "Service ownership"). This guide is the contract that
 TerraBase (TS-589), the SDKs (ts-go TS-590, ts-dotnet TS-591, ts-js TS-592,
 ts-cli TS-600) and ts-dashboard (TS-599) build on. The machine-readable
 contract is [`platform-api.openapi.yaml`](platform-api.openapi.yaml)
@@ -17,7 +17,7 @@ Status: contract v1.1, 2026-10-06: v1 plus the TS-597 decisions (the
 `usage:read` and `billing:*` scopes, project suspension, platform
 administrators, the ts-cli device flow and ts-auth's own storage token).
 Nothing here is served until its slice lands;
-[`parity.md`](parity.md) tracks each slice. The served `/openapi/v1.json`
+[SQL storage](pivot/p1-sql-storage.md) tracks each slice. The served `/openapi/v1.json`
 (Scalar at `/scalar`) stays the contract of what is actually served. Any change
 to this contract is announced on TS-597.
 
@@ -147,8 +147,8 @@ interpreted; TerraBase and the platform API check scopes, never roles.
 | --- | --- |
 | `databases:read` | TerraBase: read databases, schema, indexes, backups, backup policies and saved queries; read-only SQL |
 | `databases:write` | TerraBase: create, branch and delete databases; backups, restores and policies; indexes; saved queries |
-| `sql:read` | TerraBase: read collections and documents; queries |
-| `sql:write` | TerraBase: write collections and documents; transactions |
+| `sql:read` | TerraBase: read SQL tables |
+| `sql:write` | TerraBase: SQL mutations and transactions |
 | `usage:read` | TerraBase usage, and the platform API's usage views |
 | `billing:read` | Platform API (ts-dashboard): read the organization's plan, subscription, invoices and spending caps |
 | `billing:write` | Platform API: change the plan, payment method and spending caps |
@@ -462,7 +462,7 @@ without a signed-in user.
 
 ## 9. What ts-auth does not do
 
-- **TerraBase** owns databases, collections, documents, backups, indexes,
+- **TerraBase** owns SQL databases, tables, backups, indexes,
   schema and usage. ts-auth never calls TerraBase for users. Deleting a project
   does not delete its databases: the platform deletes them first. ts-auth removes
   a project (or an account's sole-owner projects) only after TerraBase accepted
@@ -519,7 +519,7 @@ page (HA1, 2026-10-22), like every other TerraScale sign-in:
 ## 11. Slices
 
 Each slice is one pull request with its integration tests, and updates
-[`parity.md`](parity.md) and the served OpenAPI.
+[SQL storage](pivot/p1-sql-storage.md) and the served OpenAPI.
 
 1. This contract and the ownership boundary in `AGENTS.md`.
 2. Management API authentication; organizations, members, projects and
@@ -535,4 +535,4 @@ Each slice is one pull request with its integration tests, and updates
    later revision of this contract.
 
 OAuth for MCP clients (RFC 8707 resource indicators, RFC 7591 or client ID
-metadata documents) is a follow-up outside these slices.
+metadata records) is a follow-up outside these slices.

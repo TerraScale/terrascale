@@ -1,13 +1,12 @@
 # ts-auth storage on SQL tables (pivot P1)
 
 ts-auth keeps all of its state in its TerraBase database as SQL tables. It reaches them only through the .NET SDK's SQL route
-(`TerraBaseSqlClient` / `TerraBaseSqlDatabase.BatchAsync`, `POST /v1/projects/{project}/databases/{database}/sql/execute`). It makes no
-Documents API calls.
+(`TerraBaseSqlClient` / `TerraBaseSqlDatabase.BatchAsync`, `POST /v1/projects/{project}/databases/{database}/sql/execute`). Each request is a SQL batch.
 
 ## Schema
 
 At startup, `AuthStore.ProvisionAsync` runs one batch of `CREATE TABLE IF NOT EXISTS` statements, one table per entity type
-(`AuthStore.RequiredCollections`, 39 tables):
+(39 tables defined by `AuthStore`):
 
 ```sql
 CREATE TABLE "<entity>" (
@@ -89,9 +88,7 @@ Pages are keyset pages ordered by at most one field, then by `id`. A cursor is a
 
 ## Deletion history
 
-Deleted rows are removed from the tables in place. Their earlier after-images in TerraBase's change capture (`turso_cdc`) are
-deleted by TerraBase's change tap once it consumes them (`TursoChangeTap.Truncate`). Nothing remains in a document change
-log, so ts-auth no longer asks TerraBase for shared-history erasure (decision Q-P1HIST, 2026-11-03). When logical deletion is verified, a deletion job records `historyStatus: "complete"`.
+Deleted rows are removed from the tables in place. Earlier captured after-images are trimmed by TerraBase after consumption. ts-auth does not request shared-history erasure (decision Q-P1HIST, 2026-11-03). When logical deletion is verified, a deletion job records `historyStatus: "complete"`.
 It retires once `FenceExpiresAt` has passed and, for platform jobs, the dashboard has acknowledged. Backup and point-in-time
 recovery retention of SQL databases belongs to TerraBase's backups (pivot E8).
 
@@ -102,8 +99,7 @@ recovery retention of SQL databases belongs to TerraBase's backups (pivot E8).
 
 ## Reset
 
-This is a new schema with no migration. ts-auth on SQL tables does not read records the Documents API wrote, so deploying
-it to an existing database is equivalent to wiping ts-auth's data: accounts, organizations, projects and API keys are gone,
+This is a new schema with no migration. Replacing an existing auth database discards its state: accounts, organizations, projects and API keys are gone,
 and users sign up again. Startup provisioning creates the empty tables, then the platform bootstrap seeds the TerraScale
 owner, its projects and the first signing key. After the deploy:
 

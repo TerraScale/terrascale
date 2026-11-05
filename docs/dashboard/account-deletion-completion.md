@@ -19,4 +19,4 @@ Completion ends on the dashboard-hosted `/account-deleted` page without starting
 a new sign-in flow. Pending project and organization forms continue automatically
 with their original organization scope. Project deletion markers persist outside
 the hydrated project list until dashboard finalization. No storage engine format
-bump or production reset is required; the new collection is seeded at startup.
+bump or production reset is required; the new table is seeded at startup.

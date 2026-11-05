@@ -7,7 +7,7 @@ nothing else: the npm project is `src/TerraScale.Dashboard/web` (`package.json`,
 `.browserslistrc`, and the scripts in `web/build/`). Tests are C# only.
 It is the only implementation; the Go application was removed on 2026-10-12.
 Production runs on OCI gru under ts-orch. See [OCI deployment](oci-deployment.md)
-for the current contract; [migration status](csharp-migration.md) retains historical qualification evidence.
+for the current contract; [state storage](state-storage.md) retains historical qualification evidence.
 
 ## Local development
 
@@ -161,4 +161,4 @@ and secrets arrive through ts-orch from OCI Vault using instance principal ([sec
 production demo selection and manual endpoint/secret overrides are prohibited.
 
 Do not deploy until the live SDK, persistence, identity delivery and release
-gates in [migration status](csharp-migration.md) are satisfied.
+gates in [state storage](state-storage.md) are satisfied.

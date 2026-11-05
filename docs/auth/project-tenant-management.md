@@ -2,7 +2,7 @@
 
 Each customer project is a ts-auth tenant (`platform-contract.md` section 1):
 its own end users, sessions, OAuth clients and signing keys, under the issuer
-`https://auth.terrascale.tech/{project id}`. This document specifies what a
+`https://auth.terrascale.tech/{project id}`. This guide specifies what a
 project tenant serves to its end users and the management API the project's
 owners use (through ts-dashboard and the SDKs).
 

@@ -18,7 +18,7 @@ Files use `/v1/projects/{project}/buckets`. Requests carry ts-auth project or en
 
 Every generated bucket and file ID is a canonical ULID. Mutations are never automatically replayed. Missing resources return 404; denied rules return 403; invalid input returns 400; pending/incomplete uploads and nonempty bucket deletion return 409; shared quota exhaustion returns 429; unavailable accounting or object storage returns 503. Responses use `Cache-Control: no-store`.
 
-Create a bucket with the same policy shape as document collection rules:
+Create a bucket with its own access policy:
 
 ```json
 {"name":"avatars","rules":{"owner":"/userId","read":{"owner":true,"public":false,"roles":[]},"write":{"owner":true,"public":false,"roles":[]}}}

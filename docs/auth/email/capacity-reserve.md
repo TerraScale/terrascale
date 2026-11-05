@@ -8,7 +8,7 @@ provider quota cannot be recovered by a new ledger.
 
 A single conditional-write record on GRU retains at most 1,000 reservations for 25
 hours. This conservative window includes provider request/grant duration and avoids
-assuming a midnight reset. It stays below TerraBase's 1 MiB document limit. Every
+assuming a midnight reset. It stays below TerraBase's 1 MiB record limit. Every
 instance shares it; production Cloudflare delivery refuses startup outside GRU,
 matching the current GRU-only auth decision. Regional serving requires a different
 coordination design. Storage errors fail closed. No process-local lock is authority.

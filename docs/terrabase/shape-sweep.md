@@ -1,7 +1,7 @@
 # Shape sweep: durable discovery of retired shape handles
 
 Issue: [#277](https://github.com/TerraScale/terrascale/issues/277). Implements
-[retired-shape-discovery-design.md](retired-shape-discovery-design.md), whose "not authorized"
+[shape retention](shape-retention.md), whose "not authorized"
 status the maintainer lifted for this change. Mirrored Tigris objects, object URLs, sealed bytes
 and retention floors keep their meaning; no storage format bump and no migration or reset.
 
@@ -32,9 +32,9 @@ fixed for the process lifetime, so it comes from the writer's own replica.
 Every other consumer selects `_tb_shape_chunk` and `_tb_shape_snapshot` rows by an exact canonical
 handle (`h1-` and 16 hex digits), which never starts with `~`: chunk reads, fresh bodies, snapshot due
 checks and pages, retention trim, the mirror (`ShapeMirror` reads chunks, pages and floors by handle),
-the durable frontier (`~frontier` only). Storage-quota usage sums document bodies only. Shape writes,
+the durable frontier (`~frontier` only). Storage-quota usage sums record bodies only. Shape writes,
 records included, run with capture suspended, so they are never replicated or shipped to backup.
-Copies, backups and restores skip both tables (`TursoCopy`), so records never leave the file. Deleting a
+Copies, backups and restores skip both tables, so records never leave the file. Deleting a
 table or database leaves derived rows for the sweep, or removes the file. No canonical body or URL
 changes.
 
@@ -117,7 +117,7 @@ The sweep does not take request admission (`IQosAdmission`). Request slots and t
 background pass would spend them and could be blocked behind a customer's exhausted quota, which must
 never stop cleanup, and admitting a listed database would apply a placeholder plan that rewrites the
 organization's lane and can reset a paid burst. The sweep is bounded instead by the storage engine's
-`TursoIoPool` (plan limits, a fair per-organization weighted queue, the QoS context captured per
+the native I/O pool (plan limits, a fair per-organization weighted queue, the QoS context captured per
 transaction), the tenant's bulk memory share, one database and one transaction at a time, listing pages of
 at most 16 handles from 5 indexed `LIMIT 1` metadata seeks each and at most 64 pages, 1,024 rows and 8 MiB
 per database per minute, with memory released between batches.

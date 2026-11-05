@@ -44,7 +44,7 @@ before relying on it. The requested destinations are:
   (`ts-replay: region=<home>,<replica>,...`, `421 wrong_region`, [cross-region.md](cross-region.md));
 - a Management change of a database managed elsewhere (create, update, branch, delete, imports): its home region only
   (`ts-replay: region=<home>`);
-- a changes-feed resume landing on another machine than its cursor's issuer:
+- a shape-stream resume landing on another machine than its cursor's issuer:
   `ts-replay: region=<issuer region>;instance=<issuer machine>;fallback=self` (no replay when the issuer is not listed);
 - a mismatched `X-TerraScale-Region-Pin` naming a single well-formed region: `ts-replay: region=<pin>`;
 - a regional host landing in another region: `ts-replay: region=<host region>;fallback=self`.

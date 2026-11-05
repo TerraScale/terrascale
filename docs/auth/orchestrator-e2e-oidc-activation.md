@@ -1,7 +1,7 @@
 # Orchestrator E2E OIDC activation contract
 
 This is the implementation contract for the approved read-only policy in
-`oidc-e2e-trust-review.md`. That document retains the historical review state;
+`oidc-e2e-trust-review.md`. That guide retains the historical review state;
 the implementation alone does not activate a client, provision targets, or prove
 production readiness. The parent/operator owns provisioning, CI and activation.
 
@@ -78,7 +78,7 @@ an immutable workflow revision: retain its reviewed source SHA in activation evi
 
 | Exercise | Expected |
 |---|---|
-| Exact assertion, live existing bound target | Token; selected database document read succeeds |
+| Exact assertion, live existing bound target | Token; selected database record read succeeds |
 | Wrong/missing/non-scalar subject, environment, workflow, event, ref, repository/owner ID or name | `invalid_grant` |
 | Any present reusable workflow claim, including matching string/null/array | `invalid_grant` |
 | Wrong/missing/non-scalar issuer/audience, bad algorithm/key/signature, absent expiry, expired or premature assertion beyond skew | `invalid_grant` |
@@ -88,13 +88,13 @@ an immutable workflow revision: retain its reviewed source SHA in activation evi
 | Writes, database/admin/key/identity/offline scopes requested | Denied (`invalid_request` by OpenIddict or `invalid_scope`) |
 | Signed caller-supplied tenant/database/admin/scope claims | Cannot alter output target, scopes or role |
 | Token used for another project/database or management API | TerraBase denies; target isolation returns 404 |
-| Token used for document/database writes | TerraBase denies; no mutation |
+| Token used for record/database writes | TerraBase denies; no mutation |
 | Deadline approached / reached | Token expiry capped to deadline; exchanges at/after deadline denied |
 | Missing bind arguments, invalid ULIDs/name/time, nonexistent or mismatched target, deadline beyond 24 hours, rebind to different target/deadline | Command fails; no replacement binding |
 
 Fast HTTP tests cover exchange/binding/claims/replay/time boundaries against real
 auth and TerraBase storage with a fake GitHub discovery/JWKS transport. The real
-auth-to-TerraBase `UserAuthTests` case covers selected document reads, cross-target,
+auth-to-TerraBase `UserAuthTests` case covers selected record reads, cross-target,
 write and management denial using a separate fixture-only project credential to
 seed data. Parent CI must validate both changed suites; no live activation is
 implied by those synthetic integration tests.

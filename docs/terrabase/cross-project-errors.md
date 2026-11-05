@@ -13,7 +13,7 @@ someone else, which lets a key enumerate other tenants' project and database ide
 reserved for a resource the credential does reach but an operation it may not perform. This is
 the contract; a QA expectation of "wrong project → 403" is not met by relabelling and must not be.
 
-## HTTP data protocols (documents, HTTP SQL)
+## HTTP data protocols (records, HTTP SQL)
 
 | Case | Status | `code` | Message |
 | --- | --- | --- | --- |
@@ -22,8 +22,8 @@ the contract; a QA expectation of "wrong project → 403" is not met by relabell
 | Database reached, scope missing (for example a write with a `sql:read` key) | `403` | `forbidden_scope` | names the missing scope |
 | The key's IP allowlist refuses the client | `403` | `ip_not_allowed` | names the client address |
 
-- The `404` holds for every route under `/v1/projects/{project}/databases/{database}`: documents,
-  collections, export, changes and `sql/execute`. Whether
+- The `404` holds for every route under `/v1/projects/{project}/databases/{database}`: records,
+  tables, export, changes and `sql/execute`. Whether
   the route names another project's database by name or by ULID, or names another project's ULID
   in the caller's own project route, nothing in the answer differs from a missing database, and
   nothing is read or changed there.
@@ -57,7 +57,7 @@ cannot tell another tenant's database from a missing one.
 
 - `tests/TerraBase.Fast/Management/CrossProjectErrorTests.cs`: foreign database by name and ULID,
   through the foreign and the caller's project route, against absent databases and projects, on
-  collections, collection delete, export and HTTP SQL; the foreign database is
+  tables, table delete, export and HTTP SQL; the foreign database is
   unchanged afterwards.
 - `tests/TerraBase.Fast/Postgres/PostgresWireTests.cs`
   `Wrong_keys_unknown_databases_and_unreached_databases_fail_alike`: `28P01` for all three.

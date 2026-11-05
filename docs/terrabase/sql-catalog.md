@@ -1,8 +1,7 @@
 # SQL catalog (PIVOT E2)
 
 TerraBase keeps its catalog of organizations, projects and databases in native SQL tables inside each node's system
-database (`_system.db`, encrypted and WAL like every database file). Catalog rows are not documents and no lattice
-state is involved. Code in `Features/Management/CatalogTables.cs` owns every statement.
+database (`_system.db`, encrypted and WAL like every database file). Catalog entries are SQL rows. Code in `Features/Management/CatalogTables.cs` owns every statement.
 
 ## Tables
 

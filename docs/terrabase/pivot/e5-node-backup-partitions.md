@@ -1,6 +1,6 @@
 # Node identity in local backup object keys
 
-After removal of leaderless replication, every serving node ships its own local files. Equal organization, project and database identifiers do not establish shared backup history: system catalogs and platform databases can contain different data on independent nodes.
+After removal of multi-origin replication, every serving node ships its own local files. Equal organization, project and database identifiers do not establish shared backup history: system catalogs and platform databases can contain different data on independent nodes.
 
 The file roots are now:
 
@@ -13,6 +13,6 @@ Shipping, progress lookup, `/v1/backup` file names, restore windows and plans, h
 
 Project key scopes remain `v1/keys/<organization>/<project>/`; system keys remain `v1/keys/_system/`. Independent nodes may use the same wrapped project key. Backup authentication binds ciphertext to its complete object key, including the node partition. Keys are not deleted by ordinary per-file retention. Project crypto-erasure still covers every node through the project data and key prefixes, and database purge still inventories the parent database prefix across every node. Customer destination probes and `BackupTargets` continue to enforce the existing organization/project data and key boundaries; adding the suffix grants no access outside those boundaries.
 
-This is a greenfield object-key compatibility break. Unpartitioned histories are neither selected nor migrated, and there is no fallback to the earlier keys. Re-bootstrap the backup inventory as part of the pivot reset. Snapshot bundles, log encoding, key encoding and Turso storage format are unchanged; `StorageFormat` remains 19. Tools that audit a single file must pass the complete node-qualified root.
+This is a greenfield object-key compatibility break. Unpartitioned histories are neither selected nor migrated, and there is no fallback to the earlier keys. Re-bootstrap the backup inventory as part of the pivot reset. Snapshot bundles, log encoding, key encoding and the engine storage format are unchanged; `StorageFormat` remains 19. Tools that audit a single file must pass the complete node-qualified root.
 
-`BackupNodeIsolationTests` covers platform-only, customer-only and mirrored destinations using separate real hosts, listeners and Turso directories with equal database IDs and different stable node identities. It writes divergent snapshots and log updates, restores each history through HTTP, checks drills and progress, and verifies one node's retention expires its own baseline while preserving the other node's objects and restore.
+`BackupNodeIsolationTests` covers platform-only, customer-only and mirrored destinations using separate real hosts, listeners and the engine directories with equal database IDs and different stable node identities. It writes divergent snapshots and log updates, restores each history through HTTP, checks drills and progress, and verifies one node's retention expires its own baseline while preserving the other node's objects and restore.

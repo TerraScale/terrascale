@@ -12,7 +12,7 @@ project or key has been approved or provisioned by this work.
 - Reviewed TerraScale/terrascale main `49e32e99c`; PR #124 merged inert preparation
   as `20afa8cdee150ab193f3534c54a58e91ad8b4e5e` on 2026-10-12. Current code still
   pins `TerraScale/terrascale` (repository `1414527764`), `ci.yml`, `push`, and
-  `refs/heads/main`. Its grant allows database/document reads and writes. Do not
+  `refs/heads/main`. Its grant allows database/record reads and writes. Do not
   repurpose that binding for the read-only orchestrator consumer.
 - The actual consumer is `TerraScale/ts-orchestrator/.github/workflows/e2e.yml`,
   job `prod`: `workflow_dispatch`, `inputs.target == 'prod'`, main, environment

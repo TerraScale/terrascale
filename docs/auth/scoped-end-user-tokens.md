@@ -78,12 +78,7 @@ lifetime, ULID subject and equality of `instance_id`/`project_id`. It rejects
 unknown token kinds, malformed roles, anonymous identities and end-user tokens
 carrying administrator or scope claims. A `database` claim narrows the token to that database.
 
-Authenticated end users enter only document, transaction, shape and database-change
-routes. SQL, management, collection metadata and export routes remain forbidden.
-The document read/write scopes synthesized by TerraBase admit those routes;
-collection rules authorize each data operation and deny when rules are absent.
-The identity passed to rules is
-`ProjectAccess { IsEndUser=true, Actor=sub, Roles=trusted ordinal set }`.
+Authenticated end users may read SQL shapes only when a table read grant authorizes them. SQL execution and management require project credentials. A token's database and table claims narrow its reach; they never replace the table grant. The identity used for grant evaluation is `ProjectAccess { IsEndUser=true, Actor=sub, Roles=trusted ordinal set }`.
 Anonymous requests remain unauthenticated. Existing project grant tokens keep
 their current validation and scope behavior. TerraBase stores no copy of end-user
 accounts or role membership.

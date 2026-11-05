@@ -1,7 +1,7 @@
 # Home apply (PIVOT R6)
 
 A database's home applies transactions that committed in another region (D4, D5). This is TerraBase's own apply:
-Turso's push and its server-side apply are never used (D14). R7 (streaming push over JetStream) delivers transactions
+the engine's push and its server-side apply are never used (D14). R7 (streaming push over JetStream) delivers transactions
 to this API; until R7 lands, the internal HTTP endpoint below is the only producer.
 
 ## Guarantees
@@ -13,7 +13,7 @@ to this API; until R7 lands, the internal HTTP endpoint below is the only produc
   storage fault, shutting down) answers an error, and the same transaction can be sent again.
 - **Exactly once.** The transaction id is the dedupe key. Sending an applied or reverted transaction again returns its
   recorded state and changes nothing.
-- **Column last-writer-wins by HLC (D21).** Each column of each row keeps the stamp of its last write: the writer's
+- **Column conflict resolution by HLC (D21).** Each column of each row keeps the stamp of its last write: the writer's
   [`HlcTimestamp`](hlc-clock.md), ordered by milliseconds, logical counter, then node id (ordinal) as the tie-breaker. A change to a column applies only when its stamp is greater.
   A losing column is not applied and is recorded in `terrascale.conflicts` as `superseded`, with its value.
 - **Delete tombstones.** A delete keeps a tombstone with its stamp, so an older insert or update of that row cannot

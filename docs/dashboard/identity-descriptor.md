@@ -12,7 +12,7 @@ ts-orch reads production secrets from OCI Vault in gru using instance principal
 and delivers protected files named by `<NAME>_FILE`. The app supports those files
 and direct environment values for test hosts. There is no default; startup fails
 closed on missing or invalid secrets, and values are never logged.
-CI secrets remain in GitHub Actions secrets. This document provisions nothing.
+CI secrets remain in GitHub Actions secrets. This guide provisions nothing.
 All five secrets are required in Development too; test-only hosts supply synthetic identities.
 
 | Environment variable | Format checked by the app | Used for | Issued by |
@@ -74,7 +74,7 @@ A plan's member allowance (Starter: 5, pending invitations included) limits
 the invitations the dashboard sends. ts-auth does not enforce it.
 
 1. Each dashboard invitation takes a reservation in the organization's state
-   document, in the same compare-and-set that reads ts-auth's current members
+   record, in the same compare-and-set that reads ts-auth's current members
    and invitations. Occupied slots are distinct emails across members,
    invitations ts-auth lists as pending or expired, and reservations. ts-auth
    derives "expired" from its clock without storing it, so an expired
