@@ -13,7 +13,7 @@ snapshot bundles are themselves protected by the corresponding database envelope
 cannot restore a deleted customer's envelope key.
 
 The existing bucket identity supplies CRUD. The public shape WAF rejects key paths before cache lookup, and custody
-PUTs use `private, no-store`. There is no new credential, permission, bucket, setting or paid capacity.
+PUTs use `no-store`. There is no new credential, permission, bucket, setting or paid capacity.
 The prefix must have no versioning, copy lifecycle, backup or replication job. R2 does not implement S3 bucket versioning
 or bucket replication APIs. The live configuration inspection is recorded with the F11 evidence.
 
