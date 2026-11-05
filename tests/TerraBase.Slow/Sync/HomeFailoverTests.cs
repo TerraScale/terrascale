@@ -16,6 +16,7 @@ public sealed class HomeFailoverTests
 {
     private static readonly Faker Faker = new();
     private static readonly string[] SjcOnly = ["sjc"];
+    private static readonly Uri Unreachable = new("http://127.0.0.1:9/");
 
     [Test]
     public async Task A_home_cut_off_from_its_lease_store_mid_write_fails_over_keeping_every_acknowledged_write_and_refuses_writes_after_the_epoch_bump()
@@ -24,7 +25,7 @@ public sealed class HomeFailoverTests
         await using var nats = await JetStreamServer.StartAsync(token);
         await using var gruNats = new TcpGate(nats.Url.Port);
         using var issuer = new TestIssuer();
-        var mesh = new Mesh();
+        var mesh = new Mesh { Nodes = [("gru", Unreachable), ("sjc", Unreachable)] };
         await using var gru = await StartAsync("gru", issuer, mesh, new Uri($"nats://127.0.0.1:{gruNats.Port}"), nats.Token);
         await using var sjc = await StartAsync("sjc", issuer, mesh, nats.Url, nats.Token);
         mesh.Nodes = [("gru", gru.Server.BaseAddress), ("sjc", sjc.Server.BaseAddress)];
@@ -57,6 +58,9 @@ public sealed class HomeFailoverTests
         };
         var cut = 0;
         var ackedAfterCut = 0;
+        var pushed = new ConcurrentQueue<string>();
+        var pushedDuringCut = 0;
+        var unknown = 0;
         using var stop = new CancellationTokenSource();
         var writers = new[] { (all, "all"), (local, "local") }.Select(pair => Task.Run(async () =>
         {
@@ -79,6 +83,32 @@ public sealed class HomeFailoverTests
                     }
                 }
             }
+        }, token)).Append(Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                var row = "sjc-" + EntityIds.New();
+                using var response = await viaSjc.PostAsJsonAsync(all.Sql, new
+                {
+                    statements = new object[]
+                    {
+                        new { sql = "UPDATE tally SET n = n + 1 WHERE id = 1" },
+                        new { sql = "INSERT INTO acked (id) VALUES (?)", args = new[] { row } },
+                    },
+                }, token);
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    pushed.Enqueue(row);
+                    if (Volatile.Read(ref cut) == 1 && sjcLeases.Find(all.Id)?.Home != "sjc")
+                    {
+                        Interlocked.Increment(ref pushedDuringCut);
+                    }
+                }
+                else if ((int)response.StatusCode >= 500)
+                {
+                    Interlocked.Increment(ref unknown);
+                }
+            }
         }, token)).ToArray();
 
         await TerraBaseTestServer.EventuallyAsync(async _ => acked.Values.All(rows => rows.Count >= 10)
@@ -96,9 +126,14 @@ public sealed class HomeFailoverTests
         await stop.CancelAsync();
         await Task.WhenAll(writers);
 
+        await TerraBaseTestServer.EventuallyAsync(async _ => (await RowsAsync(viaSjc, all, token)).IsSupersetOf(pushed), TimeSpan.FromSeconds(30));
         var allStored = await RowsAsync(viaSjc, all, token);
         await Assert.That(acked[all.Id].Where(row => !allStored.Contains(row))).IsEmpty();
         await Assert.That(ackedAfterCut).IsEqualTo(0);
+        await Assert.That(pushed.Where(row => !allStored.Contains(row))).IsEmpty().Because("the new home applies the pushes its former home never consumed");
+        await Assert.That(pushedDuringCut).IsGreaterThan(0);
+        var tally = await TallyAsync(viaSjc, all, token);
+        await Assert.That(tally).IsBetween((long)pushed.Count, (long)pushed.Count + Volatile.Read(ref unknown)).Because("_ts_applied applies each pushed transaction once");
 
         var localStored = await RowsAsync(viaSjc, local, token);
         var order = acked[local.Id].ToList();
@@ -115,7 +150,15 @@ public sealed class HomeFailoverTests
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync(token));
         var database = new Database((await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!,
             ManagementApi.Uri($"/v1/projects/{project}/databases/{name}/sql/execute"));
-        using var table = await client.PostAsJsonAsync(database.Sql, new { statements = new[] { new { sql = "CREATE TABLE acked (id TEXT PRIMARY KEY)" } } }, token);
+        using var table = await client.PostAsJsonAsync(database.Sql, new
+        {
+            statements = new[]
+            {
+                new { sql = "CREATE TABLE acked (id TEXT PRIMARY KEY)" },
+                new { sql = "CREATE TABLE tally (id INTEGER PRIMARY KEY, n INTEGER NOT NULL)" },
+                new { sql = "INSERT INTO tally (id, n) VALUES (1, 0)" },
+            },
+        }, token);
         await Assert.That(table.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await table.Content.ReadAsStringAsync(token));
         return database;
     }
@@ -126,6 +169,13 @@ public sealed class HomeFailoverTests
         return read.StatusCode == HttpStatusCode.OK
             ? (await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows")[0][0].GetInt64()
             : -1;
+    }
+
+    private static async Task<long> TallyAsync(HttpClient client, Database database, CancellationToken token)
+    {
+        using var read = await client.PostAsJsonAsync(database.Sql, new { statements = new[] { new { sql = "SELECT n FROM tally WHERE id = 1" } } }, token);
+        await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await read.Content.ReadAsStringAsync(token));
+        return (await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows")[0][0].GetInt64();
     }
 
     private static async Task<HttpStatusCode> WriteAsync(HttpClient client, Database database, CancellationToken token)

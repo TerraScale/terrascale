@@ -364,7 +364,7 @@ internal sealed class HomeMoves(
             }
 
             await apply.PrepareAsync(database, CancellationToken.None).ConfigureAwait(false);
-            _ = DrainAsync(database, fromRegion);
+            _ = DrainAsync(database, fromRegion, placement.Version);
             return new HomePromoteAnswer(true);
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -381,14 +381,14 @@ internal sealed class HomeMoves(
         }
     }
 
-    private async Task DrainAsync(TenantContext database, string formerHome)
+    private async Task DrainAsync(TenantContext database, string formerHome, long fence)
     {
         var backoff = TimeSpan.FromMilliseconds(200);
         for (var attempt = 0; attempt < 60; attempt++)
         {
             try
             {
-                var drained = await pushes.DrainFormerHomeAsync(database, formerHome, CancellationToken.None).ConfigureAwait(false);
+                var drained = await pushes.DrainFormerHomeAsync(database, formerHome, fence, CancellationToken.None).ConfigureAwait(false);
                 logger.ZLogInformation($"A new home applied {drained} pushed transactions addressed to its former home");
                 return;
             }
