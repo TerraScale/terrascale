@@ -117,3 +117,5 @@ SJC failures at 19:34:36.61–19:34:55.05Z coincide with the afa0171a5 rollout: 
 DECISION: retain the agreed server p99 <100 ms target and client p99 <the admitted client host’s measured SELECT-1 baseline median +100 ms, plus first insert <300 ms. Reason: beta’s SJC/FRA network path alone is about 195–210 ms, and the user authorized mariogk-dev placement with its own baseline. Load clients never run on serving nodes.
 
 The next proof retains 100 SELECT-1 baselines before writes, sanitized SQL messages, issuer-exchange durations and precise UTC receipt times. No replacement live result is claimed in this section yet.
+
+A later independent public home-move run reproduced the same admission error without a rollout: SJC request `01M6PMJE24DEMZDJ63M4MDZ7CH`, 19:56:59.223754–19:56:59.425580Z, HTTP 400 `sql_error`, sanitized message `the database does not exist`, app 9.45 ms. All 45 acknowledged rows reconciled after the three moves. This strengthens the pre-replica routing diagnosis independently of the edge restart gap; [acceptance evidence](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6667871689).
