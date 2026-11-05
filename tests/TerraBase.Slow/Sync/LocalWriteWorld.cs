@@ -105,7 +105,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
             });
         var directory = Directory.CreateTempSubdirectory("terrabase-home-push-").FullName;
         var services = new ServiceCollection().AddSingleton(api.Server.Services.GetRequiredService<ITransactionCrypto>()).AddMetrics().AddSingleton<ILocalWriteClock>(new Admitted())
-            .AddSingleton(provider => new ShapeOverlay(Options(api, nats, "sjc", directory), TimeProvider.System,
+            .AddSingleton(provider => new ShapeOverlay(Options(api, nats, "sjc", directory), TimeProvider.System, provider.GetRequiredService<ITransactionCrypto>(),
                 NullLogger<ShapeOverlay>.Instance))
             .AddSingleton<ILocalCommitFeed>(provider => provider.GetRequiredService<ShapeOverlay>())
             .BuildServiceProvider();
