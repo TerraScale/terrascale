@@ -62,7 +62,7 @@ public interface ILocalCommitPath
 
     /// <summary>
     /// Whether a local commit is acknowledged on two nodes of the region (PIVOT D16): the region's second node answers and the
-    /// push stream is ready. Without it, only <c>durability=home</c> writes commit locally; the others go home.
+    /// push stream is ready and connected, and the clock is admitted. Without it, only <c>durability=home</c> writes commit locally; the others go home.
     /// </summary>
     bool TwoNodeAck { get; }
 }
