@@ -45,20 +45,22 @@ Buckets set up this way: `terrascale-gru-terrabase` (production gru), `ts-terrab
 
 ## Purge
 
-Every time the mirror deletes an object from an R2 bucket, the object's CDN URL is queued for a Cloudflare single-file
-purge (`ShapeCdnPurge`). The mirror deletes objects in three places:
+Every shape-object deletion first admits its exact URL to a durable outbox. A worker verifies R2 absence, purges the
+handle prefix through Cloudflare, checks both HTTP success and `success: true`, then requires a public GET of every
+URL to return 404 before clearing the batch. Prefix purging removes Origin variants and every cache tier.
 
-- the retention trim below a shape's floor;
-- the hourly sweep of objects older than 7 days, which also clears handles and tenants that no longer exist;
-- a just-uploaded object that is no longer retained.
+Database DELETE uses the private per-database ownership inventory, after joining regional publishers, so unrelated
+objects and the backup erasure backlog do not delay admission. Uploads and adoption record ownership before exposing
+an object in a manifest. The existing shared-inventory sweep recovers objects that predate this inventory.
 
-A background worker sends the queued URLs to `POST /zones/<terrascale.tech>/purge_cache`, 100 per request (Cloudflare's
-limit on every plan). It waits and retries a throttled or failed request up to 5 times. It gives up at once on any other
-4xx answer, such as a bad token.
+The healthy-provider deadline is **420 seconds after successful database DELETE** for current-service URLs in all
+three regions. The queue admits at most 2,000 URLs, oldest first, in batches of 100. Each pass has an 18-second budget
+on a two-second timer. Failed purge requests use backoff and preserve durable work; provider failures can exceed the
+deadline and are visible in queue age and failure metrics. Full admission refuses the object deletion and keeps its
+ownership authority. See [F11](crypto-shredding-f11.md#cdn-deadline-after-delete) for the bound and failure contract.
 
-The token is `cloudflare-api-token` (`TERRABASE_CLOUDFLARE_API_TOKEN`, or its `_FILE` from OCI Vault through ts-orch).
-It needs Zone Cache Purge on `terrascale.tech`. It is required with an R2 endpoint and refused with any other, so a node
-never links a CDN it cannot purge.
+The runtime token is `shapes-cdn-api-token` (`TERRABASE_SHAPES_CDN_API_TOKEN_FILE` from OCI Vault through ts-orch).
+It uses the existing Zone Cache Purge and Zone Analytics Read permissions on `terrascale.tech`.
 
 ## Metrics
 
@@ -75,11 +77,11 @@ never links a CDN it cannot purge.
 
 ## Limits
 
-- A purge can fail: Cloudflare keeps refusing, or the queue (4096 URLs) is full. Then the cached copy stays until
-  Cloudflare evicts it. It is ciphertext that no manifest lists any more. `terrabase.shape.cdn.purges{outcome}` counts
-  purged, failed and dropped URLs.
-- A deleted tenant's objects leave the bucket, and so the cache, with the hourly expiry sweep, at most 7 days after they
-  were sealed. They do not leave at the moment of deletion.
+- Provider failures retain the durable purge entry. The queue count, oldest age, per-attempt results and public
+  verification failures are exposed as `terrabase.shape.cdn.purge_pending`, `purge_oldest_age`, `purge_attempts` and
+  `purges`, respectively. A refused admission leaves the object for retry.
+- Never-published orphan objects and objects predating the ownership inventory still use the shared recovery sweep;
+  their admission time depends on the inventory and erasure backlog.
 - Anyone who knows an object's name can download its ciphertext. Object names come only from authenticated manifests.
   Opening the bytes still needs the epoch key from the authenticated key route.
 - Live polls at the head stay on the origin (`private, no-store`). T2 serves only catch-up reads of sealed objects.
