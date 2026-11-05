@@ -29,13 +29,13 @@ public class LoggingBenchmarks
     public void PlainMessageZLog() => _logger.ZLogInformation($"Request finished");
 
     [Benchmark]
-    public void ThreeFields() => _logger.LogInformation("Request {Method} {Path} finished in {ElapsedMs} ms", "GET", "/v1/documents", 12.5);
+    public void ThreeFields() => _logger.LogInformation("Request {Method} {Path} finished in {ElapsedMs} ms", "POST", "/v1/projects/bench/databases/bench/sql/execute", 12.5);
 
     [Benchmark]
     public void ThreeFieldsZLog()
     {
-        var method = "GET";
-        var path = "/v1/documents";
+        var method = "POST";
+        var path = "/v1/projects/bench/databases/bench/sql/execute";
         var elapsedMs = 12.5;
         _logger.ZLogInformation($"Request {method:@Method} {path:@Path} finished in {elapsedMs:@ElapsedMs} ms");
     }
@@ -44,17 +44,17 @@ public class LoggingBenchmarks
     public void HotRequest()
     {
         using var activity = new Activity("request").Start();
-        using var scope = _logger.BeginScope(new Dictionary<string, object> { ["RequestId"] = "r-1", ["RequestPath"] = "/v1/documents" });
-        _logger.LogWarning("Request {Method} {Path} finished in {ElapsedMs} ms", "GET", "/v1/documents", 12.5);
+        using var scope = _logger.BeginScope(new Dictionary<string, object> { ["RequestId"] = "r-1", ["RequestPath"] = "/v1/projects/bench/databases/bench/sql/execute" });
+        _logger.LogWarning("Request {Method} {Path} finished in {ElapsedMs} ms", "POST", "/v1/projects/bench/databases/bench/sql/execute", 12.5);
     }
 
     [Benchmark]
     public void HotRequestZLog()
     {
         using var activity = new Activity("request").Start();
-        using var scope = _logger.BeginScope(new Dictionary<string, object> { ["RequestId"] = "r-1", ["RequestPath"] = "/v1/documents" });
-        var method = "GET";
-        var path = "/v1/documents";
+        using var scope = _logger.BeginScope(new Dictionary<string, object> { ["RequestId"] = "r-1", ["RequestPath"] = "/v1/projects/bench/databases/bench/sql/execute" });
+        var method = "POST";
+        var path = "/v1/projects/bench/databases/bench/sql/execute";
         var elapsedMs = 12.5;
         _logger.ZLogWarning($"Request {method:@Method} {path:@Path} finished in {elapsedMs:@ElapsedMs} ms");
     }
