@@ -1,5 +1,5 @@
 using System.Net.Http.Headers;
-using Bogus;
+using System.Security.Cryptography;
 using Google.Protobuf;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -37,11 +37,10 @@ internal static class SyncReplicas
     {
         const int RowBytes = 3000;
         const int RowsPerStatement = 300;
-        var faker = new Faker();
         for (long written = 0; written < bytes; written += RowBytes * RowsPerStatement)
         {
             await server.ExecuteAsync(database, "INSERT INTO items(id, tenant, v) VALUES "
-                + string.Join(", ", Enumerable.Range(0, RowsPerStatement).Select(_ => $"('{EntityIds.New()}', '{database.DatabaseId}', '{faker.Random.AlphaNumeric(RowBytes)}')")));
+                + string.Join(", ", Enumerable.Range(0, RowsPerStatement).Select(_ => $"('{EntityIds.New()}', '{database.DatabaseId}', '{Convert.ToHexString(RandomNumberGenerator.GetBytes(RowBytes / 2))}')")));
         }
     }
 
