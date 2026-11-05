@@ -159,7 +159,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
     private async Task StartCoreAsync(CancellationToken token)
     {
         // ts-auth's own storage, not the TerraBase under test: a project database on another TerraBase from this commit,
-        // reached through its internal listener as the platform operator. ts-auth creates its collections itself; its first
+        // reached through its internal listener as the platform operator. ts-auth creates its SQL tables itself; its first
         // signing key comes from the operator provisioning below.
         _storage = await TerraBaseTestServer.StartAsync(cancellationToken: token);
         var management = new TerraBaseManagementClient(_storage.Client, new TerraBaseManagementClientOptions { BaseAddress = _storage.BaseAddress });
