@@ -70,13 +70,11 @@ manifest={'schema':'terrascale.dashboard-qualification/v1','revision':sys.argv[2
           'qualificationLogSha256':hashlib.sha256((root/'dashboard-qualification.log').read_bytes()).hexdigest()}
 (root/'dashboard-qualification.json').write_text(json.dumps(manifest,indent=2)+'\n')
 PY
-if ! gh release create "dashboard/qualified-$revision" --repo TerraScale/terrascale --target "$revision" \
-  --prerelease --title "Dashboard qualified $revision" \
-  --notes "Dev-host validation and source-bound portable application for $revision." \
+if ! python3 scripts/ci/proof_release.py publish "$revision" dashboard \
   "$workspace/dashboard-publish.tar.gz" "$workspace/dashboard-qualification.json" "$workspace/dashboard-qualification.log"; then
     mkdir "$workspace/existing"
-    gh release download "dashboard/qualified-$revision" --repo TerraScale/terrascale --dir "$workspace/existing" \
-      --pattern dashboard-publish.tar.gz --pattern dashboard-qualification.json --pattern dashboard-qualification.log
+    python3 scripts/ci/proof_release.py download "$revision" dashboard "$workspace/existing" \
+      dashboard-publish.tar.gz dashboard-qualification.json dashboard-qualification.log
     gh api --paginate --slurp "repos/TerraScale/terrascale/commits/$revision/statuses?per_page=100" > "$workspace/existing/statuses.json"
     python3 - "$workspace" "$revision" <<'PY'
 import hashlib, json, pathlib, sys, tarfile
@@ -91,7 +89,7 @@ assert hashlib.sha256((existing / 'dashboard-qualification.log').read_bytes()).h
 statuses = [status for page in json.loads((existing / 'statuses.json').read_text()) for status in page]
 proof = next(status for status in statuses if status['context'] == 'dashboard-release/dashboard')
 assert proof['state'] == 'success' and proof['creator']['login'].lower() == 'mariogk'
-assert proof['target_url'] == f'https://github.com/TerraScale/terrascale/releases/tag/dashboard/qualified-{sys.argv[2]}'
+assert proof['target_url'] == f'https://github.com/TerraScale/terrascale/releases/tag/ci/qualified-{sys.argv[2]}'
 with tarfile.open(archive) as package:
     files = {}
     for member in package.getmembers():
@@ -109,4 +107,4 @@ fi
 gh api --method POST "repos/TerraScale/terrascale/statuses/$revision" \
   -f state=success -f context=dashboard-release/dashboard \
   -f description='Dashboard release checks and exact application bytes passed on a dev host' \
-  -f "target_url=https://github.com/TerraScale/terrascale/releases/tag/dashboard/qualified-$revision" --silent
+  -f "target_url=https://github.com/TerraScale/terrascale/releases/tag/ci/qualified-$revision" --silent

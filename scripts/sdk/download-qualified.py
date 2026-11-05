@@ -15,8 +15,8 @@ def main(language, revision, destination):
                     f"sdk-{language}", revision, "--release"], check=True)
     output = Path(destination).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["gh", "release", "download", f"sdk/{language}/qualified-{revision}",
-                    "--repo", "TerraScale/terrascale", "--dir", str(output)], check=True)
+    subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "ci/proof_release.py"),
+                    "download", revision, f"sdk-{language}", str(output)], check=True)
     manifest = json.loads((output / "qualification.json").read_text())
     if manifest["revision"] != revision or manifest["language"] != language or not re.fullmatch(r"0\.0\.[0-9]+", manifest["version"]):
         raise SystemExit("Qualified artifact identity differs from the requested release")

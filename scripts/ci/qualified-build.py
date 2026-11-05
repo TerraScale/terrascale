@@ -12,6 +12,8 @@ import tempfile
 import time
 import urllib.request
 
+from proof_release import download as download_proof, publish as publish_proof, tag_for
+
 REPO = 'TerraScale/terrascale'
 
 
@@ -81,8 +83,12 @@ def verify(area, sha, directory, require_fast=True):
         if not trusted(fast) or not timing or Decimal(timing[1]) >= Decimal(30):
             raise ValueError(f'No trusted Fast proof with enforced 30s/10s budgets for {area}')
         print(f'{area}: {fast["description"]}', flush=True)
-    gh('release', 'download', f'ci/qualified-{sha}-{area}', '--repo', REPO,
-       '--pattern', 'manifest.json', '--dir', str(directory))
+    expected_url = f'https://github.com/{REPO}/releases/tag/{tag_for(sha)}'
+    legacy_url = f'https://github.com/{REPO}/releases/tag/ci/qualified-{sha}-{area}'
+    if build.get('target_url', legacy_url) not in {expected_url, legacy_url}:
+        raise ValueError('Unexpected checked-build release identity')
+    legacy = f'ci/qualified-{sha}-{area}' if build.get('target_url', legacy_url) == legacy_url else None
+    download_proof(sha, area, directory, ['manifest.json'], legacy_tag=legacy)
     path = directory / 'manifest.json'
     if digest(path) != match[1]:
         raise ValueError('Checked-build manifest digest mismatch')
@@ -134,7 +140,7 @@ def prepare(area, sha, directory):
                 'files': {path.name: digest(path) for path in files}}
     path = directory / 'manifest.json'
     path.write_text(json.dumps(manifest, sort_keys=True) + '\n')
-    tag = f'ci/qualified-{sha}-{area}'
+    tag = tag_for(sha)
     # Existing exact-commit receipts are immutable. Reuse them after rerunning Fast.
     with tempfile.TemporaryDirectory(prefix='ci-receipt-') as scratch:
         try:
@@ -143,9 +149,7 @@ def prepare(area, sha, directory):
             return
         except (ValueError, subprocess.CalledProcessError):
             pass
-    gh('release', 'create', tag, '--repo', REPO, '--target', sha, '--prerelease',
-       '--title', f'CI checked {area} {sha}', '--notes', f'Dev-host checked build for {sha}.',
-       str(path), *(str(file) for file in files))
+    publish_proof(sha, area, [path, *files])
     gh('api', '--method', 'POST', f'repos/{REPO}/statuses/{sha}', '-f', 'state=success',
        '-f', 'context=ci-build/' + area, '-f', 'description=Checked build; manifest sha256 ' + digest(path),
        '-f', f'target_url=https://github.com/{REPO}/releases/tag/{tag}', '--silent')

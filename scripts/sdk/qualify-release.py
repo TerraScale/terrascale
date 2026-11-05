@@ -60,10 +60,8 @@ def main(language):
             raise SystemExit("Qualification produced no package artifacts")
         manifest = {"revision": revision, "language": language, "version": version, "files": files}
         (output / "qualification.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        tag = f"sdk/{language}/qualified-{revision}"
-        run("gh", "release", "create", tag, "--repo", "TerraScale/terrascale", "--target", revision,
-            "--prerelease", "--title", f"{language} {version} qualified artifacts", "--notes",
-            f"Dev-host release qualification for {revision}. Package hashes are in qualification.json.",
+        tag = f"ci/qualified-{revision}"
+        run(sys.executable, str(ROOT / "scripts/ci/proof_release.py"), "publish", revision, f"sdk-{language}",
             *[str(path) for path in output.iterdir() if path.is_file()])
         run("gh", "api", f"repos/TerraScale/terrascale/statuses/{revision}", "-f", "state=success",
             "-f", f"context=sdk-release/sdk-{language}", "-f", f"description=Release gates and exact package bytes qualified ({version})",

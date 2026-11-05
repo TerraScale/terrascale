@@ -37,7 +37,7 @@ def main():
         raise SystemExit('Qualify this exact documentation revision on a dev host first')
     with tempfile.TemporaryDirectory(prefix='terrascale-docs-deploy-') as temporary:
         output = Path(temporary)
-        run('gh', 'release', 'download', f'docs/qualified-{revision}', '--repo', 'TerraScale/terrascale', '--dir', temporary)
+        run(sys.executable, str(ROOT / 'scripts/ci/proof_release.py'), 'download', revision, 'docs', temporary, 'site.tar.gz', 'site-manifest.json')
         manifest = json.loads((output / 'site-manifest.json').read_text())
         if manifest['revision'] != revision or manifest['sourceDirectory'] != 'docs-site':
             raise SystemExit('The artifact identifies a different source revision')
