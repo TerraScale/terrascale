@@ -138,3 +138,9 @@ Docs audit candidate `9385e943b` passed all assertions but its portability case 
 
 
 The remaining benchmark subtest groups passed three admitted beta repeats after adding parallel execution only: suite 10.278, 9.859, 5.928 s; maximum case 4.720, 5.170, 3.030 s, respectively. All 178 Go test/subtest results passed in each repeat. The fixture and assertion bodies remain unchanged.
+
+## Follow-up: the 16.542-second TerraBase observation
+
+The 75-case candidate `e82ec484f` took 25.823 seconds and had a 16.542-second maximum for `A_cut_link_loses_nothing_a_pull_while_pending_applies_nothing_twice_and_redelivery_applies_once`. It is rejected timing proof. The complete multi-host JetStream local-write/cut-link drill subsequently moved unchanged to Slow in `01ce035ae` (rebased move source `47ee2a785`). Its independent Slow run passed both cases without skips, maximum 2.5474384 seconds, as recorded above. No assertion or recovery coverage was deleted.
+
+The restarted admitted proof at `99c979f19` passed the hard gates with 57 TerraBase Fast cases plus four driver cases: 8.285 seconds suite wall, maximum 4.291 seconds. The same audit passed all 12 areas' Fast timing checks. Docs and Dashboard subsequently failed artifact publication because their exact-source release tags already existed; those are failed overall qualifications, despite successful Fast phases. Their qualification helpers now verify an existing release's successful exact-revision proof and archive integrity before reusing it, after completing the fresh audits and tests. Published assets are never overwritten. The Docs archive also identifies the source in both built revision files; Dashboard binds every application file and its qualification log through hashes.
