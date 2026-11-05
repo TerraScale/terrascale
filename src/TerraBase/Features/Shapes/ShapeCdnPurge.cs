@@ -40,7 +40,6 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
     private static readonly TimeSpan FirstRetry = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(1);
     private const string Outbox = "shape_cdn_purges";
-    private string? _after;
     private long _pending;
     private long _oldestTicks;
     private readonly Counter<long> _attempts = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.shape.cdn.purge_attempts",
@@ -108,10 +107,9 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
         var work = inventory.Records.Select(record => (record.Id, Work: ReadWork(record.Json.Span))).ToArray();
         Interlocked.Exchange(ref _pending, work.Length);
         Interlocked.Exchange(ref _oldestTicks, work.Length == 0 ? 0 : work.Min(item => item.Work.QueuedAt.UtcTicks));
-        var page = work.Where(item => _after is null || string.CompareOrdinal(item.Id, _after) > 0).Take(BatchUrls).ToArray();
+        var page = work.OrderBy(item => item.Work.QueuedAt).ThenBy(item => item.Id, StringComparer.Ordinal).Take(BatchUrls).ToArray();
         if (page.Length == 0)
         {
-            _after = null;
             return;
         }
         var ready = new ConcurrentBag<(string Id, string Url, string Prefix)>();
@@ -128,7 +126,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
                 ready.Add((record.Id, url, url[8..(ObjectPrefix.Length + 20)]));
             }
         }).ConfigureAwait(false);
-        if (ready.Count > 0)
+        if (!ready.IsEmpty)
         {
             var batch = ready.Select(item => item.Prefix).Distinct(StringComparer.Ordinal).ToList();
             var success = await PurgeAsync(batch, token).ConfigureAwait(false);
@@ -162,7 +160,6 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
                 Interlocked.Add(ref _pending, -ready.Count);
             }
         }
-        _after = page.Length == BatchUrls ? page[^1].Id : null;
     }
 
     private ShapeCdnPurgeWork ReadWork(ReadOnlySpan<byte> json) => json[0] == (byte)'"'
