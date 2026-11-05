@@ -97,7 +97,6 @@ def worker(source):
                 if ok and (r=='gru' or 'home;dur=' not in timing and 'replica_open;dur=' in timing): break
             else: raise RuntimeError('replica did not become ready')
         c,h,last=clients[source]
-        attempt('warmup',source,lambda:c.database(config['database']).query('SELECT 1 AS ready'),last,source=source)
         for repeat in range(1,4):
             failures=0
             for n in range(100):
@@ -149,7 +148,19 @@ if __name__=='__main__':
                 h.close()
     for region in REGIONS:
         c,h,last=client(region)
-        try:attempt('inventory',region,lambda:c.database(config['database']).query('SELECT writer, body, COUNT(*) AS count, COUNT(DISTINCT id) AS distinct_ids FROM acceptance_rows GROUP BY writer, body ORDER BY writer, body'),last)
+        try:
+            attempt('inventory',region,lambda:c.database(config['database']).query('SELECT writer, body, COUNT(*) AS count, COUNT(DISTINCT id) AS distinct_ids FROM acceptance_rows GROUP BY writer, body ORDER BY writer, body'),last)
+            actual,ok=attempt('exact_inventory',region,lambda:c.database(config['database']).query('SELECT id, writer, sequence, body FROM acceptance_rows ORDER BY id'),last)
+            expected={x['id']:{'id':x['id'],'writer':x['region'],
+                'sequence':x['repeat']*1000+x['n'] if x['kind']=='write' else x['n'],
+                'body':'acceptance' if x['kind']=='write' else x['kind']}
+                for x in events if x['kind'] in ('write','home-durable','forced-home') and x['ok']}
+            by_id={row['id']:dict(row) for row in actual} if ok else {}
+            missing=sorted(expected.keys()-by_id.keys())
+            unexpected=sorted(by_id.keys()-expected.keys())
+            changed=sorted(key for key in expected.keys() & by_id.keys() if expected[key]!=by_id[key])
+            emit({'kind':'exact_comparison','region':region,'ok':ok and not missing and not unexpected and not changed and len(actual)==len(by_id),
+                'expected':len(expected),'actual':len(actual) if ok else 0,'missing':missing,'unexpected':unexpected,'changed':changed})
         finally:
             c.close()
             h.close()

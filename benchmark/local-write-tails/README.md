@@ -16,11 +16,11 @@ Every sample, response ID, route and server timing is retained. Read-only
 warmup waits for local replica reads. No insert warms the measured writer.
 One hundred reused-connection SELECT-1 requests measure each endpoint's client baseline before writes;
 the initial connection sample is retained separately. Read-only warmup follows
-baseline measurement so the first insert does not artificially start after an
-idle authentication-expiry gap. This does not change token validity.
+baseline measurement. The source then starts writes after the original cross-region
+read warmup; no extra source request refreshes authority immediately before its first insert.
 
 The harness also retains ten home-durable and ten forced-home samples per
-region and final inventories. These modes are separate from default local ack.
+region and final inventories with exact ID/value comparisons against every acknowledged write. These modes are separate from default local ack.
 A failed write or missing row remains in the evidence; it is not retried by the
 harness. The SDK's existing protocol-level resend behavior remains unchanged.
 
