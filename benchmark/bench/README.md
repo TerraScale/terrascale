@@ -5,6 +5,7 @@ Every measured run has a Markdown table, raw client JSONL and aggregate JSON in
 
 | Date | Evidence | Status |
 | --- | --- | --- |
+| 2026-11-05 | [Deleted shape CDN deadline (#1107)](2026-11-05-cdn1107.md) | 21/21 regional URLs 404 by 43.299 s; healthy-provider bound 420 s |
 | 2026-11-05 | [Fast suite budgets (#1084)](2026-11-05-fast-suite-budgets-1084.md) | All 12 admitted suites under 30 s; every case under 10 s |
 | 2026-11-05 | [Regional shape tails and bounded CDC](2026-11-05-regional-shape-tails-and-cdc.md) | Regional tails proven; retention follow-up in progress |
 | 2026-10-12 | [Replication baseline, local three regions, old engine](2026-10-12-repl-local-baseline.md) | 1M documents verified in every region; local, before design C |

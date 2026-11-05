@@ -125,3 +125,7 @@ DELETE returned 204 in 6.081s; subsequent regional reads, restore and key-releas
 scopes returned 404 and native files were absent. The previously cached CDN URL returned 404 in all three regions
 by 72.153s after the response. This is an observed sampling upper bound for that inventory, not a fixed provider-outage
 completion guarantee. The proof account closed in 2.654s and its private files were removed.
+
+The [#1107 correction and fresh live proof](../../benchmark/bench/2026-11-05-cdn1107.md) records bounded admission,
+checked Cloudflare acceptance and exact-URL verification. Seven previously cached URLs returned 404 in all three POPs
+by 43.299 seconds after DELETE; the original acceptance failure remains historical evidence.
