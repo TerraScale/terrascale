@@ -50,8 +50,53 @@ def trusted(row):
     return row and row['state'] == 'success' and row['creator']['login'].lower() == 'mariogk'
 
 
-def verify(area, sha, directory, require_fast=True):
-    rows = statuses(sha)
+def documentation(path):
+    """Match shipping's docs-only exception; application Markdown remains input."""
+    name = Path(path)
+    if path.startswith('.cos/') or name.name in {'AGENTS.md', 'CLAUDE.md'}:
+        return True
+    if path.startswith('docs-site/'):
+        return False
+    return ((path.startswith('docs/') and name.suffix.lower() in {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'})
+            or (name.suffix.lower() in {'.md', '.mdx', '.rst'}
+                and not path.startswith(('src/', 'tests/', 'scripts/', 'sdk/'))))
+
+
+def git(*args):
+    return subprocess.check_output(['git', *args], text=True).strip()
+
+
+def proof_source(area, sha):
+    """Find proof across docs-only parents; never replace a newer area result."""
+    current = sha
+    rows = statuses(current)
+    contexts = {'ci-build/' + area, 'ts-ship/' + area}
+    if contexts & rows.keys():
+        return current, rows
+    if git('rev-parse', 'HEAD') != sha:
+        raise ValueError('Inherited proof requires checkout of the requested revision')
+    # Actions checks out one commit. Fetch only a bounded ancestry and its trees;
+    # name-only diffs do not need historical blobs. No new token is required.
+    if git('rev-parse', '--is-shallow-repository') == 'true':
+        git('fetch', '--no-tags', '--filter=blob:none', '--depth=65', 'origin', sha)
+    for _ in range(64):
+        parents = git('rev-list', '--parents', '-n', '1', current).split()[1:]
+        if len(parents) != 1:
+            break  # Roots, shallow boundaries and merges need their own proof.
+        parent = parents[0]
+        paths = git('diff', '--name-only', '--no-renames', '-z', parent, current).split('\0')
+        if any(not documentation(path) for path in paths if path):
+            break
+        current = parent
+        rows = statuses(current)
+        if contexts & rows.keys():
+            return current, rows
+    raise ValueError(f'No checked-build proof across documentation-only parents for {area} at {sha}; run ts-ship on a dev host')
+
+
+def verify(area, sha, directory, require_fast=True, rows=None):
+    if rows is None:
+        rows = statuses(sha)
     build = rows.get('ci-build/' + area)
     if not trusted(build):
         raise ValueError(f'No trusted exact-commit checked build for {area} at {sha}; run ts-ship on a dev host')
@@ -148,7 +193,10 @@ def main():
             prepare(area, sha, Path(scratch))
     elif action == 'verify':
         with tempfile.TemporaryDirectory(prefix='ci-proof-') as scratch:
-            verify(area, sha, Path(scratch))
+            source, rows = proof_source(area, sha)
+            verify(area, source, Path(scratch), rows=rows)
+            if source != sha:
+                print(f'{area}: reused checked build and Fast proof from {source} for {sha}; documentation-only ancestry', flush=True)
     else:
         raise ValueError('Expected prepare or verify')
 
