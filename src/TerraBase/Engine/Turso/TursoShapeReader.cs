@@ -511,7 +511,48 @@ internal sealed partial class TursoShapeReader(
                 }
                 else
                 {
-                    key = rowKey is not null && local.TryGetValue(rowKey, out var inserted) ? inserted : ShapeNumber(change.RowId);
+                    if (rowKey is not null && local.TryGetValue(rowKey, out var inserted))
+                    {
+                        key = inserted;
+                    }
+                    else if (transaction.HomeAfter > 0)
+                    {
+                        key = ShapeNumber(change.RowId);
+                    }
+                    else if (values is not null && keyColumns.Count > 0)
+                    {
+                        // A receiver may have missed the insert, and the writer's replica rowid can belong to a
+                        // different home row. Local writes have an immutable declared primary key (PushChanges).
+                        var find = Command($"SELECT rowid FROM {Quote(shape.Table)} WHERE {string.Join(" AND ", keyColumns.Select(index => Quote(columns[index]) + " IS $k" + index.ToString(CultureInfo.InvariantCulture)))} LIMIT 1;");
+                        foreach (var index in keyColumns)
+                        {
+                            find.Parameters.AddWithValue("$k" + index.ToString(CultureInfo.InvariantCulture), values[index] ?? DBNull.Value);
+                        }
+
+                        if (find.ExecuteScalar() is long homeRow)
+                        {
+                            key = ShapeNumber(homeRow);
+                        }
+                        else if (change.Type == -1)
+                        {
+                            continue;
+                        }
+                        else
+                        {
+                            key = "~" + transaction.Id + "." + ShapeNumber(change.RowId);
+                        }
+                    }
+                    else
+                    {
+                        // A local transaction without a usable key cannot be mapped safely; use the home path.
+                        continue;
+                    }
+
+                    if (rowKey is not null && change.Type == 0)
+                    {
+                        local[rowKey] = key;
+                    }
+
                     if (change.Type == -1 && rowKey is not null)
                     {
                         _ = local.Remove(rowKey);
