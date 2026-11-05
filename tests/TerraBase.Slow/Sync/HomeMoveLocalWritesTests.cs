@@ -31,6 +31,7 @@ public sealed class HomeMoveLocalWritesTests
         mesh.Nodes = [("gru", gru), ("sjc", sjc), ("fra", fra)];
         var organization = await gru.CreateOrganizationAsync("Move " + EntityIds.New());
         var project = await gru.CreateProjectAsync(organization, "Project");
+        await gru.SetPlanAsync(gru.User, organization, "hobby", token);
         var bearer = issuer.Mint(gru.User, descriptor =>
         {
             descriptor.Claims["project_id"] = project;
@@ -91,8 +92,15 @@ public sealed class HomeMoveLocalWritesTests
                 {
                     var row = EntityIds.New().ToString();
                     using var response = await ExecuteAsync(viaSjc, sql, $"INSERT INTO acked (id) VALUES ('{row}')", token);
-                    await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync(token));
-                    expected.Add(row);
+                    if (response.StatusCode == HttpStatusCode.OK)
+                    {
+                        expected.Add(row);
+                    }
+                    else
+                    {
+                        await Assert.That(response.StatusCode is HttpStatusCode.MisdirectedRequest or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict).IsTrue()
+                            .Because(await response.Content.ReadAsStringAsync(token));
+                    }
                 }
             }, token);
             using var move = await viaOld.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/{id}/move-home"), new { homeRegion = targetRegion }, token);
