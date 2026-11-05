@@ -106,7 +106,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
                     builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Notifications.IAllowanceNotificationBackend, TestAllowanceNotifications>());
                     builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Support.ISupportMail, TestSupportMail>());
-                    // Test hosts report overage through UsageOverageReporter directly; the hourly worker would share the allowance feed.
+                    // Test hosts report overage through UsageOverageReporter directly; the hourly worker would share the allowance snapshot.
                     builder.Services.Remove(builder.Services.Single(service => service.ImplementationType == typeof(TerraScale.Dashboard.Features.Billing.UsageOverageWorker)));
                     builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(reporting)));
                     builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
@@ -286,7 +286,7 @@ namespace TerraScale.Dashboard.E2E.Demo
 
             if (scopes.Count == 0 || scopes.Any(scope => !ProjectScopes.Contains(scope)) || scopes.Distinct(StringComparer.Ordinal).Count() != scopes.Count)
             {
-                throw new HttpRequestException("Test project authority grants only distinct databases:* and documents:* scopes.");
+                throw new HttpRequestException("Test project authority grants only distinct databases:* and sql:* scopes.");
             }
 
             var role = projectRole(actor.UserId, organizationId, projectId);
