@@ -1,0 +1,27 @@
+{
+  "proof_started_at": "2026-11-05T16:49:40.355210+00:00",
+  "host": "delta",
+  "source": "674e09e10b64154fcb7a57b4f152b8a953f7c808",
+  "command": [
+    "ts-heavy-any",
+    "bash",
+    "-lc",
+    "set -eu\nproof_venv=$(mktemp -d)\ntrap 'rm -rf \"$proof_venv\"' EXIT\npython3 -m venv \"$proof_venv\"\n\"$proof_venv/bin/pip\" --disable-pip-version-check install -r benchmark/region-overlay-proof/requirements.txt\npython3 -c 'import datetime,json,socket,subprocess; print(json.dumps({\"proof_started_at\":datetime.datetime.now(datetime.timezone.utc).isoformat(),\"host\":socket.gethostname(),\"source\":subprocess.check_output([\"git\",\"rev-parse\",\"HEAD\"],text=True).strip()}),flush=True)'\n\"$proof_venv/bin/python\" benchmark/region-overlay-proof/run.py < \"$HOME/.local/state/ts-throwaway-account/f8-post23-20261105-proof.json\"\n",
+    "--repo",
+    "terrascale",
+    "--branch",
+    "main"
+  ],
+  "deployed_before": "20609ac990218fad93978b2121dc94b1d750ba5b",
+  "exit_code": 0,
+  "cleanup": {
+    "database_deleted": true,
+    "account_deleted": true,
+    "proof_credentials_removed_from": [
+      "delta",
+      "beta",
+      "mariogk-dev"
+    ],
+    "job_venv_removed_by_exit_trap": true
+  }
+}

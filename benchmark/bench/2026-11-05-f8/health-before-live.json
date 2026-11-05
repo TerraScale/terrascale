@@ -1,0 +1,35 @@
+[
+  {
+    "captured_at": "2026-11-05T16:49:19.503150+00:00",
+    "health": {
+      "status": "ok",
+      "version": "0.1.0",
+      "region": "gru",
+      "storageFormat": "23-41a88901325a",
+      "revision": "20609ac990218fad93978b2121dc94b1d750ba5b",
+      "machine": "ts-gru-1"
+    }
+  },
+  {
+    "captured_at": "2026-11-05T16:47:40.995137+00:00",
+    "health": {
+      "status": "ok",
+      "version": "0.1.0",
+      "region": "sjc",
+      "storageFormat": "23-41a88901325a",
+      "revision": "20609ac990218fad93978b2121dc94b1d750ba5b",
+      "machine": "ts-sjc-1"
+    }
+  },
+  {
+    "captured_at": "2026-11-05T16:47:41.137163+00:00",
+    "health": {
+      "status": "ok",
+      "version": "0.1.0",
+      "region": "fra",
+      "storageFormat": "23-41a88901325a",
+      "revision": "20609ac990218fad93978b2121dc94b1d750ba5b",
+      "machine": "ts-fra-1"
+    }
+  }
+]

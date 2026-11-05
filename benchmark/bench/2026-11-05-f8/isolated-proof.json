@@ -1,0 +1,30 @@
+{
+  "source": "495fe54bcc19b7b719163c14c09ff3eda7c1566f",
+  "host": "beta",
+  "completed_at": "2026-11-05T15:16:21.611369+00:00",
+  "runner": "ts-heavy-any",
+  "command": [
+    "make",
+    "terrabase-test-slow",
+    "TEST_ARGS=--treenode-filter /*/*/RegionShapeStreamTests/* --minimum-expected-tests 2"
+  ],
+  "tests": {
+    "total": 2,
+    "succeeded": 2,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 3357
+  },
+  "log_sha256": "c48f829d7fd9c96cf5ea101a9cdd1c37c1a8eb691b0d45207c7268cccac3c704",
+  "isolation": "One owned JetStream server; separate sjc writer and fra replica reader; only fra provisional TCP connection is cut; R7 and home HTTP page path remain available.",
+  "assertions": [
+    "Direct provisional delivery precedes starting home consumption",
+    "Home confirmation and home rejection settle provisional IDs",
+    "A missed insert cannot map an update onto an unrelated home rowid",
+    "Cut provisional connection falls back to home with exactly one row",
+    "Reconnected delayed delivery neither duplicates nor resurrects a settled row",
+    "Wire payload is TBP1 and rejects decryption after key destruction",
+    "Erasure purges the database provisional subject",
+    "Raw local rollout notices are excluded from retained provisional subjects"
+  ]
+}

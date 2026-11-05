@@ -1,0 +1,115 @@
+ts-heavy-any: beta ~/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce
+ts-slot: waiting for slot on beta: terrabase-test-slow needs threads=3000 mem=6.0G cpu=8; free threads=12151 mem=2.1G cpu=0.96; 1 running, priority=800, queue 2/3, waited 0s; busy_cpu=4.87 load1=3.66
+ts-slot: waiting for slot on beta: terrabase-test-slow needs threads=3000 mem=6.0G cpu=8; free threads=12164 mem=2.1G cpu=0.71; 1 running, priority=800, queue 2/6, waited 61s; busy_cpu=1.26 load1=7.21
+ts-slot: admitted terrabase-test-slow on beta after 99s (threads=3000 mem=6.0G cpu=8)
+ts-slot: reaped 2 leftover processes of terrabase-test-slow
+ts-slot: not learning from contended run of terrabase-test-slow
+ts-slot: terrabase-test-slow used peak threads=394 mem=2.4G cpu-peak=7.93 cpu-average=5 in 109s
+ts-slot: workspace cleanup: {"removed": 1, "kept_live": 0, "freed_bytes": 1105920, "free_percent": 73.5}
+{"removed": 0, "kept_live": 3, "freed_bytes": 0, "free_percent": 73.5}
+ts-heavy-any: local seed /home/mariogk/Projects/TerraScale/terrascale (200603 objects) in 5.063s
+dotnet restore TerraScale.slnx --locked-mode
+  Determining projects to restore...
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj (in 281 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj (in 297 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj (in 299 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj (in 303 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj (in 305 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj (in 5 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Authentication.Store/TerraScale.Authentication.Store.csproj (in 17 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj (in 24 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj (in 41 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraBase.Analyzers/TerraBase.Analyzers.csproj (in 91 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Authentication/TerraScale.Authentication.csproj (in 78 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj (in 390 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj (in 9 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj (in 28 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Dashboard/TerraScale.Dashboard.csproj (in 83 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraBase/TerraBase.csproj (in 114 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/vendor/Turso.Data.Sqlite/src/Turso.Data/Turso.Data.csproj (in 6 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.Fast/TerraBase.Fast.csproj (in 420 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Logging/TerraScale.Logging.csproj (in 13 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj (in 6 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj (in 6 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.Slow/TerraBase.Slow.csproj (in 437 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj (in 50 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj (in 34 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj (in 17 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj (in 15 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj (in 85 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraScale.Authentication.Slow/TerraScale.Authentication.Slow.csproj (in 99 ms).
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.E2E/TerraBase.E2E.csproj (in 130 ms).
+dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode
+  Determining projects to restore...
+  Restored /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj (in 40 ms).
+scripts/vendor/verify-turso-native.sh src/vendor/Turso.Data.Sqlite/native >/dev/null 2>&1 || scripts/vendor/download-turso-native.sh src/vendor/Turso.Data.Sqlite/native
+dotnet build terrabase.slnf --configuration Debug --no-restore
+/home/mariogk/.local/share/mise/dotnet-root/sdk/11.0.100-rc.3.26522.148/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets(385,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [/home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraBase.Analyzers/TerraBase.Analyzers.csproj]
+/home/mariogk/.local/share/mise/dotnet-root/sdk/11.0.100-rc.3.26522.148/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets(385,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [/home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj]
+/home/mariogk/.local/share/mise/dotnet-root/sdk/11.0.100-rc.3.26522.148/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets(385,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [/home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj]
+/home/mariogk/.local/share/mise/dotnet-root/sdk/11.0.100-rc.3.26522.148/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets(385,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [/home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.Slow/TerraBase.Slow.csproj]
+/home/mariogk/.local/share/mise/dotnet-root/sdk/11.0.100-rc.3.26522.148/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets(385,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [/home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.Fast/TerraBase.Fast.csproj]
+/home/mariogk/.local/share/mise/dotnet-root/sdk/11.0.100-rc.3.26522.148/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets(385,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [/home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.E2E/TerraBase.E2E.csproj]
+/home/mariogk/.local/share/mise/dotnet-root/sdk/11.0.100-rc.3.26522.148/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets(385,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [/home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj::TargetFramework=net11.0]
+/home/mariogk/.local/share/mise/dotnet-root/sdk/11.0.100-rc.3.26522.148/Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets(385,5): message NETSDK1057: You are using a preview version of .NET. See: https://aka.ms/dotnet-support-policy [/home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraBase/TerraBase.csproj]
+  TerraBase.Analyzers -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraBase.Analyzers/bin/Debug/netstandard2.0/TerraBase.Analyzers.dll
+  Turso.Raw -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/vendor/Turso.Data.Sqlite/src/Turso.Raw/bin/Debug/net11.0/Turso.Raw.dll
+  Turso.Data -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/vendor/Turso.Data.Sqlite/src/Turso.Data/bin/Debug/net11.0/Turso.Data.dll
+  TerraScale.TerraBase.Contracts -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.TerraBase.Contracts/bin/Debug/net11.0/TerraScale.TerraBase.Contracts.dll
+  Turso.Data.Sqlite -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/bin/Debug/net11.0/Turso.Data.Sqlite.dll
+  TerraScale.Endpoints.Generators -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Endpoints.Generators/bin/Debug/netstandard2.0/TerraScale.Endpoints.Generators.dll
+  TerraScale.Logging -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Logging/bin/Debug/net11.0/TerraScale.Logging.dll
+  TerraScale.Authentication.Contracts -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Authentication.Contracts/bin/Debug/net11.0/TerraScale.Authentication.Contracts.dll
+  TerraScale.TerraBase.Rpc -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.TerraBase.Rpc/bin/Debug/net11.0/TerraScale.TerraBase.Rpc.dll
+  TerraScale.Authentication.Security -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Authentication.Security/bin/Debug/net11.0/TerraScale.Authentication.Security.dll
+  TerraScale.DotNet -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/sdk/dotnet/src/TerraScale.DotNet/bin/Debug/net11.0/TerraScale.DotNet.dll
+  TerraScale.Endpoints -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Endpoints/bin/Debug/net11.0/TerraScale.Endpoints.dll
+  Turso.Data.Sqlite.Tests -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/Turso.Data.Sqlite.Tests/bin/Debug/net11.0/Turso.Data.Sqlite.Tests.dll
+  TerraScale.Authentication.Store -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Authentication.Store/bin/Debug/net11.0/TerraScale.Authentication.Store.dll
+  TerraBase -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraBase/bin/Debug/net11.0/terrabase.dll
+  TerraBase.E2E -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.E2E/bin/Debug/net11.0/TerraBase.E2E.dll
+  TerraBase.Fast -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.Fast/bin/Debug/net11.0/TerraBase.Fast.dll
+  TerraScale.Authentication -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/src/TerraScale.Authentication/bin/Debug/net11.0/ts-auth.dll
+  TerraBase.Slow -> /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.Slow/bin/Debug/net11.0/TerraBase.Slow.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:01:21.92
+dotnet run --project tests/TerraBase.Slow --configuration Debug --no-build --treenode-filter /*/*/RegionShapeStreamTests/* --minimum-expected-tests 2
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | NixOS 26.05 (Yarara) | linux-x64 | .NET 11.0.0-rc.3.26522.148 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+Suite runtime configuration: pid=3538419 cpus=8 server_gc=True latency_mode=Interactive total_available_memory_bytes=9663676416 tiered_pgo=configured:False ServerGC=True ConcurrentGC=True HeapCount=8 MaxHeapCount=0 GCDynamicAdaptationMode=1 GCHeapHardLimit=9663676416 GCHeapHardLimitPercent=0 GCHeapHardLimitSOH=0 GCHeapHardLimitLOH=0 GCHeapHardLimitPOH=0 GCHeapHardLimitSOHPercent=0 GCHeapHardLimitLOHPercent=0 GCHeapHardLimitPOHPercent=0 GCConserveMem=0 NoAffinitize=False GCHeapAffinitizeMask=0 GCCpuGroup=False RetainVM=False
+Suite cgroup limits: depth=0 path=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/ts-job-e9671acd-1793891572274627119-3503567.scope cpu_max=[max 100000] cpuset_cpus_effective=[-1] memory_max_bytes=max memory_high_bytes=max memory_swap_max_bytes=max
+Suite cgroup limits: depth=1 path=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice cpu_max=[max 100000] cpuset_cpus_effective=[-1] memory_max_bytes=max memory_high_bytes=max memory_swap_max_bytes=max
+Suite cgroup limits: depth=2 path=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service cpu_max=[max 100000] cpuset_cpus_effective=[-1] memory_max_bytes=max memory_high_bytes=max memory_swap_max_bytes=max
+Suite cgroup limits: depth=3 path=/sys/fs/cgroup/user.slice/user-1000.slice cpu_max=[max 100000] cpuset_cpus_effective=[-1] memory_max_bytes=12884901888 memory_high_bytes=10737418240 memory_swap_max_bytes=12884901888
+Suite cgroup limits: depth=4 path=/sys/fs/cgroup/user.slice cpu_max=[max 100000] cpuset_cpus_effective=[0-11] memory_max_bytes=12884901888 memory_high_bytes=10737418240 memory_swap_max_bytes=12884901888
+Suite cgroup limits: depth=5 path=/sys/fs/cgroup cpu_max=[-1] cpuset_cpus_effective=[0-11] memory_max_bytes=-1 memory_high_bytes=-1 memory_swap_max_bytes=-1
+Suite runtime pid=3538419 cpus=8 server_gc=True: elapsed_s,cpu_s,gc_pause_s,gen2,threads,queued_work,monitor_contentions,gc_index,gc_gen,gc_promoted_bytes,gc_pause0_ms,gc_pause1_ms,host_cpu_some_us,cgroup_cpu_some_us,cgroup_throttled_us,load1,allocated_bytes,heap_bytes,fragmented_bytes,committed_bytes,memory_load_bytes,memory_load_threshold_bytes,working_set_bytes,cgroup_memory_current_bytes,cgroup_swap_current_bytes,cgroup_memory_low,cgroup_memory_high,cgroup_memory_max,cgroup_memory_oom,cgroup_memory_oom_kill,cgroup_memory_oom_group_kill,host_memory_some_us,host_memory_full_us,cgroup_memory_some_us,cgroup_memory_full_us,cgroup_pgmajfault
+Suite runtime: 0.006,0.427,0.000,0,6,0,1,0,0,0,0.000,0.000,27831567333,19877023,0,10.05,2614120,0,0,0,0,11596411699,70135808,1035489280,0,0,0,0,0,0,0,2377429739,1915167491,13,9,51
+Suite runtime: 1.007,1.600,0.038,2,7,0,45,5,2,24516984,0.966,0.742,27831575111,19880496,0,10.05,33366776,24604024,654216,31027200,644245094,11596411699,191774720,1167523840,0,0,0,0,0,0,0,2377430394,1915168146,1279,1274,134
+Suite runtime: 2.008,3.567,0.042,4,9,0,99,7,2,44789552,0.655,2.166,27831583176,19886369,0,10.05,80603744,56619344,7289792,56860672,644245094,11596411699,253763584,1222131712,0,0,0,0,0,0,0,2377469205,1915206946,48226,48221,141
+Suite runtime: 3.007,5.292,0.065,5,9,0,132,9,0,12543728,18.472,0.000,27831588577,19890496,0,9.41,119694296,64736312,268816,88915968,773094113,11596411699,268554240,1241976832,0,0,0,0,0,0,0,2377469828,1915207569,48933,48928,152
+Suite runtime: 3.132,5.520,0.065,5,9,0,134,9,0,12543728,18.472,0.000,27831600703,19892928,0,9.41,130068472,64736312,268816,88915968,773094113,11596411699,276586496,1236062208,0,0,0,0,0,0,0,2377469828,1915207569,48933,48928,152
+
+  In process file artifacts produced:
+    - /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.Slow/bin/Debug/net11.0/TestResults/TerraBase.Slow-linux-net11.0-report.html
+
+Test run summary: Passed! - /home/mariogk/remote-builds/terrascale/wrk-f8-rollout-proof-20261105-a24b8eb7af612987a7a7dc7225a3d1f725610cbffb824e2de90293e716c31fce/tests/TerraBase.Slow/bin/Debug/net11.0/TerraBase.Slow.dll (net11.0|x64)
+  total: 2
+  failed: 0
+  succeeded: 2
+  skipped: 0
+  duration: 3s 357ms
