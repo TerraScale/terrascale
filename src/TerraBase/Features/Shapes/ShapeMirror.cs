@@ -780,6 +780,11 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             return;
         }
 
+        if (!uploaded)
+        {
+            await _objects.IndexAsync(key, owner, linked.Token).ConfigureAwait(false);
+        }
+
         lock (_gate)
         {
             if (_cache.Count >= CacheItems)
@@ -1043,8 +1048,7 @@ internal sealed class ShapeObjectStore : IDisposable
 
     public async Task<ShapeObjectHead> PutAsync(string key, ShapeObjectHead head, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
-        using var inventory = new MemoryStream();
-        await _objects.PutAsync(InventoryPrefix(head.Owner) + key["v1/shapes/".Length..], inventory, cancellationToken).ConfigureAwait(false);
+        await IndexAsync(key, head.Owner, cancellationToken).ConfigureAwait(false);
         if (!System.Runtime.InteropServices.MemoryMarshal.TryGetArray(bytes, out var segment))
         {
             throw new ArgumentException("shape ciphertext must be array-backed", nameof(bytes));
@@ -1080,6 +1084,12 @@ internal sealed class ShapeObjectStore : IDisposable
             return existing is not null && existing.Owner == head.Owner && existing.FloorOffset == head.FloorOffset
                 ? existing : throw new InvalidDataException("shape mirror existing object cannot be adopted");
         }
+    }
+
+    internal async Task IndexAsync(string key, string owner, CancellationToken cancellationToken)
+    {
+        using var inventory = new MemoryStream();
+        await _objects.PutAsync(InventoryPrefix(owner) + key["v1/shapes/".Length..], inventory, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The object's URL and when the manifest that names it should be read again: the start of the next epoch.</summary>
