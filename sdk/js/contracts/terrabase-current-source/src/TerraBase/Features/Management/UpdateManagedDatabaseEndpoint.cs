@@ -3,21 +3,22 @@ using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.HomeApply;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
 /// <summary><c>PATCH …/databases/{database}</c>: renames a database or sets its replica regions (docs/cross-region.md).</summary>
-internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions) : Endpoint<DatabaseRegionsRequest, IResult>
+internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     public override void Configure()
     {
         Patch(ProjectApiRoute.Database);
         Metadata(AnchoredRevocation.Instance);
         Name("updateDatabase");
-        Summary("Renames a database or confirms its home-region placement");
-        Description("Renames a database or confirms its unchanged home-region placement. Replica placement is unavailable. " + ProjectApiRoute.IdentityDescription);
+        Summary("Renames a database or sets its replica regions");
+        Description("Renames a database or sets its replica regions (up to 8 regions other than the home, which pull its pages and serve SQL reads). allRegions places a replica in every serving region, including regions that join later. The home moves with move-home. " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -52,11 +53,6 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
             return DatabaseRegions.HomeRegion(home, database.Regions(options.Region));
         }
 
-        if (request.AllRegions == true || request.ReplicaRegions is { Count: > 0 })
-        {
-            return ErrorResponse.From(new Validation("databases serve only in their home region until replicas are available", "replicas_unavailable"));
-        }
-
         if (request.Name is not null)
         {
             return request.HomeRegion is not null || request.ReplicaRegions is not null || request.AllRegions is not null
@@ -68,15 +64,20 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
                 };
         }
 
-        Valid<IReadOnlyList<string>> checkedRegions = request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change")
+        var serving = await regions.ServingAsync(cancellationToken).ConfigureAwait(false);
+        var all = request.AllRegions == true;
+        Valid<IReadOnlyList<string>> checkedRegions = request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change here: use move-home")
+            : all && request.ReplicaRegions is not null ? new Validation("send replicaRegions or allRegions, not both")
+            : all ? (Valid<IReadOnlyList<string>>)DatabaseRegions.AllBut(serving, home)
             : request.ReplicaRegions is not { } replicas ? new Validation("replicaRegions or allRegions is required")
-            : DatabaseRegions.Check(replicas) is Validation invalid ? invalid
-            : DatabaseRegions.Unserved("replicaRegions", replicas, [.. (await regions.ServingAsync(cancellationToken).ConfigureAwait(false)).Union(database.Regions(home), StringComparer.Ordinal)]) is { } unserved ? unserved
+            : DatabaseRegions.Check(replicas, home) is Validation invalid ? invalid
+            : DatabaseRegions.Unserved("replicaRegions", replicas, [.. serving.Union(database.Regions(home), StringComparer.Ordinal)]) is { } unserved ? unserved
             : replicas;
         return checkedRegions switch
         {
             Validation error => ErrorResponse.From(error),
-            IReadOnlyList<string> accepted => Answer(await management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, cancellationToken, request.AllRegions == true)),
+            IReadOnlyList<string> accepted => Answer(await apply.PrepareReplicatedAsync(organization, options.Region,
+                await management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, cancellationToken, all), cancellationToken)),
         };
     }
 

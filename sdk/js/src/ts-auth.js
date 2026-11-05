@@ -1,7 +1,6 @@
 import { TsAuthHttp } from "./http.js";
 import { err } from "./result.js";
 import { isValidId, requireId } from "./ids.js";
-import { requireDeadLetterId } from "./ts-auth-ids.js";
 /** @import { TerraScaleResult } from "./result.js" */
 
 /** @typedef {import("./config.js").TsAuthRuntimeConfig} TsAuthRuntimeConfig */
@@ -1734,154 +1733,6 @@ export class TsAuthJwtTemplatesClient {
   }
 }
 
-// webhooks (snake_case)
-
-/**
- * @typedef {{
- *   readonly id: import("./ids.js").EntityId;
- *   readonly url: string;
- *   readonly events: readonly string[];
- *   readonly signing_secret: string; // One-time HMAC key for verifying deliveries; only create returns it.
- * }} TsAuthWebhookWithSecret
- */
-
-/**
- * @typedef {{
- *   readonly id: import("./ids.js").EntityId;
- *   readonly url: string;
- *   readonly events: readonly string[];
- *   readonly enabled: boolean;
- *   readonly created_at: number; // Unix seconds.
- * }} TsAuthWebhook
- */
-
-/**
- * @typedef {{
- *   readonly id: `${import("./ids.js").EntityId}:${import("./ids.js").EntityId}`; // endpointId:eventId delivery selector.
- *   readonly endpoint_id: import("./ids.js").EntityId;
- *   readonly event_id: import("./ids.js").EntityId;
- *   readonly attempts: number;
- *   readonly last_error?: string | undefined;
- *   readonly updated_at: number; // Unix seconds.
- * }} TsAuthDeadLetterEntry
- */
-
-export class TsAuthWebhooksClient {
-  /**
-   * @type {TsAuthHttp}
-   * @readonly
-   */
-  #http;
-  /**
-   * @type {string}
-   * @readonly
-   */
-  #slug;
-
-  /**
-   * @param {TsAuthHttp} http
-   * @param {string} instanceSlug
-   */
-  constructor(http, instanceSlug) {
-    this.#http = http;
-    this.#slug = instanceSlug;
-  }
-
-  /**
-   * @param {{ readonly url: string; readonly events: readonly string[] }} request
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<TsAuthWebhookWithSecret>>}
-   */
-  create(request, options = {}) {
-    requireAbsoluteHttpUrl(request?.url, "url");
-    if (
-      !Array.isArray(request?.events) ||
-      request.events.length === 0 ||
-      !request.events.every(
-        (event) => typeof event === "string" && event.length > 0,
-      )
-    ) {
-      throw new TypeError("events must be a non-empty array of strings.");
-    }
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "POST",
-      path: `v1/${this.#slug}/webhooks`,
-      routeName: "tsauth.webhooks.create",
-      body: request,
-    });
-  }
-
-  /**
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<readonly TsAuthWebhook[]>>}
-   */
-  list(options = {}) {
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "GET",
-      path: `v1/${this.#slug}/webhooks`,
-      routeName: "tsauth.webhooks.list",
-    });
-  }
-
-  /**
-   * @param {string} webhookId
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<void>>}
-   */
-  delete(webhookId, options = {}) {
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "DELETE",
-      path: `v1/${this.#slug}/webhooks/${segment(webhookId, "webhook id")}`,
-      routeName: "tsauth.webhooks.delete",
-    });
-  }
-
-  /**
-   * @param {string} webhookId
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<{ readonly queued: boolean }>>}
-   */
-  test(webhookId, options = {}) {
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "POST",
-      path: `v1/${this.#slug}/webhooks/${segment(webhookId, "webhook id")}/test`,
-      routeName: "tsauth.webhooks.test",
-      body: {},
-    });
-  }
-
-  /**
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<readonly TsAuthDeadLetterEntry[]>>}
-   */
-  deadLetter(options = {}) {
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "GET",
-      path: `v1/${this.#slug}/webhooks/dead-letter`,
-      routeName: "tsauth.webhooks.deadLetter",
-    });
-  }
-
-  /**
-   * @param {string} entryId
-   * @param {TsAuthRequestOptions} [options={}]
-   * @returns {Promise<TerraScaleResult<{ readonly replayed: boolean }>>}
-   */
-  replayDeadLetter(entryId, options = {}) {
-    return this.#http.request({
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      method: "POST",
-      path: `v1/${this.#slug}/webhooks/dead-letter/${encodeURIComponent(requireDeadLetterId(entryId))}/replay`,
-      routeName: "tsauth.webhooks.replayDeadLetter",
-    });
-  }
-}
-
 // audit-events (snake_case)
 
 /**
@@ -2685,11 +2536,6 @@ export class TsAuthClient {
    */
   jwtTemplates;
   /**
-   * @type {TsAuthWebhooksClient}
-   * @readonly
-   */
-  webhooks;
-  /**
    * @type {TsAuthAuditEventsClient}
    * @readonly
    */
@@ -2742,7 +2588,6 @@ export class TsAuthClient {
     this.connections = new TsAuthConnectionsClient(this.#http, slug);
     this.directories = new TsAuthDirectoriesClient(this.#http, slug);
     this.jwtTemplates = new TsAuthJwtTemplatesClient(this.#http, slug);
-    this.webhooks = new TsAuthWebhooksClient(this.#http, slug);
     this.auditEvents = new TsAuthAuditEventsClient(this.#http, slug);
     this.billing = new TsAuthBillingClient(this.#http, slug);
     this.instance = new TsAuthInstanceClient(this.#http, slug);
@@ -2785,124 +2630,6 @@ function requireBareOrigin(apiBaseUrl) {
       "The ts-auth apiBaseUrl must be a bare origin without a path, query, or fragment.",
     );
   }
-}
-
-/**
- * Verifies a ts-auth webhook delivery signature: sha256=lowercaseHex(HMAC-
- * SHA256(key = UTF8(signingSecret), message = UTF8(timestamp + "." + rawBody)))
- * compared in constant time over the RAW body bytes. Malformed input returns
- * false; this function never throws.
- * @param {string} signingSecret
- * @param {string | undefined} timestamp
- * @param {string | undefined} signature
- * @param {Uint8Array} payload
- * @returns {Promise<boolean>}
- */
-export async function verifyTsAuthWebhook(
-  signingSecret,
-  timestamp,
-  signature,
-  payload,
-) {
-  const verified = await verifySignature(
-    signingSecret,
-    timestamp,
-    signature,
-    payload,
-  );
-  return verified === true;
-}
-
-/**
- * verifyTsAuthWebhook plus a replay window: the timestamp header must be
- * within ±toleranceMs of `now` (milliseconds).
- * @param {string} signingSecret
- * @param {string | undefined} timestamp
- * @param {string | undefined} signature
- * @param {Uint8Array} payload
- * @param {number} toleranceMs
- * @param {number} now
- * @returns {Promise<boolean>}
- */
-export async function verifyTsAuthWebhookWithTolerance(
-  signingSecret,
-  timestamp,
-  signature,
-  payload,
-  toleranceMs,
-  now,
-) {
-  const verified = await verifySignature(
-    signingSecret,
-    timestamp,
-    signature,
-    payload,
-  );
-  if (verified !== true) return false;
-  if (!Number.isFinite(toleranceMs) || toleranceMs < 0 || !Number.isFinite(now))
-    return false;
-  const seconds = Number(timestamp);
-  if (!Number.isFinite(seconds)) return false;
-  return Math.abs(now - seconds * 1_000) <= toleranceMs;
-}
-
-/**
- * undefined means malformed input; true/false means the signature verdict.
- * @param {string} signingSecret
- * @param {string | undefined} timestamp
- * @param {string | undefined} signature
- * @param {Uint8Array} payload
- * @returns {Promise<boolean | undefined>}
- */
-async function verifySignature(signingSecret, timestamp, signature, payload) {
-  if (typeof signingSecret !== "string" || signingSecret.length === 0)
-    return undefined;
-  if (typeof timestamp !== "string" || !/^[0-9]+$/u.test(timestamp))
-    return undefined;
-  if (typeof signature !== "string" || !signature.startsWith("sha256="))
-    return undefined;
-  if (!(payload instanceof Uint8Array)) return undefined;
-  const hex = signature.slice("sha256=".length);
-  if (!/^[0-9a-f]{64}$/u.test(hex)) return undefined;
-  const prefix = utf8Encoder.encode(`${timestamp}.`);
-  const message = new Uint8Array(prefix.byteLength + payload.byteLength);
-  message.set(prefix, 0);
-  message.set(payload, prefix.byteLength);
-  const subtle = globalThis.crypto.subtle;
-  const key = await subtle.importKey(
-    "raw",
-    utf8Encoder.encode(signingSecret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const mac = new Uint8Array(await subtle.sign("HMAC", key, message));
-  return timingSafeEqualHex(toLowercaseHex(mac), hex);
-}
-
-/**
- * @param {Uint8Array} bytes
- * @returns {string}
- */
-function toLowercaseHex(bytes) {
-  let hex = "";
-  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
-  return hex;
-}
-
-/**
- * Fixed-length hex compare whose loop never short-circuits.
- * @param {string} a
- * @param {string} b
- * @returns {boolean}
- */
-function timingSafeEqualHex(a, b) {
-  if (a.length !== b.length) return false;
-  let difference = 0;
-  for (let index = 0; index < a.length; index++) {
-    difference |= a.charCodeAt(index) ^ b.charCodeAt(index);
-  }
-  return difference === 0;
 }
 
 /**

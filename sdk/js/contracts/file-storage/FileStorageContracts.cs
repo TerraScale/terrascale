@@ -4,12 +4,12 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.FileStorage;
 
-/// <summary>A project file bucket with the same end-user policy as document collections.</summary>
-public sealed record FileBucket(string Id, string Name, string Region, CollectionAccessRules Rules);
+/// <summary>A project file bucket and its end-user policy.</summary>
+public sealed record FileBucket(string Id, string Name, string Region, FileAccessRules Rules);
 /// <summary>A new bucket. Rules deny end users unless explicitly granted.</summary>
-public sealed record CreateFileBucketRequest(string? Name, CollectionAccessRules? Rules);
+public sealed record CreateFileBucketRequest(string? Name, FileAccessRules? Rules);
 /// <summary>A replacement bucket policy.</summary>
-public sealed record FileBucketRulesRequest(CollectionAccessRules? Rules);
+public sealed record FileBucketRulesRequest(FileAccessRules? Rules);
 /// <summary>An immutable file upload reservation. SHA-256 is base64, not hex.</summary>
 public sealed record CreateFileUploadRequest(string? Name, string? ContentType, long Size, string? Sha256, JsonElement Metadata);
 /// <summary>A file's customer-visible metadata. IDs and ownership cannot be overwritten.</summary>

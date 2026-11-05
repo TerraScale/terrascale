@@ -287,7 +287,7 @@ func schemaGuard(live map[string]schemaEntity) v1.Statement {
 	if len(live) == 0 {
 		expected = []byte("[]")
 	}
-	// Turso supports scalar count subqueries, but not compound EXCEPT inside
+	// The SQL engine supports scalar count subqueries, but not compound EXCEPT inside
 	// EXISTS. Unique catalogue names make equal counts plus exact matches a
 	// complete comparison, including concurrent additions and replacements.
 	count := "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL"
