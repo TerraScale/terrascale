@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptrace"
 	"syscall"
 	"time"
 
@@ -49,14 +50,24 @@ func (s *sim) homeFailover() (string, string, error) {
 	}
 
 	// A request may have an unknown outcome when the process dies; count it only if acknowledged.
-	started := make(chan struct{})
+	started := make(chan error, 1)
 	inflight := make(chan bool, 1)
+	requestContext := httptrace.WithClientTrace(s.ctx, &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) { started <- info.Err },
+	})
 	go func() {
-		close(started)
-		r, err := s.api.execDurable(s.ctx, s.c.a, "all", stmt{SQL: "INSERT INTO failover (id) VALUES (?)", Args: []any{confirmed + 1}})
+		r, err := s.api.execDurable(requestContext, s.c.a, "all", stmt{SQL: "INSERT INTO failover (id) VALUES (?)", Args: []any{confirmed + 1}})
 		inflight <- err == nil && r.status == http.StatusOK
+		if err != nil {
+			select {
+			case started <- err:
+			default:
+			}
+		}
 	}()
-	<-started
+	if err := <-started; err != nil {
+		return "", "", fmt.Errorf("send the in-flight write: %w", err)
+	}
 	killed := time.Now()
 	if err := syscall.Kill(-s.c.a.proc.cmd.Process.Pid, syscall.SIGKILL); err != nil {
 		return "", "", err
@@ -76,7 +87,7 @@ func (s *sim) homeFailover() (string, string, error) {
 	}
 	takeover := time.Since(killed)
 	after, err := readHome(kv, s.dbID)
-	if err != nil || after.Home != "sjc" || after.Epoch <= before.Epoch {
+	if err != nil || after.Home != "sjc" || after.Epoch != before.Epoch+1 {
 		return "", "", fmt.Errorf("takeover did not advance the shared home epoch: %v", err)
 	}
 	want := fmt.Sprintf("[[%d]]", acked)
