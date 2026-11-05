@@ -39,6 +39,7 @@ type apiReply struct {
 	code    string
 	results []stmtResult
 	body    string
+	timing  string
 }
 
 func newSQLAPI(auth *authStandIn, org, project, db string) *sqlAPI {
@@ -73,7 +74,7 @@ func (s *sqlAPI) exec(ctx context.Context, n *node, statements ...stmt) (apiRepl
 	if err != nil {
 		return apiReply{}, err
 	}
-	r := apiReply{status: res.StatusCode, body: snippet(data)}
+	r := apiReply{status: res.StatusCode, body: snippet(data), timing: res.Header.Get("Server-Timing") + " route=" + res.Header.Get("TerraScale-Write-Route")}
 	if res.StatusCode/100 == 2 {
 		var out struct {
 			Results []stmtResult `json:"results"`

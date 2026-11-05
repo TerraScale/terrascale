@@ -381,8 +381,9 @@ func (s *sim) replicaLag() (string, string, error) {
 		for {
 			before := time.Now()
 			rows, r, err := s.api.query(s.ctx, s.c.b, "SELECT id FROM lag WHERE id = ?", i)
-			if time.Since(before) > 50*time.Millisecond {
+			if d := time.Since(before); d > 50*time.Millisecond {
 				slow++
+				fmt.Fprintf(os.Stderr, "region-sim: slow read write=%d after-ack=%s took=%s rows=%s timing=%q\n", i, before.Sub(acked), d, rows, r.timing)
 			}
 			if err == nil && r.status == 200 && rows != "[]" {
 				break
@@ -393,6 +394,7 @@ func (s *sim) replicaLag() (string, string, error) {
 			time.Sleep(time.Millisecond)
 		}
 		lags = append(lags, float64(time.Since(acked).Microseconds())/1000)
+		fmt.Fprintf(os.Stderr, "region-sim: lag write=%d %.1f ms\n", i, lags[len(lags)-1])
 	}
 	slices.Sort(lags)
 	p := func(q float64) float64 { return lags[min(len(lags)-1, int(float64(len(lags))*q))] }
