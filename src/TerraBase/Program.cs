@@ -181,6 +181,7 @@ try
     app.MapTerraScaleOpenApi().WithMetadata(new ListenerMetadata(TerraBaseListener.Client));
     app.MapTerraBaseMetrics();
     app.MapTerraBaseClock();
+    app.MapTerraBaseKeyRevocation(options);
     app.MapTerraBaseRestRpc();
     await ApplicationRunCompletion.RunAsync(app);
     return 0;

@@ -38,6 +38,10 @@ internal sealed class ShreddedDatabaseSweep(KeyCustody custody, Lazy<EngineManag
             {
                 var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
                 var record = await ShredRecords.ReadAsync(custody.Store, BackupLayout.KeyScope(tenant), token).ConfigureAwait(false);
+                if (record is not null)
+                {
+                    custody.Revocations.Forget(BackupLayout.KeyScope(tenant));
+                }
                 if (record is null || !await management.Value.ObserveShreddedAsync(tenant, record.ShreddedAt, token).ConfigureAwait(false))
                 {
                     return; // Never advance past authority the catalog could not durably accept.
