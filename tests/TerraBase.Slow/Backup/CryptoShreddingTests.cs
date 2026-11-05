@@ -87,6 +87,7 @@ public sealed class CryptoShreddingTests
         var closure = EntityIds.New().ToString();
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
+            await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);
             using var response = await api.Server.Client.PutAsJsonAsync(ManagementApi.Uri($"/admin/projects/{first.Project}/closure"),
                 new { version = 2, closureId = closure, authorityOrganizationId = first.Organization }, token);
             await Assert.That(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Accepted).IsTrue();
