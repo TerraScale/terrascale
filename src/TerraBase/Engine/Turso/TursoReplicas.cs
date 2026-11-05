@@ -749,7 +749,12 @@ internal sealed partial class TursoReplicas(
                 {
                     try
                     {
-                        await sync.CheckpointAsync(cancellationToken).ConfigureAwait(false);
+                        // A checkpoint mutates the same pager as page apply. Drain readers before starting it,
+                        // rather than letting a pooled reader begin against its changing WAL generation.
+                        using (await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false))
+                        {
+                            await sync.CheckpointAsync(cancellationToken).ConfigureAwait(false);
+                        }
                     }
                     catch (TursoException error)
                     {
