@@ -22,7 +22,8 @@ Each group has a unique tab/panel ID association, `aria-selected`, and one
 The dashboard Database Overview and Home Connect views use the same row. Docs
 register `SdkQueryTabs.vue` for the getting-started, SDK and SQL pages in every
 locale. Landing's code panel preserves MCP and CLI beside the five SDK choices.
-Docs and landing share their public example source in `landing-site/src/lib/highlight.ts`.
+Docs and landing share their public example source in `web/assets/js/sdk-examples.js`
+under the dashboard project.
 Existing copy controls continue to follow the selected snippet.
 
 Python, JavaScript, Go, .NET and Rust marks come from Simple Icons 16.0.0 (CC0).
