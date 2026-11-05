@@ -439,7 +439,10 @@ namespace TerraScale.Dashboard.Common.Databases
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is TerraBaseException or HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)))
                     { return (home, Listed: (IReadOnlyList<ManagedDatabase>?)null); }
                 }));
-                var remote = listings.SelectMany(listing => listing.Listed ?? []).Where(database => database.ProjectId == project.Id).DistinctBy(database => database.Id).ToArray();
+                // Replica catalogs can lag a move; prefer the record returned by its own home when that region answers.
+                var remote = listings.SelectMany(listing => (listing.Listed ?? []).Select(database => (Database: database, Home: listing.home.Id)))
+                    .Where(item => item.Database.ProjectId == project.Id).GroupBy(item => item.Database.Id)
+                    .Select(group => group.OrderByDescending(item => item.Database.HomeRegion == item.Home).First().Database).ToArray();
                 var answered = listings.Where(listing => listing.Listed is not null).Select(listing => listing.home.Id).ToHashSet(StringComparer.Ordinal);
                 var gone = seen.Where(record => DatabaseRegion.Resolve(catalog, record.Region) is { } home && answered.Contains(home.Id) &&
                     remote.All(database => database.Id != record.Id)).Select(record => record.Id).ToHashSet(StringComparer.Ordinal);
@@ -454,9 +457,9 @@ namespace TerraScale.Dashboard.Common.Databases
                         {
                             imported.Add(record);
                         }
-                        // Existing identity and immutable home must match; refresh configuration, never inferred health/status.
-                        else if (record.Name == before.Name && record.ProjectId == before.ProjectId && record.Region.Equals(before.Region, StringComparison.OrdinalIgnoreCase) &&
-                            (record.ExpiresAt != before.ExpiresAt || record.AllRegions != before.AllRegions || !Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase)))
+                        // Identity must match; the home and replica regions follow the producer placement.
+                        else if (record.Name == before.Name && record.ProjectId == before.ProjectId &&
+                            (!record.Region.Equals(before.Region, StringComparison.OrdinalIgnoreCase) || record.ExpiresAt != before.ExpiresAt || record.AllRegions != before.AllRegions || !Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase)))
                         {
                             refreshed.Add(record);
                         }
@@ -493,6 +496,7 @@ namespace TerraScale.Dashboard.Common.Databases
                         if (target.Databases.TryGetValue(record.Id, out var current) && Unchanged(current))
                         {
                             current.ExpiresAt = record.ExpiresAt;
+                            current.Region = record.Region;
                             current.Regions = [.. record.Regions];
                             current.AllRegions = record.AllRegions;
                             current.Endpoint = record.Endpoint;
