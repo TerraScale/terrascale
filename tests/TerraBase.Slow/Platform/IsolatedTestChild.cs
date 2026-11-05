@@ -73,12 +73,12 @@ internal static class IsolatedTestChild
                 // A successful exit with a missing filter or skipped test is not proof the regression ran.
                 await Assert.That(new FileInfo(reportPath).Length).IsLessThanOrEqualTo(1024 * 1024);
                 await using var report = File.OpenRead(reportPath);
-                var document = await XDocument.LoadAsync(report, LoadOptions.None, deadline.Token);
+                var report = await XDocument.LoadAsync(report, LoadOptions.None, deadline.Token);
                 XNamespace ns = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
-                var result = document.Descendants(ns + "UnitTestResult").Single();
+                var result = report.Descendants(ns + "UnitTestResult").Single();
                 await Assert.That((string?)result.Attribute("outcome")).IsEqualTo("Passed");
                 await Assert.That((string?)result.Attribute("testName")).IsEqualTo(testName);
-                var counters = document.Descendants(ns + "Counters").Single();
+                var counters = report.Descendants(ns + "Counters").Single();
                 await Assert.That((string?)counters.Attribute("total")).IsEqualTo("1");
                 await Assert.That((string?)counters.Attribute("passed")).IsEqualTo("1");
                 await Assert.That((string?)counters.Attribute("notExecuted")).IsEqualTo("0");
