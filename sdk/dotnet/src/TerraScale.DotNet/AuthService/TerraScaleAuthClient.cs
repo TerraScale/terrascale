@@ -55,7 +55,6 @@ public sealed partial class TerraScaleAuthClient
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Users = new TerraScaleAuthUsersClient(this);
         Sessions = new TerraScaleAuthSessionsClient(this);
-        Webhooks = new TerraScaleAuthWebhooksClient(this);
         AuditEvents = new TerraScaleAuthAuditClient(this);
         Oidc = new TerraScaleAuthOidcClient(this);
         Platform = new TerraScaleAuthPlatformClient(this);
@@ -68,8 +67,6 @@ public sealed partial class TerraScaleAuthClient
     /// <summary>Session revocation.</summary>
     public TerraScaleAuthSessionsClient Sessions { get; }
 
-    /// <summary>Outbound webhook endpoints, deliveries, and dead-letter replay.</summary>
-    public TerraScaleAuthWebhooksClient Webhooks { get; }
 
     /// <summary>Instance audit event listing.</summary>
     public TerraScaleAuthAuditClient AuditEvents { get; }

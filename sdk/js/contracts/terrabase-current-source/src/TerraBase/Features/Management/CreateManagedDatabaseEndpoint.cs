@@ -2,6 +2,7 @@ using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.Regions;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -10,7 +11,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/projects/{project}/databases</c>: creates an empty database in a project.</summary>
-internal sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRegionCatalog regions)
+internal sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply)
     : Endpoint<DatabaseRegionsRequest, IResult>
 {
     internal const string OperationName = "createDatabase";
@@ -20,7 +21,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("Creates a database in its home region. Replicas and all-region placement are unavailable until the replacement sync engine is ready. " + ProjectApiRoute.IdentityDescription);
+        Description("Creates a database in its home region. replicaRegions names up to 8 other regions that hold read replicas: they pull the home's pages and serve SQL reads, while writes go to the home. allRegions places a replica in every serving region, including regions that join later." + DatabaseTtl.Description + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -45,11 +46,16 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
 
     private async ValueTask<IResult> CreateAsync(DatabaseRegionsRequest request, string name, CancellationToken cancellationToken)
     {
-        if (request.AllRegions == true || request.ReplicaRegions is { Count: > 0 })
+        if (DatabaseTtl.Invalid(request.TtlSeconds) is { } invalidTtl)
         {
-            return ErrorResponse.From(new Validation("databases serve only in their home region until replicas are available", "replicas_unavailable"));
+            return ErrorResponse.From(invalidTtl);
         }
-        const bool all = false;
+
+        var all = request.AllRegions == true;
+        if (all && request.ReplicaRegions is not null)
+        {
+            return ErrorResponse.From(new Validation("send replicaRegions or allRegions, not both"));
+        }
 
         var home = request.HomeRegion ?? options.Region;
         var serving = await regions.ServingAsync(cancellationToken).ConfigureAwait(false);
@@ -58,7 +64,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
             return ErrorResponse.From(unservedHome);
         }
 
-        IReadOnlyList<string> replicas = all ? [] : request.ReplicaRegions ?? [];
+        IReadOnlyList<string> replicas = all ? DatabaseRegions.AllBut(serving, home) : request.ReplicaRegions ?? [];
         if (home != options.Region)
         {
             return TerraBaseOptions.IsRegion(home)
@@ -68,7 +74,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
 
         if (!all)
         {
-            var checkedRegions = DatabaseRegions.Check(replicas);
+            var checkedRegions = DatabaseRegions.Check(replicas, home);
             if (checkedRegions is Validation invalid)
             {
                 return ErrorResponse.From(invalid);
@@ -88,7 +94,7 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
 
         if (HttpContext.Features.Get<LegacyManagementRoute>() is not null)
         {
-            return await CreateAsync(name, replicas, all, cancellationToken).ConfigureAwait(false);
+            return await CreateAsync(name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false);
         }
 
         var restricted = HttpContext.User.FindFirst("database")?.Value;
@@ -120,14 +126,16 @@ internal sealed class CreateManagedDatabaseEndpoint(IManagementService managemen
         var grant = new ProjectAccess(actor, project, organization, restricted, DatabaseId: null);
         HttpContext.Features.Set(grant);
         IResult result = null!;
-        await ProjectAccess.RunAsync(grant, async () => result = await CreateAsync(name, replicas, all, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        await ProjectAccess.RunAsync(grant, async () => result = await CreateAsync(name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
         return result;
     }
 
-    private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, bool all, CancellationToken cancellationToken)
+    private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, bool all, long? ttlSeconds, CancellationToken cancellationToken)
     {
-        return await management.CreateDatabaseAsync(
-            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas, all) switch
+        var organization = ManagementRoute.OrganizationId(HttpContext);
+        return await apply.PrepareReplicatedAsync(organization, options.Region, await management.CreateDatabaseAsync(
+            ManagementRoute.UserId(HttpContext), organization, ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas, all, ttlSeconds),
+            cancellationToken) switch
         {
             ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),
             NotFound error => ManagementRoute.DatabaseNotFound(error),
