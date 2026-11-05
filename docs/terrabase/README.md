@@ -167,6 +167,7 @@ Per-collection TTL: [declare an expiry member; the home region sweeps expired do
 Transaction change-group budget, rollback and the deterministic `503 capacity` refusal: [transaction capacity](documents/transaction-capacity.md).
 
 End-user shape reads from the browser under table read grants: [shape read grants](shape-read-grants.md).
+SDK delivery, Cloudflare policy and regional cache qualification: [shape CDN delivery](shape-cdn-delivery.md).
 
 Live coalescing, per-tenant admission, hint sockets and cache boundaries: [live shape reads](free-reads-live.md).
 Provisional, confirmed and revert on live shape tails for a region's own writes (PIVOT F7): [shape overlay](shape-overlay.md).
