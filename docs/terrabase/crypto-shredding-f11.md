@@ -42,6 +42,7 @@ are outside the new guarantee and must not be presented as F11-protected.
 | Managed backup snapshots and their continuous copies | Source deletion also shreds each snapshot's independent envelope-key scope; snapshot sweep removes its local files and page-key sidecars. |
 | Continuous snapshots and logical segments | Existing TBK1 envelope; all destinations obtain keys from R2 custody. |
 | JetStream regional push messages | TBP1 envelope under the same per-database key; deletion also purges the database subject from the local origin stream. |
+| JetStream provisional shape messages | TBP1 under the database envelope key; shredded keys prevent decryption and erasure purges the local origin subject. |
 | Regional partner holds and their system backups | The exact TBP1 ciphertext from JetStream; no decoded SQL is persisted in the hold record. |
 | Shape objects in R2/CDN | Existing TBS1 epoch derivation under the database envelope key; deletion removes owned objects and queues their CDN purge. |
 | Region key caches | Warm selection and decode use bounded memory caches. Cold decode checks permanent custody authority. DELETE synchronously evicts every node through authenticated gRPC and requires every acknowledgement. |

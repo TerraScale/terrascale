@@ -8,6 +8,8 @@ using NATS.Client.JetStream;
 using TerraBase.Configuration;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Sync;
+using TerraBase.Features.Backup;
+using TerraBase.Features.HomePush;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
 using TerraBase.Testing;
@@ -24,8 +26,12 @@ public sealed class RegionShapeStreamTests
         await using var world = await LocalWriteWorld.StartAsync(nats);
         await world.Overlay.StartAsync(token);
         await world.Overlay.Ready.WaitAsync(TimeSpan.FromSeconds(5), token);
+        await using var wire = await world.Client.SubscribeCoreAsync<byte[]>("terrabase.local.sjc.>", cancellationToken: token);
+        _ = await world.Client.PingAsync(token);
         // fra joins after the original insert. Home assigns the same rowid to a different primary key.
         var inserted = await world.LocalAsync(false, ["INSERT INTO items (id, v) VALUES ('p', 'first')"], token);
+        var encrypted = await wire.Msgs.ReadAsync(token).AsTask().WaitAsync(TimeSpan.FromSeconds(5), token);
+        await Assert.That(encrypted.Data!.AsSpan(0, 4).SequenceEqual("TBP1"u8)).IsTrue();
         var js = new NatsJSContext(world.Client);
         await TerraBaseTestServer.EventuallyAsync(async cancellation =>
             (await js.GetStreamAsync("TERRABASE_PROVISIONAL_SJC", cancellationToken: cancellation)).Info.State.Messages == 1, TimeSpan.FromSeconds(5));
@@ -72,6 +78,10 @@ public sealed class RegionShapeStreamTests
         var winner = reverted.GetProperty("changes").EnumerateArray().SelectMany(change => change.GetProperty("ops").EnumerateArray())
             .Single(op => op.GetProperty("row").GetProperty("id").GetString() == "x");
         await Assert.That(winner.GetProperty("row").GetProperty("v").GetString()).IsEqualTo("gru");
+        await Assert.That(await world.Api.Server.Services.GetRequiredService<IBackupKeyShredding>().DestroyAsync(world.Database, token)).IsTrue();
+        await Assert.That(await world.Api.Server.Services.GetRequiredService<ITransactionCrypto>().OpenAsync(world.Database, encrypted.Data!, token)).IsNull();
+        await world.Overlay.PurgeDeletedAsync(world.Database, token);
+        await Assert.That((await js.GetStreamAsync("TERRABASE_PROVISIONAL_SJC", cancellationToken: token)).Info.State.Messages).IsEqualTo(0UL);
     }
 
     [Test]
@@ -109,6 +119,7 @@ public sealed class RegionShapeStreamTests
     {
         var database = world.Database;
         var payload = JsonSerializer.SerializeToUtf8Bytes(transaction, ShapeOverlayJsonContext.Default.ProvisionalTransaction);
+        payload = await world.Api.Server.Services.GetRequiredService<ITransactionCrypto>().SealAsync(database, payload, token);
         await TerraBaseTestServer.EventuallyAsync(async _ =>
         {
             await world.Client.PublishAsync($"terrabase.local.sjc.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}", payload, cancellationToken: token);
@@ -146,7 +157,7 @@ public sealed class RegionShapeStreamTests
                 NatsToken = nats.Token,
             };
             var replicas = new TursoReplicas(options, new TestMasterKey(), services.GetRequiredService<IMemoryBudget>(), NullLogger<TursoReplicas>.Instance);
-            var overlay = new ShapeOverlay(options, TimeProvider.System, NullLogger<ShapeOverlay>.Instance);
+            var overlay = new ShapeOverlay(options, TimeProvider.System, services.GetRequiredService<ITransactionCrypto>(), NullLogger<ShapeOverlay>.Instance);
             var pulls = PeerTls.CreateClient(world.Api.Server.BaseAddress);
             try
             {

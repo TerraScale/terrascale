@@ -256,6 +256,7 @@ internal sealed class DatabaseBackupPurge(
         if (!progress.CopiesAbsent)
         {
             await services.GetRequiredService<HomePush.HomePush>().PurgeDeletedAsync(job.Database, token).ConfigureAwait(false);
+            await services.GetRequiredService<Shapes.ShapeOverlay>().PurgeDeletedAsync(job.Database, token).ConfigureAwait(false);
             await services.GetRequiredService<LocalAck.HoldStore>().DeleteDatabaseAsync(job.Database, token).ConfigureAwait(false);
             var shape = await services.GetRequiredService<Shapes.ShapeMirror>().DeleteDatabaseAsync(job.Database, progress.ShapeAfter, token).ConfigureAwait(false);
             progress = progress with { ShapeAfter = shape.After, CopiesAbsent = shape.Complete };
