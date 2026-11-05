@@ -154,10 +154,6 @@ public interface ITenantDirectory
     /// </summary>
     ValueTask<ForgetDatabaseResult> ForgetDatabaseAsync(TenantContext database, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// The published plan of organization <paramref name="organizationId"/>; <see cref="Unavailable"/> when a clustered
-    /// region has not received its plan or the catalog cannot be read.
-    /// </summary>
     ValueTask<TenantPlanResult> PlanAsync(string organizationId, CancellationToken cancellationToken);
 }
 
