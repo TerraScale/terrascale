@@ -206,7 +206,7 @@ internal sealed class RegionReplication(
                 try
                 {
                     if (await catalog.FindAsync(revised.Database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-                        || placement.Home != options.Region || placement.Replicas.Count == 0)
+                        || placement.Home != options.Region || (!placement.AllRegions && placement.Replicas.Count == 0))
                     {
                         _ = _published.TryRemove(key, out _);
                         continue;
@@ -225,7 +225,7 @@ internal sealed class RegionReplication(
                     }
 
                     _published[key] = revision;
-                    foreach (var region in placement.Replicas)
+                    foreach (var region in placement.AllRegions ? _peers.Select(peer => peer.Region).Distinct(StringComparer.Ordinal) : placement.Replicas)
                     {
                         await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database), push.Payload, cancellationToken: cancellationToken)
                             .ConfigureAwait(false);
@@ -424,7 +424,7 @@ internal sealed class RegionReplication(
             {
                 var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
                 var replicated = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
-                    && placement.Home == home.Region && placement.Replicas.Contains(options.Region);
+                    && placement.Home == home.Region && placement.Includes(options.Region);
                 try
                 {
                     if (replicated && (listed is null || listed.ContainsKey(key)))
@@ -553,7 +553,7 @@ internal sealed class RegionReplication(
                     return null;
                 }
 
-                foreach (var entry in page.Databases.Where(entry => entry.HomeRegion == home.Region && entry.ReplicaRegions.Contains(options.Region)))
+                foreach (var entry in page.Databases.Where(entry => entry.HomeRegion == home.Region && (entry.AllRegions || entry.ReplicaRegions.Contains(options.Region))))
                 {
                     listed[(entry.OrganizationId, entry.ProjectId, entry.DatabaseId)] = entry;
                 }
@@ -600,7 +600,7 @@ internal sealed class RegionReplication(
 
         await catalog.UpdatePlacementAsync(database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions), cancellationToken)
             .ConfigureAwait(false);
-        if (!entry.ReplicaRegions.Contains(options.Region))
+        if (!entry.AllRegions && !entry.ReplicaRegions.Contains(options.Region))
         {
             await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
         }
