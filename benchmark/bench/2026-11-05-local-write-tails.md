@@ -6,6 +6,8 @@ DECISION: Judge the primary acceptance gate on server `app` p99 <100 ms. Judge c
 
 DECISION: Renew project access tokens in the background in Python (sync/async), JavaScript, Go, .NET and Rust, single-flight with initial/expired exchanges. Keep returning a still-valid token until actual expiry; explicitly refused tokens cannot be reused. Reason: a 60-second token's synchronous half-life renewal put issuer RTT on otherwise local requests. User authorized all five SDKs; the independent server fix shipped first.
 
+DECISION: The independent acceptance rerun may use mariogk-dev rather than wait for beta admission. Measure that client’s own regional baseline first and apply the same server <100 ms and client <baseline +100 ms gates. Reason: the user explicitly authorized the placement change after beta lacked admission headroom. The comparable before/after evidence in this report remains beta-to-beta.
+
 ## Method
 
 `benchmark/local-write-tails/run.py` preserves #1105's workload: three concurrent regional workers, each performing three measured repeats of 100 fresh ULID inserts. Each write is followed by SELECTs through the other two regions. There are 900 default writes and 1,800 cross-region reads per run. SDK retries are set to one attempt. Read-only warmup waits for a local replica (`replica_open`, no `home` span); no write primes the measured writer. Before warmup, 30 health requests on a reused connection measure each beta path; initial connection samples remain separately recorded. Ten home-durable and ten forced-home samples per region are separate diagnostics.
@@ -83,6 +85,8 @@ Python `ruff check src tests` and `mypy` passed. JavaScript declaration build an
 
 Server deployment CI: [42088276912](https://github.com/TerraScale/terrascale/actions/runs/42088276912) completed successfully. SDK proof runs: [Python](https://github.com/TerraScale/terrascale/actions/runs/42091985260), [JS](https://github.com/TerraScale/terrascale/actions/runs/42091985278), [Go](https://github.com/TerraScale/terrascale/actions/runs/42091985218), [.NET](https://github.com/TerraScale/terrascale/actions/runs/42091985188), [Rust](https://github.com/TerraScale/terrascale/actions/runs/42091985271). Unrelated older Slow probe failures reported by `ts-main` remain separate from these Fast/deployment proofs.
 
+SDK main CI initially failed auth/libs/TerraBase because `ts-ship` omitted their exact-commit receipts for a .NET SDK change; the CI shared path filter correctly required them. There was no failing test. The installed runner rebuilt and ran all three Fast suites at the exact shipped `ddbc3a87d` revision through `ts-heavy-any`, then published genuine checked receipts: libs 6.210 s (build 27.870 s), auth 18.161 s (build 159.347 s), TerraBase 10.871 s (build 72.378 s). CI attempt 2 accepted all three at 19:25:58–19:25:59Z; its aggregate test gate passed at 19:26:07Z. A read-only readiness snapshot at 19:30:16Z confirmed `ddbc3a87d` healthy on all six GRU/SJC/FRA nodes, retaining format 23. No status was copied or manufactured and no test/workflow gate was weakened. The helper’s initial affected-area map needs to include these consumers for future .NET SDK shipments.
+
 Raw before/after JSONL, summaries, six-node health and bounded refresh counter snapshots accompany this report. Secrets are absent. Accounts are synthetic and deleted after proof.
 
 
@@ -92,10 +96,11 @@ Raw before/after JSONL, summaries, six-node health and bounded refresh counter s
 - [Beta after](local-write-tails-20261105/beta-after-summary.json), [raw JSONL gzip](local-write-tails-20261105/beta-after.jsonl.gz).
 - [Before start](local-write-tails-20261105/beta-before-start-peers.json) and [end](local-write-tails-20261105/beta-before-end-peers.json) peer snapshots.
 - [After start](local-write-tails-20261105/beta-after-start-peers.json) and [end](local-write-tails-20261105/beta-after-end-peers.json) peer/refresh snapshots.
+- [SDK repair deployment readiness](local-write-tails-20261105/repaired-sdk-deployed-peers.json).
 - [Residual writer-open busy log](local-write-tails-20261105/residual-writer-busy.json).
 - [Earlier delta reproduction](local-write-tails-20261105/before-delta-summary.json), [raw gzip](local-write-tails-20261105/before-delta.jsonl.gz).
 - [Harness instructions](../local-write-tails/README.md): run through `TS_HEAVY_HOST=beta ts-heavy-any`, with a beta hostname guard, against the pinned SDK source. All credentials stay in the helper's private files. Run `summarize.py` over retained samples.
 
 Parked: rare native writer-open busy fallback plus synchronous post-forward home catch-up; #1103 forwarding-pool investigation remains independent. The specified pooled p99 and first-insert targets are met, with maxima and the failed SJC per-repeat distribution explicitly retained above.
 
-Acceptance handoff: server deployed readiness and shipped SDK pin were delivered with `mode:steer` to beta acceptance `aeb225be` (environment `e70ee7fd-aace-4435-8419-2c2182950c48`) to rerun item 2 on its own retained Pro database. Its stronger exact-ID/value reconciliation and 100 SELECT-1 path baselines are independent proof, not results claimed here.
+Acceptance handoff: server deployed readiness and shipped SDK pin were delivered with `mode:steer` to beta acceptance `aeb225be` (environment `e70ee7fd-aace-4435-8419-2c2182950c48`) to rerun item 2 on a fresh Pro database using its own account. The user subsequently authorized mariogk-dev client placement with that host’s own measured path baselines. Its stronger exact-ID/value reconciliation and 100 SELECT-1 path baselines are independent proof, not results claimed here.

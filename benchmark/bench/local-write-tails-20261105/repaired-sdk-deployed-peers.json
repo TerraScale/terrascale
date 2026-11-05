@@ -1,0 +1,97 @@
+{
+  "captured_at": "2026-11-05T19:30:16.723311+00:00",
+  "health": {
+    "status": "ok",
+    "version": "0.1.0",
+    "region": "sjc",
+    "storageFormat": "23-41a88901325a",
+    "revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+    "machine": "ts-sjc-1"
+  },
+  "peer_internal_health_ms": {
+    "ts-fra-1": {
+      "region": "fra",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "fra",
+        "storageFormat": "23-41a88901325a",
+        "revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+        "machine": "ts-fra-1"
+      },
+      "samples_ms": [
+        300.469
+      ]
+    },
+    "ts-fra-2": {
+      "region": "fra",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "fra",
+        "storageFormat": "23-41a88901325a",
+        "revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+        "machine": "ts-fra-2"
+      },
+      "samples_ms": [
+        276.775
+      ]
+    },
+    "ts-gru-1": {
+      "region": "gru",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "gru",
+        "storageFormat": "23-41a88901325a",
+        "revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+        "machine": "ts-gru-1"
+      },
+      "samples_ms": [
+        356.084
+      ]
+    },
+    "ts-gru-2": {
+      "region": "gru",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "gru",
+        "storageFormat": "23-41a88901325a",
+        "revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+        "machine": "ts-gru-2"
+      },
+      "samples_ms": [
+        338.275
+      ]
+    },
+    "ts-sjc-1": {
+      "region": "sjc",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "sjc",
+        "storageFormat": "23-41a88901325a",
+        "revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+        "machine": "ts-sjc-1"
+      },
+      "samples_ms": [
+        0.991
+      ]
+    },
+    "ts-sjc-2": {
+      "region": "sjc",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "sjc",
+        "storageFormat": "23-41a88901325a",
+        "revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+        "machine": "ts-sjc-2"
+      },
+      "samples_ms": [
+        3.965
+      ]
+    }
+  }
+}
