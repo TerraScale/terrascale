@@ -23,9 +23,14 @@ internal sealed record HomeLease(string OrganizationId, string ProjectId, string
 
 internal sealed record HeldRevisionAnswer(string Region, string? Revision);
 
+internal interface IHomeWriteLease
+{
+    ValueTask<bool> PrepareAsync(TenantContext database, CancellationToken cancellationToken);
+}
+
 internal sealed class HomeLeases(
     TerraBaseOptions options, IReplicaCatalog catalog, IReplicaPeers peers, IDatabaseReplicas replicas, DatabaseFences fences, HomeLeaseGate leaseGate,
-    RegionReplication replication, IStorageEngine engine, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger) : BackgroundService
+    RegionReplication replication, IStorageEngine engine, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger) : BackgroundService, IHomeWriteLease
 {
     internal const string Bucket = "terrabase-homes";
     internal static readonly TimeSpan Ttl = TimeSpan.FromSeconds(10);
@@ -111,6 +116,42 @@ internal sealed class HomeLeases(
     internal bool Active => _js is not null;
 
     internal Func<TenantContext, HomeLease, CancellationToken, Task<bool>>? FailOver { get; set; }
+
+    public async ValueTask<bool> PrepareAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (_js is null)
+        {
+            return true;
+        }
+
+        if (_kv is not { } kv || !Ready)
+        {
+            return false;
+        }
+
+        // Serialize with the scan so creation cannot finish just before its first confirmation fences active writes.
+        await _confirming.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
+                || placement.Home != options.Region)
+            {
+                return false;
+            }
+
+            if (placement is { AllRegions: false, Replicas.Count: 0 })
+            {
+                return true;
+            }
+
+            await ConfirmAsync(kv, database, placement, cancellationToken).ConfigureAwait(false);
+            return leaseGate.Holds(database.DatabaseId!);
+        }
+        finally
+        {
+            _confirming.Release();
+        }
+    }
 
     internal async ValueTask<bool> TakeAsync(TenantContext database, string fromRegion, long epoch, HomeLease? failedHome, CancellationToken cancellationToken)
     {

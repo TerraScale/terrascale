@@ -31,7 +31,7 @@ public static class HomeApplyExtensions
     }
 
     private static ValueTask PrepareAsync(IHomeApply apply, string organization, string region, ManagedDatabase database, CancellationToken cancellationToken) =>
-        database is { ReplicaRegions.Count: > 0 } && (database.HomeRegion ?? region) == region
+        (database.AllRegions || database is { ReplicaRegions.Count: > 0 }) && (database.HomeRegion ?? region) == region
             ? apply.PrepareAsync(new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id), cancellationToken)
             : ValueTask.CompletedTask;
 }
