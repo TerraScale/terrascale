@@ -13,7 +13,7 @@ public sealed class TenantBoundaryTests
         using var outsider = await api.CreateTenantAsync("sql:read", "sql:write");
         using var dashboard = api.As(owner.User);
         using var otherDashboard = api.As(outsider.User);
-        var database = await api.CreateDatabaseAsync(owner.OrganizationId, owner.ProjectId, "private", dashboard);
+        await api.CreateDatabaseAsync(owner.OrganizationId, owner.ProjectId, "private", dashboard);
         await api.CreateDatabaseAsync(outsider.OrganizationId, outsider.ProjectId, "own", otherDashboard);
         var path = $"/v1/projects/{owner.ProjectId}/databases/private";
         using var seeded = await owner.Data.PostAsJsonAsync(ManagementApi.Uri(path + "/sql/execute"), new
@@ -29,10 +29,14 @@ public sealed class TenantBoundaryTests
             $"/v1/projects/{outsider.ProjectId}/databases/own", "SELECT 1");
         admitted.EnsureSuccessStatusCode();
 
+        var managementPath = ManagementApi.Uri(
+            $"/v1/management/organizations/{owner.OrganizationId}/projects/{owner.ProjectId}/databases/private");
+        using var visible = await dashboard.GetAsync(managementPath);
+        visible.EnsureSuccessStatusCode();
+
         using var read = await ManagementApi.SqlAsync(outsider.Data, path, "SELECT * FROM notes");
         using var write = await ManagementApi.SqlAsync(outsider.Data, path, "INSERT INTO notes VALUES (99)");
-        using var management = await otherDashboard.GetAsync(ManagementApi.Uri(
-            $"/v1/management/organizations/{owner.OrganizationId}/projects/{owner.ProjectId}/databases/{database}"));
+        using var management = await otherDashboard.GetAsync(managementPath);
 
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(write.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
