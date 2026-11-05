@@ -43,4 +43,4 @@ last. Timing values are measurements, not a protocol deadline or an SLA.
 
 The measurements contain fixed stage and region names, never SQL, tenant names,
 credentials or query arguments. Read behavior and acknowledgement guarantees
-are unchanged by timing collection.
+are unchanged by timing instrumentation.

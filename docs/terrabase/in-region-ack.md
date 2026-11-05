@@ -73,7 +73,7 @@ database's next transaction only after the previous one is held or applied. So t
 transaction of a database before an earlier one.
 
 One case can apply out of order: the partner failed to hold a transaction, the client cancelled its wait for the home,
-and the home was unreachable until both sources delivered. Column last-writer-wins by HLC (R6) still converges on the
+and the home was unreachable until both sources delivered. For each column, the greatest HLC stamp wins (R6), preserving convergence on the
 same rows.
 
 ## Limits
