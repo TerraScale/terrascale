@@ -1,6 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Hosting;
+using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
