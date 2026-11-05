@@ -288,7 +288,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                             {
                                 start = first,
                                 requests = new Dictionary<string, long> { ["GET"] = scenario == "negative" ? -3 : scenario == "zero" ? 0 : 10 },
-                                operations = new Dictionary<string, long> { ["document_read"] = scenario == "zero" ? 0 : 4 },
+                                operations = new Dictionary<string, long> { ["sql_read"] = scenario == "zero" ? 0 : 4 },
                                 errors = scenario == "zero" ? 0 : 1,
                                 latency = new { p50Ms = scenario is "zero" or "missing-latency" ? (double?)null : 0.5, p95Ms = scenario is "zero" or "missing-latency" ? (double?)null : 1.75, p99Ms = scenario is "zero" or "missing-latency" ? (double?)null : 9d },
                                 storageBytes = scenario == "missing-latency" ? (long?)null : 4096,
