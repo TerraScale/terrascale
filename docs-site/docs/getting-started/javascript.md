@@ -94,12 +94,12 @@ const people = await db.query("SELECT id, name FROM people WHERE id = ?", [ada])
 console.log("query matched", people[0].id, people[0].name);
 
 // A batch of 1 to 256 statements runs as one transaction: all commit or none do.
-const { rowsAffected } = await db.batch([
+// batch returns one result per statement; each result's rows are arrays by column.
+const batch = await db.batch([
   { sql: "INSERT INTO people (id, name) VALUES (:id, :name)", named: { id: generateId(), name: "Grace" } },
   "SELECT count(*) AS n FROM people",
 ]);
-const counted = await db.query("SELECT count(*) AS n FROM people");
-console.log("batch inserted, people count:", Number(counted[0].n));
+console.log("batch inserted, people count:", Number(batch[1].rows[0][0]));
 
 // A refused statement throws SqlError; the whole request rolled back.
 try {
@@ -115,6 +115,35 @@ Run it with the key exported in your shell:
 ```bash
 node quickstart.mjs
 ```
+
+To check types on a TypeScript copy, add a `tsconfig.json` and run the compiler
+in no-emit mode:
+
+```bash
+npm install --save-dev typescript @types/node
+cp quickstart.mjs quickstart.ts
+npx tsc --noEmit
+```
+
+```json
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2023"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["quickstart.ts"]
+}
+```
+
+The quickstart is valid TypeScript as written; `strict` mode needs one change:
+annotate the token cache (`let cached;` becomes `let cached: string | undefined;`)
+and the helper parameter (`const required = (name: string) => {`).
 
 Expected output (ids vary):
 
