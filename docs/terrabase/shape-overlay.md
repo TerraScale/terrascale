@@ -44,8 +44,11 @@ response. When the shape is up to date, the answer adds:
   `terrabase.local.<origin>.<organization>.<project>.<database>` with its transaction id as `Nats-Msg-Id`.
   `TERRABASE_PROVISIONAL_<ORIGIN>` retains those subjects in the origin region, using one file-backed replica,
   64 MiB, a 1 MiB message limit, ten-minute retention/deduplication, and discard-old retention.
+  Its row images are sealed as TBP1 under the database envelope key before publication; receiving regions decrypt
+  only while custody permits it. Database erasure also purges that database's provisional subject and pending rows.
   Live subscribers receive the publication in one hop without a pull through home or waiting for the storage ack.
-  The provisional publisher has eight pending messages, each at most 1 MiB of captured rows; an overflow falls
+  The provisional publisher has eight pending messages, each at most 1 MiB of captured rows; the wire limit includes
+  TBP1's 78-byte overhead. An overflow falls
   back to home delivery. The subscription queue also holds at most eight messages.
 - Direct delivery is best effort: disconnected readers do not replay the provisional stream. R7’s durable push and
   the normal home-confirmed page path continue independently. On reconnect, duplicate ids are suppressed in the
