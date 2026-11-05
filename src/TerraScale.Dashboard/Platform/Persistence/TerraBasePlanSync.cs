@@ -59,6 +59,20 @@ namespace TerraScale.Dashboard.Platform.Persistence
             return PublishAsync(organization, false, cancellationToken);
         }
 
+        public async Task EnsurePublishedAsync(OrganizationRecord organization, CancellationToken cancellationToken)
+        {
+            var plan = PlanFor(organization);
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            budget.CancelAfter(TimeSpan.FromSeconds(10));
+            var response = await PutAsync(organization.Id, plan, false, budget.Token);
+            if (response is < 200 or > 299)
+            {
+                throw new IOException("Organization plan publication failed.");
+            }
+
+            published[organization.Id] = new(plan, time.GetUtcNow(), true, 0);
+        }
+
         internal async Task PublishAsync(OrganizationRecord organization, bool reconcile, CancellationToken cancellationToken)
         {
             if (PlatformDatabases.IsPlatform(organization.Id) || !TerraScaleIds.IsValid(organization.Id))

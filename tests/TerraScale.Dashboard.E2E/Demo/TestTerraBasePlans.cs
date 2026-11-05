@@ -15,10 +15,12 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E
 {
-    // The private plan endpoint sees a project only after its first database enrolls it.
     internal sealed class TestTerraBasePlans(IHttpClientFactory fallback, TestDatabases databases, Uri origin) : HttpMessageHandler, IHttpClientFactory
     {
-        public ConcurrentQueue<(string Project, string Plan, HttpStatusCode Status)> Requests { get; } = new();
+        private int refuseOrganization;
+        public ConcurrentQueue<(string Owner, string Plan, HttpStatusCode Status)> Requests { get; } = new();
+
+        public void RefuseNextOrganization() => Interlocked.Exchange(ref refuseOrganization, 1);
 
         public HttpClient CreateClient(string name)
         {
@@ -30,15 +32,8 @@ namespace TerraScale.Dashboard.E2E
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
-            // A TerraBase without the organization plan route: the publisher falls back to each enrolled project.
-            if (uri.AbsolutePath.Split('/') is ["", "admin", "organizations", var organization, "plan"] && TerraScaleIds.IsValid(organization) &&
-                request.Method == HttpMethod.Put && uri.Query.Length == 0)
-            {
-                return new(HttpStatusCode.NotFound);
-            }
-
             if (uri.GetLeftPart(UriPartial.Authority) != origin.GetLeftPart(UriPartial.Authority) || uri.Query.Length != 0 ||
-                uri.AbsolutePath.Split('/') is not ["", "admin", "projects", var project, "plan"] || !TerraScaleIds.IsValid(project) ||
+                uri.AbsolutePath.Split('/') is not ["", "admin", var kind, var owner, "plan"] || kind is not ("organizations" or "projects") || !TerraScaleIds.IsValid(owner) ||
                 request.Method != HttpMethod.Put || request.Headers.Authorization is not null ||
                 request.Content?.Headers.ContentType?.MediaType != "application/json")
             {
@@ -52,11 +47,19 @@ namespace TerraScale.Dashboard.E2E
                 throw new InvalidOperationException("Unexpected TerraBase plan body.");
             }
 
-            var scope = new DatabaseScope("", "", "", "", project, "");
-            var home = (await databases.RegionsAsync(cancellationToken))[0];
-            var enrolled = (await databases.ListAsync(scope, home, cancellationToken)).Count > 0;
-            var status = enrolled ? HttpStatusCode.OK : HttpStatusCode.NotFound;
-            Requests.Enqueue((project, value.GetString()!, status));
+            var status = kind == "organizations"
+                ? Interlocked.Exchange(ref refuseOrganization, 0) == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK
+                : HttpStatusCode.NotFound;
+            if (kind == "projects")
+            {
+                var scope = new DatabaseScope("", "", "", "", owner, "");
+                var home = (await databases.RegionsAsync(cancellationToken))[0];
+                if ((await databases.ListAsync(scope, home, cancellationToken)).Count > 0)
+                {
+                    status = HttpStatusCode.OK;
+                }
+            }
+            Requests.Enqueue((owner, value.GetString()!, status));
             return new(status);
         }
     }

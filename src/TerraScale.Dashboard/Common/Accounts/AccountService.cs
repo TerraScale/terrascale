@@ -221,6 +221,7 @@ namespace TerraScale.Dashboard.Common.Accounts
 
                 org.Projects.TryAdd(project.Id, new() { Id = project.Id, OrganizationId = live.Id, Name = project.Name, IsDefault = true, CreatedAt = project.CreatedAt });
             }
+            await plans.EnsurePublishedAsync(org, cancellationToken);
             return org;
         }
 
@@ -705,6 +706,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             {
                 if (duplicate.Kind == "business" && duplicate.BillingStatus == "billing_required")
                 {
+                    await plans.EnsurePublishedAsync(duplicate, cancellationToken);
                     await SwitchOrganizationAsync(session, duplicate.Id, cancellationToken);
                     return duplicate;
                 }
@@ -733,6 +735,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     throw new AccountAccessException("Organization is unavailable.", 404);
                 }
             }
+            await plans.EnsurePublishedAsync(org, cancellationToken);
             await UpdateAccountAsync(session, account => { account.OrganizationIds.Add(org.Id); account.ActiveOrganizationId = org.Id; account.ActiveProjectId = ""; }, cancellationToken);
             return org;
         }
