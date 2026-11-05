@@ -1,6 +1,6 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
-using TerraBase.Features.HomeApply;
+using TerraBase.Features.HomePush;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -71,6 +71,8 @@ internal sealed class HoldEndpoint(HoldStore holds, IMemoryBudget memory) : Endp
         _ when !EntityIds.IsValid(held.Organization) || !EntityIds.IsValid(held.Project) || !EntityIds.IsValid(held.Database) =>
             "organization, project and database must be ULIDs",
         { Sequence: 0 } => "sequence must be positive",
-        _ => ApplyEndpoint.Invalid(held.Transaction),
+        { Payload: not { Length: >= TransactionCrypto.Overhead and <= TerraBase.Features.HomePush.HomePush.MaxPayloadBytes } } => "payload must be a sealed TBP1 transaction",
+        _ when !held.Payload.AsSpan(0, 4).SequenceEqual("TBP1"u8) => "payload must be a sealed TBP1 transaction",
+        _ => null,
     };
 }

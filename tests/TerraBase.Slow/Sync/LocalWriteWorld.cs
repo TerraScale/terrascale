@@ -96,16 +96,22 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
 
     public static async Task<LocalWriteWorld> StartAsync(JetStreamServer nats, LocalPartner mode = LocalPartner.Held)
     {
+        var s3 = new FakeS3();
         var api = await ManagementApi.StartAsync(
-            settings => settings["region"] = "gru",
+            settings =>
+            {
+                settings["region"] = "gru";
+                s3.Configure(settings);
+            },
             services =>
             {
+                s3.Route(services);
                 services.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new Serving()));
                 services.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new Peers()));
                 services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new NoReplicas()));
             });
         var directory = Directory.CreateTempSubdirectory("terrabase-home-push-").FullName;
-        var services = new ServiceCollection().AddMetrics().AddSingleton<ILocalWriteClock>(new Admitted())
+        var services = new ServiceCollection().AddSingleton(api.Server.Services.GetRequiredService<ITransactionCrypto>()).AddMetrics().AddSingleton<ILocalWriteClock>(new Admitted())
             .AddSingleton(provider => new ShapeOverlay(api.Server.Services.GetRequiredService<TerraBaseOptions>() with { NatsUrl = null }, TimeProvider.System,
                 NullLogger<ShapeOverlay>.Instance))
             .AddSingleton<ILocalCommitFeed>(provider => provider.GetRequiredService<ShapeOverlay>())
@@ -138,7 +144,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
             {
                 LocalPartner.Held => new Holds(healthy: true),
                 _ => new InRegionAck(options, new Partners(partner?.BaseAddress), new NoReplicas(),
-                    new HoldStore(api.Server.Services.GetRequiredService<IStorageEngine>(), TimeProvider.System),
+                    new HoldStore(api.Server.Services.GetRequiredService<IStorageEngine>(), TimeProvider.System), api.Server.Services.GetRequiredService<ITransactionCrypto>(),
                     api.Server.Services.GetRequiredService<InternalCredential>(), services.GetRequiredService<IMeterFactory>(), TimeProvider.System,
                     NullLogger<InRegionAck>.Instance),
             };
@@ -313,7 +319,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
 
     private sealed class NoApply : IHomeApply
     {
-        public ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken) => ValueTask.FromResult<HomeApplyResult?>(null);
+        public ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, byte[] payload, CancellationToken cancellationToken) => ValueTask.FromResult<HomeApplyResult?>(null);
 
         public ValueTask<HomeApplyResult?> StateAsync(TenantContext database, string transactionId, CancellationToken cancellationToken) => ValueTask.FromResult<HomeApplyResult?>(null);
 
@@ -344,7 +350,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
 
         public bool QuorumHealthy => healthy;
 
-        public ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, RegionTransaction transaction, CancellationToken cancellationToken) =>
+        public ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, byte[] payload, CancellationToken cancellationToken) =>
             ValueTask.FromResult(healthy);
 
         public void Release(TenantContext database, ulong through)

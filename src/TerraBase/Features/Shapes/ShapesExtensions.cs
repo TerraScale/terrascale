@@ -125,7 +125,8 @@ public static class ShapesExtensions
                 provider.GetRequiredService<ILogger<ShapeMirror>>()))
             .AddSingleton<ShapeCdnPurge>(provider => new ShapeCdnPurge(provider.GetRequiredService<IHttpClientFactory>(),
                 provider.GetService<ShapeStorageSettings>()?.CloudflareApiToken, provider.GetRequiredService<TimeProvider>(),
-                provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<ShapeCdnPurge>>()))
+                provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<ShapeCdnPurge>>(),
+                provider.GetRequiredService<Management.SystemCatalog>(), provider.GetService<Backup.KeyCustody>()))
             .AddSingleton<IShapeCdnPurge>(provider => provider.GetRequiredService<ShapeCdnPurge>())
             .AddHostedService(provider => provider.GetRequiredService<ShapeCdnPurge>())
             .AddHostedService(provider => new ShapeCdnAnalytics(provider.GetRequiredService<IHttpClientFactory>(),

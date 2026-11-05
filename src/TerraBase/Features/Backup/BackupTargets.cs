@@ -29,7 +29,7 @@ internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys
 internal sealed class BackupTargets(
     IObjectStore platform, DataKeys platformKeys, BackupReader platformReader, IProjectBackupDestinations destinations,
     IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger,
-    S3ObjectStore bucket, IDiskBudget disk) : IDisposable
+    S3ObjectStore bucket, IDiskBudget disk, KeyCustody custody) : IDisposable
 {
     private readonly SemaphoreSlim _customerKeyReads = new(DataKeys.MaxReads, DataKeys.MaxReads);
 
@@ -91,7 +91,7 @@ internal sealed class BackupTargets(
         var scope = BackupLayout.KeyScope(database);
         var scopedCustomer = new ProjectStore(customer, scope);
         IObjectStore store = mirror ? new MirroredStore(new ProjectStore(platform, scope), scopedCustomer) : scopedCustomer;
-        var keys = new DataKeys(store, master, time, options.Backup!, freshKey, _customerKeyReads);
+        var keys = new DataKeys(custody.Store, master, time, options.Backup!, freshKey, _customerKeyReads);
         return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options, disk), [new ProjectStore(platform, scope), scopedCustomer], mirror, customer);
     }
 

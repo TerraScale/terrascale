@@ -2,7 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Threading.Channels;
 using TerraBase.Configuration;
-using TerraBase.Features.HomeApply;
+using TerraBase.Features.HomePush;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -23,14 +23,14 @@ internal interface IInRegionAck
     /// Stores the published transaction on the partner and answers true once it is synced there; false when the partner
     /// did not store it, and the write then waits for the home instead. A discovered one-node region needs no partner copy.
     /// </summary>
-    ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, RegionTransaction transaction, CancellationToken cancellationToken);
+    ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, byte[] payload, CancellationToken cancellationToken);
 
     /// <summary>Tells the partner that the home holds the database's transactions up to <paramref name="through"/>.</summary>
     void Release(TenantContext database, ulong through);
 }
 
 internal sealed class InRegionAck(
-    TerraBaseOptions options, IRegionPartners partners, IReplicaPeers homes, HoldStore holds, InternalCredential credential, IMeterFactory meters,
+    TerraBaseOptions options, IRegionPartners partners, IReplicaPeers homes, HoldStore holds, ITransactionCrypto crypto, InternalCredential credential, IMeterFactory meters,
     TimeProvider time, ILogger<InRegionAck> logger) : BackgroundService, IInRegionAck
 {
     internal static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
@@ -71,7 +71,7 @@ internal sealed class InRegionAck(
         base.Dispose();
     }
 
-    public async ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, RegionTransaction transaction, CancellationToken cancellationToken)
+    public async ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, byte[] payload, CancellationToken cancellationToken)
     {
         var members = _partners;
         if (members is [])
@@ -89,7 +89,7 @@ internal sealed class InRegionAck(
         try
         {
             using var body = Json(JsonSerializer.SerializeToUtf8Bytes(
-                new HeldTransaction(1, options.MachineId, home, database.OrganizationId, database.ProjectId, database.DatabaseId, sequence, transaction),
+                new HeldTransaction(1, options.MachineId, home, database.OrganizationId, database.ProjectId, database.DatabaseId, sequence, payload),
                 TerraBaseJsonContext.Default.HeldTransaction));
             using var response = await Http.PostAsync(new Uri(partner.Internal, "v1/sync/holds"), body, timeout.Token).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
@@ -193,7 +193,13 @@ internal sealed class InRegionAck(
     {
         try
         {
-            using var body = Json(JsonSerializer.SerializeToUtf8Bytes(held.Transaction!, TerraBaseJsonContext.Default.RegionTransaction));
+            var database = new TenantContext(held.Organization!, PlanTier.Hobby, held.Project, held.Database);
+            var plain = await crypto.OpenAsync(database, held.Payload!, cancellationToken).ConfigureAwait(false);
+            if (plain is null || !TerraBase.Features.HomePush.HomePush.TryDecode(plain, out var transaction))
+            {
+                return true; // Shredded or unauthentic: it must never be replayed.
+            }
+            using var body = Json(JsonSerializer.SerializeToUtf8Bytes(transaction, TerraBaseJsonContext.Default.RegionTransaction));
             using var response = await Http.PostAsync(
                 new Uri(home.Internal, $"v1/sync/organizations/{held.Organization}/projects/{held.Project}/databases/{held.Database}/apply"),
                 body, cancellationToken).ConfigureAwait(false);

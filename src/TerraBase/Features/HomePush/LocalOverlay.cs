@@ -49,6 +49,17 @@ internal sealed class LocalOverlay
         }
     }
 
+    internal void DeleteDatabase(TenantContext database)
+    {
+        if (_databases.TryRemove(Key(database), out var pending))
+        {
+            foreach (var entry in pending.Snapshot())
+            {
+                entry.Home.TrySetCanceled();
+            }
+        }
+    }
+
     public RegionTransaction? Find(TenantContext database, string id) =>
         _databases.TryGetValue(Key(database), out var pending) ? pending.Find(id) : null;
 
@@ -159,7 +170,18 @@ internal sealed class LocalOverlay
             }
         }
 
-        public RegionTransaction? Find(string id)
+        internal void DeleteDatabase(TenantContext database)
+    {
+        if (_databases.TryRemove(Key(database), out var pending))
+        {
+            foreach (var entry in pending.Snapshot())
+            {
+                entry.Home.TrySetCanceled();
+            }
+        }
+    }
+
+    public RegionTransaction? Find(string id)
         {
             lock (_lock)
             {
