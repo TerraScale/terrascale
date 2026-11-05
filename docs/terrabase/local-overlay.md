@@ -4,6 +4,9 @@ A write the router (R4) commits in a region that is not the database's home must
 once and in commit order, and stay visible in its own region until the home's pages carry it. This note is the
 contract for that path. The home side is [home apply](home-apply.md) (R6). Shapes (F7) build their
 `provisional`, `confirmed` and `revert` states on the overlay described here ([shape overlay](shape-overlay.md)).
+F8 also sends captured row images directly to other regions’ shape overlays over the origin’s bounded JetStream stream.
+This asynchronous publication neither gates the write acknowledgement nor replaces the durable push to home.
+A cut direct link leaves the home push and confirmed page path intact; late images are suppressed by `_ts_applied` in the pulled pages.
 
 ## Why the replica cannot hold local writes
 
