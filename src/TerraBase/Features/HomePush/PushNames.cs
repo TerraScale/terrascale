@@ -21,6 +21,8 @@ internal static class PushNames
 
     public static string AppliedAll(string origin) => $"terrabase.applied.{origin}.>";
 
+    public static string? Origin(string subject) => subject.Split('.') is [_, _, var origin, ..] && TerraBase.Configuration.TerraBaseOptions.IsRegion(origin) ? origin : null;
+
     public static TenantContext? Database(string subject)
     {
         var parts = subject.Split('.');

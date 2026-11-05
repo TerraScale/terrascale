@@ -104,6 +104,11 @@ internal sealed class SqlExecuteEndpoint(
             return await ReplicaAsync(database, placement, commands, body, cancellationToken);
         }
 
+        if (await SettledAsync(database, cancellationToken) is { } unsettled)
+        {
+            return unsettled;
+        }
+
         var canWrite = (await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.SqlWrite)).Succeeded;
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
@@ -187,7 +192,14 @@ internal sealed class SqlExecuteEndpoint(
                 return answered;
             }
 
-            return await ForwardAsync(placement.Home, route is { Commit: WritePath.Local } ? route with { Commit = WritePath.Home } : route, body, cancellationToken);
+            var forwarded = await ForwardAsync(placement.Home, route is { Commit: WritePath.Local } ? route with { Commit = WritePath.Home } : route, body,
+                writes ? database : null, cancellationToken);
+            if (writes)
+            {
+                local.Forwarded(database);
+            }
+
+            return forwarded;
         }
 
         await using (reader.ConfigureAwait(false))
@@ -200,6 +212,24 @@ internal sealed class SqlExecuteEndpoint(
                 ReplicaSqlFailure failed => Error(new SqlBatchFailure(failed.Error, failed.Statement)),
             };
         }
+    }
+
+    private async ValueTask<IResult?> SettledAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (!Listeners.IsForwarded(HttpContext) || HttpContext.Request.Headers[HomeForwarding.PushThroughHeader] is not [{ } through])
+        {
+            return null;
+        }
+
+        if (through.Split(' ') is not [var origin, var position] || !TerraBaseOptions.IsRegion(origin)
+            || !ulong.TryParse(position, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var sequence))
+        {
+            return Error(new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, "the forwarded push position is malformed"), 0));
+        }
+
+        return await local.AppliedAsync(origin, database, sequence, cancellationToken)
+            ? null
+            : Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, "the region's earlier writes have not reached the home yet; retry"), 0));
     }
 
     private async ValueTask<IResult?> LocalAsync(
@@ -277,7 +307,7 @@ internal sealed class SqlExecuteEndpoint(
         return new SqlError(code, conflict?.Message ?? "the database's home rejected the write");
     }
 
-    private async ValueTask<IResult> ForwardAsync(string home, WriteRoute? route, byte[] body, CancellationToken cancellationToken)
+    private async ValueTask<IResult> ForwardAsync(string home, WriteRoute? route, byte[] body, TenantContext? writing, CancellationToken cancellationToken)
     {
         if ((await peers.ListAsync(cancellationToken)).FirstOrDefault(peer => peer.Region == home) is not { } node)
         {
@@ -290,7 +320,8 @@ internal sealed class SqlExecuteEndpoint(
             HttpContext.Response.Headers[RouteHeader] = route.Header;
         }
 
-        await HomeForwarding.ForwardAsync(HttpContext, new HomeNode(home, node.Internal), body);
+        await HomeForwarding.ForwardAsync(HttpContext, new HomeNode(home, node.Internal), body,
+            writing is not null && local.LastPushed(writing) is { } pushed ? $"{options.Region} {pushed}" : null);
         return Results.Empty;
     }
 

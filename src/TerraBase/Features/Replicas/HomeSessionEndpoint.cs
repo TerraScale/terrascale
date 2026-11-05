@@ -16,9 +16,11 @@ namespace TerraBase.Features.Replicas;
 /// (docs/terrabase/region-replicas.md#writes-and-transactions). Internal listener only, behind the peer credential.
 /// </summary>
 internal sealed class HomeSessionEndpoint(
-    ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+    ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local)
+    : EndpointWithoutRequest<IResult>
 {
     private static readonly SqlError NotHere = new(SqlErrors.WrongRegion, "this region is not the database's home for that replica region");
+    private static readonly SqlError Unsettled = new(SqlErrors.Unavailable, "the region's earlier writes have not reached the home yet; retry");
 
     public override void Configure()
     {
@@ -70,8 +72,11 @@ internal sealed class HomeSessionEndpoint(
                 case SqlError refused:
                     await AnswerAsync(output, new HomeSessionAnswer(true, refused), cancellationToken).ConfigureAwait(false);
                     return Results.Empty;
+                case TenantContext database when open.PushThrough is { } through && !await local.AppliedAsync(open.Region, database, through, cancellationToken).ConfigureAwait(false):
+                    await AnswerAsync(output, new HomeSessionAnswer(true, Unsettled), cancellationToken).ConfigureAwait(false);
+                    return Results.Empty;
                 case TenantContext database:
-                    await ServeAsync(database, open.CanWrite, input, output, cancellationToken).ConfigureAwait(false);
+                    await ServeAsync(database, open.Region, open.CanWrite, input, output, cancellationToken).ConfigureAwait(false);
                     break;
             }
         }
@@ -104,7 +109,7 @@ internal sealed class HomeSessionEndpoint(
         };
     }
 
-    private async Task ServeAsync(TenantContext database, bool canWrite, System.IO.Pipelines.PipeReader input, System.IO.Pipelines.PipeWriter output,
+    private async Task ServeAsync(TenantContext database, string origin, bool canWrite, System.IO.Pipelines.PipeReader input, System.IO.Pipelines.PipeWriter output,
         CancellationToken cancellationToken)
     {
         var session = sql.Open(database, canWrite);
@@ -114,6 +119,12 @@ internal sealed class HomeSessionEndpoint(
             while (await HomeSessionFrames.ReadAsync(input, TerraBaseJsonContext.Default.HomeSessionCall, memory, database, cancellationToken).ConfigureAwait(false) is { } call)
             {
                 HomeSessionAnswer answer;
+                if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, cancellationToken).ConfigureAwait(false))
+                {
+                    await AnswerAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
                 using (QosContext.Enter(database, memory))
                 {
                     session.BeginRequest();

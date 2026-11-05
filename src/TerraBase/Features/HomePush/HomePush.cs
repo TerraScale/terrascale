@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Buffers.Binary;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
@@ -22,6 +23,12 @@ namespace TerraBase.Features.HomePush;
 internal interface ILocalWrites
 {
     ValueTask<ILocalTransaction?> BeginAsync(TenantContext database, CancellationToken cancellationToken);
+
+    ulong? LastPushed(TenantContext database);
+
+    void Forwarded(TenantContext database);
+
+    ValueTask<bool> AppliedAsync(string origin, TenantContext database, ulong sequence, CancellationToken cancellationToken);
 }
 
 internal interface ILocalTransaction : IAsyncDisposable
@@ -44,7 +51,14 @@ internal sealed class HomePush(
     private const int MaxParallelDatabases = 16;
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(5);
 
+    private static readonly TimeSpan SettleBound = TimeSpan.FromSeconds(30);
+
     private readonly LocalOverlay _overlay = new();
+    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), ulong> _pushed = new();
+    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), byte> _forwarded = new();
+    private readonly ConcurrentDictionary<(string Origin, string Organization, string Project, string Database), ulong> _applied = new();
+    private readonly ConcurrentDictionary<string, ulong> _floors = new(StringComparer.Ordinal);
+    private TaskCompletionSource _progress = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Channel<(TenantContext Database, ulong Through)> _purges = Channel.CreateBounded<(TenantContext, ulong)>(
         new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.DropOldest });
     private readonly Lock _queuesGate = new();
@@ -147,9 +161,62 @@ internal sealed class HomePush(
             return null;
         }
 
+        if (_forwarded.TryRemove(Key(database), out _))
+        {
+            try
+            {
+                _ = await replicas.PullAsync(database, fromHome: true, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _forwarded[Key(database)] = 0;
+                return null;
+            }
+        }
+
         return await replicas.BeginWriteAsync(database, cancellationToken).ConfigureAwait(false) is { } writer
             ? new LocalTransaction(this, database, placement.Home, writer)
             : null;
+    }
+
+    public ulong? LastPushed(TenantContext database) => _pushed.TryGetValue(Key(database), out var sequence) ? sequence : null;
+
+    public void Forwarded(TenantContext database) => _forwarded[Key(database)] = 0;
+
+    public async ValueTask<bool> AppliedAsync(string origin, TenantContext database, ulong sequence, CancellationToken cancellationToken)
+    {
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bound.CancelAfter(SettleBound);
+        while (true)
+        {
+            var progress = Volatile.Read(ref _progress).Task;
+            if ((_floors.TryGetValue(origin, out var floor) && sequence <= floor)
+                || (_applied.TryGetValue((origin, database.OrganizationId, database.ProjectId!, database.DatabaseId!), out var applied) && applied >= sequence))
+            {
+                return true;
+            }
+
+            try
+            {
+                await progress.WaitAsync(bound.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+        }
+    }
+
+    private static (string, string, string) Key(TenantContext database) => (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
+
+    private void Progressed(string origin, TenantContext? database, ulong sequence)
+    {
+        if (database is not null)
+        {
+            _ = _applied.AddOrUpdate((origin, database.OrganizationId, database.ProjectId!, database.DatabaseId!), sequence, (_, known) => Math.Max(known, sequence));
+        }
+
+        Interlocked.Exchange(ref _progress, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
     }
 
     internal async Task<PubAckResponse> PublishAgainAsync(TenantContext database, string id, CancellationToken cancellationToken)
@@ -243,6 +310,7 @@ internal sealed class HomePush(
                     && TryDecode(data, out var transaction))
                 {
                     _ = _overlay.Add(database, metadata.Sequence.Stream, transaction);
+                    _ = _pushed.AddOrUpdate(Key(database), metadata.Sequence.Stream, (_, known) => Math.Max(known, metadata.Sequence.Stream));
                 }
             }
 
@@ -336,6 +404,8 @@ internal sealed class HomePush(
                 }, cancellationToken).ConfigureAwait(false);
                 if (reset)
                 {
+                    _floors[origin] = consumer.Info.AckFloor.StreamSeq;
+                    Progressed(origin, null, 0);
                     await consumer.ResetAsync(consumer.Info.AckFloor.StreamSeq + 1, cancellationToken).ConfigureAwait(false);
                     reset = false;
                 }
@@ -416,6 +486,11 @@ internal sealed class HomePush(
             logger.ZLogWarning($"A malformed pushed message is dropped");
             _applies?.Add(1, new KeyValuePair<string, object?>("state", "malformed"));
             await message.AckTerminateAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (PushNames.Origin(message.Subject) is { } dropped && message.Metadata is { } at)
+            {
+                Progressed(dropped, PushNames.Database(message.Subject), at.Sequence.Stream);
+            }
+
             return;
         }
 
@@ -448,6 +523,11 @@ internal sealed class HomePush(
         await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
             JsonSerializer.SerializeToUtf8Bytes(result, TerraBaseJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
         await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (message.Metadata is { } metadata)
+        {
+            Progressed(transaction.Region!, database, metadata.Sequence.Stream);
+        }
+
         _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
     }
 
@@ -563,6 +643,7 @@ internal sealed class HomePush(
             }
 
             var homeApplied = push._overlay.Add(database, acknowledged.Seq, transaction);
+            _ = push._pushed.AddOrUpdate(Key(database), acknowledged.Seq, (_, known) => Math.Max(known, acknowledged.Seq));
             try
             {
                 await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
