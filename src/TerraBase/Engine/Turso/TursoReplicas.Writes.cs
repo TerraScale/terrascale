@@ -36,6 +36,7 @@ internal sealed partial class TursoReplicas
             await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
                 return await OpenWriterAsync(captured: true, release: true, cancellationToken).ConfigureAwait(false);
             }
             catch (TursoException error)

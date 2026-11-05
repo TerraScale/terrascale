@@ -18,6 +18,113 @@ public sealed class RegionReplicaTests
     private readonly Faker _faker = new();
 
     [Test]
+    public async Task A_delayed_home_answer_allows_local_writes_and_newer_pushes_without_regressing_the_revision()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current!.Execution.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(8));
+        var token = deadline.Token;
+        await using var api = await ManagementApi.StartSharedAsync();
+        var server = api.Server;
+        var directory = Directory.CreateTempSubdirectory("terrabase-delayed-replica-").FullName;
+        try
+        {
+            var database = await server.CreateSyncedDatabaseAsync();
+            await server.ExecuteAsync(database, $"INSERT INTO items(id, tenant, v) VALUES ('home', '{database.DatabaseId}', 'initial')");
+            var options = server.Services.GetRequiredService<TerraBaseOptions>() with { DataDirectory = directory };
+            using var delayed = new DelayedAnswer();
+            using var http = PeerTls.CreateClient(server.BaseAddress, delayed);
+            await using var replicas = new TursoReplicas(options, new TestMasterKey(), server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<TursoReplicas>.Instance);
+            await replicas.OpenAsync(database, server.PullAddress(database), http, token);
+            var held = replicas.HeldRevision(database)!.Value;
+            await server.ExecuteAsync(database, "UPDATE items SET v = 'delayed' WHERE id = 'home'");
+            var beforeRequest = replicas.Position;
+            delayed.BlockNext = true;
+            var fetching = replicas.PullAsync(database, fromHome: true, token).AsTask();
+            try
+            {
+                await delayed.Captured.Task.WaitAsync(token);
+                // Keep the same overlay contract as production: a pull restores the local commit after page apply.
+                replicas.Overlay = async (_, _, writer, cancellation) =>
+                {
+                    _ = await writer.ExecuteAsync(Statement($"INSERT OR REPLACE INTO items(id, tenant, v) VALUES ('local', '{database.DatabaseId}', 'sjc')"), cancellation);
+                    return true;
+                };
+                await using (var writer = (await replicas.BeginWriteAsync(database, token))!)
+                {
+                    _ = await writer.ExecuteAsync(Statement($"INSERT INTO items(id, tenant, v) VALUES ('local', '{database.DatabaseId}', 'sjc')"), token);
+                    await writer.CommitAsync(token);
+                }
+
+                await server.ExecuteAsync(database, "UPDATE items SET v = 'newer' WHERE id = 'home'");
+                using (var push = await RevisionPush.BuildAsync(server.Services.GetRequiredService<IDatabaseRevisions>(), server.Services.GetRequiredService<IMemoryBudget>(),
+                    database, held.ToString(), 0, token))
+                {
+                    await Assert.That(RevisionPush.TryRead(push!.Payload.ToArray(), out var notice, out var answer)).IsTrue();
+                    await Assert.That(DatabaseRevision.TryParse(notice!.Revision, out var to)).IsTrue();
+                    await Assert.That(replicas.Offer(database, held, to, answer, notice.CdcPosition)).IsTrue();
+                }
+
+                await Assert.That((await replicas.PullAsync(database, fromHome: false, token))!.Changed).IsTrue();
+                var newer = replicas.HeldRevision(database);
+                var afterPush = replicas.Position;
+                await Assert.That(fetching.IsCompleted).IsFalse();
+                delayed.Release.TrySetResult();
+                await Assert.That((await fetching)!.Changed).IsFalse();
+                await Assert.That(replicas.HeldRevision(database)).IsEqualTo(newer);
+                await Assert.That(await RowsAsync(replicas, database, token)).IsEquivalentTo(new SortedDictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["home"] = "newer",
+                    ["local"] = "sjc",
+                });
+                await using var certified = await replicas.BeginReadAsync(database, beforeRequest, token);
+                await Assert.That(certified).IsNotNull();
+                await Assert.That(await replicas.BeginReadAsync(database, afterPush, token)).IsNull();
+            }
+            finally
+            {
+                delayed.Release.TrySetResult();
+                _ = await fetching;
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class DelayedAnswer() : DelegatingHandler(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
+    {
+        public bool BlockNext { get; set; }
+
+        public TaskCompletionSource Captured { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = await base.SendAsync(request, cancellationToken);
+            if (!BlockNext)
+            {
+                return response;
+            }
+
+            BlockNext = false;
+            try
+            {
+                await response.Content.LoadIntoBufferAsync(cancellationToken);
+                Captured.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+                return response;
+            }
+            catch
+            {
+                response.Dispose();
+                throw;
+            }
+        }
+    }
+
+    [Test]
     public async Task AnEncryptedReplicaFollowsItsHomeThroughDmlDdlACheckpointAndAReopen()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
