@@ -66,7 +66,7 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
                 return record;
             }
 
-            if (!record.Replicas.Contains(target, StringComparer.Ordinal))
+            if (!record.AllRegions && !record.Replicas.Contains(target, StringComparer.Ordinal))
             {
                 return new Validation(record.Replicas.Count == 0
                     ? "homeRegion must be one of the database's replica regions, and it has none: add the region as a replica first"
