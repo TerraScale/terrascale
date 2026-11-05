@@ -195,12 +195,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
         {
             values["master-key"] = masterKey;
             settings?.Invoke(values);
-        }, logs, clock, replace: collection =>
-        {
-            // Ordinary journeys exercise the production cache; only key-mutation tests need immediate rereads.
-            collection.RemoveAll<KeyRingRefresh>();
-            services?.Invoke(collection);
-        }, runClosureWorker, configure);
+        }, logs, clock, services, runClosureWorker, configure);
         return new OidcHarness(fixture, tenant, masterKey, server, database, email);
     }
 
