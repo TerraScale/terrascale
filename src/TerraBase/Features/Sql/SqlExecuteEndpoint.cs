@@ -98,6 +98,7 @@ internal sealed class SqlExecuteEndpoint(
 
     private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlCommand> commands, byte[] body, CancellationToken cancellationToken)
     {
+        SqlRequestTiming.Mark(HttpContext, "tenant");
         // Only a node holding a replica of the database reads its placement here; the home answers without another catalog read.
         if (replicas.Holds(database)
             && await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
@@ -185,12 +186,14 @@ internal sealed class SqlExecuteEndpoint(
         {
             reader = null;
         }
+        SqlRequestTiming.Mark(HttpContext, "replica_open");
         if (reader is null || writes || preference == WriteOverride.Home)
         {
             WriteRoute? route = null;
             if (writes)
             {
                 route = await router.RouteAsync(database, reader, [.. commands.Select(command => command.Sql)], preference, homeDurable, cancellationToken);
+                SqlRequestTiming.Mark(HttpContext, "route");
             }
 
             if (reader is not null)
@@ -252,6 +255,7 @@ internal sealed class SqlExecuteEndpoint(
         try
         {
             transaction = await local.BeginAsync(database, cancellationToken);
+            SqlRequestTiming.Mark(HttpContext, "local_begin");
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -266,6 +270,7 @@ internal sealed class SqlExecuteEndpoint(
         await using (transaction.ConfigureAwait(false))
         {
             var outcome = await sql.ExecuteOnCopyAsync(database, statement => transaction.ExecuteAsync(statement, cancellationToken), statements, write: true, cancellationToken);
+            SqlRequestTiming.Mark(HttpContext, "local_execute");
             if (outcome is ReplicaSqlFailure failed)
             {
                 return Error(new SqlBatchFailure(failed.Error, failed.Statement));
@@ -280,6 +285,7 @@ internal sealed class SqlExecuteEndpoint(
             try
             {
                 committed = await transaction.CommitAsync(homeDurable, cancellationToken);
+                SqlRequestTiming.Mark(HttpContext, "ack");
             }
             catch (LocalWriteRefusedException)
             {
