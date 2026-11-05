@@ -119,7 +119,7 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
 ## Storage and readiness (TS-489)
 
 `AuthStore` uses generic per-feature collections through
-`TerraBaseDocumentsClient`, with no unconditional writes or automatic write
+`TerraBaseDatabaseClient`, with no unconditional writes or automatic write
 retries. Reads expose the opaque ETag version; create uses
 `TerraBasePrecondition.Absent` (`If-None-Match: *`), and replacement/deletion
 uses `Matches(version)` (`If-Match`). Callers authorize the instance before

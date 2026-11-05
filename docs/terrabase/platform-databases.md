@@ -72,7 +72,7 @@ var http = new HttpClient(TerraBaseHttp.CreateHandler());
 http.DefaultRequestHeaders.Add("X-TerraBase-Peer-Credential",
     Environment.GetEnvironmentVariable("TERRABASE_PEER_SECRET")
         ?? throw new InvalidOperationException("TERRABASE_PEER_SECRET is required"));
-var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+var database = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions
 {
     // This internal-only transport sends the peer credential; the SDK sends HTTP/2 prior knowledge.
     BaseAddress = internalOrigin,

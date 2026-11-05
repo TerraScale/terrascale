@@ -32,7 +32,7 @@ async ValueTask<string> Token(CancellationToken ct)
     }
     return token;
 }
-var client = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = api, AccessTokenProvider = Token });
+var client = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { BaseAddress = api, AccessTokenProvider = Token });
 var project = client.Project(projectId);
 using var health = JsonDocument.Parse(await http.GetStringAsync(new Uri(api, "/healthz")));
 var region = health.RootElement.GetProperty("region").GetString()!;
