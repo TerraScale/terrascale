@@ -7,6 +7,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Shapes;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -88,8 +89,9 @@ public sealed class CompleteShreddingTests
         // Warm a separate server's cache. Deletion must revoke it over the actual authenticated peer RPC.
         var remoteCustody = remote.Server.Services.GetRequiredService<KeyCustody>();
         var observedStore = new ObservedStore(remoteCustody.Store);
+        var keyTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
         using var otherKeys = new DataKeys(observedStore,
-            remote.Server.Services.GetRequiredService<IMasterKey>(), TimeProvider.System,
+            remote.Server.Services.GetRequiredService<IMasterKey>(), keyTime,
             remote.Server.Services.GetRequiredService<BackupSettings>(), revocations: remoteCustody.Revocations);
         var other = new TransactionCrypto(otherKeys);
         await Assert.That(await other.OpenAsync(tenant, payload, token)).IsEquivalentTo(packed);
@@ -100,6 +102,32 @@ public sealed class CompleteShreddingTests
             await Assert.That(await other.OpenAsync(tenant, payload, token)).IsEquivalentTo(packed);
         }
         await Assert.That(observedStore.Reads).IsEqualTo(reads);
+        await other.PrepareAsync(tenant, token);
+        keyTime.Advance(TimeSpan.FromMinutes(1));
+        var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        s3.BeforeList = async (prefix, cancellation) =>
+        {
+            if (prefix == BackupLayout.Keys(BackupLayout.KeyScope(tenant)))
+            {
+                refreshing.TrySetResult();
+                await releaseRefresh.Task.WaitAsync(cancellation);
+            }
+        };
+        var refresh = otherKeys.RefreshAsync(BackupLayout.KeyScope(tenant), token);
+        try
+        {
+            await refreshing.Task.WaitAsync(token);
+            var seal = other.SealAsync(tenant, packed, token);
+            await Assert.That(seal.IsCompletedSuccessfully).IsTrue();
+            await Assert.That(await other.OpenAsync(tenant, await seal, token)).IsEquivalentTo(packed);
+        }
+        finally
+        {
+            releaseRefresh.TrySetResult();
+            await refresh;
+            s3.BeforeList = null;
+        }
         using var channel = GrpcChannel.ForAddress(remote.Server.BaseAddress, new GrpcChannelOptions { HttpClient = remote.Server.Client });
         var revocations = new KeyRevocation.KeyRevocationClient(channel);
         var refused = await revocations.RevokeAsync(new KeyRevocationRequest
@@ -124,6 +152,7 @@ public sealed class CompleteShreddingTests
         await Assert.That(nativeReplica.Holds(tenant)).IsFalse();
         await Assert.That(Directory.GetFiles(replicaFiles)).IsEmpty();
         await Assert.That(await other.OpenAsync(tenant, payload, token)).IsNull();
+        await Assert.That(() => other.SealAsync(tenant, packed, token)).Throws<DatabaseShreddedException>();
         await Assert.That(await other.OpenAsync(snapshot, snapshotPayload, token)).IsNull();
         await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);
         await Assert.That(api.Server.Services.GetRequiredService<HoldStore>().Count).IsEqualTo(0);
