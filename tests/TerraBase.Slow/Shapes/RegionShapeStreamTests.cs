@@ -62,6 +62,9 @@ public sealed class RegionShapeStreamTests
         var reverted = await fra.NextAsync(token);
         await Assert.That(Settled(reverted, "revert")).IsEquivalentTo([commit.Id]);
         await Assert.That(Pending(reverted).Count).IsEqualTo(0);
+        var winner = reverted.GetProperty("changes").EnumerateArray().SelectMany(change => change.GetProperty("ops").EnumerateArray())
+            .Single(op => op.GetProperty("row").GetProperty("id").GetString() == "x");
+        await Assert.That(winner.GetProperty("row").GetProperty("v").GetString()).IsEqualTo("gru");
     }
 
     [Test]
