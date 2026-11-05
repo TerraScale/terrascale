@@ -10,6 +10,7 @@ using NATS.Client.KeyValueStore;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -24,7 +25,7 @@ internal sealed record HeldRevisionAnswer(string Region, string? Revision);
 
 internal sealed class HomeLeases(
     TerraBaseOptions options, IReplicaCatalog catalog, IReplicaPeers peers, IDatabaseReplicas replicas, DatabaseFences fences, HomeLeaseGate leaseGate,
-    RegionReplication replication, IStorageEngine engine, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger) : BackgroundService
+    RegionReplication replication, IStorageEngine engine, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger) : BackgroundService
 {
     internal const string Bucket = "terrabase-homes";
     internal static readonly TimeSpan Ttl = TimeSpan.FromSeconds(10);
@@ -565,7 +566,19 @@ internal sealed class HomeLeases(
         leaseGate.Unlease(id);
         if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement } && placement.Version <= home.Epoch)
         {
-            await catalog.UpdatePlacementAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
+            if (placement.Home == options.Region)
+            {
+                _ = await moves.FollowHomeLeaseAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
+                if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement.Home: var recordedHome }
+                    || recordedHome == options.Region)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                await catalog.UpdatePlacementAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
+            }
         }
 
         try

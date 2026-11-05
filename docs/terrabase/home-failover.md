@@ -68,6 +68,8 @@ its leases. For a database whose `home.<databaseId>` names another node at an ep
 it demotes itself: it fences the database as moved, records the
 new placement, deletes its file and follows the new home as a replica. Writes it committed that no replica pulled are
 discarded with the file (`terrabase.home.demotions`).
+The lease demotion uses a dedicated catalog write: ordinary replica placement updates cannot replace a region's own
+home record. The old file stays fenced until that catalog write succeeds.
 
 ## Every write path carries the epoch
 
