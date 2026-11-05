@@ -148,7 +148,7 @@ public sealed class HomeFailoverTests
         }
         catch
         {
-            Console.WriteLine($"Before partition: all acknowledged={acked[all.Id].Count}, local acknowledged={acked[local.Id].Count}, all replica={await ReplicaCountAsync(viaSjc, all, token)}, local replica={await ReplicaCountAsync(viaSjc, local, token)}; writes={string.Join(", ", writeStatuses.Select(pair => $"{pair.Key}:{pair.Value}"))}; tasks={string.Join(", ", writers.Select(writer => writer.Status))}");
+            Console.WriteLine($"Before partition: all acknowledged={acked[all.Id].Count}, local acknowledged={acked[local.Id].Count}, all replica={await ReplicaCountAsync(viaSjc, all, token, diagnose: true)}, local replica={await ReplicaCountAsync(viaSjc, local, token, diagnose: true)}; writes={string.Join(", ", writeStatuses.Select(pair => $"{pair.Key}:{pair.Value}"))}; tasks={string.Join(", ", writers.Select(writer => writer.Status))}");
             throw;
         }
         gruNats.Cut();
@@ -225,9 +225,14 @@ public sealed class HomeFailoverTests
         return database;
     }
 
-    private static async Task<long> ReplicaCountAsync(HttpClient client, Database database, CancellationToken token)
+    private static async Task<long> ReplicaCountAsync(HttpClient client, Database database, CancellationToken token, bool diagnose = false)
     {
         using var read = await client.PostAsJsonAsync(database.Sql, new { statements = new[] { new { sql = "SELECT count(*) FROM acked" } } }, token);
+        if (diagnose && read.StatusCode != HttpStatusCode.OK)
+        {
+            Console.WriteLine($"Replica count: {(int)read.StatusCode} {await read.Content.ReadAsStringAsync(token)}");
+        }
+
         return read.StatusCode == HttpStatusCode.OK
             ? (await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows")[0][0].GetInt64()
             : -1;
