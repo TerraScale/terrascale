@@ -55,9 +55,12 @@ internal sealed class RegionalHandoff(
 
         _nats = new NatsConnection(new NatsOpts
         {
-            Url = url.ToString(), AuthOpts = new NatsAuthOpts { Token = token },
-            Name = $"terrabase-regional-owner-{options.MachineId}", MaxReconnectRetry = -1,
-            ReconnectWaitMin = TimeSpan.FromMilliseconds(100), ReconnectWaitMax = TimeSpan.FromSeconds(1),
+            Url = url.ToString(),
+            AuthOpts = new NatsAuthOpts { Token = token },
+            Name = $"terrabase-regional-owner-{options.MachineId}",
+            MaxReconnectRetry = -1,
+            ReconnectWaitMin = TimeSpan.FromMilliseconds(100),
+            ReconnectWaitMax = TimeSpan.FromSeconds(1),
         });
         var js = new NatsJSContext(_nats);
         while (!stoppingToken.IsCancellationRequested)
@@ -67,7 +70,8 @@ internal sealed class RegionalHandoff(
                 await _nats.ConnectAsync().ConfigureAwait(false);
                 _kv ??= await new NatsKVContext(js).CreateOrUpdateStoreAsync(new NatsKVConfig(Bucket)
                 {
-                    History = 1, Storage = NatsKVStorageType.File,
+                    History = 1,
+                    Storage = NatsKVStorageType.File,
                     NumberOfReplicas = _nats.ServerInfo?.Cluster is { Length: > 0 } ? 3 : 1,
                 }, stoppingToken).ConfigureAwait(false);
                 await RefreshAsync(_kv, stoppingToken).ConfigureAwait(false);
