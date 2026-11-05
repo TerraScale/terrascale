@@ -66,7 +66,7 @@ public sealed class RegionalHandoffTests
             await using var connection = new NatsConnection(new NatsOpts { Url = nats.Url.ToString(), AuthOpts = new NatsAuthOpts { Token = nats.Token } });
             await connection.ConnectAsync();
             var homes = await new NatsKVContext(new NatsJSContext(connection)).CreateOrUpdateStoreAsync(new NatsKVConfig(HomeLeases.Bucket) { History = 1 }, token);
-            var foreign = new HomeLease(organization, project, regionalId, "sjc", "sjc-1", 1, EntityIds.New());
+            var foreign = new HomeLease(organization, project, regionalId, "sjc", "sjc-1", 1, EntityIds.New().ToString());
             _ = await homes.PutAsync("home." + regionalId, JsonSerializer.SerializeToUtf8Bytes(foreign, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
             var handoff = first.Server.Services.GetRequiredService<RegionalHandoff>();
             await Assert.That(await handoff.DrainAsync("gru-2", token)).IsTrue();
