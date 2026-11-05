@@ -1,0 +1,189 @@
+{
+  "source_revision": "cf2550738309a1bcddd1e4edfd61d87419f6cd25",
+  "required_revision": "959e6055d",
+  "main_at_initial_check": "e661a352b",
+  "repeats": [
+    {
+      "durable_home": {
+        "writes": 20,
+        "p50_ms": 1207.2,
+        "p99_ms": 5861.2,
+        "max_ms": 5861.2,
+        "routes": {
+          "route=local; reason=ulid_insert; commit=local": 20
+        }
+      },
+      "forwarded": {
+        "writes": 20,
+        "p50_ms": 1004.7,
+        "p99_ms": 2296.8,
+        "max_ms": 2296.8,
+        "routes": {
+          "route=local; reason=ulid_insert; commit=home": 20
+        }
+      },
+      "home_rows": {
+        "durable_home": 20,
+        "forwarded": 20
+      },
+      "exactly_once": true
+    },
+    {
+      "durable_home": {
+        "writes": 20,
+        "p50_ms": 1017.0,
+        "p99_ms": 1712.9,
+        "max_ms": 1712.9,
+        "routes": {
+          "route=local; reason=ulid_insert; commit=local": 20
+        }
+      },
+      "forwarded": {
+        "writes": 20,
+        "p50_ms": 1006.4,
+        "p99_ms": 3580.3,
+        "max_ms": 3580.3,
+        "routes": {
+          "route=local; reason=ulid_insert; commit=home": 20
+        }
+      },
+      "home_rows": {
+        "durable_home": 20,
+        "forwarded": 20
+      },
+      "exactly_once": true
+    },
+    {
+      "durable_home": {
+        "writes": 20,
+        "p50_ms": 1013.9,
+        "p99_ms": 1544.0,
+        "max_ms": 1544.0,
+        "routes": {
+          "route=local; reason=ulid_insert; commit=local": 20
+        }
+      },
+      "forwarded": {
+        "writes": 20,
+        "p50_ms": 1037.9,
+        "p99_ms": 2221.4,
+        "max_ms": 2221.4,
+        "routes": {
+          "route=local; reason=ulid_insert; commit=home": 20
+        }
+      },
+      "home_rows": {
+        "durable_home": 20,
+        "forwarded": 20
+      },
+      "exactly_once": true
+    }
+  ],
+  "before_repeat_3": {
+    "region": "sjc",
+    "revision": "cf2550738309a1bcddd1e4edfd61d87419f6cd25",
+    "count": 61,
+    "sum_ms": 12301,
+    "cumulative_buckets": {
+      "0": 0,
+      "5": 0,
+      "10": 0,
+      "25": 0,
+      "50": 0,
+      "75": 0,
+      "100": 0,
+      "250": 60,
+      "500": 61,
+      "750": 61,
+      "1000": 61,
+      "2500": 61,
+      "5000": 61,
+      "7500": 61,
+      "10000": 61,
+      "+Inf": 61
+    }
+  },
+  "region_snapshots": [
+    {
+      "captured_at": "2026-11-05T11:24:55.876769+00:00",
+      "image": "ghcr.io/terrascale/terrabase@sha256:58c66b5a305d67bd170516cabf9f6b8a953d209c1a084b39192078eb5e9f0707",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "gru",
+        "storageFormat": "22-41a88901325a",
+        "revision": "cf2550738309a1bcddd1e4edfd61d87419f6cd25",
+        "machine": "ts-gru-1"
+      },
+      "metrics": [
+        "terrabase_push_applies_total{otel_scope_name=\"TerraScale.TerraBase\",state=\"confirmed\"} 81",
+        "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+      ]
+    },
+    {
+      "captured_at": "2026-11-05T11:24:22.452084+00:00",
+      "image": "ghcr.io/terrascale/terrabase@sha256:58c66b5a305d67bd170516cabf9f6b8a953d209c1a084b39192078eb5e9f0707",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "sjc",
+        "storageFormat": "22-41a88901325a",
+        "revision": "cf2550738309a1bcddd1e4edfd61d87419f6cd25",
+        "machine": "ts-sjc-1"
+      },
+      "metrics": [
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"0\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"5\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"10\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"25\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"50\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"75\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"100\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"250\"} 80",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"500\"} 81",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"750\"} 81",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"1000\"} 81",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"2500\"} 81",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"5000\"} 81",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"7500\"} 81",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"10000\"} 81",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"+Inf\"} 81",
+        "terrabase_push_lag_milliseconds_sum{otel_scope_name=\"TerraScale.TerraBase\"} 16293",
+        "terrabase_push_lag_milliseconds_count{otel_scope_name=\"TerraScale.TerraBase\"} 81",
+        "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+      ]
+    },
+    {
+      "captured_at": "2026-11-05T11:24:57.914080+00:00",
+      "image": "ghcr.io/terrascale/terrabase@sha256:58c66b5a305d67bd170516cabf9f6b8a953d209c1a084b39192078eb5e9f0707",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "fra",
+        "storageFormat": "22-41a88901325a",
+        "revision": "cf2550738309a1bcddd1e4edfd61d87419f6cd25",
+        "machine": "ts-fra-1"
+      },
+      "metrics": [
+        "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+      ]
+    }
+  ],
+  "repeat_3_push_lag": {
+    "samples": 20,
+    "sum_ms": 3992,
+    "mean_ms": 199.6,
+    "p50_interval_ms": {
+      "exclusive_lower": 100,
+      "inclusive_upper": 250
+    },
+    "p99_interval_ms": {
+      "exclusive_lower": 100,
+      "inclusive_upper": 250
+    }
+  },
+  "cleanup": {
+    "proof_databases_deleted": 3,
+    "throwaway_account": "deleted"
+  }
+}
