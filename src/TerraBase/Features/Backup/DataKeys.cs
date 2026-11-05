@@ -91,9 +91,9 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
             else
             {
                 // Customer shipping skips the listing: check the deletion record before creating a key.
-                if (freshKey && await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
+                if (freshKey && await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
                 {
-                    throw new DatabaseShreddedException(shredded.ShreddedAt);
+                    throw new DatabaseShreddedException(priorShred.ShreddedAt);
                 }
 
                 var (generated, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
