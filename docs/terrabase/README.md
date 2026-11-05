@@ -8,7 +8,7 @@ Hosting: [OCI and ts-orch](../oci.md); node discovery: [TerraBase on ts-orch](ts
 Local processes: [TerraBase local host](local-host.md).
 Recovery: [Copy placement and snapshot routing](recovery-copy-placement.md).
 Transport security: [TLS and authentication on every SQL surface](transport-security.md).
-Erasure: [Crypto-shredding of deleted databases](crypto-shredding.md).
+Erasure: [Crypto-shredding of deleted databases](crypto-shredding.md), [F11 complete deletion contract](crypto-shredding-f11.md).
 Clock safety: [HLC and clock admission](hlc-clock.md).
 Placement: [Home region, replica regions, all-regions mode and moving the home](placement.md).
 

@@ -36,8 +36,8 @@ identity is compromised.
 
 Encrypted snapshot bundles carry the wrapped key with the encrypted database
 inside the existing authenticated backup envelope. A restore does not depend
-on a key sidecar remaining on the source node. Continuous backup objects use
-per-database envelope keys; deleting a database destroys them ([crypto-shredding](crypto-shredding.md)). Snapshot, restore and copy
+on a key sidecar remaining on the source node. Continuous backup objects and durable push/partner payloads use
+per-database envelope keys held in [unsnapshotted R2 custody](crypto-shredding-f11.md); deleting a database destroys them ([crypto-shredding](crypto-shredding.md)). Snapshot, restore and copy
 scratch files must preserve encryption and remove their key sidecars when
 the owning operation cleans them up.
 

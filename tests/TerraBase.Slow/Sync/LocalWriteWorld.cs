@@ -122,9 +122,14 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
             if (mode == LocalPartner.Node)
             {
                 partner = await TerraBaseTestServer.StartAsync(
-                    settings => settings["region"] = "sjc",
+                    settings =>
+                    {
+                        settings["region"] = "sjc";
+                        s3.Configure(settings);
+                    },
                     collection =>
                     {
+                        s3.Route(collection);
                         collection.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new Serving()));
                         collection.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new Peers()));
                         collection.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new HomeAt(api.Server.BaseAddress)));
