@@ -23,7 +23,7 @@ public sealed class RegionShapeStreamTests
         await using var nats = await JetStreamServer.StartAsync(token);
         await using var world = await LocalWriteWorld.StartAsync(nats);
         await world.Overlay.StartAsync(token);
-        await world.Overlay.Subscribed.WaitAsync(TimeSpan.FromSeconds(5), token);
+        await world.Overlay.Ready.WaitAsync(TimeSpan.FromSeconds(5), token);
         // fra joins after the original insert. Home assigns the same rowid to a different primary key.
         var inserted = await world.LocalAsync(false, ["INSERT INTO items (id, v) VALUES ('p', 'first')"], token);
         var js = new NatsJSContext(world.Client);
@@ -83,7 +83,7 @@ public sealed class RegionShapeStreamTests
         await using var link = new Link(nats.Url);
         await using var fra = await Reader.StartAsync(world, nats, token, link.Url);
         await world.Overlay.StartAsync(token);
-        await world.Overlay.Subscribed.WaitAsync(TimeSpan.FromSeconds(5), token);
+        await world.Overlay.Ready.WaitAsync(TimeSpan.FromSeconds(5), token);
         link.Cut();
         await using var home = await world.HomeNodeAsync();
         var commit = await world.LocalAsync(true, ["INSERT INTO items (id, v) VALUES ('p', 'sjc')"], token);
@@ -148,7 +148,7 @@ public sealed class RegionShapeStreamTests
             {
                 await replicas.OpenAsync(world.Database, world.Api.Server.PullAddress(world.Database), pulls, token);
                 await overlay.StartAsync(token);
-                await overlay.Subscribed.WaitAsync(TimeSpan.FromSeconds(5), token);
+                await overlay.Ready.WaitAsync(TimeSpan.FromSeconds(5), token);
                 var tails = new ReplicaShapeTails(replicas, services.GetRequiredService<IMemoryBudget>(), TimeProvider.System,
                     services.GetRequiredService<IShapeFlights<ShapeRead>>(), services.GetRequiredService<ShapeControls>(), overlay);
                 var shape = await tails.ResolveAsync(world.Database, "items", new ShapeQuery(null, null), token);
