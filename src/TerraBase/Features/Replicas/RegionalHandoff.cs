@@ -383,6 +383,7 @@ internal sealed class RegionalHandoff(
             {
                 return false;
             }
+            using var admission = await services.GetRequiredService<RegionalIngress>().HoldAsync(cancellationToken).ConfigureAwait(false);
             owners.Drain();
             logger.ZLogInformation($"Regional handoff source fenced: {options.MachineId:@Source} to {target:@Target}, epoch {owner.Epoch:@Epoch}");
             var catalog = services.GetRequiredService<IReplicaCatalog>();

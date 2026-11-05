@@ -12,13 +12,24 @@ internal static class RegionalForwarding
         {
             var services = context.RequestServices;
             var owners = services.GetRequiredService<RegionalOwners>();
-            if (Listeners.ArrivedOn(context) != TerraBaseListener.Client || owners.Writer
-                || ReferenceEquals(context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe))
+            var metadata = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>();
+            var served = metadata?.Listeners.Contains(TerraBaseListener.Client) == true
+                || ReferenceEquals(metadata, ListenerMetadata.Management)
+                || context.Request.Path.StartsWithSegments("/admin/organizations")
+                || context.Request.Path.StartsWithSegments("/admin/projects");
+            if (!served || ReferenceEquals(metadata, ListenerMetadata.Probe))
             {
                 await next(context).ConfigureAwait(false);
                 return;
             }
 
+            var ingress = services.GetRequiredService<RegionalIngress>();
+            using var request = await ingress.EnterAsync(context.RequestAborted).ConfigureAwait(false);
+            if (owners.Writer)
+            {
+                await next(context).ConfigureAwait(false);
+                return;
+            }
             var options = services.GetRequiredService<TerraBaseOptions>();
             var owner = (await owners.NodesAsync(context.RequestAborted).ConfigureAwait(false))
                 .FirstOrDefault(node => node.Region == options.Region && node.Name != options.MachineId);
@@ -28,8 +39,15 @@ internal static class RegionalForwarding
                 return;
             }
 
-            await HomeForwarding.ForwardAsync(context, new HomeNode(options.Region,
-                new UriBuilder(Uri.UriSchemeHttp, owner.Address.ToString(), options.InternalPort).Uri)).ConfigureAwait(false);
+            var address = new UriBuilder(Uri.UriSchemeHttp, owner.Address.ToString(), options.InternalPort).Uri;
+            if (Listeners.ArrivedOn(context) == TerraBaseListener.Client)
+            {
+                await HomeForwarding.ForwardAsync(context, new HomeNode(options.Region, address)).ConfigureAwait(false);
+            }
+            else
+            {
+                await ingress.ForwardServiceAsync(context, address).ConfigureAwait(false);
+            }
         });
         return app;
     }
