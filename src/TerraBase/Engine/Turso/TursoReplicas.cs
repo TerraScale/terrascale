@@ -788,9 +788,11 @@ internal sealed partial class TursoReplicas(
             {
                 return await OpenReaderAsync(lease, cancellationToken).ConfigureAwait(false);
             }
-            catch
+            catch (Exception error)
             {
                 lease.Dispose();
+                // Opening runs only our fixed PRAGMA/BEGIN statements, never caller SQL or bound values.
+                logger.ZLogInformation($"A replica reader could not open: {error.GetType().Name:@Error} ({error.Message:@Detail})");
                 throw;
             }
         }

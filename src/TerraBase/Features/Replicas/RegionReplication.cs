@@ -855,7 +855,7 @@ internal sealed class RegionReplication(
                     _owner._pullCount?.Add(1, new KeyValuePair<string, object?>("result", "failed"));
                     if (failures % 20 == 1)
                     {
-                        _owner.Logger.ZLogInformation($"A replica {what} failed and is retried: {error.GetType().Name:@Error}");
+                        _owner.Logger.ZLogInformation($"A replica {what} failed and is retried: {error.GetType().Name:@Error} ({error.Message:@Detail})");
                         // A home that stopped answering for this database may have deleted it or moved it out of this region.
                         _ = _owner._catalogWakes.Writer.TryWrite(_home.Region);
                     }
