@@ -200,14 +200,15 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var organizationPlan = request.RequestUri is { Scheme: "https", Host: "api.terrascale.tech" or "gru.api.terrascale.tech", IsDefaultPort: true } uri
+            var uri = request.RequestUri ?? throw new HttpRequestException("The audit requires an outbound URI.");
+            var organizationPlan = uri is { Scheme: "https", Host: "api.terrascale.tech" or "gru.api.terrascale.tech", IsDefaultPort: true }
                 && uri.AbsolutePath.Split('/') is ["", "admin", "organizations", _, "plan"];
-            if (!organizationPlan && request.RequestUri is not { Scheme: "https", Host: "api.stripe.com", IsDefaultPort: true })
+            if (!organizationPlan && uri is not { Scheme: "https", Host: "api.stripe.com", IsDefaultPort: true })
             {
                 throw new HttpRequestException("The audit accepts only the local Stripe protocol fixture.");
             }
 
-            using var forwarded = new HttpRequestMessage(request.Method, request.RequestUri);
+            using var forwarded = new HttpRequestMessage(request.Method, uri);
             foreach (var header in request.Headers)
             {
                 forwarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
@@ -221,7 +222,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
                     forwarded.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
                 }
             }
-            var path = request.RequestUri.AbsolutePath;
+            var path = uri.AbsolutePath;
             if (organizationPlan)
             {
                 return await fallback.SendAsync(forwarded, cancellationToken);
