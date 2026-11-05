@@ -18,7 +18,7 @@ Run it on a dev host through `ts-heavy-any` (never on mariogk-desktop). For a fr
 ts-heavy-any bash -c 'mkdir -p $HOME/region-sim && exec > $HOME/region-sim/job.log 2>&1 </dev/null; scripts/vendor/download-turso-native.sh && make region-sim REGION_SIM_ARGS="-logs $HOME/region-sim/logs"' --repo terrascale --branch <branch>
 ```
 
-Flags: `-terrabase <binary or .dll>`, `-ts <ts binary>`, `-out <file>`, `-logs <dir>`. Without `-logs`, node logs are deleted with the run directory. On a failure, the end of each node's log is printed to stderr.
+Flags: `-terrabase <binary or .dll>`, `-ts <ts binary>`, `-out <file>`, `-logs <dir>`, `-peer-delay <duration>` (one-way latency on the peer path and on sjc-1's NATS connection, e.g. `85ms` for gru–sjc), `-lag-writes <n>` (default 100). Without `-logs`, node logs are deleted with the run directory. On a failure, the end of each node's log is printed to stderr.
 
 ## What it sets up
 
@@ -40,6 +40,7 @@ Functional steps use `ts`: `auth login`, `projects create`, `db create simdb -re
 | create-project-db-replica-sjc | project created; db home `gru` with replica `sjc` | — |
 | dml-in-A-visible-in-B | DDL, insert, update and delete on gru, all visible on sjc; CLI read on sjc matches | last write ack → visible on sjc |
 | restart-B-catches-up | 51 writes while sjc-1 is down; after restart sjc-1 serves all of them | sjc-1 ready → caught up |
+| replica-lag | `-lag-writes` single-row writes on gru-1, each read back on sjc-1; reads over 50 ms are printed with their Server-Timing (`home;…` means sjc-1 forwarded the read) | p50 / p99, write ack → first read on sjc-1 returning the row |
 
 `cli-login` and `create-project-db-replica-sjc` are prerequisites. If either fails, later scenarios are reported as failed and not run.
 
