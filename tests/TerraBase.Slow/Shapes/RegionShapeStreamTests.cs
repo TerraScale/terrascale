@@ -26,8 +26,10 @@ public sealed class RegionShapeStreamTests
         await using var world = await LocalWriteWorld.StartAsync(nats);
         await world.Overlay.StartAsync(token);
         await world.Overlay.Ready.WaitAsync(TimeSpan.FromSeconds(5), token);
-        await using var wire = await world.Client.SubscribeCoreAsync<byte[]>("terrabase.local.sjc.>", cancellationToken: token);
+        await using var wire = await world.Client.SubscribeCoreAsync<byte[]>("terrabase.provisional.sjc.>", cancellationToken: token);
         _ = await world.Client.PingAsync(token);
+        // An older node's raw local notices must never enter the sealed provisional stream during a rollout.
+        await world.Client.PublishAsync($"terrabase.local.sjc.{world.Database.OrganizationId}.{world.Database.ProjectId}.{world.Database.DatabaseId}", "raw local notice"u8.ToArray(), cancellationToken: token);
         // fra joins after the original insert. Home assigns the same rowid to a different primary key.
         var inserted = await world.LocalAsync(false, ["INSERT INTO items (id, v) VALUES ('p', 'first')"], token);
         var encrypted = await wire.Msgs.ReadAsync(token).AsTask().WaitAsync(TimeSpan.FromSeconds(5), token);
@@ -122,7 +124,7 @@ public sealed class RegionShapeStreamTests
         payload = await world.Api.Server.Services.GetRequiredService<ITransactionCrypto>().SealAsync(database, payload, token);
         await TerraBaseTestServer.EventuallyAsync(async _ =>
         {
-            await world.Client.PublishAsync($"terrabase.local.sjc.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}", payload, cancellationToken: token);
+            await world.Client.PublishAsync($"terrabase.provisional.sjc.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}", payload, cancellationToken: token);
             return fra.Overlay.Snapshot(database).Any(entry => entry.Id == transaction.Id);
         }, TimeSpan.FromSeconds(5));
     }
