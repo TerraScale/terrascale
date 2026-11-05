@@ -5,6 +5,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.HomePush;
 using TerraBase.Features.Regions;
@@ -59,6 +60,9 @@ public sealed class HomeFailoverTests
             [all.Id] = new ConcurrentQueue<string>(),
             [local.Id] = new ConcurrentQueue<string>(),
         };
+        var oldEngine = gru.Server.Services.GetRequiredService<IStorageEngine>();
+        var oldTenant = new TenantContext(organization, PlanTier.Hobby, project, local.Id);
+        var oldStore = (await oldEngine.OpenDatabaseAsync(oldTenant, token))!;
         var cut = 0;
         var ackedAfterCut = 0;
         var pushed = new ConcurrentQueue<string>();
@@ -143,10 +147,11 @@ public sealed class HomeFailoverTests
         await TerraBaseTestServer.EventuallyAsync(async _ => (await WriteAsync(viaSjc, all, token)) == HttpStatusCode.OK, TimeSpan.FromSeconds(30));
         await Assert.That(await WriteAsync(viaGru, local, token)).IsNotEqualTo(HttpStatusCode.OK);
 
-        gruNats.Heal();
-        await TerraBaseTestServer.EventuallyAsync(async _ => (await WriteAsync(viaGru, local, token)) == HttpStatusCode.MisdirectedRequest, TimeSpan.FromSeconds(60));
         await stop.CancelAsync();
         await Task.WhenAll(writers);
+        gruNats.Heal();
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gruLeases.Find(local.Id)?.Home == "sjc" && oldStore.IsClosed), TimeSpan.FromSeconds(60));
+        await Assert.That(await RefusesWriteAsync(oldStore, token)).IsTrue().Because("the former home cannot write even through a handle opened before failover");
 
         await TerraBaseTestServer.EventuallyAsync(async _ => (await TryRowsAsync(viaSjc, all, token))?.IsSupersetOf(pushed) == true, TimeSpan.FromSeconds(30));
         var allStored = await RowsAsync(viaSjc, all, token);
@@ -163,6 +168,19 @@ public sealed class HomeFailoverTests
         await Assert.That(firstMissing < 0 || order.Skip(firstMissing).All(row => !localStored.Contains(row))).IsTrue()
             .Because("the default mode loses only the tail no replica pulled");
         await Assert.That(localStored.Count).IsGreaterThanOrEqualTo(10);
+    }
+
+    private static async Task<bool> RefusesWriteAsync(IDatabaseStore store, CancellationToken token)
+    {
+        try
+        {
+            await using var transaction = await store.BeginDurableTransactionAsync(token);
+            return false;
+        }
+        catch (Exception error) when (error is DatabaseMovedException or StorageBusyException or ObjectDisposedException)
+        {
+            return true;
+        }
     }
 
     private static async Task<Database> CreateAsync(HttpClient client, string project, CancellationToken token)

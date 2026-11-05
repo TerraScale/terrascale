@@ -4,9 +4,6 @@ A database with replica regions keeps serving writes when its home region dies: 
 as home, and the old home never accepts another write (D17, D18). A database without replica regions has no other copy,
 so it has no failover; it waits for its home.
 
-Status: the lease store, write fencing, demotion, the epoch on home sessions and `durability: all` are on main. The
-takeover itself ([Failover](#failover)) lands with R9's replica detach; until then a dead home's databases wait for it.
-
 ## Lease store
 
 Leases live in the JetStream KV bucket `terrabase-homes` of the `TERRABASE` account (`docs/mesh-jetstream.md` in
@@ -33,15 +30,13 @@ A node may commit a write to a database with replica regions only while it holds
 2. `home.<databaseId>` names this node with its current session.
 
 The engine checks this when a write transaction begins and again just before `COMMIT`. A write without the lease answers
-a retryable error (`StorageBusyException`: SQLSTATE `40001` on SQL surfaces, REST `409 serialization_conflict`).
+a retryable error (`DatabaseMovedException` without a home: SQLSTATE `40001`, REST `409 serialization_conflict`).
 
 At start a node marks every database it homes with replica regions as leased but not held, so it writes none of them
 until it confirmed each `home.<databaseId>` under its new session. Each node confirms its leases on every new session and
 every 15 s, which also picks up databases that gained replica regions.
 
 ## Failover
-
-Lands with R9 (replica detach and the shared compare-and-set below).
 
 1. Every node watches the bucket. When `node.<node>` of a database's home expires, each replica region that holds a
    pulled replica of the database waits 5 s and checks that the node did not come back.
@@ -58,12 +53,19 @@ Lands with R9 (replica detach and the shared compare-and-set below).
    prepare home apply (R6).
 6. Every region watches `home.*` and takes the new placement at once, so home routing (421 `wrong_region`, Postgres and
    WebSocket home sessions) follows within the watch delay; the 30 s catalog sweep stays the backstop.
+7. The new home drains the local writes still addressed to the old home. Each push carries header `Tb-Epoch`, the
+   placement version its origin saw. For every region's push stream (its own included) the new home reads subject
+   `terrabase.push.<origin>.<old home>.<organization>.<project>.<database>` from the start and applies each message
+   stamped with an epoch below its own; `_ts_applied`, which came with the replica file, answers the ones the old home
+   already applied, so each transaction applies once. It keeps reading for 60 s (two catalog sweeps) to catch pushes from
+   regions that had not yet seen the new placement, then publishes each result on the applied subject as the old home
+   would have. Planned moves (R9) drain the same way.
 
 ## The old home
 
 When the old home reaches JetStream again, its renewal fails (its key expired), so it starts a new session and confirms
 its leases. For a database whose `home.<databaseId>` names another node at an epoch at least its own placement version,
-it demotes itself: it fences the database as moved (writes answer `421 wrong_region` / SQLSTATE `08004`), records the
+it demotes itself: it fences the database as moved, records the
 new placement, deletes its file and follows the new home as a replica. Writes it committed that no replica pulled are
 discarded with the file (`terrabase.home.demotions`).
 
@@ -92,20 +94,20 @@ discarded with the file (`terrabase.home.demotions`).
 
 ## Metrics
 
+- `terrabase.home.failovers`: databases this node took over.
 - `terrabase.home.demotions`: databases this node stopped homing because another node holds their lease.
 - `terrabase.home.leased`: databases whose writes on this node need its lease.
 
 ## Tests
 
-`tests/TerraBase.Slow/Sync/HomeLeaseTests.cs` runs gru and sjc on one JetStream server. A `durability: all` write is on
-sjc's replica when it is acknowledged; cut off from JetStream, gru refuses writes within the lease margin and writes
-again after it reconnects and confirms its lease under a new session. The failover drill (gru cut off mid-write, sjc
-takes over, keeps every `all` write, gru refuses writes after the epoch bump) lands with the takeover.
+`tests/TerraBase.Slow/Sync/HomeFailoverTests.cs` runs gru and sjc on one JetStream server, writes to two databases (one
+with `durability: all`, one default), cuts gru off from JetStream mid-write, and checks that sjc
+takes over, keeps every `all` write, loses only a tail of default writes, and that gru refuses writes before and after
+it reconnects. While gru is cut off, sjc commits local writes that each increment a counter; after the takeover every
+acknowledged one is in the new home and the counter shows each applied once.
 
 ## Known gaps
 
-- R7 push replay: messages that the old home applied but no replica pulled are replayed by the new home once R7's
-  consumer reads the old home's subjects for failed-over databases.
 - `durability` is accepted on SQL REST only; the WebSocket frame field and `SET terrascale.durability` follow.
 
 ## Planned moves (R9)
