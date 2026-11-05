@@ -49,6 +49,7 @@ internal sealed class HomePush(
     internal const int MaxPayloadBytes = 8 << 20;
     private const int MaxParallelDatabases = 16;
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DrainWindow = RegionReplication.Sweep * 2;
 
     private static readonly TimeSpan SettleBound = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan HomeWait = TimeSpan.FromSeconds(30);
@@ -206,7 +207,7 @@ internal sealed class HomePush(
         }
 
         return await replicas.BeginWriteAsync(database, cancellationToken).ConfigureAwait(false) is { } writer
-            ? new LocalTransaction(this, database, placement.Home, writer)
+            ? new LocalTransaction(this, database, placement.Home, placement.Version, writer)
             : null;
     }
 
@@ -253,11 +254,11 @@ internal sealed class HomePush(
     internal async Task<PubAckResponse> PublishAgainAsync(TenantContext database, string id, CancellationToken cancellationToken)
     {
         var transaction = _overlay.Find(database, id) ?? throw new InvalidOperationException("the transaction is not in the overlay");
-        var home = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement.Home: var placed }
+        var placement = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placed }
             ? placed
             : throw new InvalidOperationException("the database has no placement");
-        return await _js!.PublishAsync(PushNames.Subject(options.Region, home, database), Encode(transaction), opts: new NatsJSPubOpts { MsgId = id },
-            headers: Headers(transaction.Hlc!.Value), cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await _js!.PublishAsync(PushNames.Subject(options.Region, placement.Home, database), Encode(transaction), opts: new NatsJSPubOpts { MsgId = id },
+            headers: Headers(transaction.Hlc!.Value, placement.Version), cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task<ulong?> ReplayFromAsync(string origin, TenantContext database, string transactionId, CancellationToken cancellationToken)
@@ -300,11 +301,71 @@ internal sealed class HomePush(
         return resume;
     }
 
-    private static NatsHeaders Headers(HlcTimestamp stamp)
+    internal async Task<int> DrainFormerHomeAsync(TenantContext database, string formerHome, long fence, CancellationToken cancellationToken)
+    {
+        if (_js is not { } js || _nats is not { } nats)
+        {
+            return 0;
+        }
+
+        var scans = new List<INatsJSConsumer>();
+        foreach (var origin in (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Region).Append(options.Region).Where(region => region != formerHome).Distinct(StringComparer.Ordinal))
+        {
+            scans.Add(await js.CreateOrderedConsumerAsync(PushNames.Stream(origin), new NatsJSOrderedConsumerOpts
+            {
+                FilterSubjects = [PushNames.Subject(origin, formerHome, database)],
+                DeliverPolicy = ConsumerConfigDeliverPolicy.All,
+            }, cancellationToken).ConfigureAwait(false));
+        }
+
+        var applied = 0;
+        var until = time.GetTimestamp() + (long)(DrainWindow.TotalSeconds * time.TimestampFrequency);
+        while (true)
+        {
+            var read = 0;
+            foreach (var scan in scans)
+            {
+                await foreach (var message in scan.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
+                {
+                    read++;
+                    if (message.Data is not { } data || !TryDecode(data, out var transaction) || Epoch(message.Headers) >= fence)
+                    {
+                        continue;
+                    }
+
+                    var result = await apply.ApplyAsync(database, transaction, cancellationToken).ConfigureAwait(false)
+                        ?? throw new StorageBusyException();
+                    await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
+                        JsonSerializer.SerializeToUtf8Bytes(result, TerraBaseJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
+                    _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
+                    applied++;
+                }
+            }
+
+            if (read == 0)
+            {
+                if (time.GetTimestamp() >= until)
+                {
+                    break;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(1), time, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return applied;
+    }
+
+    private static long Epoch(NatsHeaders? headers) =>
+        headers is not null && headers.TryGetValue("Tb-Epoch", out var value) && long.TryParse(value.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var epoch)
+            ? epoch
+            : 0;
+
+    private static NatsHeaders Headers(HlcTimestamp stamp, long epoch)
     {
         Span<byte> encoded = stackalloc byte[HlcTimestamp.EncodedLength];
         stamp.WriteTo(encoded);
-        return new NatsHeaders { ["Tb-Hlc"] = Convert.ToHexString(encoded) };
+        return new NatsHeaders { ["Tb-Hlc"] = Convert.ToHexString(encoded), ["Tb-Epoch"] = epoch.ToString(CultureInfo.InvariantCulture) };
     }
 
     private async Task EnsureStreamAsync(NatsJSContext js, NatsConnection nats, CancellationToken cancellationToken)
@@ -634,7 +695,7 @@ internal sealed class HomePush(
         }
     }
 
-    private sealed class LocalTransaction(HomePush push, TenantContext database, string home, IReplicaWriter writer) : ILocalTransaction
+    private sealed class LocalTransaction(HomePush push, TenantContext database, string home, long epoch, IReplicaWriter writer) : ILocalTransaction
     {
         public ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken) => writer.ExecuteAsync(statement, cancellationToken);
 
@@ -666,7 +727,7 @@ internal sealed class HomePush(
             try
             {
                 acknowledged = await push._js!.PublishAsync(PushNames.Subject(push.Region, home, database), payload,
-                    opts: new NatsJSPubOpts { MsgId = transaction.Id }, headers: Headers(stamp), cancellationToken: cancellationToken).ConfigureAwait(false);
+                    opts: new NatsJSPubOpts { MsgId = transaction.Id }, headers: Headers(stamp, epoch), cancellationToken: cancellationToken).ConfigureAwait(false);
                 acknowledged.EnsureSuccess();
             }
             catch (Exception error) when (error is NatsException or TimeoutException)
