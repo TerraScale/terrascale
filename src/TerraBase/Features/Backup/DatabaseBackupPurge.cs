@@ -176,6 +176,37 @@ internal sealed class DatabaseBackupPurge(
     /// <returns>When the keys were destroyed, or <see langword="null"/> while custody still holds one.</returns>
     internal async Task<DateTimeOffset?> ShredAsync(TenantContext database, CancellationToken token)
     {
+        var shredded = await ShredScopeAsync(database, token).ConfigureAwait(false);
+        if (shredded is null)
+        {
+            return null;
+        }
+
+        // Managed snapshots are engine databases with independent keys. Include pending/expiring
+        // records too; the snapshot sweep must shred a scope before removing its ownership record.
+        string? after = null;
+        do
+        {
+            var page = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.ListAsync(transaction,
+                BackupCatalog.Records(database.OrganizationId), after, 100, TerraBaseJsonContext.Default.BackupRecord,
+                record => record.Id, token), token).ConfigureAwait(false);
+            foreach (var snapshot in page.Items.Where(record => record.ProjectId == database.ProjectId
+                && record.DatabaseId == database.DatabaseId))
+            {
+                if (await ShredScopeAsync(snapshot.Storage(database.Plan), token).ConfigureAwait(false) is null)
+                {
+                    return null;
+                }
+            }
+            after = page.Next;
+        }
+        while (after is not null);
+
+        return shredded;
+    }
+
+    private async Task<DateTimeOffset?> ShredScopeAsync(TenantContext database, CancellationToken token)
+    {
         var scope = BackupLayout.KeyScope(database);
         platformKeys.Forget(scope);
         var (record, complete) = await custody.ShredAsync(database, time.GetUtcNow(), token).ConfigureAwait(false);
