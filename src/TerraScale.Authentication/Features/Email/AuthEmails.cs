@@ -666,7 +666,7 @@ public sealed partial class AuthEmails(AuthOptions options)
 
 /// <summary>Model for <c>AuthEmailLayout.cshtml</c>: rendered text only, which Razor encodes.</summary>
 /// <param name="Lang">The BCP 47 language of the copy.</param>
-/// <param name="Subject">The subject, also the document title.</param>
+/// <param name="Subject">The subject, also the record title.</param>
 /// <param name="Preheader">The inbox preview line.</param>
 /// <param name="Heading">The heading.</param>
 /// <param name="Paragraphs">Body paragraphs, each a list of lines.</param>

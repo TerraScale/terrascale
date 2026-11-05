@@ -58,7 +58,7 @@ public sealed record RequiresSecurity(string Scheme);
 public static partial class OpenApiSetup
 {
     /// <summary>
-    /// Adds ts-auth's transformers to the <c>v1</c> document registered by TerraScale.Endpoints,
+    /// Adds ts-auth's transformers to the <c>v1</c> schema registered by TerraScale.Endpoints,
     /// and keeps Scalar self-hosted (no third-party font requests).
     /// </summary>
     public static IServiceCollection AddAuthOpenApi(this IServiceCollection services) =>
@@ -178,7 +178,7 @@ public static partial class OpenApiSetup
                     }
                 }
 
-                // OpenAPI 11 documents every reference-typed response body as oneOf [null, $ref]. No response body
+                // OpenAPI 11 describes every reference-typed response body as oneOf [null, $ref]. No response body
                 // is null, so the plain $ref that the contract has always served is restored.
                 foreach (var response in operation.Responses?.Values ?? Enumerable.Empty<IOpenApiResponse>())
                 {
@@ -193,9 +193,9 @@ public static partial class OpenApiSetup
 
                 return Task.CompletedTask;
             });
-            options.AddDocumentTransformer((document, context, _) =>
+            options.AddDocumentTransformer((schema, context, _) =>
             {
-                Complete(document, context.ApplicationServices.GetRequiredService<AuthOptions>().PublicOrigin);
+                Complete(schema, context.ApplicationServices.GetRequiredService<AuthOptions>().PublicOrigin);
                 return Task.CompletedTask;
             });
         });
@@ -301,14 +301,14 @@ public static partial class OpenApiSetup
         },
     };
 
-    private static void Complete(OpenApiDocument document, Uri publicOrigin)
+    private static void Complete(OpenApiDocument schema, Uri publicOrigin)
     {
         // The configured public origin, never the request's Host header.
-        document.Servers = [new OpenApiServer { Url = publicOrigin.GetLeftPart(UriPartial.Path).TrimEnd('/') }];
-        document.Info.License = new OpenApiLicense { Name = "Apache-2.0", Identifier = "Apache-2.0" };
+        schema.Servers = [new OpenApiServer { Url = publicOrigin.GetLeftPart(UriPartial.Path).TrimEnd('/') }];
+        schema.Info.License = new OpenApiLicense { Name = "Apache-2.0", Identifier = "Apache-2.0" };
 
         var used = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var (path, item) in document.Paths)
+        foreach (var (path, item) in schema.Paths)
         {
             if (item.Operations is null)
             {
@@ -335,7 +335,7 @@ public static partial class OpenApiSetup
                 if (operation.Security is null)
                 {
                     // Unspecified: the credential the route's prefix requires, or anonymous.
-                    operation.Security = DefaultScheme(path) is { } scheme ? [Requirement(scheme, document)] : [new OpenApiSecurityRequirement()];
+                    operation.Security = DefaultScheme(path) is { } scheme ? [Requirement(scheme, schema)] : [new OpenApiSecurityRequirement()];
                 }
                 else if (operation.Security.Count == 0)
                 {
@@ -373,20 +373,20 @@ public static partial class OpenApiSetup
             }
         }
 
-        document.Components ??= new OpenApiComponents();
-        document.Components.SecuritySchemes = used.ToDictionary(
+        schema.Components ??= new OpenApiComponents();
+        schema.Components.SecuritySchemes = used.ToDictionary(
             name => name,
             name => (IOpenApiSecurityScheme)(SchemeDefinitions.TryGetValue(name, out var create)
                 ? create()
                 : throw new InvalidOperationException($"Undefined OpenAPI security scheme '{name}'.")),
             StringComparer.Ordinal);
 
-        var tags = document.Paths.Values
+        var tags = schema.Paths.Values
             .SelectMany(item => item.Operations?.Values ?? Enumerable.Empty<OpenApiOperation>())
             .SelectMany(operation => operation.Tags ?? new HashSet<OpenApiTagReference>())
             .Select(tag => tag.Name!)
             .ToHashSet(StringComparer.Ordinal);
-        document.Tags = new HashSet<OpenApiTag>(tags.Order(StringComparer.Ordinal).Select(name => new OpenApiTag
+        schema.Tags = new HashSet<OpenApiTag>(tags.Order(StringComparer.Ordinal).Select(name => new OpenApiTag
         {
             Name = name,
             Description = TagDescriptions.TryGetValue(name, out var description)
@@ -398,8 +398,8 @@ public static partial class OpenApiSetup
     [GeneratedRegex(@"\{(?<name>[^{}]+)\}")]
     private static partial Regex RouteParameter();
 
-    private static OpenApiSecurityRequirement Requirement(string scheme, OpenApiDocument? document) =>
-        new() { [new OpenApiSecuritySchemeReference(scheme, document)] = [] };
+    private static OpenApiSecurityRequirement Requirement(string scheme, OpenApiDocument? schema) =>
+        new() { [new OpenApiSecuritySchemeReference(scheme, schema)] = [] };
 
     // Instance-scoped API routes, hosted admin pages and userinfo each have a distinct
     // credential; nothing else inherits one implicitly.
