@@ -58,6 +58,11 @@ discovered peer, including hold partners, cannot acknowledge the tombstone and s
 node starts cold and refuses the permanent tombstone. Revocation records local catalog deletion authority, stops native followers, deletes their page-key sidecars and files, and verifies local engine erasure before acknowledging. Follower admission is serialized with teardown and rechecks the local catalog, so a stale catalog listing cannot recreate a deleted replica; cached decodes after successful DELETE cannot bypass it. Home consumption and partner takeover decrypt before applying; a shredded payload is discarded.
 No read-pull behavior or quorum/durability policy changes.
 
+Revocation also retires the database's continuous-backup work synchronously. It cancels an active upload,
+joins it, cancels and joins snapshot side work, then disposes the retained native WAL reader and scratch buffers.
+The engine must still verify that every database handle is closed before acknowledging erasure. Deletion does
+not wait for the ten-second backup discovery interval to release a reader retained between shipping passes.
+
 ## Convergence and CDN purge
 
 Every serving node, including regional hold partners, scans the shared custody namespace in pages of at most 128
@@ -69,7 +74,9 @@ its durable authority is applied when custody is reachable again.
 
 The one-minute backup erasure pass additionally removes partner holds, purges JetStream subjects and scans owned shape
 objects. It persists the R2 scan cursor and retries partial work. It does not certify physical cleanup before all local
-files are absent. Healthy small-scope copy cleanup therefore normally finishes within one erasure interval plus I/O.
+files are absent. Shape cleanup scans at most 1024 objects or 30 seconds per database per visit, using a durable cursor
+over the shared object inventory. Each pass visits at most 16 database jobs. A full inventory or a backlog can require
+multiple minutes and multiple visits; the live evidence records the observed CDN completion time.
 These are scheduling bounds, not a promise that a failing storage provider responds within them.
 
 A CDN outbox entry is disk-synced before deleting an R2 object. A full outbox refuses the deletion so it can be retried.

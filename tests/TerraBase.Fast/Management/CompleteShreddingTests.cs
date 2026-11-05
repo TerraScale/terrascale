@@ -109,6 +109,10 @@ public sealed class CompleteShreddingTests
             Database = tenant.DatabaseId!,
         }, cancellationToken: token).ResponseAsync;
         await Assert.That(refused.Revoked).IsFalse();
+        // Production shipping retains a native WAL reader between passes. DELETE must drain it.
+        await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(token);
+        await Assert.That(api.Server.Services.GetRequiredService<IContinuousBackup>().Status.Files
+            .Any(file => file.File == BackupLayout.File(tenant, "origin"))).IsTrue();
         using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var certificate = await api.Server.Services.GetRequiredService<SystemCatalog>().ReadUncheckedAsync(transaction =>

@@ -170,6 +170,59 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
     }
 
+    internal async Task RetireDeletedAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        var prefix = BackupLayout.File(database, _node);
+        ShippedFile file;
+        ShippingJob? job;
+        await _pass.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!_files.TryGetValue(prefix, out file!))
+            {
+                return;
+            }
+            file.Removed = true;
+            file.Retiring ??= file.Retirement.CancelAsync();
+            job = file.Job;
+            if (job is not null)
+            {
+                job.Cancelling ??= job.Cancellation.CancelAsync();
+            }
+        }
+        finally
+        {
+            _pass.Release();
+        }
+
+        // A failed upload cannot retain a native reader after deletion. The engine's
+        // erasure check, after disposal, remains the authority for acknowledging it.
+        await Task.WhenAll(file.Retiring!, job?.Completion ?? Task.CompletedTask, job?.Cancelling ?? Task.CompletedTask)
+            .WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await _pass.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_files.TryGetValue(prefix, out var current) && ReferenceEquals(current, file))
+            {
+                if (file.Job is { } completed)
+                {
+                    _jobs.Remove(completed);
+                    completed.Cancellation.Dispose();
+                    file.Job = null;
+                }
+                // Keep the entry until disposal finishes so another revoker also waits.
+                await file.DisposeAsync().ConfigureAwait(false);
+                _files.TryRemove(prefix, out _);
+            }
+        }
+        finally
+        {
+            _pass.Release();
+        }
+    }
+
     private async Task<long> ScheduleAsync(long? pass, List<Task>? pending, CancellationToken cancellationToken)
     {
         using var scheduling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token);
@@ -971,7 +1024,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
     private void StartSide(ShippedFile file, SnapshotKey key, string? snapshot, byte[]? live, bool drill, IDisposable? claim = null)
     {
-        var side = new SideWork(key, CancellationTokenSource.CreateLinkedTokenSource(file.Job?.Caller ?? CancellationToken.None, _jobCancellation.Token))
+        var side = new SideWork(key, CancellationTokenSource.CreateLinkedTokenSource(
+            file.Job?.Caller ?? CancellationToken.None, _jobCancellation.Token, file.Retirement.Token))
         {
             Stored = snapshot is null ? null : new(TaskCreationOptions.RunContinuationsAsynchronously),
             CdcPosition = (file.Tap as ICdcBackupRetention)?.Position ?? 0,
@@ -1235,6 +1289,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public ShippingJob? Job { get; set; }
         public long ScheduledAt { get; set; }
         public bool Removed { get; set; }
+        public CancellationTokenSource Retirement { get; } = new();
+        public Task? Retiring { get; set; }
         public bool FinalRefreshed { get; set; }
         public bool FinalCustomer { get; set; }
         public BackupTarget Target { get; set; } = target;
@@ -1317,6 +1373,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         public async ValueTask DisposeAsync()
         {
+            await (Retiring ??= Retirement.CancelAsync()).ConfigureAwait(false);
             Side?.Cancellation.Cancel();
             await StopSideAsync().ConfigureAwait(false);
             try
@@ -1333,6 +1390,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 finally
                 {
                     Target.Dispose();
+                    Retirement.Dispose();
                 }
             }
         }
