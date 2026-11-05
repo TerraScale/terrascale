@@ -10,7 +10,7 @@ namespace TerraBase.Features.Management;
 /// ts-auth organization id, before or after its first database enrolls. Served only on the internal administrative listener,
 /// as <c>PUT /admin/projects/{project}/plan</c> is.
 /// </summary>
-internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog) : Endpoint<PlanRequest, IResult>
+internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -42,7 +42,10 @@ internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog
             Validation error => ErrorResponse.From(error),
             TerraBase.Tenancy.PlanTier plan => await catalog.SetStoragePlanAsync(organization, plan, cancellationToken).ConfigureAwait(false) switch
             {
-                Organization value => TypedResults.Ok(value),
+                Organization value => await fanout.PublishAsync(HttpContext, value.Id, plan, cancellationToken).ConfigureAwait(false) is { } error
+                    ? ErrorResponse.From(error) : TypedResults.Ok(value),
+                NotFound when plan == TerraBase.Tenancy.PlanTier.Hobby
+                    && await fanout.PublishAsync(HttpContext, organization, plan, cancellationToken).ConfigureAwait(false) is { } unpublished => ErrorResponse.From(unpublished),
                 NotFound error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),
