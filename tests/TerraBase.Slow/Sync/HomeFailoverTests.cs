@@ -47,13 +47,15 @@ public sealed class HomeFailoverTests
         });
         using var viaGru = gru.WithToken(bearer);
         using var viaSjc = sjc.WithToken(bearer);
-        var all = await CreateAsync(viaGru, project, token);
+        var all = await CreateAsync(viaGru, project, token, allRegions: true);
         var local = await CreateAsync(viaGru, project, token);
+        var gruLeases = gru.Server.Services.GetRequiredService<HomeLeases>();
+        await Assert.That(gruLeases.Find(all.Id)?.Node).IsEqualTo("gru-1").Because("creation confirms the lease before it answers");
+        await Assert.That(gruLeases.Find(local.Id)?.Node).IsEqualTo("gru-1");
 
         var replication = sjc.Server.Services.GetRequiredService<RegionReplication>();
         await replication.SyncCatalogsAsync(token);
         await replication.PullAllAsync(token);
-        var gruLeases = gru.Server.Services.GetRequiredService<HomeLeases>();
         var sjcLeases = sjc.Server.Services.GetRequiredService<HomeLeases>();
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gruLeases.Find(all.Id)?.Home == "gru" && gruLeases.Find(local.Id)?.Home == "gru"
             && sjcLeases.Find(all.Id) is not null && sjcLeases.Find(local.Id) is not null), TimeSpan.FromSeconds(30));
@@ -207,10 +209,11 @@ public sealed class HomeFailoverTests
         }
     }
 
-    private static async Task<Database> CreateAsync(HttpClient client, string project, CancellationToken token)
+    private static async Task<Database> CreateAsync(HttpClient client, string project, CancellationToken token, bool allRegions = false)
     {
         var name = "failover" + Faker.Random.AlphaNumeric(6).ToLowerInvariant();
-        using var created = await client.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name, replicaRegions = SjcOnly }, token);
+        using var created = await client.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases"),
+            new { name, replicaRegions = allRegions ? null : SjcOnly, allRegions = allRegions ? true : (bool?)null }, token);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync(token));
         var database = new Database((await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!,
             ManagementApi.Uri($"/v1/projects/{project}/databases/{name}/sql/execute"));

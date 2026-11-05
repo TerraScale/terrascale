@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Clock;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -10,7 +11,7 @@ using ZLogger;
 
 namespace TerraBase.Features.HomeApply;
 
-internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger)
+internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHomeWriteLease leases, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger)
     : IHomeApply
 {
     internal const int MaxChanges = 1024;
@@ -118,6 +119,11 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
 
     public async ValueTask PrepareAsync(TenantContext database, CancellationToken cancellationToken)
     {
+        if (!await leases.PrepareAsync(database, cancellationToken).ConfigureAwait(false))
+        {
+            throw new StorageBusyException();
+        }
+
         var preparing = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
         if (preparing is null)
         {
