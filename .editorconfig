@@ -17,7 +17,7 @@ trim_trailing_whitespace = false
 [Makefile]
 indent_style = tab
 
-# TerraBase, and the tests of the Turso driver it vendors: the strictest style, enforced in the build
+# TerraBase, and the tests of its vendored SQL driver: the strictest style, enforced in the build
 # (EnforceCodeStyleInBuild) with warnings as errors.
 [{src/TerraBase*,tests/TerraBase*,tests/Turso.Data.Sqlite.Tests}/**.cs]
 csharp_style_namespace_declarations = file_scoped:error

@@ -25,11 +25,11 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        var api = await ManagementApi.StartAsync(s3.Configure, collection =>
+        var api = await ManagementApi.StartAsync(s3.Configure, registrations =>
         {
-            s3.Route(collection);
-            ManualBackupHosting.Configure(collection);
-            services?.Invoke(collection);
+            s3.Route(registrations);
+            ManualBackupHosting.Configure(registrations);
+            services?.Invoke(registrations);
         }, time);
         try
         {

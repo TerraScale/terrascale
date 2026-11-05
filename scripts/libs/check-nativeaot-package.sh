@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Packs TerraScale.Endpoints into FEED (default artifacts/nativeaot/packages) at
+# Packs TerraScale.Endpoints into a package source (default artifacts/nativeaot/packages) at
 # PACKAGE_VERSION (default: the calendar version of HEAD), then consumes it from a
 # standalone NativeAOT app. Endpoints is not published, so only this check packs it.
 # Run locally with `nice -n 19 bash scripts/libs/check-nativeaot-package.sh`.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-feed="$(realpath -m "${1:-$root/artifacts/nativeaot/packages}")"
+packages_dir="$(realpath -m "${1:-$root/artifacts/nativeaot/packages}")"
 version=${PACKAGE_VERSION:-$(bash "$root/scripts/libs/package-version.sh")}
-rm -rf -- "$feed"
-mkdir -p "$feed"
+rm -rf -- "$packages_dir"
+mkdir -p "$packages_dir"
 dotnet pack "$root/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" \
-  --configuration Release --nologo -p:Version="$version" --output "$feed"
+  --configuration Release --nologo -p:Version="$version" --output "$packages_dir"
 shopt -s nullglob
-packages=("$feed"/TerraScale.Endpoints.*.nupkg)
+packages=("$packages_dir"/TerraScale.Endpoints.*.nupkg)
 if [ "${#packages[@]}" -ne 1 ]; then
-  echo "Expected exactly one TerraScale.Endpoints .nupkg in $feed" >&2
+  echo "Expected exactly one TerraScale.Endpoints .nupkg in $packages_dir" >&2
   exit 1
 fi
 version=$(unzip -p "${packages[0]}" '*.nuspec' | sed -n 's:.*<version>\(.*\)</version>.*:\1:p')
@@ -39,7 +39,7 @@ cat > "$consumer/nuget.config" <<'EOF'
 </configuration>
 EOF
 # Let NuGet escape XML attribute characters in the filesystem path.
-dotnet nuget add source "$feed" --name packed --configfile "$consumer/nuget.config"
+dotnet nuget add source "$packages_dir" --name packed --configfile "$consumer/nuget.config"
 cat > "$consumer/Consumer.csproj" <<EOF
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
