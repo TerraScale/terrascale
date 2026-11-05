@@ -429,7 +429,7 @@ namespace TerraScale.Dashboard.E2E
                 }
                 // The source DTO reports neither project/member/account CreatedAt
                 // nor project slug. Keep them unreported rather than infer them
-                // from the organization timestamp or manifest collection time.
+                // from the organization timestamp or manifest capture time.
                 organization.Projects[id] = new() { Id = id, OrganizationId = organization.Id };
             }
             ApplyOrganizationMetadata(organization, detail);
