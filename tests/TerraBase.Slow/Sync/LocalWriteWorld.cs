@@ -25,20 +25,15 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Sync;
 
-/// <summary>How the sjc node's in-region partner behaves.</summary>
 internal enum LocalPartner
 {
-    /// <summary>A stand-in that holds every transaction.</summary>
     Held,
 
-    /// <summary>None: sjc is a one-node region.</summary>
     Alone,
 
-    /// <summary>A second TerraBase node, sjc-2, reached on its internal listener.</summary>
     Node,
 }
 
-/// <summary>A database homed in gru with a replica in sjc, written locally on the sjc node (R7, R10).</summary>
 internal sealed class LocalWriteWorld : IAsyncDisposable
 {
     private static readonly string[] ReplicaRegions = ["sjc", "fra"];
@@ -86,10 +81,8 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
 
     public IInRegionAck Ack { get; }
 
-    /// <summary>sjc-2, with <see cref="LocalPartner.Node"/>.</summary>
     public TerraBaseTestServer? Partner { get; }
 
-    /// <summary>Transactions sjc-2 holds.</summary>
     public long PartnerHolds => Partner!.Services.GetRequiredService<HoldStore>().Count;
 
     private bool _killed;
@@ -200,7 +193,6 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
             _ = await transaction.ExecuteAsync(ApplySql.Statement(sql), cancellationToken);
         }
 
-        // A commit the partner did not hold waits for the home, which some tests never start: fail instead of hanging.
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bounded.CancelAfter(TimeSpan.FromSeconds(10));
         return await transaction.CommitAsync(homeDurable, bounded.Token);
@@ -227,7 +219,6 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
         return JsonElement.Parse(body).GetProperty("results")[0].GetProperty("rows");
     }
 
-    /// <summary>Stops the sjc node that acknowledged the writes, as if its host died: its push and its partner checks end.</summary>
     public async Task KillRegionNodeAsync()
     {
         _killed = true;
@@ -324,7 +315,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
 
     private sealed class NoApply : IHomeApply
     {
-        public ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, byte[] payload, CancellationToken cancellationToken) => ValueTask.FromResult<HomeApplyResult?>(null);
+        public ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken) => ValueTask.FromResult<HomeApplyResult?>(null);
 
         public ValueTask<HomeApplyResult?> StateAsync(TenantContext database, string transactionId, CancellationToken cancellationToken) => ValueTask.FromResult<HomeApplyResult?>(null);
 
