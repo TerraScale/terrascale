@@ -23,8 +23,8 @@ internal static class TerraBaseIntegrationFixture
         throw new FileNotFoundException("Missing source-derived TerraBase fixture", name);
     }
 
-    internal static TerraBaseDocumentsClient Client(HttpClient http, TimeSpan? timeout = null) => timeout is null
-        ? new(http, new TerraBaseDocumentsClientOptions { Region = "sjc", AccessTokenProvider = _ => ValueTask.FromResult("project-user-token") })
+    internal static TerraBaseDatabaseClient Client(HttpClient http, TimeSpan? timeout = null) => timeout is null
+        ? new(http, new TerraBaseDatabaseClientOptions { Region = "sjc", AccessTokenProvider = _ => ValueTask.FromResult("project-user-token") })
         : new(new TerraBaseConnection(http, TerraBaseRegion.PublicOrigin, null, null, "credential", timeout.Value,
             TerraBaseConnection.DefaultMaxResponseBytes, _ => ValueTask.FromResult("project-user-token"), region: "sjc"));
 

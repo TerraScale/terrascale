@@ -9,14 +9,14 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 /// The SDK's side of TerraBase's regional contract (monorepo docs/terrabase/region-identity.md), against
 /// a fake OCI HTTP endpoint: TerraBase answers <c>X-TerraBase-Region</c>; a request for a database another
 /// region serves answers <c>421 wrong_region</c> without SDK redirects or retries; TerraBase refuses
-/// <c>Idempotency-Key</c>, so a write must never be sent twice. A client with <see cref="TerraBaseDocumentsClientOptions.Region"/> targets that region's
+/// <c>Idempotency-Key</c>, so a write must never be sent twice. A client with <see cref="TerraBaseDatabaseClientOptions.Region"/> targets that region's
 /// host and pins every request to it; one without sends no routing header at all.
 /// </summary>
 public sealed class TerraBaseRegionalContractTests
 {
     private const string Branch = """{"id":"01JA0000000000000000000005","projectId":"01JA0000000000000000000001","name":"copy","branchedFrom":null,"createdAt":"2026-10-12T00:00:00+00:00","region":"gru","homeRegion":"gru"}""";
 
-    private static readonly TerraBaseDocumentsClientOptions Options = new()
+    private static readonly TerraBaseDatabaseClientOptions Options = new()
     {
         BaseAddress = new Uri("https://api.terrascale.test/"),
         ApiKey = "tb_test_key",
@@ -41,7 +41,7 @@ public sealed class TerraBaseRegionalContractTests
             return Task.FromResult(response);
         });
         using var http = new HttpClient(handler);
-        var database = new TerraBaseDocumentsClient(http, Options).Database("project", "app");
+        var database = new TerraBaseDatabaseClient(http, Options).Database("project", "app");
 
         var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.BranchAsync("copy"));
 
@@ -67,9 +67,9 @@ public sealed class TerraBaseRegionalContractTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Branch, Encoding.UTF8, "application/json") });
         });
         using var http = new HttpClient(handler);
-        var regional = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { Region = "fra", ApiKey = "tb_test_key" }).Database("project", "app");
+        var regional = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { Region = "fra", ApiKey = "tb_test_key" }).Database("project", "app");
         // An explicit origin keeps its host; the pin still holds the request to the region.
-        var explicitOrigin = new TerraBaseDocumentsClient(http, Options with { Region = "sjc" }).Database("project", "app");
+        var explicitOrigin = new TerraBaseDatabaseClient(http, Options with { Region = "sjc" }).Database("project", "app");
 
         await regional.BranchAsync("copy");
         await explicitOrigin.BranchAsync("copy");
