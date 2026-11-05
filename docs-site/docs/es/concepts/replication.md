@@ -29,8 +29,19 @@ completed its first pull sends reads to the home. Transactions that are not read
 ## Recovery and availability
 
 Replicas catch up after a restart or a temporary connection failure. A ready replica can serve SQL reads while
-its home is unreachable, using the state it already holds. It cannot accept writes or promise fresh data during
-that interruption. There is no automatic failover to a new write region.
+its home is unreachable, using the state it already holds.
+
+If the home region of a database with replica regions stops responding, the most caught-up replica becomes the
+new home within about 15 to 45 seconds, and writes move there. The old home never accepts another write; when it
+returns, it follows the new home as a replica. A database without replica regions waits for its home.
+
+| Durability | A write is acknowledged when | Lost if the home region fails |
+| --- | --- | --- |
+| Default | the home committed it | at most the latest writes no replica had pulled yet |
+| `"durability": "all"` | every replica region holds it | nothing |
+
+Set `"durability": "all"` on a SQL REST request to wait for every replica region. If a replica region does not
+confirm within 10 seconds, the request fails with `503 unavailable`; the write stays at the home.
 
 A replica is not a backup: it follows changes made at the home. Use point-in-time recovery to restore an earlier
 state into a new database. A restore needs a free database slot. In-place point-in-time restore is coming.
