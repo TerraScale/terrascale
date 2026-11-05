@@ -176,6 +176,12 @@ export class V1Transport {
   #token;
   /** @type {string | undefined} */
   #apiKeyBasic;
+  /** @type {{ token: string; refreshAt: number; expiresAt: number } | undefined} */
+  #cachedKeyToken;
+  /** @type {Promise<string> | undefined} */
+  #tokenFlight;
+  /** @type {unknown} */
+  #keyRefusal;
   /** @type {FetchLike} */
   #fetch;
   /** @type {number} */
@@ -252,13 +258,19 @@ export class V1Transport {
   async #accessToken(signal) {
     signal?.throwIfAborted();
     if (this.#apiKeyBasic !== undefined) {
-      const response = await this.#authRequest("/terrascale/oauth/token", new URLSearchParams({
-        grant_type: "client_credentials", project: requireProject(this.#project),
-      }).toString(), "application/x-www-form-urlencoded", signal);
-      const raw = object(response, "API key token");
-      if (typeof raw.expires_in !== "number" || !Number.isSafeInteger(raw.expires_in) || raw.expires_in <= 0)
-        throw new TypeError("ts-auth returned an invalid token lifetime.");
-      return requireToken(raw.access_token);
+      if (this.#keyRefusal !== undefined) throw this.#keyRefusal;
+      const now = performance.now();
+      const cached = this.#cachedKeyToken;
+      const valid = cached !== undefined && now < cached.expiresAt;
+      if (valid && now < cached.refreshAt) return cached.token;
+      if (this.#tokenFlight === undefined) {
+        this.#tokenFlight = Promise.resolve().then(() => this.#exchangeKey()).finally(() => { this.#tokenFlight = undefined; });
+        // A failed background exchange is observed. Missing/expired callers
+        // still await the same result, independently of caller cancellation.
+        void this.#tokenFlight.catch(() => {});
+      }
+      if (valid) return cached.token;
+      return this.#waitForToken(this.#tokenFlight, signal);
     }
     const provider = this.#token;
     if (typeof provider !== "function") return requireToken(provider);
@@ -283,6 +295,47 @@ export class V1Transport {
     }
   }
 
+  /** @returns {Promise<string>} */
+  async #exchangeKey() {
+    const started = performance.now();
+    try {
+      const response = await this.#authRequest("/terrascale/oauth/token", new URLSearchParams({
+        grant_type: "client_credentials", project: requireProject(this.#project),
+      }).toString(), "application/x-www-form-urlencoded", undefined);
+      const raw = object(response, "API key token");
+      if (typeof raw.expires_in !== "number" || !Number.isSafeInteger(raw.expires_in) || raw.expires_in <= 0)
+        throw new TypeError("ts-auth returned an invalid token lifetime.");
+      const lifetime = raw.expires_in * 1000;
+      const expiresAt = started + lifetime;
+      if (!Number.isFinite(expiresAt) || performance.now() >= expiresAt)
+        throw new TypeError("ts-auth's token expired before it arrived.");
+      const token = requireToken(raw.access_token);
+      if (this.#keyRefusal !== undefined) throw this.#keyRefusal;
+      this.#cachedKeyToken = { token, refreshAt: started + lifetime - Math.min(60_000, lifetime / 2), expiresAt };
+      return token;
+    } catch (error) {
+      if (this.#cachedKeyToken !== undefined) this.#cachedKeyToken.refreshAt = performance.now() + 1000;
+      throw error;
+    }
+  }
+
+  /** @param {Promise<string>} pending @param {AbortSignal | undefined} signal @returns {Promise<string>} */
+  async #waitForToken(pending, signal) {
+    if (signal === undefined) return pending;
+    /** @type {() => void} */
+    let abort = () => {};
+    try {
+      return await new Promise((resolve, reject) => {
+        abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+        void pending.then(resolve, reject);
+      });
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
   /** @param {string} body @param {AbortSignal | undefined} signal @returns {Promise<JsonValue | undefined>} */
   createScopedKey(body, signal) {
     return this.#authRequest("/v1/terrascale/api-keys/self/scoped-keys", body, "application/json", signal);
@@ -303,8 +356,14 @@ export class V1Transport {
     }
     const response = await this.#fetch(`https://auth.terrascale.tech${path}`, init);
     const text = await this.readText(response, bounded, 64 * 1024);
-    if (response.status !== (path.endsWith("scoped-keys") ? 201 : 200))
-      throw parseV1Error(response.status, response.headers, text);
+    if (response.status !== (path.endsWith("scoped-keys") ? 201 : 200)) {
+      const error = parseV1Error(response.status, response.headers, text);
+      if (path.endsWith("/token") && response.status === 401) {
+        this.#keyRefusal = error;
+        this.#cachedKeyToken = undefined;
+      }
+      throw error;
+    }
     return V1Transport.#decodeJson(response, text);
   }
 
@@ -551,6 +610,10 @@ export class V1Transport {
       if (response.type === "opaqueredirect") throw new OpaqueRedirectError();
       if (!route.successStatuses.includes(response.status)) {
         const error = await this.error(response, signal);
+        if (response.status === 401 && this.#apiKeyBasic !== undefined) {
+          if (["key_revoked", "key_expired", "invalid_key"].includes(error.code)) this.#keyRefusal = error;
+          if (headers.get("authorization") === `Bearer ${this.#cachedKeyToken?.token}`) this.#cachedKeyToken = undefined;
+        }
         if (!replaySafe || attempt >= maximumReadRetries || !transientRefusal(error)) throw error;
         // Wait at least Retry-After, plus jitter so clients refused together do not return in lockstep.
         // A wait the deadline cannot cover surfaces the refusal now.

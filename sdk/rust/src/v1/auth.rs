@@ -31,7 +31,8 @@ pub(super) struct KeyAuth {
     pub(super) project: String,
     pub(super) endpoint: String,
     pub(super) scoped_endpoint: String,
-    cached: Mutex<Option<Cached>>,
+    pub(super) cached: Mutex<Option<Cached>>,
+    exchange_gate: Mutex<()>,
     /// Set while one background task renews a still-valid token.
     renewing: AtomicBool,
 }
@@ -101,6 +102,7 @@ impl Auth {
                         "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys"
                             .into(),
                     cached: Mutex::new(None),
+                    exchange_gate: Mutex::new(()),
                     renewing: AtomicBool::new(false),
                 })))
             }
@@ -127,35 +129,58 @@ impl Auth {
             Self::Static(header) => return Ok(header.clone()),
             Self::Key(key) => key,
         };
-        // Hold the lock through a blocking exchange so clones share one
-        // refresh. Identity prevents a late 401 from invalidating a newer
-        // (even identical) token.
+        // Cache state is never locked over network I/O. Initial, expired
+        // and background exchanges all share the same exchange gate.
+        {
+            let mut cached = key.cached.lock().await;
+            if matches!(cached.as_ref(), Some(Cached::Token { header, .. }) if rejected.is_some_and(|old| Arc::ptr_eq(old, header)))
+            {
+                *cached = None;
+            }
+            if let Some(result) = usable(&cached, rejected) {
+                if matches!(cached.as_ref(), Some(Cached::Token { refresh_at, .. }) if Instant::now() >= *refresh_at)
+                {
+                    key.renew_in_background(http);
+                }
+                return result;
+            }
+        }
+        let _exchange = key.exchange_gate.lock().await;
+        {
+            let cached = key.cached.lock().await;
+            if let Some(result) = usable(&cached, rejected) {
+                return result;
+            }
+        }
+        let fresh = key.exchange(http, retry).await?;
         let mut cached = key.cached.lock().await;
+        // An explicit permanent refusal during I/O stays authoritative.
         if let Some(Cached::Refused { code, message }) = cached.as_ref() {
             return Err(refusal(code, message.clone()));
         }
-        if let Some(Cached::Token {
-            header,
-            refresh_at,
-            expires_at,
-        }) = cached.as_ref()
-        {
-            let now = Instant::now();
-            if now < *expires_at && rejected.is_none_or(|old| !Arc::ptr_eq(old, header)) {
-                if now >= *refresh_at {
-                    key.renew_in_background(http);
-                }
-                return Ok(header.clone());
-            }
-        }
-        *cached = None;
-        let fresh = key.exchange(http, retry).await?;
         let result = match &fresh {
             Cached::Token { header, .. } => Ok(header.clone()),
             Cached::Refused { code, message } => Err(refusal(code, message.clone())),
         };
         *cached = Some(fresh);
         result
+    }
+}
+
+fn usable(
+    cached: &Option<Cached>,
+    rejected: Option<&Arc<HeaderValue>>,
+) -> Option<Result<Arc<HeaderValue>>> {
+    match cached {
+        Some(Cached::Refused { code, message }) => Some(Err(refusal(code, message.clone()))),
+        Some(Cached::Token {
+            header, expires_at, ..
+        }) if Instant::now() < *expires_at
+            && rejected.is_none_or(|old| !Arc::ptr_eq(old, header)) =>
+        {
+            Some(Ok(header.clone()))
+        }
+        _ => None,
     }
 }
 
@@ -171,6 +196,15 @@ impl KeyAuth {
         }
         let (key, http) = (self.clone(), http.clone());
         runtime.spawn(async move {
+            let _exchange = key.exchange_gate.lock().await;
+            {
+                let cached = key.cached.lock().await;
+                if matches!(cached.as_ref(), Some(Cached::Refused { .. }))
+                    || matches!(cached.as_ref(), Some(Cached::Token { refresh_at, .. }) if Instant::now() < *refresh_at) {
+                    key.renewing.store(false, Ordering::Release);
+                    return;
+                }
+            }
             let fresh = key.exchange(&http, &RetryPolicy::none()).await;
             let mut cached = key.cached.lock().await;
             match (fresh, cached.as_mut()) {
@@ -321,15 +355,14 @@ impl KeyAuth {
         }
         let lifetime = Duration::from_secs(grant.expires_in);
         // Renew in the background from the later of half-life and 60 s before
-        // expiry; block only in the last quarter (at most 10 s) of the lifetime.
+        // expiry; callers wait only once the token has actually expired.
         let refresh_at = started
             .checked_add(lifetime - Duration::from_secs(60).min(lifetime / 2))
-            .filter(|at| *at > Instant::now())
             .ok_or_else(invalid)?;
         let expires_at = started
-            .checked_add(lifetime - Duration::from_secs(10).min(lifetime / 4))
-            .ok_or_else(invalid)?
-            .max(refresh_at);
+            .checked_add(lifetime)
+            .filter(|at| *at > Instant::now())
+            .ok_or_else(invalid)?;
         let header = Arc::new(header("Bearer", &grant.access_token).map_err(|_| invalid())?);
         Ok(Cached::Token {
             header,

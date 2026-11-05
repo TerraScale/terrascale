@@ -171,8 +171,8 @@ func NewExchangeSource(cfg ExchangeConfig) (*TokenSource, error) {
 
 // TokenSource caches one access token. From 60 s (at most half its
 // lifetime) before expiry it refreshes the token in the background while
-// callers keep the cached token, until reuseMargin (at most a quarter of its
-// lifetime) before expiry; only then do callers wait for a new token.
+// callers keep the cached token until its actual expiry; only then do
+// callers wait for a new token.
 // Concurrent callers share one request; a refresh retries 429, 502, 503, 504
 // and transport failures with backoff. It is safe for concurrent use and
 // satisfies v1.TokenSource.
@@ -184,10 +184,10 @@ type TokenSource struct {
 	mu        sync.Mutex
 	token     string
 	refreshAt time.Time
-	// staleAt is when the cached token stops being handed out.
-	staleAt  time.Time
-	flight   *flight
-	terminal error
+	// expiresAt is when the cached token stops being handed out.
+	expiresAt time.Time
+	flight    *flight
+	terminal  error
 }
 
 type flight struct {
@@ -201,10 +201,8 @@ type flight struct {
 	background bool
 }
 
-// Token refresh limits. reuseMargin keeps a token valid for a request that
-// starts just before staleAt; fetchTimeout bounds one refresh with retries.
+// Token refresh limits. fetchTimeout bounds one refresh with retries.
 const (
-	reuseMargin       = 10 * time.Second
 	fetchTimeout      = 30 * time.Second
 	maxFetchRetries   = 3
 	fetchBackoffBase  = 200 * time.Millisecond
@@ -238,7 +236,7 @@ func (s *TokenSource) Token(ctx context.Context) (string, error) {
 		s.mu.Unlock()
 		return "", err
 	}
-	if now := s.now(); s.token != "" && now.Before(s.staleAt) {
+	if now := s.now(); s.token != "" && now.Before(s.expiresAt) {
 		token := s.token
 		if !now.Before(s.refreshAt) && s.flight == nil {
 			s.start(ctx, true)
@@ -323,7 +321,7 @@ func (s *TokenSource) run(ctx context.Context, f *flight) {
 	}
 	if err == nil && s.flight == f && ctx.Err() == nil {
 		s.token, s.refreshAt = res.AccessToken, start.Add(lifetime-min(time.Minute, lifetime/2))
-		s.staleAt = start.Add(lifetime - min(reuseMargin, lifetime/4))
+		s.expiresAt = start.Add(lifetime)
 		f.token = res.AccessToken
 	}
 	f.err = err

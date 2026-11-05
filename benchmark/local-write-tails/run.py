@@ -39,15 +39,19 @@ def emit(value):
 
 def client(region, headers=None):
     last = {}
+    def request(r):
+        r.extensions['localtails_start'] = time.perf_counter()
     def response(r):
+        last.setdefault('http', []).append({'kind': 'token' if r.request.url.host == 'auth.terrascale.tech' else 'api',
+            'ms': round(1000*(time.perf_counter()-r.request.extensions['localtails_start']),3), 'status':r.status_code})
         if r.request.url.host.endswith('api.terrascale.tech'):
-            last.clear()
             last.update(status=r.status_code, headers={k:v for k,v in r.headers.items() if k.startswith(('x-terrabase', 'terrascale-', 'server-timing', 'cf-ray', 'cf-cache-status', 'age', 'x-request-id'))})
-    h = httpx.Client(timeout=30, http2=True, headers=headers, event_hooks={'response':[response]})
+    h = httpx.Client(timeout=30, http2=True, headers=headers, event_hooks={'request':[request],'response':[response]})
     c = TerraScale(config['key'], project=config['project'], base_url=f'https://{region}.api.terrascale.tech', region=region, http_client=h, max_attempts=1)
     return c, h, last
 
 def attempt(kind, region, fn, last, **extra):
+    last.clear()
     started = time.perf_counter()
     try:
         value = fn()

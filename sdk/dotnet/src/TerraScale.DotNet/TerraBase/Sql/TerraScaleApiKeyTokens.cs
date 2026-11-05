@@ -8,7 +8,7 @@ namespace TerraScale.DotNet.TerraBase;
 
 /// <summary>
 /// Exchanges a TerraScale API key for project access tokens at ts-auth (platform contract 6.1: client credentials,
-/// Basic keyId:key) and caches each project's token until shortly before it expires. Concurrent callers share one
+/// Basic keyId:key) and renews each project's token in the background before expiry. Concurrent callers share one
 /// exchange. The key goes only to ts-auth.
 /// </summary>
 internal sealed partial class TerraScaleApiKeyTokens
@@ -107,33 +107,75 @@ internal sealed partial class TerraScaleApiKeyTokens
 
     private sealed class ProjectToken(TerraScaleApiKeyTokens owner, string project)
     {
-        private readonly SemaphoreSlim gate = new(1, 1);
+        private readonly object gate = new();
         private Cached? cached;
+        private Task<string>? flight;
+        private Exception? refusal;
 
         public async ValueTask<string> GetAsync(CancellationToken cancellationToken)
         {
-            if (Fresh(Volatile.Read(ref cached)) is { } current) return current;
-            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            Task<string> pending;
+            lock (gate)
+            {
+                if (refusal is not null) throw refusal;
+                var now = owner.time.GetUtcNow();
+                var valid = cached is { } entry && now < entry.ExpiresAt;
+                if (valid && now < cached!.RefreshAt) return cached.Token;
+                if (flight is null)
+                {
+                    var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    flight = completion.Task;
+                    // Queue renewal so even a synchronous HTTP handler cannot
+                    // delay callers using the still-valid cached token.
+                    _ = Task.Run(() => RefreshAsync(completion));
+                }
+
+                if (valid) return cached!.Token;
+                pending = flight;
+            }
+
+            // A caller's cancellation ends its wait, not the shared exchange.
+            return await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task RefreshAsync(TaskCompletionSource<string> completion)
+        {
             try
             {
-                if (Fresh(cached) is { } raced) return raced;
                 var issued = owner.time.GetUtcNow();
-                var (token, lifetime) = await owner.ExchangeAsync(project, cancellationToken).ConfigureAwait(false);
-                // Refresh a minute early, or at half-life for short-lived tokens.
-                Volatile.Write(ref cached, new Cached(token, issued + lifetime - TimeSpan.FromTicks(Math.Min(RefreshMargin.Ticks, lifetime.Ticks / 2))));
-                return token;
+                var (token, lifetime) = await owner.ExchangeAsync(project, CancellationToken.None).ConfigureAwait(false);
+                var expires = issued + lifetime;
+                if (owner.time.GetUtcNow() >= expires) throw new InvalidDataException("ts-auth's token expired before it arrived.");
+                lock (gate)
+                {
+                    cached = new Cached(token, issued + lifetime - TimeSpan.FromTicks(Math.Min(RefreshMargin.Ticks, lifetime.Ticks / 2)), expires);
+                    completion.SetResult(token);
+                    flight = null;
+                }
             }
-            finally
+            catch (Exception error)
             {
-                gate.Release();
+                lock (gate)
+                {
+                    if (error is TerraBaseAuthenticationException { ErrorCode: "invalid_client" })
+                    {
+                        refusal = error;
+                        cached = null;
+                    }
+                    else if (cached is { } entry) cached = entry with { RefreshAt = owner.time.GetUtcNow() + TimeSpan.FromSeconds(1) };
+                    completion.SetException(error);
+                    // Background errors are observed; expired callers still
+                    // receive the same failure through their shared task.
+                    _ = completion.Task.Exception;
+                    flight = null;
+                }
             }
         }
 
-        private string? Fresh(Cached? entry) => entry is not null && owner.time.GetUtcNow() < entry.RefreshAt ? entry.Token : null;
-
-        private sealed record Cached(string Token, DateTimeOffset RefreshAt)
+        private sealed record Cached(string Token, DateTimeOffset RefreshAt, DateTimeOffset ExpiresAt)
         {
-            public override string ToString() => $"Cached token [REDACTED] until {RefreshAt:O}";
+            public override string ToString() => $"Cached token [REDACTED] until {ExpiresAt:O}";
         }
     }
 }

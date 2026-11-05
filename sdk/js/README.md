@@ -376,3 +376,7 @@ makes its outcome uncertain, and restores and branches can run long.
 Commit your changes, then run `npm run ship` (or `ts-ship`) from the worktree.
 It rebases onto current main, runs the Fast command from `AGENTS.md` on a dev
 host, and pushes main after validation. Run `ts-main` for the latest CI results.
+
+Built-in project API-key tokens renew in the background from 60 seconds before expiry
+(or at half-life for short tokens). Concurrent callers share one exchange and continue
+using a valid token; only missing, actually expired, or refused tokens require a wait.

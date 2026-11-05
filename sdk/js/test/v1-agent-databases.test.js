@@ -61,7 +61,7 @@ test("agent database lifecycle matches the recorded contract and reuses a scoped
     return Response.json({ results: [{ columns: [{ name: "n", decltype: "INTEGER" }], rows: [[1]], rows_affected: 0, last_insert_rowid: null }] });
   }
   expect(await agent.database(created.id).query("SELECT 1")).toEqual([{ n: 1 }]);
-  expect(exchanges).toHaveLength(6);
+  expect(exchanges).toHaveLength(1);
   expect(operations).toHaveLength(0);
   expect(JSON.stringify(client)).not.toContain(contract.apiKey);
 });
