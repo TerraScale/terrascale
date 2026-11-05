@@ -200,13 +200,9 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (request.RequestUri is { Scheme: "https", Host: "api.terrascale.tech" or "gru.api.terrascale.tech", IsDefaultPort: true } uri
-                && uri.AbsolutePath.Split('/') is ["", "admin", "organizations", _, "plan"])
-            {
-                return await fallback.SendAsync(request, cancellationToken);
-            }
-
-            if (request.RequestUri is not { Scheme: "https", Host: "api.stripe.com", IsDefaultPort: true })
+            var organizationPlan = request.RequestUri is { Scheme: "https", Host: "api.terrascale.tech" or "gru.api.terrascale.tech", IsDefaultPort: true } uri
+                && uri.AbsolutePath.Split('/') is ["", "admin", "organizations", _, "plan"];
+            if (!organizationPlan && request.RequestUri is not { Scheme: "https", Host: "api.stripe.com", IsDefaultPort: true })
             {
                 throw new HttpRequestException("The audit accepts only the local Stripe protocol fixture.");
             }
@@ -226,6 +222,10 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
                 }
             }
             var path = request.RequestUri.AbsolutePath;
+            if (organizationPlan)
+            {
+                return await fallback.SendAsync(forwarded, cancellationToken);
+            }
             if (request.Method == HttpMethod.Post && path == "/v1/checkout/sessions")
             {
                 var form = QueryHelpers.ParseQuery(await forwarded.Content!.ReadAsStringAsync(cancellationToken));
