@@ -8,6 +8,7 @@ The product goal is to write in any region and read in any region, with free rea
 
 - [Native SQL](sql/native-sql.md): statements, transactions, errors and sandbox.
 - [SQL WebSocket](sql/websocket.md).
+- [Native full-text qualification](sql/full-text-native.md).
 - [Write routing](sql/write-routing.md): regional decisions and home forwarding.
 - [Home apply](home-apply.md): conflict resolution and transaction states.
 - [Local overlay](local-overlay.md): regional writes and push to home.

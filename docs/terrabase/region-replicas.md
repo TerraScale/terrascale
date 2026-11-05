@@ -146,7 +146,7 @@ listener, as for every peer request.
 - **NATS in production.** ts-orch does not yet pass `TS_NATS_URL` and the token to TerraBase, so production replicas
   follow on the 30-second sweep until it does.
 - **One node per region.** A replica pulls from the first node the peers file lists for its home region.
-- **Reads only through relational SQL.** Record, query and shape reads of a replicated database are served by its home.
+- **Shape reads.** Home serves immutable snapshots and sealed chunks; ready replicas serve live tails under the [regional shape contract](region-shape-tails-and-cdc-retention.md).
 - **Replica status is in memory.** After a home restarts, replica status reads `unknown` until each replica's next report
   (at most 30 seconds).
 - **Buffered pulls.** The page sync host buffers each answer in memory (see [page sync host](page-sync-host.md)).
