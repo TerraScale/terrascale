@@ -1,7 +1,7 @@
-# Provisional, confirmed and revert on shapes (PIVOT F7)
+# Provisional, confirmed and revert on shapes (PIVOT F7/F8)
 
-A reader in a replica region sees writes made in that region at once. Each local transaction ([local overlay](local-overlay.md))
-reaches the region's live shape tails as `provisional`. The home's pages later mark it `confirmed`, or `revert` when the
+A reader in a replica region sees local writes at once and other regions’ writes after direct NATS delivery. Each local transaction ([local overlay](local-overlay.md))
+reaches replica regions’ live shape tails as `provisional`. The home's pages later mark it `confirmed`, or `revert` when the
 home rejected it. Provisional data is never sealed, mirrored or cached.
 
 ## Confirmed and revert: from the home's pages
@@ -34,13 +34,22 @@ response. When the shape is up to date, the answer adds:
 ```
 
 - `provisional` is every pending transaction of the region that changes this shape (local commits, and forwarded writes
-  below), in arrival order. It is the
+  below, and direct changes from other regions), in arrival order. It is the
   complete set at `next_offset`: the client replaces its provisional layer with it. At most 256 transactions or 1 MiB.
 - `local` is the first 16 hex characters of SHA-256 over the listed ids joined by newlines, or `0` for none.
   `TB-Shape-Local` carries the same value.
 - At the head, a live request answers as soon as the set differs from `local`, and otherwise waits for a commit as before.
-  A local commit on the same node wakes waiting tails at once; the other nodes of the region learn it over core NATS
-  (`terrabase.local.<region>.<organization>.<project>.<database>`).
+  A local commit on the same node wakes waiting tails at once; other nodes and replica regions subscribe directly to
+  `terrabase.local.*.*.*.*`. The writer publishes to
+  `terrabase.local.<origin>.<organization>.<project>.<database>` with its transaction id as `Nats-Msg-Id`.
+  `TERRABASE_PROVISIONAL_<ORIGIN>` retains those subjects in the origin region, using one file-backed replica,
+  64 MiB, a 1 MiB message limit, ten-minute retention/deduplication, and discard-old retention.
+  Live subscribers receive the publication in one hop without a pull through home or waiting for the storage ack.
+  The provisional publisher has eight pending messages, each at most 1 MiB of captured rows; an overflow falls
+  back to home delivery. The subscription queue also holds at most eight messages.
+- Direct delivery is best effort: disconnected readers do not replay the provisional stream. R7’s durable push and
+  the normal home-confirmed page path continue independently. On reconnect, duplicate ids are suppressed in the
+  pending set, and `_ts_applied` in the pulled pages suppresses late confirmed or rejected images before projection.
 - Ops use the shape's filter and columns, with move-in and move-out. A row a pending transaction inserted is keyed
   `~<transaction>.<row id>` until the home confirms it, because its home row id is not known yet. Later pending changes
   to that row use the same key; changes to home rows use the home row id.
@@ -80,3 +89,5 @@ reports the keys shown from provisional writes in `state.provisional`.
 `tests/TerraBase.Slow/Shapes/ShapeOverlayTests.cs` (multi-host JetStream drill, beside `HomePushTests`): a local write wakes a parked sjc tail with its provisional insert, then
 the pulled home pages confirm it and the provisional set empties; a write the home rejects turns into `revert` and
 the home's row.
+
+F8: `tests/TerraBase.Slow/Shapes/RegionShapeStreamTests.cs` proves sjc → fra provisional delivery before home apply, confirmation/rejection, and home-only fallback during an isolated TCP link cut without duplicate rows.
