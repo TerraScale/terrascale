@@ -22,6 +22,11 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
     {
         var store = keys ?? throw new LocalWriteRefusedException("durable local writes require the database key store");
         var (id, dataKey) = await store.CurrentAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false);
+        return Seal(database, packed, id, dataKey);
+    }
+
+    internal static byte[] Seal(TenantContext database, byte[] packed, string id, byte[] dataKey)
+    {
         var result = new byte[packed.Length + Overhead];
         "TBP1"u8.CopyTo(result);
         Encoding.ASCII.GetBytes(id, result.AsSpan(4, 26));
