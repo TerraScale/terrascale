@@ -1,9 +1,12 @@
+using System.Text.Json;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Features.Clock;
+using TerraBase.Hosting;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Clock;
@@ -31,6 +34,17 @@ public sealed class ClockSafetyTests
                 var client = new NodeClock.NodeClockClient(channel);
                 await ReadyAsync(client);
                 before = await client.NextAsync(new ClockRequest());
+                var reserved = await ReservationAsync(first, before.HlcNodeId);
+                var issued = await Task.WhenAll(Enumerable.Range(0, 32).Select(async _ => await client.NextAsync(new ClockRequest())));
+                await Assert.That(issued.Select(stamp => (stamp.HlcPhysicalMilliseconds, stamp.HlcLogical)).Distinct().Count()).IsEqualTo(issued.Length);
+                var newest = issued.MaxBy(stamp => (stamp.HlcPhysicalMilliseconds, stamp.HlcLogical))!;
+                var observer = first.Services.GetRequiredService<IHlcClock>();
+                var observed = await observer.ObserveAsync(new HlcTimestamp(newest.HlcPhysicalMilliseconds, newest.HlcLogical, "remote"), CancellationToken.None);
+                await Assert.That(observed.CompareTo(new HlcTimestamp(newest.HlcPhysicalMilliseconds, newest.HlcLogical, newest.HlcNodeId))).IsGreaterThan(0);
+                await Assert.That(await ReservationAsync(first, before.HlcNodeId)).IsEqualTo(reserved);
+                await Assert.That(reserved.CompareTo(observed)).IsGreaterThan(0);
+                before.HlcPhysicalMilliseconds = observed.PhysicalMilliseconds;
+                before.HlcLogical = observed.Logical;
             }
 
             var persisted = new HlcTimestamp(before.HlcPhysicalMilliseconds, before.HlcLogical, before.HlcNodeId);
@@ -93,6 +107,14 @@ public sealed class ClockSafetyTests
 
     private static GrpcChannel Channel(TerraBaseTestServer server) =>
         GrpcChannel.ForAddress(server.BaseAddress, new GrpcChannelOptions { HttpClient = server.Client, DisposeHttpClient = false, CompressionProviders = [new ClockCompression()] });
+
+    private static async Task<HlcTimestamp> ReservationAsync(TerraBaseTestServer server, string node)
+    {
+        var store = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var record = await transaction.GetAsync("node_clocks", node, CancellationToken.None);
+        return JsonSerializer.Deserialize(record!.Json.Span, TerraBaseJsonContext.Default.HlcState)!.Timestamp;
+    }
 
     private static Task ReadyAsync(NodeClock.NodeClockClient clock) => WaitForAsync(clock, sample => sample.LocalWritesAllowed);
 
