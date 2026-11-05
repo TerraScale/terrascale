@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using TerraBase.Features.Management;
 using TerraBase.Features.Regions;
 using TerraBase.Primitives;
 using TerraBase.Testing;
@@ -12,7 +13,8 @@ public sealed class RegionalPlanTests
     [Test]
     public async Task A_published_plan_and_its_downgrade_apply_in_another_region()
     {
-        await using var away = await ManagementApi.StartAsync(settings => settings["region"] = "sjc");
+        await using var away = await ManagementApi.StartAsync(settings => settings["region"] = "sjc", services =>
+            services.Replace(ServiceDescriptor.Singleton(new DatabaseAllowance())));
         await using var home = await StartHomeAsync(away.Server.BaseAddress);
         var organization = EntityIds.New().ToString();
         using var client = ProjectClient(away, organization, out var project);
