@@ -1,5 +1,6 @@
 import concurrent.futures
 import dataclasses
+from datetime import datetime, timezone
 import json
 import math
 import os
@@ -42,16 +43,20 @@ def client(region, headers=None):
     def request(r):
         r.extensions['localtails_start'] = time.perf_counter()
     def response(r):
+        received = datetime.now(timezone.utc).isoformat()
+        if r.request.url.host == 'auth.terrascale.tech':
+            emit({'kind':'auth_exchange','client_region':region,'status':r.status_code,'received_at':received,'headers_ms':round(1000*(time.perf_counter()-r.request.extensions['localtails_start']),3)})
         last.setdefault('http', []).append({'kind': 'token' if r.request.url.host == 'auth.terrascale.tech' else 'api',
             'ms': round(1000*(time.perf_counter()-r.request.extensions['localtails_start']),3), 'status':r.status_code})
         if r.request.url.host.endswith('api.terrascale.tech'):
-            last.update(status=r.status_code, headers={k:v for k,v in r.headers.items() if k.startswith(('x-terrabase', 'terrascale-', 'server-timing', 'cf-ray', 'cf-cache-status', 'age', 'x-request-id'))})
+            last.update(response_received_at=received, status=r.status_code, headers={k:v for k,v in r.headers.items() if k.startswith(('x-terrabase', 'terrascale-', 'server-timing', 'cf-ray', 'cf-cache-status', 'age', 'x-request-id'))})
     h = httpx.Client(timeout=30, http2=True, headers=headers, event_hooks={'request':[request],'response':[response]})
     c = TerraScale(config['key'], project=config['project'], base_url=f'https://{region}.api.terrascale.tech', region=region, http_client=h, max_attempts=1)
     return c, h, last
 
 def attempt(kind, region, fn, last, **extra):
     last.clear()
+    started_at = datetime.now(timezone.utc).isoformat()
     started = time.perf_counter()
     try:
         value = fn()
@@ -60,9 +65,9 @@ def attempt(kind, region, fn, last, **extra):
     except Exception as e:
         value = None
         ok = False
-        error = {'type':type(e).__name__, 'status':getattr(e,'status',None), 'code':getattr(e,'code',None), 'request_id':getattr(e,'request_id',None)}
+        error = {'type':type(e).__name__, 'status':getattr(e,'status',None), 'code':getattr(e,'code',None), 'request_id':getattr(e,'request_id',None), 'message':str(getattr(e,'message',''))[:1024]}
     elapsed = (time.perf_counter()-started)*1000
-    item = {'kind':kind,'region':region,'ok':ok,'ms':round(elapsed,3),'completed_at':time.time(),**dict(last),**extra}
+    item = {'started_at':started_at,'receipt_utc':datetime.now(timezone.utc).isoformat(),'kind':kind,'region':region,'ok':ok,'ms':round(elapsed,3),'completed_at':time.time(),**dict(last),**extra}
     if error: item['error']=error
     if isinstance(value,list): item['rows']=[dict(x) for x in value]
     elif dataclasses.is_dataclass(value) and kind != 'write': item['value']=dataclasses.asdict(value)
@@ -83,8 +88,8 @@ def worker(source):
     clients = {r:client(r) for r in REGIONS}
     try:
         c,h,last=clients[source]
-        for n in range(31):
-            attempt('baseline' if n else 'baseline_cold',source,lambda:h.get(f'{c.base_url}/healthz').raise_for_status(),last,n=n)
+        for n in range(101):
+            attempt('baseline' if n else 'baseline_cold',source,lambda:c.database(config['database']).query('SELECT 1 AS ready'),last,n=n)
         for r,(c,h,last) in clients.items():
             for readiness in range(60):
                 _,ok=attempt('warmup',r,lambda c=c:c.database(config['database']).query('SELECT 1 AS ready'),last,source=source)
