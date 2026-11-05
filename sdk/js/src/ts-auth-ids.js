@@ -9,7 +9,6 @@ const singleEntityRoutes = new Set([
   "tsauth.connections.create", "tsauth.connections.update",
   "tsauth.directories.create", "tsauth.directories.rotate",
   "tsauth.jwtTemplates.create", "tsauth.jwtTemplates.update",
-  "tsauth.webhooks.create",
   "tsauth.instance.get", "tsauth.instance.update",
 ]);
 
@@ -29,7 +28,6 @@ const entityReferenceFields = new Map([
   ["tsauth.organizations.createDomain", ["organization_id"]],
   ["tsauth.organizations.listDomains", ["organization_id"]],
   ["tsauth.auditEvents.list", ["instance_id"]],
-  ["tsauth.webhooks.deadLetter", ["endpoint_id", "event_id"]],
   ["tsauth.oauthClients.create", ["client_id"]],
   ["tsauth.oauthClients.update", ["client_id"]],
   ["tsauth.oauthClients.list", ["client_id"]],
@@ -43,20 +41,6 @@ const entityReferenceFields = new Map([
   ["tsauth.directories.rotate", ["org_id"]],
   ["tsauth.directories.list", ["org_id"]],
 ]);
-
-/**
- * Validate the documented endpointId:eventId delivery selector.
- * @param {unknown} value
- * @returns {string}
- */
-export function requireDeadLetterId(value) {
-  if (typeof value !== "string" || value.split(":").length !== 2)
-    throw new TypeError("Dead-letter selector must contain endpoint and event ULIDs separated by a colon.");
-  const [endpoint, event] = value.split(":");
-  requireId(endpoint, "endpoint id");
-  requireId(event, "event id");
-  return value;
-}
 
 /**
  * Validate identity fields in the hosted-auth DTOs without inspecting customer metadata.
@@ -80,10 +64,8 @@ export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(
   }
   if (typeof value !== "object" || value === null) return;
   if (requiredReference !== undefined) requireId(Reflect.get(value, requiredReference), requiredReference);
-  const deadLetter = route === "tsauth.webhooks.deadLetter";
   if (entity) {
-    if (deadLetter) requireDeadLetterId(Reflect.get(value, "id"));
-    else requireId(Reflect.get(value, "id"), "entity id");
+    requireId(Reflect.get(value, "id"), "entity id");
   }
   const fields = ["id", "user_id", "organization_id", "org_id", "endpoint_id", "event_id", "instance_id", "actor_id"];
   const nullableOrgId = route.startsWith("tsauth.connections.") || route.startsWith("tsauth.directories.");
@@ -94,8 +76,7 @@ export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(
   for (const field of fields) {
     if (Object.hasOwn(value, field) || (validateReferences && requiredFields.includes(field))) {
       const id = Reflect.get(value, field);
-      if (field === "id" && deadLetter) requireDeadLetterId(id);
-      else if (id !== null || !(field === "sid" || (field === "org_id" && nullableOrgId))) requireId(id, field);
+      if (id !== null || !(field === "sid" || (field === "org_id" && nullableOrgId))) requireId(id, field);
     }
   }
   // `data` objects in audit events are customer payloads; only page arrays contain DTOs.
