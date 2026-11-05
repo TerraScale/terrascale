@@ -396,6 +396,19 @@ namespace TerraScale.Dashboard.E2E
                 if (http.Request.Host.Host is "api.terrascale.tech" or "gru.api.terrascale.tech")
                 {
                     http.Response.Headers["X-TerraBase-Region"] = "gru";
+                    if (path.Split('/') is ["", "admin", "organizations", var planOwner, "plan"])
+                    {
+                        if (http.Request.Method != "PUT" || !TerraScaleIds.IsValid(planOwner)
+                            || !http.Request.Headers[TerraScale.TerraBase.Contracts.TerraBaseRpc.PeerCredentialHeader].SequenceEqual([TestIdentity.PeerSecret]))
+                        {
+                            return Results.Unauthorized();
+                        }
+
+                        using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+                        var plan = body.RootElement.GetProperty("plan").GetString();
+                        return plan is "hobby" or "starter" or "pro" or "team" or "enterprise"
+                            ? Results.Json(new { plan }) : Results.BadRequest();
+                    }
                     if (path == "/healthz")
                     {
                         return Results.Json(new { status = "ok", version = "test", region = "gru", storageFormat = "test", revision = (string?)null, machine = "local" });
