@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Net.Http.Headers;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
@@ -360,8 +361,14 @@ internal sealed class RegionalHandoff(
             }
 
             var address = new UriBuilder(Uri.UriSchemeHttp, peer.Address.ToString(), options.InternalPort).Uri;
-            using var response = await _http.PostAsJsonAsync(new Uri(address, promoting ? "/v1/rollout/prepare" : "/v1/rollout/verify"),
-                new RegionalPrepare(options.MachineId, positions), TerraBaseJsonContext.Default.RegionalPrepare, cancellationToken).ConfigureAwait(false);
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions), TerraBaseJsonContext.Default.RegionalPrepare);
+            if (payload.Length > 4 * 1024 * 1024)
+            {
+                return false;
+            }
+            using var body = new ByteArrayContent(payload);
+            body.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            using var response = await _http.PostAsync(new Uri(address, promoting ? "/v1/rollout/prepare" : "/v1/rollout/verify"), body, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 return false;
