@@ -13,7 +13,7 @@ using ZLogger;
 namespace TerraBase.Features.Replicas;
 
 internal sealed record RegionalPosition(string Organization, string Project, string Database, string Home, string Revision);
-internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions);
+internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, RegionalCatalogSnapshot? Catalog = null);
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready);
 internal sealed record RegionalDrain(string Target);
 
@@ -190,6 +190,12 @@ internal sealed class RegionalHandoff(
         {
             return false;
         }
+
+        if (request.Catalog is null)
+        {
+            return false;
+        }
+        await RegionalCatalog.ImportAsync(services.GetRequiredService<IStorageEngine>(), request.Catalog, cancellationToken).ConfigureAwait(false);
 
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
         var replication = services.GetRequiredService<RegionReplication>();
@@ -374,7 +380,8 @@ internal sealed class RegionalHandoff(
             }
 
             var address = new UriBuilder(Uri.UriSchemeHttp, peer.Address.ToString(), options.InternalPort).Uri;
-            var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions), TerraBaseJsonContext.Default.RegionalPrepare);
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, promoting
+                ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null), TerraBaseJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
             {
                 return false;
