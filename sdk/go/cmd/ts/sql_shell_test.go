@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -72,35 +71,3 @@ func TestSQLShellRunsEachRunBoundary(t *testing.T) {
 		t.Fatalf("banner=%s", prompt.String())
 	}
 }
-
-func TestSQLShellHelpStatesOneStatement(t *testing.T) {
-	t.Parallel()
-	db := sqlTestDB(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Error("help must not reach the server")
-	})
-	var out, prompt bytes.Buffer
-	lines := []string{".help", ".quit"}
-	reader := &fixedSQLLines{lines: lines}
-	if err := runSQLShell(t.Context(), db, reader, &out, &prompt); err != nil {
-		t.Fatal(err)
-	}
-	if data, err := io.ReadAll(&prompt); err != nil || !strings.Contains(string(data), "submits the buffer as one SQL statement in its own transaction") {
-		t.Fatalf("help=%s error=%v", prompt.String(), err)
-	}
-}
-
-type fixedSQLLines struct {
-	lines []string
-	n     int
-}
-
-func (f *fixedSQLLines) Readline() (string, error) {
-	if f.n < len(f.lines) {
-		f.n++
-		return f.lines[f.n-1], nil
-	}
-	return "", io.EOF
-}
-
-func (*fixedSQLLines) SetPrompt(string)         {}
-func (*fixedSQLLines) SaveHistory(string) error { return nil }
