@@ -13,7 +13,7 @@ using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>One captured row change of a local transaction, in the turso_cdc image format.</summary>
+/// <summary>One captured row change of a local transaction, in the storage engine capture image format.</summary>
 /// <param name="Type">1 insert, 0 update, -1 delete.</param>
 /// <param name="Table">The table name.</param>
 /// <param name="RowId">The row id in the writer's replica.</param>

@@ -46,7 +46,7 @@ result is recorded here.
 ## Backup qualification producer (#164)
 
 `BackupQualificationE2ETests` uses a real three-node local cluster. It takes a ready
-manual backup and two shipped PIT cuts, performs actual HTTP restores, and feeds their count, canonical digest,
+manual backup and two shipped PIT cuts, performs actual HTTP restores, and passes their count, canonical digest,
 versions and source/placement identity to `BackupQualification.Failures`. A pre-window cut must answer exactly
 400 `invalid_request`. Supported-cut refusals fail. The same-body rewrite regression proves version loss fails
 independently of the body digest. This row is not a `Gaps` expected failure.
@@ -75,7 +75,7 @@ ack, immutable old values during an unacknowledged overwrite, worker wake, missi
 (shape HTTP API on the public listener, plus the probe's served and persisted chunk rows), one tenant-log sync is
 killed: a gru write after the seals, a seal's own commit, or sjc's apply of the next batch. Every unsynced byte is
 dropped, then the dropped frames but the last are written back with a torn commit frame. After restart every op of
-every chunk, page and persisted row resolves to its document value on gru (served ones on sjc too), served chunks keep
+every chunk, page and persisted row resolves to its SQL row value on gru (served ones on sjc too), served chunks keep
 their range and body, and the old HTTP handle resumes or answers 409 `must_refetch`. Six seed/cut pairs; results in
 `benchmark/bench/2026-10-14-replication-v1.md`. The shim models only log cuts: torn main-database pages after a
 checkpoint are not simulated, and no machine lost power.
