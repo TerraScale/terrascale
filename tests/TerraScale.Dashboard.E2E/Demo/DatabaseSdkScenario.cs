@@ -552,7 +552,7 @@ namespace TerraScale.Dashboard.E2E
                         Require(plan is "hobby" or "starter" or "pro" or "team" or "enterprise", "A platform publish carries a known storage plan.");
                         lock (gate)
                         {
-                            var enrolled = databases.Values.Any(database => database.ProjectId == planOwner);
+                            var enrolled = path.Split('/')[2] == "organizations" || databases.Values.Any(database => database.ProjectId == planOwner);
                             return enrolled ? Results.Json(new { plan }) : Error(404, "not_found");
                         }
                     }

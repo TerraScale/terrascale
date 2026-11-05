@@ -4,6 +4,8 @@ The dashboard owns billing plans and maps pricing.json v2 allowances to TerraBas
 
 Publication succeeds only after every region accepts it. A failed or rejected peer publication returns `503 plan_unpublished`; retry the same request. The dashboard's existing plan reconciler retries failed publications and periodically republishes settled plans. Updates and downgrades invalidate the local admission cache through the catalog commit sequence.
 
+The dashboard requires a successful publication before completing personal or business organization creation. A failed publication leaves setup incomplete; retrying adopts the same organization and publishes again before returning success. This includes Free organizations, whose explicit Hobby publication must reach every region before their first database request.
+
 For ts-auth storage organizations, publication records the plan explicitly, including Hobby. Publishing Hobby before the first database now creates the memberless storage organization and returns `200`, just as paid plans do. Enrollment adopts that record. Deleted organizations and owner-managed organizations still return `404` on the storage plan endpoint.
 
 A clustered region with no organization plan, or only an enrollment-created Hobby default without a publication, returns `503 plan_unknown` at admission. It does not admit that organization under Hobby while billing publication is pending. Existing paid records retain their plan; owner-created organizations retain their explicitly created plan. A standalone region retains local admission defaults.

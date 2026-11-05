@@ -418,12 +418,6 @@ namespace TerraScale.Dashboard.E2E
                         {
                             lock (gate)
                             {
-                                // Like TerraBase, an organization without storage keeps the default Hobby without a record.
-                                if (tier == "hobby" && !organizationPlans.ContainsKey(planOwner))
-                                {
-                                    return Error(404, "not_found");
-                                }
-
                                 organizationPlans[planOwner] = tier!;
                             }
                         }

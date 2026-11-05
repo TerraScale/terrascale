@@ -30,7 +30,17 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             {
                 BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal))
             };
-            await DatabaseJourney.NativeWorkspaceAsync(client);
+            var suffix = Guid.NewGuid().ToString("N")[..12];
+            var email = "plan-signup-" + suffix + "@example.test";
+            var password = "Plan-signup-" + suffix;
+            plans.RefuseNextOrganization();
+            using (var rejected = await HttpJourney.LoginAsync(client, email, password, "/onboarding", signUp: true))
+            {
+                await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+                await Assert.That(plans.Requests.Single().Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            }
+
+            await DatabaseJourney.NativeWorkspaceAsync(client, email, password);
             using var page = await client.GetAsync("/organization?tab=billing");
             await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await page.Content.ReadAsStringAsync()).Contains("<dt>Stripe charges</dt><dd>None</dd>");
@@ -64,7 +74,9 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(System.Text.RegularExpressions.Regex.IsMatch(portalHtml, "<a[^>]+href=\"/organization\\?tab=billing[^\"]*\"[^>]*>Return to billing</a>")).IsTrue();
             await Assert.That(vendor.Calls).IsEqualTo(0);
             await Assert.That(plans.Requests).IsNotEmpty();
-            await Assert.That(plans.Requests.All(request => request.Plan == "hobby" && request.Status == HttpStatusCode.NotFound)).IsTrue();
+            await Assert.That(plans.Requests.Select(request => request.Owner).Distinct().Count()).IsEqualTo(1);
+            await Assert.That(plans.Requests.Count(request => request.Status == HttpStatusCode.ServiceUnavailable)).IsEqualTo(1);
+            await Assert.That(plans.Requests.All(request => request.Plan == "hobby" && request.Status is HttpStatusCode.OK or HttpStatusCode.ServiceUnavailable)).IsTrue();
             await app.StopAsync();
         }
 

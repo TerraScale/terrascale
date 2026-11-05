@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E.Demo
 {
@@ -86,6 +87,21 @@ namespace TerraScale.Dashboard.E2E.Demo
 
         private async Task<HttpResponseMessage> SendProducerAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.AbsolutePath.Split('/') is ["", "admin", "organizations", var planOwner, "plan"])
+            {
+                if (request.Method != HttpMethod.Put || !TerraScaleIds.IsValid(planOwner)
+                    || !request.Headers.TryGetValues(TerraScale.TerraBase.Contracts.TerraBaseRpc.PeerCredentialHeader, out var credential)
+                    || !credential.SequenceEqual([TestIdentity.PeerSecret]))
+                {
+                    return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+                }
+
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                var plan = body.RootElement.GetProperty("plan").GetString();
+                return plan is "hobby" or "starter" or "pro" or "team" or "enterprise"
+                    ? Json(new { plan }) : Json(new { error = "invalid_plan" }, HttpStatusCode.BadRequest);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
             var uri = request.RequestUri!;
             var changesPath = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is ["v1", "projects", _, "databases", _, "changes"];
