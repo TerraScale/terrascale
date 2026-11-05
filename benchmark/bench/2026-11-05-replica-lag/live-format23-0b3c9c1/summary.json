@@ -1,0 +1,14 @@
+{
+  "accepted": false,
+  "reason": "repeat1 write47:409 serialization_conflict",
+  "region": "fra",
+  "repeat": 1,
+  "completedWrites": 46,
+  "local": 46,
+  "pushed": 46,
+  "commitToVisibleP50": 116.214,
+  "commitToVisibleP99": 282.096,
+  "commitToVisibleMax": 282.096,
+  "accountDeleted": true,
+  "remoteCredentialsRemoved": true
+}

@@ -1,0 +1,13 @@
+{
+  "verifiedAt": "2026-11-05T15:31:00Z",
+  "revision": "0b3c9c147d83df07fd6fbe58456ca004892fb757",
+  "image": "ghcr.io/terrascale/terrabase@sha256:20a8ae180667f98c351f940309bb82be3933a256bc431cc0a145a9abc58c61b5",
+  "format": 23,
+  "regions": [
+    "gru",
+    "sjc",
+    "fra"
+  ],
+  "benchmarkSha256": "940be8ebfbdf25b874cdb71b3aa528ebd8625214b5558cb08e3340d0808c65ed",
+  "resetClearance": "DELTA .cos/board.md Prod reset: 2026-11-05 f23 complete; live proofs may run"
+}
