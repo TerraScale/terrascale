@@ -1,5 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
+using TerraBase.Features.Clock;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
@@ -32,17 +34,26 @@ public static class BackupExtensions
             .AddHttpMessageHandler<CustomerBackupResponseLimits>();
         services.AddTransient<CustomerBackupResponseLimits>();
         var master = new MasterKey(settings.MasterKey);
+        services.AddGrpc().AddServiceOptions<KeyRevocationService>(grpc =>
+        {
+            grpc.CompressionProviders = [new ClockCompression()];
+            grpc.ResponseCompressionAlgorithm = "lz4";
+            grpc.MaxReceiveMessageSize = 4096;
+            grpc.MaxSendMessageSize = 4096;
+        });
         return services
             .AddSingleton(settings)
             .AddSingleton<S3ObjectStore>()
             .AddSingleton<IObjectStore>(provider => provider.GetRequiredService<S3ObjectStore>())
             .AddSingleton<IMasterKey>(master)
             .AddSingleton<KeyCustody>()
+            .AddSingleton<KeyRevocationPeers>()
             .AddSingleton(provider => new Lazy<Management.EngineManagementService>(provider.GetRequiredService<Management.EngineManagementService>))
             .AddSingleton<ShreddedDatabaseSweep>()
             .AddHostedService(provider => provider.GetRequiredService<ShreddedDatabaseSweep>())
             .AddSingleton(provider => new DataKeys(provider.GetRequiredService<KeyCustody>().Store, provider.GetRequiredService<IMasterKey>(),
-                provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<BackupSettings>()))
+                provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<BackupSettings>(),
+                revocations: provider.GetRequiredService<KeyCustody>().Revocations))
             .AddSingleton<BackupTargets>()
             .AddSingleton<ContinuousBackup>()
             .AddSingleton<IContinuousBackup>(provider => provider.GetRequiredService<ContinuousBackup>())
@@ -52,6 +63,14 @@ public static class BackupExtensions
             .AddSingleton<IBackupKeyShredding>(provider => provider.GetRequiredService<DatabaseBackupPurge>())
             .AddSingleton<BackupReader>()
             .AddSingleton<IPointInTimeRestore, PointInTimeRestore>();
+    }
+
+    internal static void MapTerraBaseKeyRevocation(this WebApplication app, TerraBaseOptions options)
+    {
+        if (options.Backup is not null)
+        {
+            app.MapGrpcService<KeyRevocationService>().WithMetadata(ListenerMetadata.Internal);
+        }
     }
 
     // Backup is off: nothing ships and nothing can be restored.

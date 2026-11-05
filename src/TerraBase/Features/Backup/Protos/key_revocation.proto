@@ -1,0 +1,13 @@
+syntax = "proto3";
+package terrabase.backup.v1;
+option csharp_namespace = "TerraBase.Features.Backup";
+
+service KeyRevocation {
+  rpc Revoke (KeyRevocationRequest) returns (KeyRevocationReply);
+}
+message KeyRevocationRequest {
+  string organization = 1;
+  string project = 2;
+  string database = 3;
+}
+message KeyRevocationReply { bool revoked = 1; }

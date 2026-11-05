@@ -7,6 +7,8 @@ namespace TerraBase.Features.Backup;
 // The existing shape identity can access this prefix; the public shape WAF rejects it before cache lookup.
 internal sealed class KeyCustody(ShapeStorageSettings settings, IHttpClientFactory http, TimeProvider time) : IDisposable
 {
+    internal KeyCacheRevocations Revocations { get; } = new();
+
     public S3ObjectStore Store { get; } = new(settings.Endpoint, settings.Region, settings.Bucket, settings.AccessKeyId,
         settings.SecretKey, http, Shapes.ShapeObjectStore.HttpClientName, time);
 
@@ -16,6 +18,7 @@ internal sealed class KeyCustody(ShapeStorageSettings settings, IHttpClientFacto
         var record = await ShredRecords.ReadAsync(Store, scope, cancellationToken).ConfigureAwait(false)
             ?? new ShredRecord(database.DatabaseId!, now);
         await ShredRecords.WriteAsync(Store, scope, record, cancellationToken).ConfigureAwait(false);
+        Revocations.Forget(scope);
         var prefix = BackupLayout.Keys(scope);
         var marker = BackupLayout.Shredded(scope);
         var complete = true;

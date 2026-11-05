@@ -18,19 +18,47 @@ namespace TerraBase.Features.Backup;
 /// restores (at most 4 MiB of key material in both caches), including concurrent downloads using the same key.
 /// Entries expire after a day without access; a cache miss retrieves the retained wrapped key.
 /// </remarks>
-internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvider time, BackupSettings settings, bool freshKey = false, SemaphoreSlim? reads = null) : IDisposable
+internal sealed class DataKeys : IDisposable
 {
+    private readonly IObjectStore store;
+    private readonly IMasterKey master;
+    private readonly TimeProvider time;
+    private readonly bool freshKey;
+    private readonly KeyCacheRevocations? _revocations;
+    private long _generation;
+    private readonly Dictionary<string, int> _pendingScopes = new(StringComparer.Ordinal);
+    private bool _disposed;
+
+    public DataKeys(IObjectStore store, IMasterKey master, TimeProvider time, BackupSettings settings,
+        bool freshKey = false, SemaphoreSlim? reads = null, KeyCacheRevocations? revocations = null)
+    {
+        this.store = store;
+        this.master = master;
+        this.time = time;
+        this.freshKey = freshKey;
+        _readSlots = reads ?? new(MaxReads, MaxReads);
+        _waitForReadSlot = reads is null;
+        _rotation = TimeSpan.FromDays(settings.KeyRotationDays);
+        _current = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
+        _keys = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
+        _revocations = revocations;
+        if (revocations is not null)
+        {
+            revocations.Shredded += Forget;
+        }
+    }
+
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromDays(1);
     private const int CacheCapacity = 65536;
     private const int MaxWrappedKeyBytes = 16 * 1024;
     internal const int MaxReads = 8;
     // Customer managers share a separate host-wide pool; slow customer keys cannot consume platform capacity.
-    private readonly SemaphoreSlim _readSlots = reads ?? new(MaxReads, MaxReads);
-    private readonly bool _waitForReadSlot = reads is null;
-    private readonly TimeSpan _rotation = TimeSpan.FromDays(settings.KeyRotationDays);
-    private readonly MemoryCache _current = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
-    private readonly MemoryCache _keys = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
+    private readonly SemaphoreSlim _readSlots;
+    private readonly bool _waitForReadSlot;
+    private readonly TimeSpan _rotation;
+    private readonly MemoryCache _current;
+    private readonly MemoryCache _keys;
     private readonly Lock _cacheAdmission = new();
     // ponytail: 64 stripes per operation bound synchronization memory; colliding selections or key reads serialize.
     // Separate arrays keep a slow publication from blocking historical reads and prevent re-entering a selection stripe.
@@ -47,6 +75,7 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
 
         var gate = Gate(_selectionGates, scope);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var generation = BeginRead(scope);
         try
         {
             // Another file of the same project may have selected a key while this call waited.
@@ -125,28 +154,25 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
             }
 
             // Never select a key until its wrapped copy is durable; old objects keep naming old keys.
-            Cache(_keys, (scope, id), key);
-            Cache(_current, scope, new CurrentKey(id, key, time.GetUtcNow()));
+            lock (_cacheAdmission)
+            {
+                CheckGeneration(generation);
+                Cache(_keys, (scope, id), key);
+                Cache(_current, scope, new CurrentKey(id, key, time.GetUtcNow()));
+            }
             return (id, key);
         }
         finally
         {
+            EndRead(scope);
             gate.Release();
         }
     }
 
     /// <summary>The data key <paramref name="id"/> of <paramref name="scope"/>.</summary>
     /// <exception cref="InvalidDataException">The bucket holds no such key.</exception>
-    public async Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken)
-    {
-        // Historical consumers must not return a cached key after another region destroyed its custody object.
-        if (await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
-        {
-            Forget(scope);
-            throw new DatabaseShreddedException(shredded.ShreddedAt);
-        }
-        return await ReadKeyAsync(scope, id, cancellationToken).ConfigureAwait(false);
-    }
+    public Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken) =>
+        ReadKeyAsync(scope, id, cancellationToken);
 
     public Task<ShredRecord?> ShreddedAsync(string scope, CancellationToken cancellationToken) =>
         ShredRecords.ReadAsync(store, scope, cancellationToken);
@@ -160,11 +186,20 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
 
         var gate = Gate(_keyGates, BackupLayout.Key(scope, id));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var generation = BeginRead(scope);
         try
         {
             if (Cached(scope, id) is { } selected)
             {
                 return selected;
+            }
+
+            // Warm decodes never perform network I/O. A cold read must consult permanent custody
+            // authority before unwrapping; DELETE synchronously evicts every peer before acknowledging.
+            if (await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
+            {
+                Forget(scope);
+                throw new DatabaseShreddedException(priorShred.ShreddedAt);
             }
 
             if (_waitForReadSlot)
@@ -204,8 +239,12 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
                     var key = await master.UnwrapAsync(wrapped, cancellationToken).ConfigureAwait(false);
                     try
                     {
-                        Cache(_keys, (scope, id), key);
-                        return key;
+                        lock (_cacheAdmission)
+                        {
+                            CheckGeneration(generation);
+                            Cache(_keys, (scope, id), key);
+                            return key;
+                        }
                     }
                     catch
                     {
@@ -225,6 +264,7 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
         }
         finally
         {
+            EndRead(scope);
             gate.Release();
         }
     }
@@ -235,38 +275,95 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
     /// </summary>
     public void Forget(string scope)
     {
-        _current.Remove(scope);
-        foreach (var id in _keys.Keys)
+        lock (_cacheAdmission)
         {
-            if (id is ValueTuple<string, string> key && key.Item1 == scope)
+            if (_disposed)
             {
-                _keys.Remove(id);
+                return;
+            }
+            var affected = _pendingScopes.ContainsKey(scope) || _current.TryGetValue(scope, out _);
+            _current.Remove(scope);
+            foreach (var id in _keys.Keys)
+            {
+                if (id is ValueTuple<string, string> key && key.Item1 == scope)
+                {
+                    _keys.Remove(id);
+                    affected = true;
+                }
+            }
+            // Repeated tombstone scans must not disturb unrelated cold loads when this scope
+            // has neither cached material nor an in-flight load that could repopulate it.
+            if (affected)
+            {
+                Interlocked.Increment(ref _generation);
             }
         }
     }
 
     public void Dispose()
     {
-        foreach (var id in _current.Keys)
+        if (_revocations is not null)
         {
-            if (_current.TryGetValue(id, out CurrentKey? current) && current is not null)
-            {
-                CryptographicOperations.ZeroMemory(current.Key);
-            }
+            _revocations.Shredded -= Forget;
         }
-
-        foreach (var id in _keys.Keys)
+        lock (_cacheAdmission)
         {
-            if (_keys.TryGetValue(id, out byte[]? key) && key is not null)
+            if (_disposed)
             {
-                CryptographicOperations.ZeroMemory(key);
+                return;
             }
-        }
+            _disposed = true;
+            foreach (var id in _current.Keys)
+            {
+                if (_current.TryGetValue(id, out CurrentKey? current) && current is not null)
+                {
+                    CryptographicOperations.ZeroMemory(current.Key);
+                }
+            }
 
-        _current.Dispose();
-        _keys.Dispose();
+            foreach (var id in _keys.Keys)
+            {
+                if (_keys.TryGetValue(id, out byte[]? key) && key is not null)
+                {
+                    CryptographicOperations.ZeroMemory(key);
+                }
+            }
+
+            _current.Dispose();
+            _keys.Dispose();
+        }
         // Async-only gates never expose a wait handle. Let GC reclaim them after holders and waiters finish;
         // disposing a gate here could mask an in-flight operation's outcome when its finally releases it.
+    }
+
+    private long BeginRead(string scope)
+    {
+        lock (_cacheAdmission)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _pendingScopes[scope] = _pendingScopes.GetValueOrDefault(scope) + 1;
+            return _generation;
+        }
+    }
+
+    private void EndRead(string scope)
+    {
+        lock (_cacheAdmission)
+        {
+            if (--_pendingScopes[scope] == 0)
+            {
+                _pendingScopes.Remove(scope);
+            }
+        }
+    }
+
+    private void CheckGeneration(long generation)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (generation != Volatile.Read(ref _generation))
+        {
+            throw new IOException("data key selection raced a shred; retry against custody authority");
+        }
     }
 
     private static SemaphoreSlim Gate(SemaphoreSlim[] gates, string key) =>

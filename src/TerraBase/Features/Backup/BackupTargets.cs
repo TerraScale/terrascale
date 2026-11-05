@@ -91,7 +91,7 @@ internal sealed class BackupTargets(
         var scope = BackupLayout.KeyScope(database);
         var scopedCustomer = new ProjectStore(customer, scope);
         IObjectStore store = mirror ? new MirroredStore(new ProjectStore(platform, scope), scopedCustomer) : scopedCustomer;
-        var keys = new DataKeys(custody.Store, master, time, options.Backup!, freshKey, _customerKeyReads);
+        var keys = new DataKeys(custody.Store, master, time, options.Backup!, freshKey, _customerKeyReads, custody.Revocations);
         return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options, disk), [new ProjectStore(platform, scope), scopedCustomer], mirror, customer);
     }
 

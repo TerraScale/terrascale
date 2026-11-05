@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Grpc.Net.Client;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TerraBase.Features.Shapes;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.HomeApply;
@@ -26,7 +28,19 @@ public sealed class CompleteShreddingTests
     public async Task Persisted_partner_payload_and_cached_region_key_cannot_open_after_deletion(CancellationToken token)
     {
         var s3 = new FakeS3();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => { s3.Route(services); ManualBackupHosting.Configure(services); });
+        await using var remote = await ManagementApi.StartAsync(s3.Configure, services => s3.Route(services));
+        var peerFile = Path.Combine(remote.Server.DataDirectory, "shred-peers");
+        await File.WriteAllLinesAsync(peerFile, ["origin gru 127.0.0.2", "remote sjc 127.0.0.1"], token);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
+        {
+            s3.Route(services);
+            ManualBackupHosting.Configure(services);
+            services.AddSingleton(provider => new KeyRevocationPeers(
+                provider.GetRequiredService<TerraBaseOptions>() with
+                {
+                    MachineId = "origin", PeersFile = peerFile, InternalPort = remote.Server.BaseAddress.Port,
+                }, remote.Server.Credential));
+        });
         var database = await api.CreateManagedDatabaseAsync();
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
         var crypto = api.Server.Services.GetRequiredService<ITransactionCrypto>();
@@ -53,14 +67,34 @@ public sealed class CompleteShreddingTests
             var persisted = JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.HeldTransaction)!;
             await Assert.That(await crypto.OpenAsync(tenant, persisted.Payload!, token)).IsEquivalentTo(packed);
         }
-        // Warm an independent region's cache before the DELETE; its historical decrypt must still consult custody.
-        using var otherKeys = new DataKeys(api.Server.Services.GetRequiredService<KeyCustody>().Store,
-            api.Server.Services.GetRequiredService<IMasterKey>(), TimeProvider.System, api.Server.Services.GetRequiredService<TerraBase.Configuration.BackupSettings>());
+        // Warm a separate server's cache. Deletion must revoke it over the actual authenticated peer RPC.
+        var remoteCustody = remote.Server.Services.GetRequiredService<KeyCustody>();
+        var observedStore = new ObservedStore(remoteCustody.Store);
+        using var otherKeys = new DataKeys(observedStore,
+            remote.Server.Services.GetRequiredService<IMasterKey>(), TimeProvider.System,
+            remote.Server.Services.GetRequiredService<BackupSettings>(), revocations: remoteCustody.Revocations);
         var other = new TransactionCrypto(otherKeys);
         await Assert.That(await other.OpenAsync(tenant, payload, token)).IsEquivalentTo(packed);
         await Assert.That(await other.OpenAsync(snapshot, snapshotPayload, token)).IsEquivalentTo(packed);
+        var reads = observedStore.Reads;
+        for (var repeat = 0; repeat < 10; repeat++)
+        {
+            await Assert.That(await other.OpenAsync(tenant, payload, token)).IsEquivalentTo(packed);
+        }
+        await Assert.That(observedStore.Reads).IsEqualTo(reads);
+        using var channel = GrpcChannel.ForAddress(remote.Server.BaseAddress, new GrpcChannelOptions { HttpClient = remote.Server.Client });
+        var revocations = new KeyRevocation.KeyRevocationClient(channel);
+        var refused = await revocations.RevokeAsync(new KeyRevocationRequest
+        {
+            Organization = tenant.OrganizationId, Project = tenant.ProjectId!, Database = tenant.DatabaseId!,
+        }, cancellationToken: token).ResponseAsync;
+        await Assert.That(refused.Revoked).IsFalse();
         using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        var certificate = await api.Server.Services.GetRequiredService<SystemCatalog>().ReadUncheckedAsync(transaction =>
+            SystemCatalog.GetAsync(transaction, DatabaseBackupPurge.ProgressKind, tenant.DatabaseId!,
+                BackupPurgeJsonContext.Default.BackupPurgeProgress, token), token);
+        await Assert.That(certificate?.KeysShreddedAt).IsNotNull();
         await Assert.That(s3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Keys(BackupLayout.KeyScope(tenant)), StringComparison.Ordinal)
             && !key.EndsWith("/shredded", StringComparison.Ordinal))).IsEmpty();
         await Assert.That(await other.OpenAsync(tenant, payload, token)).IsNull();
@@ -97,8 +131,22 @@ public sealed class CompleteShreddingTests
         using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await api.Server.Services.GetRequiredService<SystemCatalog>().ListDatabasePurgesAsync(null, 16, token))!.Items.Single().BackupVerifiedAt).IsNull();
+        // Reproduce an interrupted legacy progress publication: physical-erasure certification
+        // exists but the local key certificate did not reach durable progress. Closure must recover.
+        var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
+        _ = await catalog.WriteDurableAsync(async transaction =>
+        {
+            var record = await SystemCatalog.GetAsync(transaction, DatabasePurge.Kind, tenant.DatabaseId!,
+                TerraBaseJsonContext.Default.DatabasePurgeRecord, token);
+            await SystemCatalog.PutAsync(transaction, DatabasePurge.Kind, tenant.DatabaseId!,
+                record! with { BackupVerifiedAt = DateTimeOffset.UtcNow }, TerraBaseJsonContext.Default.DatabasePurgeRecord, token);
+            return true;
+        }, _ => false, token);
         s3.FailPut = _ => false;
         await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);
+        var repaired = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction,
+            DatabaseBackupPurge.ProgressKind, tenant.DatabaseId!, BackupPurgeJsonContext.Default.BackupPurgeProgress, token), token);
+        await Assert.That(repaired?.KeysShreddedAt).IsNotNull();
         await Assert.That(() => api.Server.Services.GetRequiredService<DataKeys>().CurrentAsync(scope, token)).Throws<DatabaseShreddedException>();
         await Assert.That(() => keys.CurrentAsync(snapshotScope, token)).Throws<DatabaseShreddedException>();
 
@@ -124,4 +172,19 @@ public sealed class CompleteShreddingTests
             TimeProvider.System, services.GetRequiredService<IMeterFactory>(), services.GetRequiredService<ILogger<ShapeCdnPurge>>(),
             services.GetRequiredService<SystemCatalog>(), custody);
     }
+
+    private sealed class ObservedStore(IObjectStore inner) : IObjectStore
+    {
+        private int _reads;
+        public int Reads => Volatile.Read(ref _reads);
+        public Task<bool> ReadAsync(string key, Func<Stream, CancellationToken, Task> read, CancellationToken token)
+        {
+            Interlocked.Increment(ref _reads);
+            return inner.ReadAsync(key, read, token);
+        }
+        public Task PutAsync(string key, Stream content, CancellationToken token) => inner.PutAsync(key, content, token);
+        public Task<bool> DeleteAsync(string key, CancellationToken token) => inner.DeleteAsync(key, token);
+        public IAsyncEnumerable<StoredObject> ListAsync(string prefix, string? after, CancellationToken token) => inner.ListAsync(prefix, after, token);
+    }
+
 }

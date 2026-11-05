@@ -2,7 +2,9 @@
 
 F11 implements PIVOT D19. A successful customer database DELETE destroys the database's envelope keys before returning
 204. It returns 503 if the deletion committed but key destruction could not be certified; durable deletion work retries.
-Project and account erasure apply the same permanent authority to every owned database. A database ID is never reused.
+Project and account erasure apply the same permanent authority to every owned database. The all-scope key certificate
+is disk-synced immediately after destruction and peer eviction, so closure does not depend on the next physical purge.
+The purge sweep repairs missing key certificates even on older records already marked physically verified. A database ID is never reused.
 
 ## Custody outside backups
 
@@ -42,14 +44,17 @@ are outside the new guarantee and must not be presented as F11-protected.
 | JetStream regional push messages | TBP1 envelope under the same per-database key; deletion also purges the database subject from the local origin stream. |
 | Regional partner holds and their system backups | The exact TBP1 ciphertext from JetStream; no decoded SQL is persisted in the hold record. |
 | Shape objects in R2/CDN | Existing TBS1 epoch derivation under the database envelope key; deletion removes owned objects and queues their CDN purge. |
-| Region key caches | Historical decrypt checks fresh custody authority before a cached key; deletion passes also discard local cached keys. |
+| Region key caches | Warm selection and decode use bounded memory caches. Cold decode checks permanent custody authority. DELETE synchronously evicts every node through authenticated gRPC and requires every acknowledgement. |
 | Tenant/project closure | Existing permanent closure enumerates every database and records individual deletion authorities. |
 
 TBP1 adds 78 bytes: magic, data-key ULID, random 32-byte salt, and a 16-byte GCM tag. HKDF-SHA256 derives a unique
 object key with the database identity and a transaction-specific domain. An envelope cannot be transplanted to another
 database. The existing compression runs before sealing. One HKDF and one AES-GCM seal are added per transaction;
-JetStream and the partner reuse the same bytes. A warm key selection performs no network operation. Cold key selection
-and rotation access R2. Home consumption and partner takeover decrypt before applying; a shredded payload is discarded.
+JetStream and the partner reuse the same bytes. Warm key selection and decode perform no network operation. Cold key selection, cold decode
+and rotation access R2. Each node shares invalidation across its platform and customer managers. A generation fence
+prevents an in-flight unwrap or rotation from publishing a cached key after eviction. DELETE returns 503 if any
+discovered peer, including hold partners, cannot acknowledge the tombstone and synchronous eviction. A restarted
+node starts cold and refuses the permanent tombstone; cached decodes after successful DELETE cannot bypass it. Home consumption and partner takeover decrypt before applying; a shredded payload is discarded.
 No read-pull behavior or quorum/durability policy changes.
 
 ## Convergence and CDN purge
@@ -75,6 +80,6 @@ Purge is storage reclamation; key destruction is the confidentiality boundary.
 ## Proof
 
 The Fast integration coverage retains one happy path (a real partner hold, an independent warm region cache and
-post-delete decrypt rejection) and one critical failure (custody failure returns 503 and durable deletion retries).
+zero-GET warm decode and immediate post-delete decrypt rejection through an authenticated peer eviction) and one critical failure (custody failure returns 503 and durable deletion retries).
 The deployment SHA, live gru/sjc/fra reads, backup probes, CDN requests, synchronous custody 404s and synthetic-account
 cleanup belong in `benchmark/bench/2026-11-05-f11-crypto-shredding.md` once measured.
