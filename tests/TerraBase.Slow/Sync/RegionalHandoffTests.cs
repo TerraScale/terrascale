@@ -10,6 +10,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Regions;
+using TerraBase.Features.Platform;
+using TerraBase.Tenancy;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -25,6 +27,18 @@ public sealed class RegionalHandoffTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var nats = await JetStreamServer.StartAsync(token);
+        await using var connection = new NatsConnection(new NatsOpts { Url = nats.Url.ToString(), AuthOpts = new NatsAuthOpts { Token = nats.Token } });
+        await connection.ConnectAsync();
+        var homes = await new NatsKVContext(new NatsJSContext(connection)).CreateOrUpdateStoreAsync(new NatsKVConfig(HomeLeases.Bucket)
+        {
+            History = 1,
+            LimitMarkerTTL = HomeLeases.Ttl,
+        }, token);
+        // Replay the exact platform tenant and database IDs used independently in every region.
+        var foreignPlatform = new HomeLease(PlatformDatabases.OrganizationId, PlatformDatabases.AuthProjectId,
+            PlatformDatabases.AuthId, "sjc", "sjc-2", 3, EntityIds.New().ToString());
+        _ = await homes.PutAsync("home." + foreignPlatform.DatabaseId,
+            JsonSerializer.SerializeToUtf8Bytes(foreignPlatform, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
         using var issuer = new TestIssuer();
         var storage = new FakeS3();
         var directory = Directory.CreateTempSubdirectory("regional-handoff-").FullName;
@@ -41,6 +55,8 @@ public sealed class RegionalHandoffTests
             await Assert.That(second.Server.Services.GetRequiredService<RegionalOwners>().Writer).IsFalse();
             await using var first = await StartAsync("gru-1", "127.0.0.2");
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(first.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
+            await Assert.That(await first.Server.Services.GetRequiredService<IPlatformCatalog>().EnsurePlatformAsync(token) is TerraBase.Errors.Done).IsTrue();
+            await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().PrimeAsync("gru-1", token)).IsTrue();
             var organization = await first.CreateOrganizationAsync("Org " + EntityIds.New());
             var project = await first.CreateProjectAsync(organization, "Project");
             var bearer = issuer.Mint(first.User, descriptor =>
@@ -63,13 +79,41 @@ public sealed class RegionalHandoffTests
             using var regionalOnly = await viaFirst.PostAsJsonAsync(ManagementApi.Uri(basePath), new { name = "regional-only", replicaRegions = Array.Empty<string>() }, token);
             await Assert.That(regionalOnly.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await regionalOnly.Content.ReadAsStringAsync(token));
             var regionalId = (await regionalOnly.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
-            await using var connection = new NatsConnection(new NatsOpts { Url = nats.Url.ToString(), AuthOpts = new NatsAuthOpts { Token = nats.Token } });
-            await connection.ConnectAsync();
-            var homes = await new NatsKVContext(new NatsJSContext(connection)).CreateOrUpdateStoreAsync(new NatsKVConfig(HomeLeases.Bucket) { History = 1 }, token);
+            await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().PrimeAsync("gru-1", token)).IsTrue();
             var foreign = new HomeLease(organization, project, regionalId, "sjc", "sjc-1", 1, EntityIds.New().ToString());
             _ = await homes.PutAsync("home." + regionalId, JsonSerializer.SerializeToUtf8Bytes(foreign, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            var foreignDashboard = foreignPlatform with { ProjectId = PlatformDatabases.DashboardProjectId, DatabaseId = PlatformDatabases.DashboardId };
+            _ = await homes.PutAsync("home." + foreignDashboard.DatabaseId,
+                JsonSerializer.SerializeToUtf8Bytes(foreignDashboard, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            // An ordinary replicated lease is an ordered watch barrier: both nodes
+            // must process the preceding foreign replay before these assertions.
+            var observed = await homes.GetEntryAsync<byte[]>("home." + database, cancellationToken: token);
+            var barrier = JsonSerializer.Deserialize(observed.Value!, TerraBaseJsonContext.Default.HomeLease)!;
+            barrier = barrier with { Epoch = barrier.Epoch + 1 };
+            _ = await homes.PutAsync("home." + database, JsonSerializer.SerializeToUtf8Bytes(barrier, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            foreach (var api in new[] { first, second })
+            {
+                var leases = api.Server.Services.GetRequiredService<HomeLeases>();
+                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(leases.Find(database)?.Epoch == barrier.Epoch), TimeSpan.FromSeconds(5));
+                await Assert.That(leases.Find(PlatformDatabases.AuthId)).IsNull();
+                await Assert.That(leases.Find(PlatformDatabases.DashboardId)).IsNull();
+                await Assert.That(leases.Find(regionalId)).IsNull();
+                var catalog = api.Server.Services.GetRequiredService<IReplicaCatalog>();
+                var platform = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Hobby, PlatformDatabases.AuthProjectId, PlatformDatabases.AuthId);
+                await Assert.That(await catalog.FindAsync(platform, token) is TenantDatabaseRecord { Placement.Home: "gru", Placement.Replicas.Count: 0, Placement.AllRegions: false }).IsTrue();
+                var dashboard = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Hobby, PlatformDatabases.DashboardProjectId, PlatformDatabases.DashboardId);
+                await Assert.That(await catalog.FindAsync(dashboard, token) is TenantDatabaseRecord { Placement.Home: "gru", Placement.Replicas.Count: 0, Placement.AllRegions: false }).IsTrue();
+            }
+            await Assert.That(await first.Server.Services.GetRequiredService<HomeLeases>().TakeAsync(
+                new TenantContext(organization, PlanTier.Hobby, project, regionalId), "sjc", 2, foreign, token)).IsFalse();
+            var localPlatform = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Hobby, PlatformDatabases.AuthProjectId, PlatformDatabases.AuthId);
+            await Assert.That(await first.Server.Services.GetRequiredService<HomeLeases>().TakeAsync(localPlatform, "sjc", 4, foreignPlatform, token)).IsFalse();
+            await Assert.That(await first.Server.Services.GetRequiredService<HomeLeases>().PrepareAsync(localPlatform, token)).IsTrue();
+            // Bound a failed activation so the negative control cannot hang the drill.
+            using var activation = CancellationTokenSource.CreateLinkedTokenSource(token);
+            activation.CancelAfter(TimeSpan.FromSeconds(8));
             var handoff = first.Server.Services.GetRequiredService<RegionalHandoff>();
-            await Assert.That(await handoff.DrainAsync("gru-2", token)).IsTrue();
+            await Assert.That(await handoff.DrainAsync("gru-2", activation.Token)).IsTrue();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(second.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
             await ExecuteAsync(viaSecond, "INSERT INTO acked VALUES ('after')");
             using var read = await viaSecond.PostAsJsonAsync(sql, new { statements = new[] { new { sql = "SELECT count(*) FROM acked" } } }, token);
@@ -82,6 +126,11 @@ public sealed class RegionalHandoffTests
             await ExecuteAsync(viaFirst, "INSERT INTO acked VALUES ('returned')");
             var retained = await homes.GetEntryAsync<byte[]>("home." + regionalId, cancellationToken: token);
             await Assert.That(JsonSerializer.Deserialize(retained.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(foreign);
+            foreach (var ignored in new[] { foreignPlatform, foreignDashboard })
+            {
+                var original = await homes.GetEntryAsync<byte[]>("home." + ignored.DatabaseId, cancellationToken: token);
+                await Assert.That(JsonSerializer.Deserialize(original.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(ignored);
+            }
 
             async Task ExecuteAsync(HttpClient client, string statement)
             {

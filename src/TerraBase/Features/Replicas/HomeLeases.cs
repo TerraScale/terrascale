@@ -11,6 +11,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
 using TerraBase.Features.Management;
+using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -61,7 +62,13 @@ internal sealed class HomeLeases(
 
     private string NodeKey => "node." + options.MachineId;
 
+    // Only cross-region replicated databases use global per-database keys.
+    // Region-only databases use the region-scoped RegionalHandoff owner key.
     private static string HomeKey(string database) => "home." + database;
+
+    private static bool RegionOnly(DatabasePlacement placement) => !placement.AllRegions && placement.Replicas.Count == 0;
+
+    private static bool PlatformDatabase(string database) => database is PlatformDatabases.AuthId or PlatformDatabases.DashboardId;
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -156,6 +163,14 @@ internal sealed class HomeLeases(
 
     internal async ValueTask<bool> TakeAsync(TenantContext database, string fromRegion, long epoch, HomeLease? failedHome, CancellationToken cancellationToken)
     {
+        // An expired global record cannot promote an independent regional copy.
+        if (PlatformDatabase(database.DatabaseId!)
+            || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
+            || RegionOnly(placement))
+        {
+            return false;
+        }
+
         if (_js is null)
         {
             return true;
@@ -373,7 +388,7 @@ internal sealed class HomeLeases(
                     {
                         if (home.Node != options.MachineId && !_nodes.ContainsKey(home.Node))
                         {
-                            Expired(new NodeLease(home.Node, home.Home, home.Session), cancellationToken);
+                            await ExpiredAsync(new NodeLease(home.Node, home.Home, home.Session), cancellationToken).ConfigureAwait(false);
                         }
                     }
                 }
@@ -539,7 +554,7 @@ internal sealed class HomeLeases(
             }
             else if (_nodes.TryRemove(node, out var gone) && node != options.MachineId)
             {
-                Expired(gone, cancellationToken);
+                await ExpiredAsync(gone, cancellationToken).ConfigureAwait(false);
             }
 
             return;
@@ -551,19 +566,31 @@ internal sealed class HomeLeases(
             return;
         }
 
+        // Legacy platform keys have no region and may be replayed forever. They
+        // never describe this region's independent platform databases, even if
+        // the tenant IDs and the database IDs happen to match exactly.
+        if (PlatformDatabase(home.DatabaseId) || entry.Key != HomeKey(home.DatabaseId))
+        {
+            return;
+        }
+        var database = new TenantContext(home.OrganizationId, PlanTier.Hobby, home.ProjectId, home.DatabaseId);
+        var recorded = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var found } ? found : null;
+        if (recorded is not null && RegionOnly(recorded))
+        {
+            return;
+        }
+
         var observed = _homes.AddOrUpdate(home.DatabaseId, (home, entry.Revision),
             (_, known) => entry.Revision > known.Revision ? (home, entry.Revision) : known);
         if (observed.Revision != entry.Revision)
         {
             return;
         }
-        var database = new TenantContext(home.OrganizationId, PlanTier.Hobby, home.ProjectId, home.DatabaseId);
         if (home.Node == options.MachineId)
         {
             return;
         }
 
-        var recorded = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var found } ? found : null;
         if (leaseGate.Leased.Contains(home.DatabaseId))
         {
             if ((recorded is null || recorded.Version <= home.Epoch) && !fences.Held.Contains(home.DatabaseId))
@@ -579,15 +606,21 @@ internal sealed class HomeLeases(
 
         if (!_nodes.ContainsKey(home.Node) && home.Home != options.Region)
         {
-            Expired(new NodeLease(home.Node, home.Home, home.Session), cancellationToken);
+            await ExpiredAsync(new NodeLease(home.Node, home.Home, home.Session), cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private void Expired(NodeLease gone, CancellationToken cancellationToken)
+    private async Task ExpiredAsync(NodeLease gone, CancellationToken cancellationToken)
     {
         foreach (var (id, (lease, _)) in _homes)
         {
-            if (lease.Node == gone.Node && replicas.Holds(new TenantContext(lease.OrganizationId, PlanTier.Hobby, lease.ProjectId, id)) && _claiming.TryAdd(id, true))
+            if (lease.Node != gone.Node || PlatformDatabase(id))
+            {
+                continue;
+            }
+            var database = new TenantContext(lease.OrganizationId, PlanTier.Hobby, lease.ProjectId, id);
+            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
+                && !RegionOnly(placement) && replicas.Holds(database) && _claiming.TryAdd(id, true))
             {
                 _ = ClaimAsync(lease, cancellationToken);
             }
@@ -607,8 +640,9 @@ internal sealed class HomeLeases(
                     return;
                 }
 
-                if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-                    || replicas.HeldRevision(database) is not { } mine)
+                if (PlatformDatabase(database.DatabaseId!)
+                    || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
+                    || RegionOnly(placement) || replicas.HeldRevision(database) is not { } mine)
                 {
                     return;
                 }
@@ -687,6 +721,11 @@ internal sealed class HomeLeases(
     private async Task DemoteAsync(TenantContext database, HomeLease home, CancellationToken cancellationToken)
     {
         var id = database.DatabaseId!;
+        if (PlatformDatabase(id)
+            || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var local } && RegionOnly(local))
+        {
+            return;
+        }
         if (home.Home == options.Region)
         {
             // Same-region promotion changes the writer, never the database's placement.
