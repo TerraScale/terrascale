@@ -16,6 +16,7 @@ public static class ReplicaExtensions
         services.AddSingleton<HomeMoves>();
         services.AddHostedService(provider => provider.GetRequiredService<HomeMoves>());
         services.AddSingleton<HomeLeases>();
+        services.AddSingleton<IHomeWriteLease>(provider => provider.GetRequiredService<HomeLeases>());
         services.AddHostedService(provider => provider.GetRequiredService<HomeLeases>());
         return services.AddHostedService(provider => provider.GetRequiredService<RegionReplication>());
     }
