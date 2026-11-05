@@ -6,8 +6,6 @@ acknowledging the change. Work already running on the key is cut off within **2.
 250 ms poll). If ts-auth cannot answer,
 TerraBase refuses the key (fail closed).
 
-This replaces the earlier bound, where a key's 60-second access tokens kept working until they expired.
-
 ## Where authority lives
 
 ts-auth owns API keys. Its key records live in its own store behind the GRU storage authority, and only ts-auth reads them.
@@ -25,26 +23,23 @@ SHA-256 of the key string they came from). ts-auth caps their expiry at the key'
 
 ## How TerraBase checks (`IKeyAuthority`, every region)
 
-- Every HTTP request with a key's token asks `IKeyAuthority`. That covers records, queries, transactions, HTTP SQL
-  and change streams. The check runs in the project-check middleware, before scope authorization.
+- Every HTTP request with a key's token asks `IKeyAuthority`. That covers SQL, shape reads and management requests.
+  The check runs in the project-check middleware, before scope authorization. SQL and shape WebSockets also retain a key watch for the connection.
 - On Postgres, every dashboard key is exchanged at ts-auth's token endpoint. It is checked at startup and again before every
   statement, including the rows a Describe already read, which are sent only if the key still acts at Execute.
 - One answer per (key, key string, project) per node. A **yes** holds for 2 seconds from when the question was *sent*,
-  so a slow answer cannot stretch the window. After 1 second it is asked again in the background, so a busy key never
-  waits. A **refusal** holds for good: key ids are ULIDs and are never reused, and retired key strings and deleted
+  so a slow answer cannot stretch the window. Aging answers are renewed in the background through one flight per key.
+  A **refusal** holds for good: key ids are ULIDs and are never reused, and retired key strings and deleted
   projects do not come back. At most one question per key is in flight.
 - ts-auth unreachable, slow (2-second timeout), 5xx, 429 or 404: the answer is *unavailable* and never a stale yes. HTTP
   then answers `503 auth_unavailable` with `Retry-After: 1`, and Postgres answers FATAL `57P03 auth_unavailable`.
-- No events are pushed, so no new replication or catalog path is added. The 2-second check already meets the bound in
-  every region. A push channel would only shorten a window that is already short. CatalogGate's anchored revocations
-  of TerraBase's own `tb_` keys are unchanged.
 
 ## Open connections and long work
 
 | Transport | New requests / statements | Already running |
 |---|---|---|
-| HTTP (records, SQL) | `401 key_revoked` / `401 key_expired` (with `WWW-Authenticate: Bearer error="invalid_token"`) | the request is cut off within 2.5 s, including slow request bodies. Before its response starts it is answered like a new request: the `401` above, or `503 auth_unavailable` with `Retry-After: 1` when the key could not be verified in time. A response already under way is aborted |
-| Change streams (SSE) | refused as above | the connection is aborted within 2.5 s |
+| HTTP SQL and shape long polls | `401 key_revoked` / `401 key_expired` (with `WWW-Authenticate: Bearer error="invalid_token"`) | the request is cut off within 2.5 s, including slow request bodies. Before its response starts it is answered like a new request: the `401` above, or `503 auth_unavailable` with `Retry-After: 1` when the key could not be verified in time. A response already under way is aborted |
+| SQL and shape hint WebSockets | the HTTP upgrade or auth frame is refused | the watched connection is closed or aborted within 2.5 s; a policy close uses code `1008` |
 | Postgres | FATAL `28000 key_revoked: ...` / `key_expired: ...`, then the connection closes | the session is watched for its whole life, idle or busy. Its TCP connection is aborted within 2.5 s and unflushed rows are dropped. An open transaction rolls back |
 
 A request or session is watched by asking `IKeyAuthority` every 250 ms while it runs. These checks hit the same
@@ -53,19 +48,6 @@ last yes. If no new yes arrives before that one runs out (2 s after it was asked
 ts-auth does not extend it. A slow ts-auth therefore ends long requests with `503 auth_unavailable` rather than a reset. A Postgres session exchanges its key again as each 60-second token lapses, as statements
 do, so an idle session that is still valid stays open. Clients should treat `key_revoked` and
 `key_expired` as permanent: stop retrying and ask for a new key. Treat `auth_unavailable` as retryable.
-
-## Mixed versions
-
-Deploy order does not matter. TerraBase works with a ts-auth from before key status, in either order:
-
-- A token without `key_id`/`key_gen` is checked as a token only (signature, issuer, audience, expiry, claims), as it was
-  before key status, on HTTP and on Postgres. The 60-second token lifetime bounds it.
-- When `/api-keys/self` answers 404, ts-auth predates key status, and the token's own checks stand.
-- A token carrying the claims must carry both, with `key_id` equal to `sub` and a well-formed `key_gen`. Otherwise it is
-  refused.
-
-The bounds above apply once ts-auth issues the claims and serves `/api-keys/self` everywhere, and its previous tokens
-(60 s) have expired.
 
 ## Service keys and sign-in
 
