@@ -1,0 +1,465 @@
+{
+  "captured_at": "2026-11-05T13:16:15.600799+00:00",
+  "client_host": "ts-sjc-1",
+  "writes_per_mode": 20,
+  "default_expects_local": true,
+  "repeats": [
+    {
+      "repeat": 12,
+      "transports": {
+        "keepalive_https": {
+          "health": {
+            "p50_ms": 1.31,
+            "p99_ms": 2.96,
+            "samples_ms": [
+              1.71,
+              1.46,
+              1.57,
+              2.96,
+              1.83,
+              1.57,
+              1.54,
+              1.44,
+              1.42,
+              1.2,
+              1.25,
+              1.27,
+              1.21,
+              1.34,
+              1.26,
+              1.24,
+              1.28,
+              1.22,
+              1.19,
+              1.17
+            ]
+          },
+          "default": {
+            "client": {
+              "p50_ms": 22.61,
+              "p99_ms": 80.96,
+              "samples_ms": [
+                21.02,
+                21.91,
+                23.63,
+                21.13,
+                24.01,
+                22.48,
+                20.59,
+                24.19,
+                31.2,
+                27.85,
+                22.67,
+                80.96,
+                20.66,
+                20.47,
+                26.98,
+                21.19,
+                65.14,
+                21.2,
+                23.53,
+                22.55
+              ]
+            },
+            "server": {
+              "request_log:sjc": {
+                "p50_ms": 21.12,
+                "p99_ms": 79.25,
+                "samples_ms": [
+                  19.32,
+                  20.2,
+                  21.96,
+                  19.55,
+                  22.38,
+                  20.79,
+                  18.98,
+                  22.84,
+                  28.88,
+                  25.77,
+                  21.24,
+                  79.25,
+                  19.11,
+                  19.21,
+                  25.36,
+                  19.61,
+                  63.69,
+                  20.02,
+                  21.29,
+                  20.99
+                ]
+              }
+            },
+            "routes": {
+              "route=local; reason=ulid_insert; commit=local": 20
+            },
+            "request_ids": [
+              "01M6NXMSF2PWHRQNFA7EZ0Z2VA",
+              "01M6NXMSFQZH14MF32ZQFSHDHS",
+              "01M6NXMSGDK3TKKZRGJEKX0NR5",
+              "01M6NXMSH533DQTZXEBFDWHETC",
+              "01M6NXMSHTXZ34PAD9AMDB2N8J",
+              "01M6NXMSJJ8R3TW2DS0KMMN576",
+              "01M6NXMSK8VFPMQ0Y0V0W1XCXC",
+              "01M6NXMSKXTQE97K4C6XFVCVTW",
+              "01M6NXMSMPNAZS2Z07X89PPXAV",
+              "01M6NXMSNNH3N7M3JAXH7A1QTA",
+              "01M6NXMSPHS1MZJ1WRJ6FDHSSQ",
+              "01M6NXMSQ83XVGV7JX2YGZPDBD",
+              "01M6NXMSSS7N68C7VXE4HXR3RK",
+              "01M6NXMSTETNSGJGFGCSCKZS9N",
+              "01M6NXMSV2JNMTJS62494YHB0Q",
+              "01M6NXMSVXWS8WS0Y05RKTPH6V",
+              "01M6NXMSWKPPJ4HR7F97Y3MEC8",
+              "01M6NXMSYM7N7KPCEMQ4G1N5MT",
+              "01M6NXMSZ90ZX71ZCH1584AZC3",
+              "01M6NXMT01XBJ9N8KS7J3P6A9M"
+            ]
+          },
+          "durable_home": {
+            "client": {
+              "p50_ms": 226.61,
+              "p99_ms": 251.07,
+              "samples_ms": [
+                226.6,
+                243.0,
+                228.03,
+                228.47,
+                224.67,
+                226.28,
+                234.21,
+                228.96,
+                226.56,
+                226.18,
+                225.73,
+                226.61,
+                233.86,
+                223.16,
+                232.04,
+                225.71,
+                238.1,
+                225.92,
+                225.37,
+                251.07
+              ]
+            },
+            "server": {
+              "request_log:sjc": {
+                "p50_ms": 224.88,
+                "p99_ms": 249.12,
+                "samples_ms": [
+                  224.9,
+                  240.8,
+                  226.32,
+                  226.54,
+                  222.85,
+                  224.86,
+                  230.85,
+                  227.15,
+                  224.59,
+                  224.64,
+                  223.81,
+                  222.88,
+                  229.49,
+                  219.47,
+                  229.93,
+                  223.82,
+                  235.85,
+                  223.91,
+                  223.42,
+                  249.12
+                ]
+              }
+            },
+            "routes": {
+              "route=local; reason=ulid_insert; commit=local": 20
+            },
+            "request_ids": [
+              "01M6NXMV7NAYZGY4264VDBCRVQ",
+              "01M6NXMVERVBFQHCN2ACJQYWWQ",
+              "01M6NXMVPB5SGXNQMB9J0N80W4",
+              "01M6NXMVXFE46WDCPS3H27GCQV",
+              "01M6NXMW4MQ9RS78FKY3WD1P2K",
+              "01M6NXMWBNJ526DQX5F8N3FYZQ",
+              "01M6NXMWJQKM8SA2SRZ5JD6F35",
+              "01M6NXMWT23D2S6ZGP1RM0416Q",
+              "01M6NXMX174A9516FFXGX2WDBA",
+              "01M6NXMX8912DJN4J93KZRHJKM",
+              "01M6NXMXFC8GWTH1KC98R55XPX",
+              "01M6NXMXPE7PN0BW9DHG99G9GK",
+              "01M6NXMXXG7HEESMA7S90B8QNH",
+              "01M6NXMY4T1J5Z39PSGFSPM25N",
+              "01M6NXMYBTNNZXDEQ2SF82JJ77",
+              "01M6NXMYK256T1K54H4VAT32XZ",
+              "01M6NXMYT4A7G67HB1WT68NE4H",
+              "01M6NXMZ1J14ZWDS9V49DE5P16",
+              "01M6NXMZ8M75ENXX9J6MYTY9AB",
+              "01M6NXMZFNGPV41ZQH94KN72MS"
+            ]
+          },
+          "forced_home": {
+            "client": {
+              "p50_ms": 211.14,
+              "p99_ms": 229.06,
+              "samples_ms": [
+                199.69,
+                197.82,
+                211.17,
+                197.13,
+                213.55,
+                196.46,
+                209.84,
+                213.44,
+                213.36,
+                209.78,
+                217.11,
+                210.09,
+                216.01,
+                229.06,
+                214.23,
+                202.11,
+                209.82,
+                217.62,
+                223.31,
+                211.1
+              ]
+            },
+            "server": {
+              "home:gru": {
+                "p50_ms": 194.0,
+                "p99_ms": 219.6,
+                "samples_ms": [
+                  193.2,
+                  194.1,
+                  207.1,
+                  193.2,
+                  193.9,
+                  193.0,
+                  191.0,
+                  193.4,
+                  192.8,
+                  192.0,
+                  197.8,
+                  190.7,
+                  196.5,
+                  210.8,
+                  193.9,
+                  198.2,
+                  206.1,
+                  213.2,
+                  219.6,
+                  207.1
+                ]
+              },
+              "request_log:sjc": {
+                "p50_ms": 209.16,
+                "p99_ms": 227.39,
+                "samples_ms": [
+                  197.83,
+                  195.92,
+                  209.3,
+                  195.28,
+                  211.23,
+                  194.69,
+                  207.53,
+                  210.34,
+                  211.11,
+                  207.81,
+                  215.16,
+                  205.07,
+                  213.82,
+                  227.39,
+                  212.49,
+                  200.04,
+                  207.98,
+                  215.31,
+                  221.38,
+                  209.02
+                ]
+              }
+            },
+            "routes": {
+              "route=home; reason=override; commit=home": 20
+            },
+            "request_ids": [
+              "01M6NXN0YQTQ8YYDP9FZJ48N4X",
+              "01M6NXN14ZNC4ED6K8K86T4TAC",
+              "01M6NXN1B52M4EJNJNW2RKKZYY",
+              "01M6NXN1HR4TTPTH64FTPC9JNN",
+              "01M6NXN1QXFPEKRVE3HP0X52B5",
+              "01M6NXN1YKPGKVM5YHBFK90470",
+              "01M6NXN24RGSMCG8JBPF8YTA9Q",
+              "01M6NXN2BBC6SP4MFK7697R7DP",
+              "01M6NXN2HZHKK3WX6MZND29JK3",
+              "01M6NXN2RNF5C9CY2ZBHX9J7BX",
+              "01M6NXN2Z7RHJDQTE7D9AATYAQ",
+              "01M6NXN362YG7F9XRFGP4S3EZR",
+              "01M6NXN3CJ7GKTNYP6YRJW82XY",
+              "01M6NXN3KA8WV8BT8S4ZA8XFDR",
+              "01M6NXN3TGY9TFSETT1MGRKQGA",
+              "01M6NXN416W9JVTWYCRG46BSN4",
+              "01M6NXN47GV2V3EHFGG9TW0XAF",
+              "01M6NXN4E2HAHCFG1VCKDW4J2W",
+              "01M6NXN4MW3VW4M493E8NKV68G",
+              "01M6NXN4VVTYR2ZYDQCBG08JWE"
+            ]
+          }
+        }
+      },
+      "before": {
+        "captured_at": "2026-11-05T13:16:18.325921+00:00",
+        "image": "ghcr.io/terrascale/terrabase@sha256:b4fab3f1dd8363d4be5d8bd19decd20b6057084fb096aa54073f1b6b4b84fd12",
+        "health": {
+          "status": "ok",
+          "version": "0.1.0",
+          "region": "sjc",
+          "storageFormat": "22-41a88901325a",
+          "revision": "d450cbe3b439b79f3b9710e1d7fe11e03e1a50d7",
+          "machine": "ts-sjc-1"
+        },
+        "metrics": [
+          "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 1"
+        ],
+        "peer_internal_health_ms": {
+          "ts-fra-1": {
+            "region": "fra",
+            "health": {
+              "status": "ok",
+              "version": "0.1.0",
+              "region": "fra",
+              "storageFormat": "22-41a88901325a",
+              "revision": "d450cbe3b439b79f3b9710e1d7fe11e03e1a50d7",
+              "machine": "ts-fra-1"
+            },
+            "samples_ms": [
+              278.268
+            ]
+          },
+          "ts-gru-1": {
+            "region": "gru",
+            "health": {
+              "status": "ok",
+              "version": "0.1.0",
+              "region": "gru",
+              "storageFormat": "22-41a88901325a",
+              "revision": "d450cbe3b439b79f3b9710e1d7fe11e03e1a50d7",
+              "machine": "ts-gru-1"
+            },
+            "samples_ms": [
+              338.907
+            ]
+          },
+          "ts-sjc-1": {
+            "region": "sjc",
+            "health": {
+              "status": "ok",
+              "version": "0.1.0",
+              "region": "sjc",
+              "storageFormat": "22-41a88901325a",
+              "revision": "d450cbe3b439b79f3b9710e1d7fe11e03e1a50d7",
+              "machine": "ts-sjc-1"
+            },
+            "samples_ms": [
+              1.098
+            ]
+          }
+        },
+        "peer_local_ack_metrics": {
+          "ts-sjc-1": [
+            "terrabase_localack_partner{otel_scope_name=\"TerraScale.TerraBase\"} 0",
+            "terrabase_localwrites_available{otel_scope_name=\"TerraScale.TerraBase\"} 1"
+          ]
+        }
+      },
+      "home_counts": {
+        "keepalive_https_default": 20,
+        "keepalive_https_durable_home": 20,
+        "keepalive_https_forced_home": 20,
+        "warmup": 15
+      },
+      "after": {
+        "captured_at": "2026-11-05T13:16:33.151149+00:00",
+        "image": "ghcr.io/terrascale/terrabase@sha256:b4fab3f1dd8363d4be5d8bd19decd20b6057084fb096aa54073f1b6b4b84fd12",
+        "health": {
+          "status": "ok",
+          "version": "0.1.0",
+          "region": "sjc",
+          "storageFormat": "22-41a88901325a",
+          "revision": "d450cbe3b439b79f3b9710e1d7fe11e03e1a50d7",
+          "machine": "ts-sjc-1"
+        },
+        "metrics": [
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"0\"} 0",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"5\"} 0",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"10\"} 0",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"25\"} 0",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"50\"} 0",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"75\"} 0",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"100\"} 0",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"250\"} 25",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"500\"} 34",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"750\"} 50",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"1000\"} 50",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"2500\"} 50",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"5000\"} 50",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"7500\"} 50",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"10000\"} 50",
+          "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"+Inf\"} 50",
+          "terrabase_push_lag_milliseconds_sum{otel_scope_name=\"TerraScale.TerraBase\"} 18013",
+          "terrabase_push_lag_milliseconds_count{otel_scope_name=\"TerraScale.TerraBase\"} 50",
+          "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 1"
+        ],
+        "peer_internal_health_ms": {
+          "ts-fra-1": {
+            "region": "fra",
+            "health": {
+              "status": "ok",
+              "version": "0.1.0",
+              "region": "fra",
+              "storageFormat": "22-41a88901325a",
+              "revision": "d450cbe3b439b79f3b9710e1d7fe11e03e1a50d7",
+              "machine": "ts-fra-1"
+            },
+            "samples_ms": [
+              276.213
+            ]
+          },
+          "ts-gru-1": {
+            "region": "gru",
+            "health": {
+              "status": "ok",
+              "version": "0.1.0",
+              "region": "gru",
+              "storageFormat": "22-41a88901325a",
+              "revision": "d450cbe3b439b79f3b9710e1d7fe11e03e1a50d7",
+              "machine": "ts-gru-1"
+            },
+            "samples_ms": [
+              337.242
+            ]
+          },
+          "ts-sjc-1": {
+            "region": "sjc",
+            "health": {
+              "status": "ok",
+              "version": "0.1.0",
+              "region": "sjc",
+              "storageFormat": "22-41a88901325a",
+              "revision": "d450cbe3b439b79f3b9710e1d7fe11e03e1a50d7",
+              "machine": "ts-sjc-1"
+            },
+            "samples_ms": [
+              1.025
+            ]
+          }
+        },
+        "peer_local_ack_metrics": {
+          "ts-sjc-1": [
+            "terrabase_localack_partner{otel_scope_name=\"TerraScale.TerraBase\"} 0",
+            "terrabase_localwrites_available{otel_scope_name=\"TerraScale.TerraBase\"} 1"
+          ]
+        }
+      },
+      "source_stable": true
+    }
+  ]
+}

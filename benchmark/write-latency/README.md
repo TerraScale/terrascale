@@ -47,3 +47,8 @@ health for every discovered peer. Each node gets one reused connection; its
 first sample includes TCP connection setup. This separates mesh RTT from the
 public edge and TLS. Runtime peer credentials remain on the serving host and
 reach curl only on stdin.
+
+Health snapshots also retain `peer_local_ack_metrics` for every discovered SJC
+node. These record partner health and local-write availability alongside the
+actual node identities, so a one-node acknowledgement is distinguishable from
+an acknowledgement with an in-region partner.

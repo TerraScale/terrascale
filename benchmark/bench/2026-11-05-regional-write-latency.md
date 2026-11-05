@@ -105,6 +105,41 @@ starts. The new `local_begin` stage measures that wait separately. The read
 owner retains the pull implementation; this report does not claim a measured
 fix to that candidate until the stage timings confirm it.
 
+## R10-only qualification before the lock fix
+
+One additional 40-write qualification per mode ran on stable source
+`59c46e4ac` in GRU/SJC/FRA, before the WAN-fetch lock fix and before the second
+SJC node was active. It validates the default `commit=local` route, but is not
+the final two-node proof. Every response ID matched its SJC request-log timing;
+all 120 measured rows reached home exactly once and the database was deleted.
+
+| Mode | Server p50 ms | Server p99 ms | Client p50 ms | Client p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| default | 45.93 | 576.72 | 47.87 | 578.89 |
+| durable_home | 229.39 | 457.07 | 231.29 | 459.46 |
+| forced_home | 197.45 | 225.76 | 200.00 | 228.12 |
+
+Enabling the safe local acknowledgement route removes the default WAN apply
+wait, but does not by itself meet the local latency targets. This qualification
+keeps that remaining stall visible instead of attributing the whole improvement
+to the routing gate. A `commit=local` route may still wait for home when its
+required partner hold fails; route headers alone do not prove two-node
+acknowledgement availability. The lag owner's `d450cbe3b` includes moving WAN prefetch
+outside the replica write lock; the final stage timings measure the remaining
+writer acquisition and acknowledgement work separately.
+
+[Raw R10 qualification](2026-11-05-regional-write-r10-qualification.json).
+
+A separate 20-write-per-mode qualification on stable `d450cbe3b`, including
+`71511c0eb`, recorded default server p50/p99 **21.12/79.25 ms** and client
+p50/p99 **22.61/80.96 ms**. Home-durable client p99 was **251.07 ms**. All
+60 measured rows reached home exactly once and the database was deleted.
+Both snapshots recorded one SJC node, `localwrites_available=1` and
+`localack_partner=0`. This is intermediate one-node evidence, not the final
+three-repeat proof.
+
+[Raw lock-fix qualification](2026-11-05-regional-write-lag-qualification.json).
+
 ## Durability and scope
 
 The baseline router's `LocalCommitAvailable` requires `homeDurable`, so an
@@ -129,3 +164,19 @@ while production moved from `e661a352b` to `6cacd06cf`. Its database cleanup
 completed. A separate second-repeat qualification succeeded. These exploratory
 runs are excluded from the measured table. The reported three repeats record
 source stability and complete home-count validation.
+
+## Shipping and reset boundary
+
+The write diagnostics, persistent-connection probe and forced-home snapshot
+bypass shipped through `ts-ship` as `cced3a160ffd2f23604a05b3a37a0c19af56fe19`.
+Its commits are `c66293b80` (SQL timing), `fbc94428a` (probe and timing docs),
+`c674c42dd` (forced-home snapshot bypass) and `cced3a160` (baseline evidence).
+The final candidate passed TerraBase Fast in 10.864 s and Auth Fast in 8.909 s;
+benchmark Fast passed in 0.287 s. Main races caused required rebases and retests;
+no gate was bypassed.
+
+The second synthetic account, `fastwrites-logs-20261105`, returned `DELETED`.
+Its local and SJC credential copies were removed. All raw evidence above was
+preserved before the verify lane's announced format-23 production reset.
+New live writes are held through the reset; final measurements will use a new
+account after the reset handoff.
