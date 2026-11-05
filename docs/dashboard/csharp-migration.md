@@ -695,7 +695,7 @@ data. Preserving dashboard-owned preferences, history and Stripe bindings is a
 separate cutover decision. The Go database must remain intact until that scope,
 the account/resource mapping and a restore procedure are reviewed.
 
-The pinned [official Documents client](https://github.com/TerraScale/terrascale/blob/130925898daf0207134d9582b7b672a5a1c3233b/src/TerraScale.DotNet/TerraBase/Documents/TerraBaseDocumentsClient.cs)
+The pinned [official Documents client](https://github.com/TerraScale/terrascale/blob/130925898daf0207134d9582b7b672a5a1c3233b/src/TerraScale.DotNet/TerraBase/Documents/TerraBaseDatabaseClient.cs)
 already exposes the necessary database operations:
 
 | Operation | Existing SDK contract | Bootstrap use |
