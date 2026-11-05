@@ -673,10 +673,26 @@ internal sealed class RegionReplication(
 
             try
             {
-                await Task.WhenAll(_report, (Task?)_verification ?? Task.CompletedTask).ConfigureAwait(false);
+                await _report.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
+            }
+
+            if (_verification is { } verification)
+            {
+                try
+                {
+                    await verification.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception error)
+                {
+                    // A fault completed before shutdown can be waiting for the loop to consume it.
+                    _owner.Logger.ZLogInformation($"A replica verification round failed during shutdown: {error.GetType().Name:@Error}");
+                }
             }
 
             Dispose();
