@@ -18,7 +18,11 @@ node = environment[b"TS_NODE"].decode()
 peers = root / "root" / environment[b"TS_PEERS_FILE"].decode().lstrip("/")
 address = next(parts[2] for line in peers.read_text().splitlines()
                if len(parts := line.split()) == 3 and parts[0] == node)
-credential = environment[b"TERRABASE_PEER_SECRET"].decode()
+if b"TERRABASE_PEER_SECRET_FILE" in environment:
+    secret_file = root / "root" / environment[b"TERRABASE_PEER_SECRET_FILE"].decode().lstrip("/")
+    credential = secret_file.read_text().rstrip("\r\n")
+else:
+    credential = environment[b"TERRABASE_PEER_SECRET"].decode()
 if len(credential) != 64 or any(c not in "0123456789abcdefABCDEF" for c in credential):
     raise RuntimeError("invalid existing internal credential")
 config = f'url = "http://{address}:8081/healthz"\nheader = "X-TerraBase-Peer-Credential: {credential}"\n'
