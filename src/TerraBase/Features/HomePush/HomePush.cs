@@ -92,7 +92,8 @@ internal sealed class HomePush(
 
     public bool Ready(TenantContext database) => _ready && _js is not null;
 
-    public bool TwoNodeAck => _ready && _js is not null && partner.PartnerHealthy;
+    public bool TwoNodeAck => _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
+        && partner.PartnerHealthy && services.GetService<ILocalWriteClock>() is { Allowed: true };
 
     private IInRegionAck Partner => partner;
 
