@@ -3,7 +3,7 @@ import { currentSourcePin, verifyCurrentSourceRoutes } from "../scripts/terrabas
 import { v1Routes } from "../src/v1/routes.js";
 
 test("the six database catalog routes match exact producer handlers", () => {
-  expect(currentSourcePin.revision).toBe("849aa779763da3a93c2224c7994aad431b264816");
+  expect(currentSourcePin.revision).toBe("1c569494df18212d1f2f071e72be73f09d587c13");
   expect(Object.keys(currentSourcePin.routes).sort()).toEqual(v1Routes.map(route => route.operation).sort());
   const evidence = verifyCurrentSourceRoutes(v1Routes);
   expect(evidence).toHaveLength(6);

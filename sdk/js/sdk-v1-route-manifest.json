@@ -3,7 +3,7 @@
   "contractVersion": "terrabase-csharp-v1",
   "currentSource": {
     "producer": "TerraScale/terrascale",
-    "revision": "849aa779763da3a93c2224c7994aad431b264816",
+    "revision": "1c569494df18212d1f2f071e72be73f09d587c13",
     "sdkBaseRevision": "eac7e3fca1178d30d81eb18ff35d8629e5f454e4",
     "evidence": "Read-only source snapshot; not generated OpenAPI or runtime qualification. Imports excluded.",
     "routes": {
@@ -15,23 +15,14 @@
       "branchDatabase": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs"
     },
     "inputs": {
-      "src/TerraBase/Errors/ErrorResponse.cs": {
-        "sha256": "3ecbb2308f1605d9675fe7cd4ebb540615448d2a3b987dc5dcaefe5d31a1c74a"
-      },
-      "src/TerraBase/Features/ApiKeys/ApiKeyAuthenticationHandler.cs": {
-        "sha256": "da12dea0a18f633dbb3e7a43b2f3d8b2ef5b364de4fa807f5c95f49b0fafaf68"
-      },
       "src/TerraBase/Features/ApiKeys/IApiKeyStore.cs": {
-        "sha256": "da2bdd3d439a6408243bd4b2a590b55db98db1e494b4dbc81d112b0d8e53189d"
+        "sha256": "9abef21398dc79aaa4be21398d2db18d306d8f68e81007c191241b993881ce73"
       },
       "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs": {
-        "sha256": "30645c044df19dbdb634436dc257664fdf29beea4f7389adcb93f33cf3e37c51"
+        "sha256": "52383c3d82bb9535229f0924503768c3cf9b2cfd217dcaf1107a470b74bd3b8c"
       },
       "src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs": {
-        "sha256": "a79475ffa8fa2a05279b0289ade2a153e216e3c152e7796d61266937aeedbe26"
-      },
-      "src/TerraBase/Features/Management/DatabaseRegions.cs": {
-        "sha256": "317e48e8b57fd8e7f4196ab0ca2a714091c9b03601d0a2059c8e6c4fd29f839f"
+        "sha256": "d7e2149c748bb964a9bdb49b4d4bba29531a3207d3004f2d410324e39c9c0a28"
       },
       "src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs": {
         "sha256": "4a36f8acee3751514942d35db87f75b6c201eed98239768e23e8a63dda78144d"
@@ -42,26 +33,11 @@
       "src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs": {
         "sha256": "5ed3ea5dda2cbc57d0f894b09a8d9983d741723bf1a0e395b9fdd1c27bd77e7f"
       },
-      "src/TerraBase/Features/Management/ManagedDatabaseBody.cs": {
-        "sha256": "7d984575eba95500d6e0a275c87813924d0bc4ba60fcc18d7cf30ecfc90fd70b"
-      },
       "src/TerraBase/Features/Management/ProjectApiRoute.cs": {
-        "sha256": "f4cac8bc765d74f4df0d5d5d587d1c6d105135dd57cf37bcb3ca39b556d9fe70"
+        "sha256": "7f6d0ead448c1042ac15d4a451ac8e6f2cae483181dffb7e9f8676a1365ca930"
       },
       "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs": {
-        "sha256": "ce96898e6c94201c80f96784ff1f21a3ee3db29cd9b8f9782043b967050acadc"
-      },
-      "src/TerraBase/Features/UserAuth/ProjectToken.cs": {
-        "sha256": "10f5e8cb95fb0cceafd3dc97c7228bd717f65ee15def84bc86f63b1d0100ef25"
-      },
-      "src/TerraBase/Features/UserAuth/UserAuthenticationHandler.cs": {
-        "sha256": "5855137c2d46757afd9f1ad7ae74af9a6c3af93455ea404289133cf2f6b773e9"
-      },
-      "src/TerraBase/Features/UserAuth/UserAuthExtensions.cs": {
-        "sha256": "bb4c057dc201bdd9ac553e830551fcbe3b88afb83721f2d5076662eb9f7943ce"
-      },
-      "src/TerraBase/Primitives/EntityIds.cs": {
-        "sha256": "5cb0657965bdefdf1d4ba8faf71a70a5c3cd9f2e510c5105202ba55a6cac2503"
+        "sha256": "b954951ef904a2205184b8878a26d94b820eebf526ee7d4149d9cb53d3e9f61f"
       }
     }
   },
@@ -70,7 +46,7 @@
       "operation": "createDatabase",
       "producerOperationId": "createDatabase",
       "sourcePath": "src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs",
-      "sha256": "a79475ffa8fa2a05279b0289ade2a153e216e3c152e7796d61266937aeedbe26",
+      "sha256": "d7e2149c748bb964a9bdb49b4d4bba29531a3207d3004f2d410324e39c9c0a28",
       "method": "POST",
       "pathTemplate": "/v1/projects/{project}/databases",
       "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
@@ -117,7 +93,7 @@
       "operation": "updateDatabase",
       "producerOperationId": "updateDatabase",
       "sourcePath": "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs",
-      "sha256": "ce96898e6c94201c80f96784ff1f21a3ee3db29cd9b8f9782043b967050acadc",
+      "sha256": "b954951ef904a2205184b8878a26d94b820eebf526ee7d4149d9cb53d3e9f61f",
       "method": "PATCH",
       "pathTemplate": "/v1/projects/{project}/databases/{database}",
       "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
@@ -149,7 +125,7 @@
       "operation": "branchDatabase",
       "producerOperationId": "branchDatabase",
       "sourcePath": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs",
-      "sha256": "30645c044df19dbdb634436dc257664fdf29beea4f7389adcb93f33cf3e37c51",
+      "sha256": "52383c3d82bb9535229f0924503768c3cf9b2cfd217dcaf1107a470b74bd3b8c",
       "method": "POST",
       "pathTemplate": "/v1/projects/{project}/databases/{database}/branches",
       "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",

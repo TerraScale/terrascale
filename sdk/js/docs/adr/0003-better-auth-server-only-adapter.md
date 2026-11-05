@@ -5,7 +5,7 @@ Status: Test-only local adapter; production persistence blocked.
 The production Better Auth entrypoint is server-only and raises
 `security_authority_unavailable` until owning native single-writer and C06/C07
 contracts admit uniqueness, compare-and-swap, one-time consume, transactions,
-indexes, migrations, revocation, and regional concurrency. Leaderless writes
+indexes, migrations, revocation, and regional concurrency. Multi-region writes
 cannot establish those security invariants.
 
 The existing local adapter, restricted by TS-795 to test code/test binaries,
