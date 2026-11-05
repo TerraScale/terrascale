@@ -163,7 +163,11 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
             return;
         }
 
-        await _streamReady.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (!_streamReady.Task.IsCompletedSuccessfully)
+        {
+            throw new IOException("the provisional stream is not ready; database cleanup retries");
+        }
+
         _ = await new NatsJSContext(nats).PurgeStreamAsync(StreamName, new StreamPurgeRequest
         {
             Filter = Subject(database),
