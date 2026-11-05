@@ -21,9 +21,8 @@ public sealed class RegionalWriterCrashTests
 
     [Test]
     [Timeout(120_000)]
-    public async Task Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion()
+    public async Task Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion(CancellationToken token)
     {
-        var token = TestContext.Current!.Execution.CancellationToken;
         if (Environment.GetEnvironmentVariable(HostConfig) is { } config)
         {
             await HostAsync(config, token);
