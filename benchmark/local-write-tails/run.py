@@ -75,7 +75,9 @@ def usage(label):
         try:
             r=h.get(f'{c.base_url}/v1/projects/{config["project"]}/databases/{config["database"]}/usage', headers={'Authorization':'Bearer '+c._bearer()})
             emit({'kind':'usage','label':label,'region':region,'status':r.status_code,'body':r.json()})
-        finally: h.close()
+        finally:
+            c.close()
+            h.close()
 
 def worker(source):
     clients = {r:client(r) for r in REGIONS}
@@ -107,7 +109,9 @@ def worker(source):
                     t,th,tl=clients[target]
                     attempt('cross_read',target,lambda:t.database(config['database']).query('SELECT id, writer, sequence, body FROM acceptance_rows WHERE id = ?',[key]),tl,source=source,repeat=repeat,n=n,id=key)
     finally:
-        for c,h,last in clients.values():h.close()
+        for c,h,last in clients.values():
+            c.close()
+            h.close()
 
 if __name__=='__main__':
     emit({'kind':'environment','host':os.uname().nodename,'sdk_revision':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())})
@@ -120,7 +124,9 @@ if __name__=='__main__':
             response.raise_for_status()
             emit({'kind':'created','database':response.json()['id']})
             c.database(config['database']).execute('CREATE TABLE acceptance_rows (id TEXT PRIMARY KEY, writer TEXT, sequence INTEGER, body TEXT)')
-        finally:h.close()
+        finally:
+            c.close()
+            h.close()
     usage('before')
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         list(pool.map(worker,REGIONS))
@@ -133,11 +139,15 @@ if __name__=='__main__':
                     key=new_id()
                     _,ok=attempt(mode,region,lambda:c.database(config['database']).execute('INSERT INTO acceptance_rows (id, writer, sequence, body) VALUES (?, ?, ?, ?)',[key,region,n,mode]),last,id=key)
                     if not ok:break
-            finally:h.close()
+            finally:
+                c.close()
+                h.close()
     for region in REGIONS:
         c,h,last=client(region)
         try:attempt('inventory',region,lambda:c.database(config['database']).query('SELECT writer, body, COUNT(*) AS count, COUNT(DISTINCT id) AS distinct_ids FROM acceptance_rows GROUP BY writer, body ORDER BY writer, body'),last)
-        finally:h.close()
+        finally:
+            c.close()
+            h.close()
     usage('after')
     print(json.dumps({'output':args.output,'writes':sum(x['kind']=='write' for x in events),
                       'failures':sum(not x.get('ok',True) for x in events)}))
