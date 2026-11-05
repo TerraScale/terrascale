@@ -60,8 +60,8 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_key_rotation_reaches_every_replica_and_earlier_tokens_keep_validating()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new KeyRingRefresh(TimeSpan.Zero)));
-        await using var replica = await oidc.StartReplicaAsync(services: services => services.AddSingleton(new KeyRingRefresh(TimeSpan.Zero)));
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var replica = await oidc.StartReplicaAsync();
         var (_, _, tokens) = await oidc.SignInAndRedeemAsync();
         var oldIdToken = tokens.GetProperty("id_token").GetString()!;
         var oldKid = new JsonWebToken(oldIdToken).Kid;

@@ -65,8 +65,6 @@ jobs:
               - Dockerfile
               - .dockerignore
               - Makefile
-              - scripts/ci/fast-budget.py
-              - scripts/ci/qualified-build.py
               - Directory.*
               - global.json
               - NuGet.config
@@ -104,7 +102,6 @@ jobs:
               - docs/auth/*.yaml
               - scripts/auth/**/!(AGENTS.md|CLAUDE.md)
               - scripts/ci/auth-build.sh
-              - scripts/ci/test-area.sh
             auth-server:
               - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
             terrabase:
@@ -166,8 +163,6 @@ jobs:
           python3 scripts/legacy-scan/process-test.py
           python3 scripts/ci/slow-report-test.py
           python3 scripts/ci/cache-policy-test.py
-          python3 scripts/ci/fast-budget-test.py
-          python3 scripts/ci/qualified-build-test.py
           python3 scripts/vendor/turso-native-pipeline-test.py
           bash scripts/terrabase/storage-format-check-test.sh
           bash scripts/terrabase/e2e-summary-test.sh
@@ -278,12 +273,17 @@ jobs:
           path: native-release/
           if-no-files-found: error
 
-  # ts-ship retains the checked build and uncached Fast proof for this exact commit.
   libs:
-    needs: changes
-    if: contains(fromJSON(needs.changes.outputs.fast), 'libs')
+    needs: [changes, native]
+    if: >-
+      contains(fromJSON(needs.changes.outputs.fast), 'libs')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    env:
+      AREA: libs
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 45
+    permissions:
+      contents: read
     steps:
       - &checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -291,42 +291,283 @@ jobs:
           path: terrascale
           persist-credentials: false
           ref: ${{ needs.changes.outputs.sha }}
-      - name: Verify checked build and budgeted Libraries Fast
+      - &native-artifacts
+        name: Download this run's verified pinned release cores
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: turso-native-verified
+          path: terrascale/src/vendor/Turso.Data.Sqlite/native
+      - &setup-dotnet
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: terrascale/global.json
+      - &nuget-cache
+        name: Restore locked NuGet packages
+        id: nuget
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.nuget/packages
+          restore-keys: ${{ runner.os }}-nuget-monorepo-
+          key: ${{ runner.os }}-nuget-monorepo-${{ hashFiles('terrascale/Makefile', 'terrascale/global.json', 'terrascale/NuGet.config', 'terrascale/Directory.*', 'terrascale/**/packages.lock.json') }}
+      - &locked-restore
+        name: Locked restore
         working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/qualified-build.py verify libs
+        run: make restore
+      - name: Checked build and Fast
+        working-directory: terrascale
+        run: bash scripts/ci/test-area.sh fast "$AREA"
+
 
   auth:
-    needs: changes
-    if: contains(fromJSON(needs.changes.outputs.fast), 'auth')
+    needs: [changes, native]
+    if: >-
+      contains(fromJSON(needs.changes.outputs.fast), 'auth')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    env:
+      AREA: auth
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      statuses: read
     steps:
       - *checkout
-      - name: Verify checked build and budgeted Auth Fast
-        working-directory: terrascale
+      - *native-artifacts
+      - *setup-dotnet
+      - *nuget-cache
+      - *locked-restore
+      - name: Restore Auth npm tooling cache
+        id: npm
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-auth-npm-${{ hashFiles('terrascale/Makefile', 'terrascale/Directory.Packages.props') }}
+          restore-keys: ${{ runner.os }}-auth-npm-
+      - id: fast-proof
+        name: Verify exact-commit Auth Fast evidence
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/qualified-build.py verify auth
+        run: |
+          if statuses=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses") &&
+             jq -e '[.[][] | select(.context == "ts-ship/auth")] | max_by(.id) | .state == "success" and ((.creator.login // "" | ascii_downcase) == "mariogk")' <<< "$statuses" > /dev/null; then
+            echo 'verified=true' >> "$GITHUB_OUTPUT"
+            echo "Auth Fast passed on the dev host for $GITHUB_SHA, verified through ts-ship/auth by MarioGK." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'verified=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Auth browser dependencies
+        if: steps.fast-proof.outputs.verified != 'true'
+        working-directory: terrascale
+        run: npx --yes playwright@1.63.0 install --with-deps chromium
+      - name: Checked Auth build
+        working-directory: terrascale
+        run: bash scripts/ci/auth-build.sh
+      - name: Retain main Auth npm tooling cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.npm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.npm
+          key: ${{ steps.npm.outputs.cache-primary-key }}
+      - name: Auth Fast
+        if: steps.fast-proof.outputs.verified != 'true'
+        working-directory: terrascale
+        run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make -o restore auth-test-fast CONFIGURATION=Release
+
+  auth-package:
+    needs: [changes, native]
+    if: >-
+      contains(fromJSON(needs.changes.outputs.fast), 'auth')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    env:
+      AREA: auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - *native-artifacts
+      - *setup-dotnet
+      - *nuget-cache
+      - *locked-restore
+      - &save-nuget
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (env.AREA == 'terrabase' || !contains(fromJSON(needs.changes.outputs.main), 'terrabase')) && steps.nuget.outputs.cache-hit != 'true'
+        with:
+          path: ~/.nuget/packages
+          key: ${{ steps.nuget.outputs.cache-primary-key }}
+      - name: Auth single-file packaging proof
+        working-directory: terrascale
+        run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make auth-publish RUNTIME=linux-x64 PUBLISH_DIR="$RUNNER_TEMP/auth-publish"
+      - name: Retain both architectures from the required Auth packaging proof
+        if: github.event_name != 'pull_request'
+        working-directory: terrascale
+        run: |
+          bash scripts/ci/image-payloads.sh auth
+          bash scripts/ci/image-payloads.sh pack auth
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name != 'pull_request'
+        with:
+          name: image-payloads-auth
+          path: ${{ runner.temp }}/image-payloads-auth.tar
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
+
+  terrabase-build:
+    needs: [changes, native]
+    outputs:
+      fast-verified: ${{ steps.fast-proof.outputs.verified }}
+    if: >-
+      contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    env:
+      AREA: terrabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - *native-artifacts
+      - *setup-dotnet
+      - *nuget-cache
+      - *locked-restore
+      - *save-nuget
+      - id: fast-proof
+        name: Verify exact-commit TerraBase Fast evidence
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          # Public metadata needs no additional token permission. An unavailable or untrusted proof runs all shards.
+          if curl --fail --silent --show-error --max-time 20 \
+               "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100" |
+             jq -e '[.[] | select(.context == "ts-ship/terrabase")] | max_by(.id) | .state == "success" and ((.creator.login // "" | ascii_downcase) == "mariogk")' > /dev/null; then
+            echo 'verified=true' >> "$GITHUB_OUTPUT"
+            echo "TerraBase Fast passed on the dev host for $GITHUB_SHA, verified through ts-ship/terrabase by MarioGK." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'verified=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Checked build and native single-file execution proof
+        working-directory: terrascale
+        run: bash scripts/ci/test-area.sh build terrabase
+      - name: Qualify integration proofs outside the dev-host Fast target
+        if: steps.fast-proof.outputs.verified == 'true'
+        working-directory: terrascale
+        run: >-
+          make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release
+          'TERRABASE_E2E_RUN=dotnet tests/TerraBase.E2E/bin/Release/net11.0/TerraBase.E2E.dll'
+      - name: Retain local integration proof results
+        if: ${{ always() && hashFiles('terrascale/tests/TerraBase.E2E/bin/e2e-results.jsonl') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: terrabase-e2e-results
+          path: terrascale/tests/TerraBase.E2E/bin/e2e-results.jsonl
+          retention-days: 7
+      - name: Pack this commit's build outputs
+        if: steps.fast-proof.outputs.verified != 'true'
+        working-directory: terrascale
+        # Only shard executables are consumed: their output directories contain every referenced assembly and native asset.
+        # RID-specific publish outputs are packaging proofs, not shard inputs. Fast gzip avoids spending a runner CPU on them.
+        run: >-
+          tar --exclude='*/net11.0/linux-*' -cf -
+          tests/TerraBase.Fast/bin/Release/net11.0
+          tests/Turso.Data.Sqlite.Tests/bin/Release/net11.0
+          tests/TerraBase.E2E/bin/Release/net11.0
+          | gzip -1 > "$RUNNER_TEMP/terrabase-build.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: steps.fast-proof.outputs.verified != 'true'
+        with:
+          name: terrabase-build
+          path: ${{ runner.temp }}/terrabase-build.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+
+  # Publish once per architecture, in parallel with Fast compilation. The image
+  # job wraps these exact checked single-file outputs without another build.
+  terrabase-package:
+    needs: [changes, native]
+    if: >-
+      contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(github.event_name == 'pull_request' && '["amd64"]' || '["amd64","arm64"]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - *native-artifacts
+      - *setup-dotnet
+      - *nuget-cache
+      - *locked-restore
+      - name: Check production single-file packaging and retain its output
+        working-directory: terrascale
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          bash scripts/ci/image-payloads.sh terrabase "$ARCH"
+          bash scripts/ci/image-payloads.sh pack terrabase "$ARCH"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: github.event_name != 'pull_request'
+        with:
+          name: image-payloads-terrabase-${{ matrix.arch }}
+          path: ${{ runner.temp }}/image-payloads-terrabase-${{ matrix.arch }}.tar
+          compression-level: 1
+          retention-days: 1
+          if-no-files-found: error
 
   terrabase:
-    needs: changes
-    if: contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
+    needs: [changes, terrabase-build]
+    name: ${{ needs.terrabase-build.outputs.fast-verified == 'true' && 'TerraBase Fast (dev proof)' || format('TerraBase Fast shard {0}/4', matrix.shard) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.terrabase-build.outputs.fast-verified == 'true' && '[1]' || '[1,2,3,4]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - *checkout
-      - name: Verify checked build, integration proofs and budgeted TerraBase Fast
+      - name: Retain verified dev-host Fast provenance
+        if: needs.terrabase-build.outputs.fast-verified == 'true'
+        run: echo "All TerraBase Fast tests already passed for $GITHUB_SHA through ts-ship/terrabase by MarioGK." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        if: needs.terrabase-build.outputs.fast-verified != 'true'
+        with:
+          global-json-file: terrascale/global.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: needs.terrabase-build.outputs.fast-verified != 'true'
+        with:
+          name: terrabase-build
+          path: ${{ runner.temp }}
+      - name: Unpack this commit's build outputs
+        if: needs.terrabase-build.outputs.fast-verified != 'true'
         working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/qualified-build.py verify terrabase
+        run: tar -xzf "$RUNNER_TEMP/terrabase-build.tar.gz"
+      - name: Fast shard and assigned integration proofs
+        if: needs.terrabase-build.outputs.fast-verified != 'true'
+        working-directory: terrascale
+        run: make terrabase-test-shard SHARD=${{ matrix.shard }}
+      - name: Retain test durations and failures
+        if: ${{ always() && needs.terrabase-build.outputs.fast-verified != 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: terrabase-results-${{ matrix.shard }}
+          path: terrascale/artifacts/test-results/
+          if-no-files-found: error
+          retention-days: 7
 
   main:
-    needs: [changes, native, terrabase, test]
+    needs: [changes, native, terrabase, terrabase-package, test]
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
+      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success' && needs.terrabase-package.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
@@ -345,24 +586,28 @@ jobs:
       actions: write
     steps: &production-steps
       - *checkout
-      - name: Set up the artifact transport runtime
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - name: Download this area's checked runtime payloads
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          node-version: 24.22.0
-      - name: Restore the exact checked runtime payload
+          pattern: image-payloads-${{ env.AREA }}*
+          merge-multiple: true
+          path: ${{ runner.temp }}
+      - name: Prepare the runtime-only image context
         working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: python3 scripts/ci/qualified-build.py restore "$AREA"
+        run: |
+          mkdir -p "$RUNNER_TEMP/image-payloads"
+          for payload in "$RUNNER_TEMP"/image-payloads-"$AREA"*.tar; do
+            tar -C "$RUNNER_TEMP/image-payloads" -xf "$payload"
+          done
+          bash scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      # Dev hosts checked both runtime architectures. CI wraps their verified bytes without compiling.
+      # Public multi-arch images ts-orch runs: ghcr.io/terrascale/{terrabase,ts-auth}:<sha> and :main, linux/amd64 +
+      # linux/arm64 (both architectures cross-published from the build platform, Dockerfile publish-* stages).
       - id: image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -371,7 +616,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}:${{ github.sha }}
-            ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}:main
+            ${{ github.ref == 'refs/heads/main' && format('ghcr.io/terrascale/{0}:main', env.AREA == 'auth' && 'ts-auth' || 'terrabase') || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -427,9 +672,9 @@ jobs:
   # Shared scope and contract changes must reach TerraBase before their issuer.
   # Auth-only runs may proceed when TerraBase was intentionally not selected.
   main-auth:
-    needs: [changes, native, auth, test, main]
+    needs: [changes, native, auth, auth-package, test, main]
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
+      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success' && needs.auth-package.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'auth')
       && (!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')
@@ -449,7 +694,7 @@ jobs:
 
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
-    needs: [changes, native, libs, auth, terrabase]
+    needs: [changes, native, libs, auth, auth-package, terrabase-build, terrabase, terrabase-package]
     if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -470,21 +715,5 @@ jobs:
           if grep -qE 'failure|cancelled' <<< '${{ join(needs.*.result, ' ') }}'; then exit 1; fi
           for area in $(jq -r '.[]' <<< "$FAST_AREAS"); do
             [[ $(jq -r --arg area "$area" '.[$area].result' <<< "$RESULTS") == success ]] || exit 1
+            [[ $area != auth || $(jq -r '.["auth-package"].result' <<< "$RESULTS") == success ]] || exit 1
           done
-
-  budget:
-    name: CI timing budget
-    needs: [changes, native, libs, auth, terrabase, test, main, main-auth]
-    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - *checkout
-      - name: Enforce six-minute CI and two-minute Fast jobs
-        working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/run-budget.py "$GITHUB_RUN_ID"

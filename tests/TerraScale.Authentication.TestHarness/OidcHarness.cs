@@ -8,7 +8,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
@@ -192,9 +191,6 @@ public sealed partial class OidcHarness : IAsyncDisposable
         }, services =>
         {
             fixture.UseStorage(services, tenant);
-            // Ordinary OIDC flows use the production cache for immutable signing keys. Tests that
-            // mutate keys across replicas explicitly register their refresh policy below.
-            services.RemoveAll<KeyRingRefresh>();
             services.AddSingleton<IEmailSender>(email);
             if (logs is not null)
             {
