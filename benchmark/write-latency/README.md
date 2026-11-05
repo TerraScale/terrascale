@@ -2,7 +2,8 @@
 
 Create a unique Free synthetic account with `ts-throwaway-account <tag>`.
 Run `run.py --tag <tag> --output <private-temporary-result.json>` on a client in
-SJC. The default performs three repeats with a fresh database each time, 40
+SJC. Select `--region fra` on a FRA client for the same proof there; GRU remains
+the home region. The default performs three repeats with a fresh database each time, 40
 measured writes per mode and transport, and five excluded warmup writes. It
 verifies home row counts and deletes every database. Delete the account afterward
 with `ts-throwaway-account --delete <tag>`; complete its second deletion call if
@@ -38,7 +39,7 @@ health and metrics, without credentials or SQL bodies.
 Add `--request-logs` to correlate every measured response's `X-Request-ID`
 with the exact server `latencyMs` observation. This requires `--snapshot-script`
 and reads the existing authenticated internal logs endpoint on every discovered
-SJC node, including pending observations. Missing or duplicate response IDs and
+entry-region node, including pending observations. Missing or duplicate response IDs and
 missing server observations fail the proof. Request-log time includes response
 completion; `app` timing ends at response headers.
 
@@ -48,7 +49,7 @@ first sample includes TCP connection setup. This separates mesh RTT from the
 public edge and TLS. Runtime peer credentials remain on the serving host and
 reach curl only on stdin.
 
-Health snapshots also retain `peer_local_ack_metrics` for every discovered SJC
+Health snapshots also retain `peer_local_ack_metrics` for every discovered entry-region
 node. These record partner health and local-write availability alongside the
 actual node identities, so a one-node acknowledgement is distinguishable from
 an acknowledgement with an in-region partner.
