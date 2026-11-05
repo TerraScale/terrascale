@@ -1,5 +1,0 @@
-.sdk/
-.sdk.lock
-**/bin/
-**/obj/
-api-bench/out/
