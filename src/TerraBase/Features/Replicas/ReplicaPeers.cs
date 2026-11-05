@@ -20,7 +20,7 @@ internal interface IReplicaPeers
 /// The ts-orch peers file (<c>TS_PEERS_FILE</c>): every node listens on the same internal port on its private address.
 /// A region of several nodes is reached at its first line, the founder and data owner.
 /// </summary>
-internal sealed class PeersFileReplicaPeers(TerraBaseOptions options) : IReplicaPeers
+internal sealed class PeersFileReplicaPeers(TerraBaseOptions options, RegionalOwners? owners = null) : IReplicaPeers
 {
     public async ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken)
     {
@@ -29,8 +29,9 @@ internal sealed class PeersFileReplicaPeers(TerraBaseOptions options) : IReplica
             return [];
         }
 
-        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
-        return [.. nodes.Where(node => node.Region != options.Region).DistinctBy(node => node.Region)
+        var nodes = owners is null ? await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)
+            : await owners.NodesAsync(cancellationToken).ConfigureAwait(false);
+        return [.. nodes.Where(node => node.Name != options.MachineId)
             .Select(node => new ReplicaPeer(node.Region, node.Name, new UriBuilder(Uri.UriSchemeHttp, node.Address.ToString(), options.InternalPort).Uri))];
     }
 }
