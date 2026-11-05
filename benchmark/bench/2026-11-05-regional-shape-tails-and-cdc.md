@@ -24,6 +24,8 @@ The shipped runner at `60141fccf807a9846d267b5d545e086b3f83bc07` repeated the pr
 | fra | Project token, filtered shape | 30 | 13.8 / 213.1 ms | 627.7 / 1131.9 ms |
 | fra | End-user token, filter and column projection | 10 | 14.55 / 25.0 ms | 628.25 / 830.0 ms |
 
+A further fresh-account confirmation after the format-22 release notice again delivered all 40 updates locally in each region, with no refetch and successful account deletion. The inspected image label remained `4b04ad56f`, which includes the requested `7f02e9823`. In sjc, replay medians were 129.95 ms for the 30 project-token updates and 15.9 ms for the ten end-user updates; write-start-to-tail medians were 768.95 and 734.05 ms. The corresponding fra replay medians were 13.75 and 14.4 ms. Raw observations are under `format22_confirmation`.
+
 ## Retention safety
 
 The retained critical integration case checks that cleanup cannot pass a live shape, an unstored backup segment, an R3 replica position or a registered push-consumer position. It also verifies successful catalog shipping, an active grant restored from the initial snapshot, and a later grant revocation restored through CDC. Consumer release now triggers cleanup without needing a shape sweep, always capped by the durable backup and every remaining floor.
