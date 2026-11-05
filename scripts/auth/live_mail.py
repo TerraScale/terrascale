@@ -254,11 +254,9 @@ def dashboard_flows(audit):
         try:
             _, body, _ = post("/api/v1/dashboard/databases", {"name": name, "region": project["region"] or "GRU"}, token, expected=(201,))
             database_id = json.loads(body)["id"]
-            post("/api/v1/dashboard/data/collections", {"databaseId": database_id, "name": "email_audit"}, token)
-            # Storage evaluation rounds GB to three decimals. One bounded 512 KiB
-            # record produces a nonzero measurement while staying within the free plan.
-            document = json.dumps({"purpose": "isolated email delivery audit", "padding": "x" * (512 * 1024)})
-            post("/api/v1/dashboard/data/documents", {"databaseId": database_id, "collection": "email_audit", "operation": "create", "document": document}, token)
+            # A SQL-generated 512 KiB value stays inside the editor request limit.
+            post("/api/v1/dashboard/data/sql", {"databaseId": database_id, "sql": "CREATE TABLE email_audit (padding BLOB)"}, token)
+            post("/api/v1/dashboard/data/sql", {"databaseId": database_id, "sql": "INSERT INTO email_audit VALUES (zeroblob(524288))"}, token)
             token = csrf("/notifications/alerts")
             rule_name = "Email audit " + secrets.token_hex(6)
             _, page, _ = post("/api/v1/notifications/alerts", {"name": rule_name, "metric": "storage_gb", "threshold": "0.000000001", "database": database_id, "email": "on"}, token, expected=(201,))
