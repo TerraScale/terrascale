@@ -155,8 +155,8 @@ public interface ITenantDirectory
     ValueTask<ForgetDatabaseResult> ForgetDatabaseAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>
-    /// The plan of organization <paramref name="organizationId"/>: <see cref="PlanTier.Hobby"/> when it does not exist (or no
-    /// longer does); <see cref="Unavailable"/> when this member's catalog is at a version this build does not read.
+    /// The published plan of organization <paramref name="organizationId"/>; <see cref="Unavailable"/> when a clustered
+    /// region has not received its plan or the catalog cannot be read.
     /// </summary>
     ValueTask<TenantPlanResult> PlanAsync(string organizationId, CancellationToken cancellationToken);
 }
