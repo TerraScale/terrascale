@@ -6,13 +6,17 @@ request bodies enter the result. A separate connection handles setup/validation.
 
 import argparse
 import base64
+import contextlib
 import datetime
+import io
 import http.client
 import json
 import os
 import pathlib
+import runpy
 import statistics
 import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -82,12 +86,27 @@ def main():
     parser.add_argument("--writes", type=int, default=40)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--start-repeat", type=int, default=1)
+    parser.add_argument("--request-logs", action="store_true")
     parser.add_argument("--expect-local", action="store_true")
     parser.add_argument("--transports", nargs="+", choices=("fresh_https", "keepalive_https", "keepalive_node"),
                         default=["fresh_https", "keepalive_https", "keepalive_node"])
     parser.add_argument("--output", required=True)
     parser.add_argument("--snapshot-script", type=pathlib.Path)
     args = parser.parse_args()
+    internal_get = None
+    log_addresses = []
+    if args.request_logs:
+        if not args.snapshot_script:
+            parser.error("--request-logs needs --snapshot-script on the serving host")
+        previous_argv = sys.argv
+        try:
+            sys.argv = [str(args.snapshot_script)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                runtime = runpy.run_path(str(args.snapshot_script))
+                internal_get = runtime["get"]
+                log_addresses = [address for _, region, address in runtime["peers"] if region == "sjc"]
+        finally:
+            sys.argv = previous_argv
     root = pathlib.Path(os.environ.get("WRITE_PROOF_ACCOUNT_ROOT", pathlib.Path.home() / ".local/state/ts-throwaway-account"))
     state = json.loads((root / (args.tag + ".json")).read_text())
     key = (root / (args.tag + ".key")).read_text().strip()
@@ -124,10 +143,11 @@ def main():
 
         status, body, _, _ = control.call(databases, "POST", {"name": name, "homeRegion": "gru", "replicaRegions": ["sjc"]}, headers({"Host": "gru.api.terrascale.tech"}))
         require(status, body, 201, "create database")
+        database_id = body["id"]
         samples = {"repeat": repeat, "transports": {}}
-        if args.snapshot_script:
-            samples["before"] = json.loads(subprocess.check_output(["python3", str(args.snapshot_script), "--health-samples", "1"]))
         try:
+            if args.snapshot_script:
+                samples["before"] = json.loads(subprocess.check_output(["python3", str(args.snapshot_script), "--health-samples", "1"]))
             status, body, _, _ = sql(control, "CREATE TABLE events (id TEXT PRIMARY KEY, body TEXT)", {"Host": "gru.api.terrascale.tech"})
             require(status, body, 200, "create table")
             for transport, client in (("fresh_https", Client("sjc.api.terrascale.tech", fresh=True)),
@@ -152,7 +172,7 @@ def main():
                     modes = {"health": summary(health)}
                     for mode, extra in (("default", {}), ("durable_home", {"TerraScale-Durability": "home"}),
                                         ("forced_home", {"TerraScale-Write": "home"})):
-                        latencies, stages, routes = [], {}, {}
+                        latencies, stages, routes, request_ids = [], {}, {}, []
                         for index in range(args.writes + 5):
                             row = ulid()
                             label = f"{transport}_{mode}" if index >= 5 else "warmup"
@@ -164,11 +184,28 @@ def main():
                             if fields.get("commit") != expected:
                                 raise RuntimeError((mode, "unexpected commit route", route))
                             if index >= 5:
+                                request_ids.append(answered.get("x-request-id"))
                                 latencies.append(elapsed)
                                 routes[route] = routes.get(route, 0) + 1
                                 for stage, duration in timing(answered.get("server-timing", "")).items():
                                     stages.setdefault(stage, []).append(duration)
                         modes[mode] = {"client": summary(latencies), "server": {stage: summary(values) for stage, values in stages.items()}, "routes": routes}
+                        if args.request_logs:
+                            if None in request_ids or len(set(request_ids)) != args.writes:
+                                raise RuntimeError("response request IDs are missing or repeated")
+                            end = time.monotonic() + 5
+                            while True:
+                                recorded = {}
+                                for address in log_addresses:
+                                    body = json.loads(internal_get(f"v1/usage/projects/{project}/databases/{database_id}/logs", address))
+                                    recorded.update({row.get("requestId"): row["latencyMs"] for row in body["items"] if row["region"] == "sjc"})
+                                if all(request_id in recorded for request_id in request_ids):
+                                    break
+                                if time.monotonic() >= end:
+                                    raise RuntimeError(("missing correlated SJC request logs", len(set(request_ids) - recorded.keys())))
+                                time.sleep(.05)
+                            modes[mode]["request_ids"] = request_ids
+                            modes[mode]["server"]["request_log:sjc"] = summary([recorded[request_id] for request_id in request_ids])
                         print(json.dumps({"repeat": repeat, "transport": transport, "mode": mode, "client_p50_ms": modes[mode]["client"]["p50_ms"], "client_p99_ms": modes[mode]["client"]["p99_ms"]}), flush=True)
                     samples["transports"][transport] = modes
                 finally:
