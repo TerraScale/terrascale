@@ -35,14 +35,16 @@ type credentials struct {
 }
 
 type client struct {
-	creds    credentials
-	api      string
-	write    *http.Client
-	read     *http.Client
-	mu       sync.Mutex
-	token    string
-	expires  time.Time
-	database string
+	creds     credentials
+	api       string
+	write     *http.Client
+	read      *http.Client
+	mu        sync.Mutex
+	token     string
+	expires   time.Time
+	database  string
+	region    string
+	readLocal bool
 }
 
 type notice struct {
@@ -59,6 +61,7 @@ type arrival struct {
 }
 
 type sample struct {
+	Local           bool    `json:"local"`
 	Repeat          int     `json:"repeat"`
 	Write           int     `json:"write"`
 	WriteMs         float64 `json:"writeMs"`
@@ -92,7 +95,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
-	c := &client{creds: creds, api: strings.TrimRight(*api, "/"), write: newHTTP(""), read: newHTTP(*readDial)}
+	c := &client{creds: creds, api: strings.TrimRight(*api, "/"), write: newHTTP(""), read: newHTTP(*readDial), region: *region}
 	name := fmt.Sprintf("lag-%s-%d", *region, time.Now().Unix())
 	if err := c.createDatabase(ctx, name, *home, *region); err != nil {
 		fail(err)
@@ -119,8 +122,9 @@ func main() {
 }
 
 func (c *client) measure(ctx context.Context, home, region string, writes, repeats int, natsURL, natsTokenFile, out string) error {
-	arrivals := make(chan arrival, 1024)
+	var arrivals chan arrival
 	if natsURL != "" {
+		arrivals = make(chan arrival, 1024)
 		token, err := os.ReadFile(natsTokenFile)
 		if err != nil {
 			return fmt.Errorf("NATS token file: %w", err)
@@ -219,7 +223,10 @@ func (c *client) one(ctx context.Context, id int, arrivals chan arrival) (sample
 	for {
 		before := time.Now()
 		rows, err := c.exec(ctx, c.read, query)
-		traceLine(map[string]any{"poll": id, "at": before.UnixMicro(), "ms": ms(time.Since(before)), "rows": rows, "error": err != nil, "headers": lastHeaders})
+		traceLine(map[string]any{"poll": id, "at": before.UnixMicro(), "ms": ms(time.Since(before)), "rows": rows, "error": err != nil, "local": c.readLocal, "headers": lastHeaders})
+		if err == nil && !c.readLocal {
+			return sample{}, fmt.Errorf("read was served outside replica region %s", c.region)
+		}
 		if err == nil && rows > 0 {
 			break
 		}
@@ -233,18 +240,28 @@ func (c *client) one(ctx context.Context, id int, arrivals chan arrival) (sample
 
 	seen := time.Now()
 	traceLine(map[string]any{"write": id, "sent": sent.UnixMicro(), "ack": ack.UnixMicro(), "visible": seen.UnixMicro()})
-	s := sample{WriteMs: ms(ack.Sub(sent)), AckToVisibleMs: ms(seen.Sub(ack))}
+	s := sample{Local: true, WriteMs: ms(ack.Sub(sent)), AckToVisibleMs: ms(seen.Sub(ack))}
+	if arrivals == nil {
+		return s, nil
+	}
+
+	// A local pull can make the row visible before this observer receives its notice. Keep the visibility
+	// timestamp, and wait only to attribute it. A delayed notice from an earlier write cannot time this one.
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
 	for {
 		select {
 		case a := <-arrivals:
-			if a.at.Before(sent) {
+			if a.committed.Before(sent) {
 				continue
 			}
 
 			s.CommitToNotice, s.NoticeToVisible, s.CommitToVisible, s.Pages = ms(a.at.Sub(a.committed)), ms(seen.Sub(a.at)), ms(seen.Sub(a.committed)), a.pages
 			return s, nil
-		default:
-			return s, nil
+		case <-timer.C:
+			return sample{}, errors.New("no revision notice for this write within 2 s")
+		case <-ctx.Done():
+			return sample{}, ctx.Err()
 		}
 	}
 }
@@ -360,11 +377,14 @@ func (c *client) visible(ctx context.Context, sql string, within time.Duration) 
 	deadline := time.Now().Add(within)
 	for {
 		_, err := c.exec(ctx, c.read, sql)
-		if err == nil {
+		if err == nil && c.readLocal {
 			return nil
 		}
 
 		if time.Now().After(deadline) {
+			if err == nil {
+				return errors.New("replica never served locally")
+			}
 			return err
 		}
 
@@ -396,6 +416,7 @@ func (c *client) call(ctx context.Context, h *http.Client, method, path string, 
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if h == c.read {
+		c.readLocal = resp.Header.Get("X-TerraBase-Region") == c.region && !strings.Contains(resp.Header.Get("Server-Timing"), "home;")
 		lastHeaders = resp.Header.Get("X-Terrabase-Machine") + " " + resp.Header.Get("Server-Timing") + " " + resp.Header.Get("TerraScale-Write-Route") + " " + resp.Header.Get("Ts-Replay") + " " + resp.Header.Get("Via")
 	}
 	if resp.StatusCode != want {
