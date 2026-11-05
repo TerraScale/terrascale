@@ -31,6 +31,7 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
         Metadata(ListenerMetadata.Client, new AuthorizeAttribute(ApiKeyScopes.SqlRead), new Management.DatabaseRegions.ReplicaReads());

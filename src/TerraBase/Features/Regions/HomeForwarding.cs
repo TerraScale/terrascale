@@ -122,6 +122,17 @@ internal static class HomeForwarding
     internal static async Task ForwardAsync(HttpContext context, HomeNode home, byte[]? body = null, string? pushThrough = null,
         Action<HttpResponseMessage>? answered = null)
     {
+        if (context.WebSockets.IsWebSocketRequest)
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers["X-TerraBase-Database-Home"] = home.Region;
+            var refused = RetryUrl(context, home.Region);
+            context.Response.Headers.Location = refused;
+            await BadRequests.WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region",
+                $"the database is served in {home.Region}: open the WebSocket in its home region", op: null, url: refused).ConfigureAwait(false);
+            return;
+        }
+
         var services = context.RequestServices;
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
             new Uri(home.Address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()))
