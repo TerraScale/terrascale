@@ -6,10 +6,10 @@ namespace TerraBase.Features.ApiKeys;
 /// <summary>Bearer-token scopes. Each scope is also the name of its authorization policy.</summary>
 public static class ApiKeyScopes
 {
-    /// <summary>Read documents and list collections.</summary>
+    /// <summary>Run SQL reads and read shapes and files.</summary>
     public const string SqlRead = "sql:read";
 
-    /// <summary>Write or delete collections and documents.</summary>
+    /// <summary>Run SQL writes and schema changes and write files.</summary>
     public const string SqlWrite = "sql:write";
 
     /// <summary>Read databases and database tooling.</summary>
