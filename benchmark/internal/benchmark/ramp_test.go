@@ -128,6 +128,7 @@ func TestWindowsMustAgreeWithAssignedPhase(t *testing.T) {
 		{"bucket crosses phase end", func(o *Output) { o.Windows[8].ElapsedS = 1.25 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			w, o := rampFixture(t)
 			if _, err := read(bytes.NewReader(encodeOutput(t, o)), w, "gru"); err != nil {
 				t.Fatal("valid fixture rejected:", err)
@@ -185,6 +186,7 @@ func TestRampRequiresCompletionOrSafetyStop(t *testing.T) {
 		{"safety stop without stopped phase", []bool{true, true}, "ramp safety threshold exceeded", false, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			w, o := rampFixture(t)
 			o.Summary.Steps = o.Summary.Steps[:len(test.completed)]
 			for i, completed := range test.completed {
@@ -227,6 +229,7 @@ func TestRampGuardUsesTotalErrorRate(t *testing.T) {
 		{"update latency exceeds twice target", 0, 250000, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			bucket := map[string]*accumulator{"doc.get": newAccumulator(), "doc.update": newAccumulator()}
 			for i := 0; i < 70; i++ {
 				bucket["doc.get"].record(1000, nil)
