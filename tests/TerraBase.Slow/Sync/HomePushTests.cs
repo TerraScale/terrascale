@@ -81,6 +81,7 @@ public sealed class HomePushTests
         await using (var restarted = await world.HomeNodeAsync())
         {
             var js = new NatsJSContext(world.Client);
+            await Assert.That(await restarted.Push.AppliedAsync("sjc", world.Database, 5, token)).IsTrue();
             await Assert.That(await restarted.Push.ReplayFromAsync("sjc", world.Database, pending[0], token)).IsEqualTo(2UL);
             await TerraBaseTestServer.EventuallyAsync(async cancellation =>
                 (await js.GetConsumerAsync(PushNames.Stream("sjc"), PushNames.Consumer("gru"), cancellation)).Info.NumAckPending == 0
