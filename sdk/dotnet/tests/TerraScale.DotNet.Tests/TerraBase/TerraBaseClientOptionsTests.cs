@@ -35,12 +35,12 @@ public sealed class TerraBaseClientOptionsTests
         using var http = new HttpClient();
         var insecure = new Uri($"http://{host}:8081/");
         await Assert.That(() => new TerraBaseStaticEndpointResolver(insecure)).Throws<ArgumentException>();
-        await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = insecure, ApiKey = "tb_key" }))
+        await Assert.That(() => new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { BaseAddress = insecure, ApiKey = "tb_key" }))
             .Throws<ArgumentException>();
         await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = insecure }))
             .Throws<ArgumentException>();
         var secure = new Uri($"https://{host}:8443/");
-        _ = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = secure, ApiKey = "tb_key" });
+        _ = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { BaseAddress = secure, ApiKey = "tb_key" });
         _ = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = secure, AccessTokenProvider = _ => ValueTask.FromResult("token") });
     }
 
@@ -52,14 +52,14 @@ public sealed class TerraBaseClientOptionsTests
     public async Task SecretsMustBePrintableTokens(string? secret)
     {
         using var http = new HttpClient();
-        await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin, ApiKey = secret }))
+        await Assert.That(() => new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { BaseAddress = Origin, ApiKey = secret }))
             .Throws<ArgumentException>();
     }
 
     [Test]
     public async Task OptionsAndInvitationsNeverPrintSecrets()
     {
-        var options = new TerraBaseDocumentsClientOptions { BaseAddress = Origin, ApiKey = "tb_secretvalue" };
+        var options = new TerraBaseDatabaseClientOptions { BaseAddress = Origin, ApiKey = "tb_secretvalue" };
         var invitation = new TerraBaseCreatedInvitation(
             new TerraBaseInvitation("i", "a@example.com", TerraBaseRole.Member, "u", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, "pending"), "org.inv.secretvalue");
 
@@ -80,8 +80,8 @@ public sealed class TerraBaseClientOptionsTests
         }
 
         var client = timeout is null
-            ? new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin, AccessTokenProvider = provider })
-            : new TerraBaseDocumentsClient(new TerraBaseConnection(http, Origin, null, null, "credential", timeout.Value,
+            ? new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { BaseAddress = Origin, AccessTokenProvider = provider })
+            : new TerraBaseDatabaseClient(new TerraBaseConnection(http, Origin, null, null, "credential", timeout.Value,
                 TerraBaseConnection.DefaultMaxResponseBytes, provider, anonymousAllowed: true));
         var database = client.Database("project", "app");
         return token => database.GetUsageAsync(cancellationToken: token);
