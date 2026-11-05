@@ -551,6 +551,17 @@ jobs:
         if: needs.terrabase-build.outputs.fast-verified != 'true'
         working-directory: terrascale
         run: tar -xzf "$RUNNER_TEMP/terrabase-build.tar.gz"
+      - name: Install the pinned JetStream test server
+        if: needs.terrabase-build.outputs.fast-verified != 'true'
+        run: |
+          archive="$RUNNER_TEMP/nats-server-v2.15.2-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            https://github.com/nats-io/nats-server/releases/download/v2.15.2/nats-server-v2.15.2-linux-amd64.tar.gz -o "$archive"
+          echo "67cb8e10bc6f0c4b47f75a728529a20953dbae2a4f9a4a52ae8517d65ae303ff  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/nats-server"
+          tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP/nats-server" nats-server-v2.15.2-linux-amd64/nats-server
+          "$RUNNER_TEMP/nats-server/nats-server" --version
+          echo "$RUNNER_TEMP/nats-server" >> "$GITHUB_PATH"
       - name: Fast shard and assigned integration proofs
         if: needs.terrabase-build.outputs.fast-verified != 'true'
         working-directory: terrascale
