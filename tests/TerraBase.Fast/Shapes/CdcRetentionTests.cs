@@ -34,6 +34,10 @@ public sealed class CdcRetentionTests
         var catalog = backupService.Status.Files.Single(file => file.File == BackupLayout.File(null, "local"));
         await Assert.That(catalog.LastError).IsNull();
         await Assert.That(catalog.LastShippedAt).IsNotNull();
+        var tenant = new TenantContext(host.Database.Organization, PlanTier.Enterprise, host.Database.Project, host.Database.Id);
+        await host.RestoreAsync(backupService.LastShipped(tenant)!.Value, "granted", token);
+        using var activeGrant = await data.GetAsync(ManagementApi.Uri((host.Database with { Name = "granted" }).Data + "/tables/people/read-grant"), token);
+        await Assert.That(activeGrant.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the initial snapshot must preserve active grants");
         using var revoked = await data.DeleteAsync(ManagementApi.Uri(host.Database.Data + "/tables/people/read-grant"), token);
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await host.PutAsync("people", "one", "first", token);
@@ -45,7 +49,6 @@ public sealed class CdcRetentionTests
         }
 
         await host.ShipAsync(TimeSpan.FromSeconds(3), token);
-        var tenant = new TenantContext(host.Database.Organization, PlanTier.Enterprise, host.Database.Project, host.Database.Id);
         var store = await host.Api.Server.StoreAsync(tenant);
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(slowOffset);
         var kept = await slow.ReadAsync(slow.NextOffset);
