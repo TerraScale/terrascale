@@ -28,3 +28,7 @@ their parent durations.
 ## Requests before replica preparation
 
 SQL HTTP routing reads the durable catalog placement even when the follower has not opened a local copy yet. Such reads and writes forward once to the database home through the existing authenticated peer path. They never open an absent primary file and return a misleading `400 sql_error`. Local acknowledgement resumes through the usual router once the prepared replica is available. This does not change edge draining or node replacement.
+
+## Native replica reader and writer admission
+
+Local native write transactions acquire the replica's existing exclusive reader-drain lease, also used by page apply and checkpoint, before capture setup and BEGIN. They release it with the local transaction, before any home-durable wait. This prevents pooled reader BEGIN/ROLLBACK operations from colliding with native writer setup and sending an otherwise local write home. Waiting for admission remains cancellable and releases both gates on failure. The existing catch-up after a successfully forwarded write remains mandatory; it is not removed to improve latency. Partner holds, stream publication and acknowledgement durability are unchanged.

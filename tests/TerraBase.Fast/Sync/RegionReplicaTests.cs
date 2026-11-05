@@ -92,6 +92,56 @@ public sealed class RegionReplicaTests
         }
     }
 
+    [Test]
+    public async Task A_local_replica_writer_drains_readers_and_cancelled_admission_releases_its_gate()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var api = await ManagementApi.StartSharedAsync();
+        var server = api.Server;
+        var directory = Directory.CreateTempSubdirectory("terrabase-replica-writer-").FullName;
+        try
+        {
+            var database = await server.CreateSyncedDatabaseAsync();
+            var options = server.Services.GetRequiredService<TerraBaseOptions>() with { DataDirectory = directory };
+            using var http = PeerTls.CreateClient(server.BaseAddress);
+            await using var replicas = new TursoReplicas(options, new TestMasterKey(), server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<TursoReplicas>.Instance);
+            await replicas.OpenAsync(database, server.PullAddress(database), http, token);
+            await using (var reader = (await replicas.BeginReadAsync(database, token))!)
+            {
+                _ = await reader.ExecuteAsync(Statement("SELECT id FROM items"), token);
+                using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(token);
+                cancelled.CancelAfter(TimeSpan.FromMilliseconds(50));
+                IReplicaWriter? unexpected = null;
+                try
+                {
+                    await Assert.ThrowsAsync<OperationCanceledException>(async () => { unexpected = await replicas.BeginWriteAsync(database, cancelled.Token); });
+                }
+                finally
+                {
+                    if (unexpected is not null)
+                    {
+                        await unexpected.DisposeAsync();
+                    }
+                }
+            }
+
+            // Cancellation must release the write gate; the next real transaction commits and becomes readable.
+            await using (var writer = (await replicas.BeginWriteAsync(database, token))!)
+            {
+                _ = await writer.ExecuteAsync(Statement($"INSERT INTO items(id, tenant, v) VALUES ('local', '{database.DatabaseId}', 'committed')"), token);
+                await writer.CommitAsync(token);
+            }
+            await Assert.That(await RowsAsync(replicas, database, token)).IsEquivalentTo(new SortedDictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["local"] = "committed",
+            });
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private sealed class DelayedAnswer() : DelegatingHandler(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
     {
         public bool BlockNext { get; set; }

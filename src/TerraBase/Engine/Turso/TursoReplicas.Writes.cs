@@ -34,19 +34,27 @@ internal sealed partial class TursoReplicas
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             await _pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
+            IDisposable? exclusive = null;
             try
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                return await OpenWriterAsync(captured: true, release: true, cancellationToken).ConfigureAwait(false);
+                // Native BEGIN/capture setup can refuse while a pooled reader begins or ends a transaction.
+                // Use the same reader drain as page apply/checkpoint, and keep it through the short local commit.
+                // A transient native refusal otherwise forwards home and makes the next write pay a WAN catch-up.
+                exclusive = await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false);
+                return await OpenWriterAsync(captured: true, release: true, cancellationToken, exclusive).ConfigureAwait(false);
             }
             catch (TursoException error)
             {
+                exclusive?.Dispose();
                 _pulls.Release();
-                logger.ZLogInformation($"A local write goes home: the replica is busy ({error.GetType().Name:@Error})");
+                // Only fixed native setup statements ran here; this detail contains no caller SQL or bound values.
+                logger.ZLogInformation($"A local write goes home: replica writer setup failed ({error.GetType().Name:@Error}, {error.Message[..Math.Min(error.Message.Length, 512)]:@Detail})");
                 return null;
             }
             catch
             {
+                exclusive?.Dispose();
                 _pulls.Release();
                 throw;
             }
@@ -67,7 +75,7 @@ internal sealed partial class TursoReplicas
             }
         }
 
-        private async Task<Writer> OpenWriterAsync(bool captured, bool release, CancellationToken cancellationToken)
+        private async Task<Writer> OpenWriterAsync(bool captured, bool release, CancellationToken cancellationToken, IDisposable? exclusive = null)
         {
             var native = _writer ??= await sync.ConnectHandleAsync(cancellationToken).ConfigureAwait(false);
             await Task.Run(() =>
@@ -94,10 +102,10 @@ internal sealed partial class TursoReplicas
 
                 Run(native, "BEGIN;");
             }, cancellationToken).ConfigureAwait(false);
-            return new Writer(this, native, captured, release);
+            return new Writer(this, native, captured, release, exclusive);
         }
 
-        private void EndWriter(TursoDatabaseHandle native, bool committed, bool release)
+        private void EndWriter(TursoDatabaseHandle native, bool committed, bool release, IDisposable? exclusive)
         {
             try
             {
@@ -116,6 +124,7 @@ internal sealed partial class TursoReplicas
             }
             finally
             {
+                exclusive?.Dispose();
                 if (release)
                 {
                     _pulls.Release();
@@ -123,7 +132,7 @@ internal sealed partial class TursoReplicas
             }
         }
 
-        private sealed class Writer(Replica replica, TursoDatabaseHandle native, bool captured, bool release) : IReplicaWriter
+        private sealed class Writer(Replica replica, TursoDatabaseHandle native, bool captured, bool release, IDisposable? exclusive) : IReplicaWriter
         {
             private int _ended;
             private bool _committed;
@@ -158,7 +167,7 @@ internal sealed partial class TursoReplicas
             {
                 if (Interlocked.Exchange(ref _ended, 1) == 0)
                 {
-                    replica.EndWriter(native, _committed, release);
+                    replica.EndWriter(native, _committed, release, exclusive);
                 }
 
                 return ValueTask.CompletedTask;
