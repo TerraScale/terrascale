@@ -50,6 +50,7 @@ type sim struct {
 	org     string
 	project string
 	db      string
+	dbID    string
 	results []outcome
 }
 
@@ -148,6 +149,7 @@ func (s *sim) execute(terrabase, logDir string) (string, int) {
 		{"second-nodes-hold-no-customer-data", s.holders},
 		{"restart-B-catches-up", s.restartB},
 		{"replica-lag", s.replicaLag},
+		{"home-failover-keeps-durable-writes", s.homeFailover},
 	}
 	prerequisite := map[string]bool{"cli-login": true, "create-project-db-replica-sjc": true}
 	var blocked string
@@ -323,6 +325,7 @@ func (s *sim) create() (string, string, error) {
 		ReplicaRegions []string `json:"replicaRegions"`
 	}
 	json.Unmarshal([]byte(out), &db)
+	s.dbID = db.ID
 	note := fmt.Sprintf("project %s, db %s home %s replicas %v", s.project, db.ID, db.HomeRegion, db.ReplicaRegions)
 	if db.HomeRegion != "" && db.HomeRegion != "gru" || db.ReplicaRegions != nil && !slices.Contains(db.ReplicaRegions, "sjc") {
 		return "", note, errors.New("placement is not home gru with replica sjc")
