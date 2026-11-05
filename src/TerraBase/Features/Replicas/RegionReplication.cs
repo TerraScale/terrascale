@@ -18,8 +18,8 @@ namespace TerraBase.Features.Replicas;
 /// <summary>
 /// Region replicas (docs/terrabase/region-replicas.md). As a home, this node announces every newer revision of a database with
 /// replica regions on NATS. As a replica region, it records the databases other regions' homes place here, keeps a replica of
-/// each and pulls it whenever its home announces a revision, after a NATS reconnect, after a failed pull and every
-/// <see cref="Sweep"/>. Star topology: every replica pulls from its home, page mode only, never pushing.
+/// each and pulls it whenever its home announces a revision, after a NATS reconnect, after a failed pull and on a
+/// <see cref="Sweep"/> when no changed revision has been applied recently. Star topology: every replica pulls from its home, page mode only, never pushing.
 /// </summary>
 internal sealed class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
@@ -328,7 +328,7 @@ internal sealed class RegionReplication(
             await SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
             foreach (var follower in _followers.Values)
             {
-                follower.Signal(0, fromHome: true);
+                follower.SweepIfIdle();
             }
 
             using var sweep = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -587,6 +587,9 @@ internal sealed class RegionReplication(
         private Task _loop = Task.CompletedTask;
         private Task _report = Task.CompletedTask;
         private int _fromHome;
+        private int _pullRequested;
+        private long _lastChangedAt;
+        private Task<VerificationRound>? _verification;
 
         private Follower(RegionReplication owner, TenantContext database, ReplicaPeer home)
         {
@@ -623,6 +626,16 @@ internal sealed class RegionReplication(
             return follower;
         }
 
+        public void SweepIfIdle()
+        {
+            // A recent applied revision proves the notice path is alive. Recover lost notices after it goes quiet,
+            // instead of queuing an unnecessary home round trip ahead of the next pushed page answer.
+            if (_owner.Time.GetUtcNow().ToUnixTimeMilliseconds() - Volatile.Read(ref _lastChangedAt) >= Sweep.TotalMilliseconds)
+            {
+                Signal(0, fromHome: true);
+            }
+        }
+
         public void Signal(long committedAt, bool fromHome)
         {
             if (fromHome)
@@ -636,6 +649,7 @@ internal sealed class RegionReplication(
                 _ = Interlocked.CompareExchange(ref _noticed, committedAt, 0);
             }
 
+            Volatile.Write(ref _pullRequested, 1);
             _ = _signals.Writer.TryWrite(true);
         }
 
@@ -659,7 +673,7 @@ internal sealed class RegionReplication(
 
             try
             {
-                await _report.ConfigureAwait(false);
+                await Task.WhenAll(_report, (Task?)_verification ?? Task.CompletedTask).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -683,6 +697,12 @@ internal sealed class RegionReplication(
             Signal(0, fromHome: true);
             await foreach (var _ in _signals.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
+                await VerifyAsync(cancellationToken).ConfigureAwait(false);
+                if (Interlocked.Exchange(ref _pullRequested, 0) == 0)
+                {
+                    continue;
+                }
+
                 var completing = Interlocked.Exchange(ref _pulled, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
                 var noticed = Interlocked.Exchange(ref _noticed, 0);
                 var started = _owner.Time.GetUtcNow();
@@ -712,6 +732,11 @@ internal sealed class RegionReplication(
 
                 Volatile.Write(ref _pullStartedAt, started.ToUnixTimeMilliseconds());
                 _syncedAt = _owner.Time.GetUtcNow();
+                if (changed)
+                {
+                    Volatile.Write(ref _lastChangedAt, _syncedAt.Value.ToUnixTimeMilliseconds());
+                }
+
                 if (pending)
                 {
                     Signal(0, fromHome: false);
@@ -729,14 +754,29 @@ internal sealed class RegionReplication(
 
         private async Task VerifyAsync(CancellationToken cancellationToken)
         {
-            if (_owner._verifier is not { } verifier || _owner.Time.GetUtcNow() < _nextVerify || !await _owner._verifying.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+            if (_owner._verifier is not { } verifier)
+            {
+                return;
+            }
+
+            if (_verification is null)
+            {
+                if (_owner.Time.GetUtcNow() >= _nextVerify && await _owner._verifying.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+                {
+                    _verification = ObserveAsync(verifier, cancellationToken);
+                }
+
+                return;
+            }
+
+            if (!_verification.IsCompleted)
             {
                 return;
             }
 
             try
             {
-                var round = await verifier.RoundAsync(Database, _source, _cursor, cancellationToken).ConfigureAwait(false);
+                var round = await _verification.ConfigureAwait(false);
                 var now = _owner.Time.GetUtcNow();
                 switch (round.Verdict)
                 {
@@ -774,7 +814,21 @@ internal sealed class RegionReplication(
             }
             finally
             {
+                _verification = null;
+            }
+        }
+
+        private async Task<VerificationRound> ObserveAsync(ReplicaVerifier verifier, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await verifier.ObserveAsync(Database, _source, _cursor, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
                 _owner._verifying.Release();
+                // Wake the loop to consume the result, without requesting another page pull.
+                _ = _signals.Writer.TryWrite(false);
             }
         }
 
