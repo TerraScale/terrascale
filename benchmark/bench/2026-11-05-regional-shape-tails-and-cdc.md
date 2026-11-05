@@ -13,6 +13,17 @@ Write-to-tail timing includes the client's cross-region write request to gru. Re
 
 The reproducible runner is [shape-tails](../shape-tails/README.md). Raw public observations are in [f9f5-live-20261105.json](f9f5-live-20261105.json). Credentials stayed in private helper files or stdin.
 
+## Fresh account after the production reset
+
+The shipped runner at `60141fccf807a9846d267b5d545e086b3f83bc07` repeated the proof after the reset with a newly created Free account. All three serving nodes still ran `4b04ad56f711ab7e10735273a037f67dfa60464b`. Each region delivered 30 consecutive filtered project-token updates and ten filtered/projected end-user updates, with HTTP 200 on every continuation and replay, the matching regional serving header, and no `must_refetch`. The sjc node identified itself as `ts-sjc-1`; fra identified itself as `ts-fra-1`. The account was deleted successfully. These observations are recorded under `post_reset_tails` in the raw JSON.
+
+| Client | Reader | Consecutive updates | Replay median / maximum | Write start to tail median / maximum |
+| --- | --- | ---: | ---: | ---: |
+| sjc | Project token, filtered shape | 30 | 189.6 / 272.2 ms | 769.1 / 1150.5 ms |
+| sjc | End-user token, filter and column projection | 10 | 16.75 / 23.7 ms | 573.25 / 776.7 ms |
+| fra | Project token, filtered shape | 30 | 13.8 / 213.1 ms | 627.7 / 1131.9 ms |
+| fra | End-user token, filter and column projection | 10 | 14.55 / 25.0 ms | 628.25 / 830.0 ms |
+
 ## Retention safety
 
 The retained critical integration case checks that cleanup cannot pass a live shape, an unstored backup segment, an R3 replica position or a registered push-consumer position. It also verifies successful catalog shipping, an active grant restored from the initial snapshot, and a later grant revocation restored through CDC. Consumer release now triggers cleanup without needing a shape sweep, always capped by the durable backup and every remaining floor.
@@ -27,4 +38,4 @@ Before consumer-triggered cleanup, one 1,024-update round remained at 2,089 reta
 
 The consumer cleanup change is on main at `1c15bcda38c9f9f46af05b2b70cb5adafcfd2a2e`. Its TerraBase and auth proof checks passed; TerraBase Fast took 20.532 seconds. Its CI runtime-payload restore failed separately: Cloudflare returned HTTP 403 for the checked R2 bundle in [run 41947282761](https://github.com/TerraScale/terrascale/actions/runs/41947282761).
 
-The production reset to storage format 21 wipes the previous accounts. The final load proof waits for the reset owner to report completion and for a green deployment of the consumer cleanup change, then uses a fresh throwaway account. No bounded-storage result is claimed yet.
+The final load proof waits for a green deployment containing the consumer cleanup change, then uses another fresh throwaway account. The post-reset tail run confirmed production was still on `4b04ad56f`, before that change. No bounded-storage result is claimed yet.
