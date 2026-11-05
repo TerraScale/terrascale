@@ -146,7 +146,7 @@ def main():
         status, body, _, _ = control.call(databases, "POST", {"name": name, "homeRegion": "gru", "replicaRegions": [args.region]}, headers({"Host": "gru.api.terrascale.tech"}))
         require(status, body, 201, "create database")
         database_id = body["id"]
-        samples = {"repeat": repeat, "transports": {}}
+        samples = {"repeat": repeat, "database_id": database_id, "transports": {}}
         try:
             if args.snapshot_script:
                 samples["before"] = json.loads(subprocess.check_output(["python3", str(args.snapshot_script), "--health-samples", "1"]))
@@ -174,11 +174,12 @@ def main():
                     modes = {"health": summary(health)}
                     for mode, extra in (("default", {}), ("durable_home", {"TerraScale-Durability": "home"}),
                                         ("forced_home", {"TerraScale-Write": "home"})):
-                        latencies, stages, routes, request_ids = [], {}, {}, []
+                        latencies, stages, routes, request_ids, completed_at = [], {}, {}, [], []
                         for index in range(args.writes + 5):
                             row = ulid()
                             label = f"{transport}_{mode}" if index >= 5 else "warmup"
                             status, body, answered, elapsed = sql(client, f"INSERT INTO events (id, body) VALUES ('{row}', '{label}')", extra)
+                            completed = datetime.datetime.now(datetime.timezone.utc).isoformat()
                             require(status, body, 200, mode)
                             route = answered.get("terrascale-write-route", "")
                             fields = dict(field.strip().split("=", 1) for field in route.split(";") if "=" in field)
@@ -187,11 +188,13 @@ def main():
                                 raise RuntimeError((mode, "unexpected commit route", route))
                             if index >= 5:
                                 request_ids.append(answered.get("x-request-id"))
+                                completed_at.append(completed)
                                 latencies.append(elapsed)
                                 routes[route] = routes.get(route, 0) + 1
                                 for stage, duration in timing(answered.get("server-timing", "")).items():
                                     stages.setdefault(stage, []).append(duration)
-                        modes[mode] = {"client": summary(latencies), "server": {stage: summary(values) for stage, values in stages.items()}, "routes": routes}
+                        modes[mode] = {"client": summary(latencies), "server": {stage: summary(values) for stage, values in stages.items()}, "routes": routes,
+                                       "completed_at": completed_at}
                         if args.request_logs:
                             if None in request_ids or len(set(request_ids)) != args.writes:
                                 raise RuntimeError("response request IDs are missing or repeated")
