@@ -87,7 +87,6 @@ internal sealed class HomePush(
     private Counter<long>? _reverts;
     private Counter<long>? _applyRetries;
     private Histogram<double>? _applyTime;
-    private long _storageBusyDiagnosticAt;
 
     internal LocalOverlay Overlay => _overlay;
 
@@ -655,17 +654,6 @@ internal sealed class HomePush(
             {
                 applied = null;
                 reason = error.GetType().Name;
-                if (error is StorageBusyException)
-                {
-                    // StorageBusy has a fixed message; its stack identifies the refusing safeguard without logging payloads.
-                    // One stack per process per minute bounds diagnostics even when every message is refused.
-                    var now = Stopwatch.GetTimestamp();
-                    var next = Volatile.Read(ref _storageBusyDiagnosticAt);
-                    if (now >= next && Interlocked.CompareExchange(ref _storageBusyDiagnosticAt, now + 60 * Stopwatch.Frequency, next) == next)
-                    {
-                        logger.ZLogWarning(error, $"A home push apply was refused by storage");
-                    }
-                }
             }
             finally
             {
