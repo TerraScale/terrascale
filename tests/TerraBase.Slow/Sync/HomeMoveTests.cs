@@ -74,7 +74,9 @@ public sealed class HomeMoveTests
         await PostgresSql.ExecuteAsync(oldSession, "INSERT INTO acked (id) VALUES ($1)", "before-" + EntityIds.New());
 
         var acked = new ConcurrentBag<string>();
-        using var stop = new CancellationTokenSource();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var beforeMove = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var homeMoved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var moved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var afterMove = 0;
         var writer = Task.Run(async () =>
@@ -82,13 +84,24 @@ public sealed class HomeMoveTests
             var target = viaGru;
             while (!stop.IsCancellationRequested)
             {
+                // REST can forward successfully after demotion without returning a 421.
+                if (homeMoved.Task.IsCompletedSuccessfully)
+                {
+                    target = viaSjc;
+                }
+
                 var row = EntityIds.New().ToString();
                 while (true)
                 {
-                    using var response = await target.PostAsJsonAsync(sql, new { statements = new[] { new { sql = "INSERT INTO acked (id) VALUES (?)", args = new[] { row } } } }, token);
+                    using var response = await target.PostAsJsonAsync(sql, new { statements = new[] { new { sql = "INSERT INTO acked (id) VALUES (?)", args = new[] { row } } } }, stop.Token);
                     if (response.StatusCode == HttpStatusCode.OK)
                     {
                         acked.Add(row);
+                        if (acked.Count == 20)
+                        {
+                            beforeMove.TrySetResult();
+                        }
+
                         if (target == viaSjc && Interlocked.Increment(ref afterMove) == 20)
                         {
                             moved.TrySetResult();
@@ -109,13 +122,28 @@ public sealed class HomeMoveTests
             }
         }, token);
 
-        await Task.Delay(TimeSpan.FromMilliseconds(500), TimeProvider.System, token);
-        using var move = await viaGru.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/{id}/move-home"), new { homeRegion = "sjc" }, token);
-        await Assert.That(move.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await move.Content.ReadAsStringAsync(token));
-        var body = await move.Content.ReadFromJsonAsync<JsonElement>(token);
-        await moved.Task.WaitAsync(TimeSpan.FromSeconds(60), token);
-        await stop.CancelAsync();
-        await writer;
+        JsonElement body;
+        try
+        {
+            await (await Task.WhenAny(beforeMove.Task, writer).WaitAsync(TimeSpan.FromSeconds(60), token));
+            using var move = await viaGru.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/{id}/move-home"), new { homeRegion = "sjc" }, token);
+            await Assert.That(move.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await move.Content.ReadAsStringAsync(token));
+            body = await move.Content.ReadFromJsonAsync<JsonElement>(token);
+            homeMoved.SetResult();
+            await (await Task.WhenAny(moved.Task, writer).WaitAsync(TimeSpan.FromSeconds(60), token));
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            try
+            {
+                await writer;
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested)
+            {
+                // The fixture owns this writer and cancels its final in-flight request.
+            }
+        }
 
         await Assert.That(body.GetProperty("homeRegion").GetString()).IsEqualTo("sjc");
         await Assert.That(body.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString()!).ToList()).IsEquivalentTo(["gru"]);
