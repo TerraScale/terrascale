@@ -20,7 +20,7 @@ public sealed class EndUserAccessTokens(ApiKeys apiKeys, PlatformDirectory proje
     public const int MaxTokenBytes = 8192;
 
     /// <summary>
-    /// Authenticates a live project key with no database restriction and both document scopes.
+    /// Authenticates a live project key with no database restriction and both record scopes.
     /// An organization key, platform JWT or narrowed key cannot assert project-wide end-user authority.
     /// </summary>
     internal async Task<ApiKeyRecord?> AuthorizeAsync(string project, string? secret, CancellationToken cancellationToken)

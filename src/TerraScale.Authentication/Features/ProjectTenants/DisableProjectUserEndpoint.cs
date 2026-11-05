@@ -10,7 +10,7 @@ public sealed class DisableProjectUserEndpoint(TenantDirectory tenants, Platform
     public override void Configure()
     {
         Post(Root + "/users/{user}/disable");
-        this.Document("disable_project_user", "Disable an end user", "Needs the admin project role. The user can no longer sign in, and every session and token it holds stops working at once.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectUserBody));
+        this.Describe("disable_project_user", "Disable an end user", "Needs the admin project role. The user can no longer sign in, and every session and token it holds stops working at once.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectUserBody));
     }
 
     /// <inheritdoc />

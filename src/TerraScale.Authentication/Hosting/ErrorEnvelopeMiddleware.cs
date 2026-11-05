@@ -59,7 +59,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
         }
         catch (TerraBaseUnavailableException unavailable) when (!context.Response.HasStarted)
         {
-            // A storage outage is temporary: answer the retryable 503 every handler documents, never a 500.
+            // A storage outage is temporary: answer the retryable 503 every handler specifies, never a 500.
             var error = ApiException.Unavailable(unavailable);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);

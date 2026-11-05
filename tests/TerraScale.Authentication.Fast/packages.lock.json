@@ -446,21 +446,6 @@
           "ZString": "[2.6.0, )"
         }
       },
-      "turso.data": {
-        "type": "Project",
-        "dependencies": {
-          "Turso.Raw": "[0.8.2, )"
-        }
-      },
-      "turso.data.sqlite": {
-        "type": "Project",
-        "dependencies": {
-          "Turso.Data": "[0.8.2, )"
-        }
-      },
-      "turso.raw": {
-        "type": "Project"
-      },
       "Geralt": {
         "type": "CentralTransitive",
         "requested": "[4.4.0, )",
