@@ -88,6 +88,12 @@ public sealed class HomeFailoverTests
         {
             while (!stop.IsCancellationRequested)
             {
+                if (Volatile.Read(ref cut) == 0)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(20), token);
+                    continue;
+                }
+
                 var row = "sjc-" + EntityIds.New();
                 using var response = await viaSjc.PostAsJsonAsync(all.Sql, new
                 {
