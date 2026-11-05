@@ -1,0 +1,901 @@
+{
+  "input": "/tmp/1105-drain-independent-events.jsonl",
+  "percentile": "p99=sorted[ceil(q*n)-1]; older sorted[ceil(q*(n-1))] also retained; all samples retained",
+  "environment": [
+    {
+      "kind": "environment",
+      "host": "delta",
+      "pid": 809563,
+      "mode": "local-ack",
+      "sdk_revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+      "declared_server_revision": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+      "at": "2026-11-05T21:03:20.097479+00:00",
+      "stop_file": "/tmp/mb-acceptance-rerun-env-q7538pfl/probe.stop"
+    }
+  ],
+  "regions": {
+    "gru": {
+      "baseline": {
+        "count": 100,
+        "p50_ms": 23.557,
+        "p99_ms": 28.496,
+        "p99_conservative_ms": 34.563,
+        "max_ms": 34.563
+      },
+      "baseline_path": {
+        "count": 100,
+        "p50_ms": 21.831,
+        "p99_ms": 24.226,
+        "p99_conservative_ms": 32.613,
+        "max_ms": 32.613
+      },
+      "failed_writes": 0,
+      "client": {
+        "count": 300,
+        "p50_ms": 34.611,
+        "p99_ms": 55.313,
+        "p99_conservative_ms": 60.43,
+        "max_ms": 95.401
+      },
+      "server": {
+        "count": 300,
+        "p50_ms": 12.395,
+        "p99_ms": 34.82,
+        "p99_conservative_ms": 37.96,
+        "max_ms": 72.62
+      },
+      "first_insert": {
+        "kind": "write",
+        "region": "gru",
+        "started_at": "2026-11-05T21:03:46.469943+00:00",
+        "completed_at": "2026-11-05T21:03:46.515507+00:00",
+        "ok": true,
+        "ms": 45.563,
+        "status": 200,
+        "response_received_at": "2026-11-05T21:03:46.515258+00:00",
+        "headers": {
+          "server-timing": "admission;dur=0.12, auth;dur=0.47, home_lookup;dur=3.93, qos;dur=2.57, project;dur=0.03, placement;dur=0.02, tenant;dur=2.28, execute;dur=13.94, app;dur=23.36;desc=\"gru\"",
+          "x-request-id": "01M6PRCQ9BZFMT51B4GSWHBR4S",
+          "x-terrabase-machine": "ts-gru-1",
+          "x-terrabase-region": "gru"
+        },
+        "id": "01M6PRCQ95E6NN26KD9XDGF9PQ",
+        "n": 0,
+        "sequence": 0,
+        "repeat": 1,
+        "stop_seen": false,
+        "value": {
+          "columns": [],
+          "rows": [],
+          "rows_affected": 1,
+          "last_insert_rowid": 1
+        }
+      },
+      "repeats": {
+        "1": {
+          "client": {
+            "count": 100,
+            "p50_ms": 34.63,
+            "p99_ms": 53.764,
+            "p99_conservative_ms": 55.313,
+            "max_ms": 55.313
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 12.36,
+            "p99_ms": 29.24,
+            "p99_conservative_ms": 34.82,
+            "max_ms": 34.82
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.5,
+              "p99_conservative_ms": 0.55,
+              "max_ms": 0.55
+            },
+            "local_allowance": null,
+            "local_native": null,
+            "local_execute": null,
+            "local_begin": null,
+            "local_seal": null,
+            "local_hlc": null,
+            "push_publish": null,
+            "push_hold": null,
+            "local_commit": null
+          },
+          "routes": [
+            ""
+          ]
+        },
+        "2": {
+          "client": {
+            "count": 100,
+            "p50_ms": 34.489,
+            "p99_ms": 60.43,
+            "p99_conservative_ms": 95.401,
+            "max_ms": 95.401
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 12.315,
+            "p99_ms": 37.96,
+            "p99_conservative_ms": 72.62,
+            "max_ms": 72.62
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.58,
+              "p99_conservative_ms": 0.62,
+              "max_ms": 0.62
+            },
+            "local_allowance": null,
+            "local_native": null,
+            "local_execute": null,
+            "local_begin": null,
+            "local_seal": null,
+            "local_hlc": null,
+            "push_publish": null,
+            "push_hold": null,
+            "local_commit": null
+          },
+          "routes": [
+            ""
+          ]
+        },
+        "3": {
+          "client": {
+            "count": 100,
+            "p50_ms": 34.776,
+            "p99_ms": 51.895,
+            "p99_conservative_ms": 71.777,
+            "max_ms": 71.777
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 12.45,
+            "p99_ms": 28.93,
+            "p99_conservative_ms": 49.68,
+            "max_ms": 49.68
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.11,
+              "p99_ms": 0.7,
+              "p99_conservative_ms": 0.79,
+              "max_ms": 0.79
+            },
+            "local_allowance": null,
+            "local_native": null,
+            "local_execute": null,
+            "local_begin": null,
+            "local_seal": null,
+            "local_hlc": null,
+            "push_publish": null,
+            "push_hold": null,
+            "local_commit": null
+          },
+          "routes": [
+            ""
+          ]
+        }
+      },
+      "client_budget_ms": 121.831
+    },
+    "sjc": {
+      "baseline": {
+        "count": 100,
+        "p50_ms": 194.505,
+        "p99_ms": 365.301,
+        "p99_conservative_ms": 589.496,
+        "max_ms": 589.496
+      },
+      "baseline_path": {
+        "count": 100,
+        "p50_ms": 192.965,
+        "p99_ms": 194.585,
+        "p99_conservative_ms": 194.698,
+        "max_ms": 194.698
+      },
+      "failed_writes": 0,
+      "client": {
+        "count": 300,
+        "p50_ms": 216.315,
+        "p99_ms": 246.117,
+        "p99_conservative_ms": 247.525,
+        "max_ms": 249.419
+      },
+      "server": {
+        "count": 300,
+        "p50_ms": 21.885,
+        "p99_ms": 51.61,
+        "p99_conservative_ms": 52.92,
+        "max_ms": 54.83
+      },
+      "first_insert": {
+        "kind": "write",
+        "region": "sjc",
+        "started_at": "2026-11-05T21:03:46.469364+00:00",
+        "completed_at": "2026-11-05T21:03:46.696463+00:00",
+        "ok": true,
+        "ms": 227.096,
+        "status": 200,
+        "response_received_at": "2026-11-05T21:03:46.696215+00:00",
+        "headers": {
+          "server-timing": "admission;dur=0.13, auth;dur=0.12, home_lookup;dur=0.81, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.13, replica_open;dur=0.05, route;dur=0.89, local_begin;dur=7.35, local_allowance;dur=0.01, local_native;dur=0.67, local_execute;dur=0.71, ack;dur=22.84, local_capture;dur=0.31, local_hlc;dur=5.62, local_seal;dur=0.09, push_publish;dur=5.88, push_hold;dur=7.52, local_commit;dur=3.28, execute;dur=0.11, app;dur=33.19;desc=\"sjc\"",
+          "terrascale-write-route": "route=local; reason=ulid_insert; commit=local",
+          "x-request-id": "01M6PRCQC3J49DAYWC2B42E0NG",
+          "x-terrabase-machine": "ts-sjc-1",
+          "x-terrabase-region": "sjc"
+        },
+        "id": "01M6PRCQ946XMH201KMQ2F34QZ",
+        "n": 0,
+        "sequence": 0,
+        "repeat": 1,
+        "stop_seen": false,
+        "value": {
+          "columns": [],
+          "rows": [],
+          "rows_affected": 1,
+          "last_insert_rowid": null
+        }
+      },
+      "repeats": {
+        "1": {
+          "client": {
+            "count": 100,
+            "p50_ms": 216.04,
+            "p99_ms": 230.475,
+            "p99_conservative_ms": 240.086,
+            "max_ms": 240.086
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 21.51,
+            "p99_ms": 36.76,
+            "p99_conservative_ms": 44.55,
+            "max_ms": 44.55
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.46,
+              "p99_conservative_ms": 1.46,
+              "max_ms": 1.46
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.07,
+              "p99_conservative_ms": 0.22,
+              "max_ms": 0.22
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.19,
+              "p99_ms": 0.67,
+              "p99_conservative_ms": 0.67,
+              "max_ms": 0.67
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.22,
+              "p99_ms": 0.71,
+              "p99_conservative_ms": 0.71,
+              "max_ms": 0.71
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.99,
+              "p99_ms": 11.21,
+              "p99_conservative_ms": 14.39,
+              "max_ms": 14.39
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.1,
+              "p99_ms": 0.34,
+              "p99_conservative_ms": 0.37,
+              "max_ms": 0.37
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 6.16,
+              "p99_conservative_ms": 8.91,
+              "max_ms": 8.91
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 0.985,
+              "p99_ms": 3.76,
+              "p99_conservative_ms": 5.88,
+              "max_ms": 5.88
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.555,
+              "p99_ms": 11.69,
+              "p99_conservative_ms": 14.54,
+              "max_ms": 14.54
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.095,
+              "p99_ms": 5.08,
+              "p99_conservative_ms": 5.14,
+              "max_ms": 5.14
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        },
+        "2": {
+          "client": {
+            "count": 100,
+            "p50_ms": 219.512,
+            "p99_ms": 247.525,
+            "p99_conservative_ms": 248.17,
+            "max_ms": 248.17
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 24.575,
+            "p99_ms": 52.92,
+            "p99_conservative_ms": 54.35,
+            "max_ms": 54.35
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.14,
+              "p99_ms": 0.63,
+              "p99_conservative_ms": 0.94,
+              "max_ms": 0.94
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.04,
+              "p99_conservative_ms": 0.04,
+              "max_ms": 0.04
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.19,
+              "p99_ms": 1.11,
+              "p99_conservative_ms": 1.93,
+              "max_ms": 1.93
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.225,
+              "p99_ms": 1.15,
+              "p99_conservative_ms": 1.97,
+              "max_ms": 1.97
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.245,
+              "p99_ms": 23.48,
+              "p99_conservative_ms": 28.15,
+              "max_ms": 28.15
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.09,
+              "p99_ms": 0.73,
+              "p99_conservative_ms": 1.33,
+              "max_ms": 1.33
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 4.62,
+              "p99_conservative_ms": 7.93,
+              "max_ms": 7.93
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 0.875,
+              "p99_ms": 2.37,
+              "p99_conservative_ms": 2.85,
+              "max_ms": 2.85
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.755,
+              "p99_ms": 23.46,
+              "p99_conservative_ms": 24.75,
+              "max_ms": 24.75
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.14,
+              "p99_ms": 4.42,
+              "p99_conservative_ms": 4.77,
+              "max_ms": 4.77
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        },
+        "3": {
+          "client": {
+            "count": 100,
+            "p50_ms": 215.728,
+            "p99_ms": 237.768,
+            "p99_conservative_ms": 249.419,
+            "max_ms": 249.419
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 21.58,
+            "p99_ms": 44.31,
+            "p99_conservative_ms": 54.83,
+            "max_ms": 54.83
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.13,
+              "p99_ms": 0.68,
+              "p99_conservative_ms": 0.78,
+              "max_ms": 0.78
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.35,
+              "p99_conservative_ms": 0.44,
+              "max_ms": 0.44
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.2,
+              "p99_ms": 0.64,
+              "p99_conservative_ms": 1.62,
+              "max_ms": 1.62
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.24,
+              "p99_ms": 1.06,
+              "p99_conservative_ms": 1.66,
+              "max_ms": 1.66
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.865,
+              "p99_ms": 12.57,
+              "p99_conservative_ms": 28.33,
+              "max_ms": 28.33
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.1,
+              "p99_ms": 0.22,
+              "p99_conservative_ms": 0.23,
+              "max_ms": 0.23
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 3.88,
+              "p99_conservative_ms": 6.11,
+              "max_ms": 6.11
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 0.85,
+              "p99_ms": 2.97,
+              "p99_conservative_ms": 3.44,
+              "max_ms": 3.44
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.635,
+              "p99_ms": 11.37,
+              "p99_conservative_ms": 15.57,
+              "max_ms": 15.57
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.185,
+              "p99_ms": 6.39,
+              "p99_conservative_ms": 6.45,
+              "max_ms": 6.45
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        }
+      },
+      "client_budget_ms": 292.965
+    },
+    "fra": {
+      "baseline": {
+        "count": 100,
+        "p50_ms": 213.433,
+        "p99_ms": 398.534,
+        "p99_conservative_ms": 901.383,
+        "max_ms": 901.383
+      },
+      "baseline_path": {
+        "count": 100,
+        "p50_ms": 212.007,
+        "p99_ms": 213.505,
+        "p99_conservative_ms": 214.939,
+        "max_ms": 214.939
+      },
+      "failed_writes": 0,
+      "client": {
+        "count": 300,
+        "p50_ms": 234.531,
+        "p99_ms": 251.568,
+        "p99_conservative_ms": 251.625,
+        "max_ms": 264.844
+      },
+      "server": {
+        "count": 300,
+        "p50_ms": 21.635,
+        "p99_ms": 37.77,
+        "p99_conservative_ms": 38.52,
+        "max_ms": 49.88
+      },
+      "first_insert": {
+        "kind": "write",
+        "region": "fra",
+        "started_at": "2026-11-05T21:03:46.468800+00:00",
+        "completed_at": "2026-11-05T21:03:46.710448+00:00",
+        "ok": true,
+        "ms": 241.648,
+        "status": 200,
+        "response_received_at": "2026-11-05T21:03:46.710220+00:00",
+        "headers": {
+          "server-timing": "admission;dur=0.14, auth;dur=0.11, home_lookup;dur=0.76, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.16, replica_open;dur=0.04, route;dur=0.89, local_begin;dur=7.75, local_allowance;dur=0.01, local_native;dur=0.23, local_execute;dur=0.34, ack;dur=18.11, local_capture;dur=0.27, local_hlc;dur=4.82, local_seal;dur=0.11, push_publish;dur=1.50, push_hold;dur=7.79, local_commit;dur=3.52, execute;dur=0.40, app;dur=28.76;desc=\"fra\"",
+          "terrascale-write-route": "route=local; reason=ulid_insert; commit=local",
+          "x-request-id": "01M6PRCQC90MK3RJKQPZ4ETN4F",
+          "x-terrabase-machine": "ts-fra-1",
+          "x-terrabase-region": "fra"
+        },
+        "id": "01M6PRCQ946XMH201KMQ2F34R0",
+        "n": 0,
+        "sequence": 0,
+        "repeat": 1,
+        "stop_seen": false,
+        "value": {
+          "columns": [],
+          "rows": [],
+          "rows_affected": 1,
+          "last_insert_rowid": null
+        }
+      },
+      "repeats": {
+        "1": {
+          "client": {
+            "count": 100,
+            "p50_ms": 234.161,
+            "p99_ms": 250.988,
+            "p99_conservative_ms": 251.625,
+            "max_ms": 251.625
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 21.115,
+            "p99_ms": 37.77,
+            "p99_conservative_ms": 38.52,
+            "max_ms": 38.52
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.44,
+              "p99_conservative_ms": 1.78,
+              "max_ms": 1.78
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.05,
+              "p99_conservative_ms": 0.05,
+              "max_ms": 0.05
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.18,
+              "p99_ms": 0.7,
+              "p99_conservative_ms": 0.81,
+              "max_ms": 0.81
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.21,
+              "p99_ms": 0.73,
+              "p99_conservative_ms": 0.84,
+              "max_ms": 0.84
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 7.175,
+              "p99_ms": 10.62,
+              "p99_conservative_ms": 11.31,
+              "max_ms": 11.31
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.09,
+              "p99_ms": 0.27,
+              "p99_conservative_ms": 0.43,
+              "max_ms": 0.43
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 4.82,
+              "p99_conservative_ms": 5.82,
+              "max_ms": 5.82
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 1.005,
+              "p99_ms": 2.3,
+              "p99_conservative_ms": 2.77,
+              "max_ms": 2.77
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.375,
+              "p99_ms": 9.38,
+              "p99_conservative_ms": 25.27,
+              "max_ms": 25.27
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.15,
+              "p99_ms": 4.2,
+              "p99_conservative_ms": 4.48,
+              "max_ms": 4.48
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        },
+        "2": {
+          "client": {
+            "count": 100,
+            "p50_ms": 234.946,
+            "p99_ms": 251.568,
+            "p99_conservative_ms": 256.886,
+            "max_ms": 256.886
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 21.815,
+            "p99_ms": 37.68,
+            "p99_conservative_ms": 39.71,
+            "max_ms": 39.71
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.44,
+              "p99_conservative_ms": 0.49,
+              "max_ms": 0.49
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.01,
+              "p99_conservative_ms": 0.01,
+              "max_ms": 0.01
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.18,
+              "p99_ms": 0.92,
+              "p99_conservative_ms": 1.24,
+              "max_ms": 1.24
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.21,
+              "p99_ms": 0.95,
+              "p99_conservative_ms": 1.37,
+              "max_ms": 1.37
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.79,
+              "p99_ms": 13.6,
+              "p99_conservative_ms": 22.36,
+              "max_ms": 22.36
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.09,
+              "p99_ms": 0.27,
+              "p99_conservative_ms": 0.32,
+              "max_ms": 0.32
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 4.31,
+              "p99_conservative_ms": 4.68,
+              "max_ms": 4.68
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 0.755,
+              "p99_ms": 2.47,
+              "p99_conservative_ms": 2.68,
+              "max_ms": 2.68
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.495,
+              "p99_ms": 10.8,
+              "p99_conservative_ms": 23.91,
+              "max_ms": 23.91
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.22,
+              "p99_ms": 4.62,
+              "p99_conservative_ms": 4.69,
+              "max_ms": 4.69
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        },
+        "3": {
+          "client": {
+            "count": 100,
+            "p50_ms": 234.678,
+            "p99_ms": 244.848,
+            "p99_conservative_ms": 264.844,
+            "max_ms": 264.844
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 21.855,
+            "p99_ms": 31.49,
+            "p99_conservative_ms": 49.88,
+            "max_ms": 49.88
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.115,
+              "p99_ms": 0.46,
+              "p99_conservative_ms": 0.89,
+              "max_ms": 0.89
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.04,
+              "p99_conservative_ms": 0.05,
+              "max_ms": 0.05
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.18,
+              "p99_ms": 0.86,
+              "p99_conservative_ms": 1.74,
+              "max_ms": 1.74
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.22,
+              "p99_ms": 0.89,
+              "p99_conservative_ms": 1.78,
+              "max_ms": 1.78
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.995,
+              "p99_ms": 11.04,
+              "p99_conservative_ms": 12.62,
+              "max_ms": 12.62
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.09,
+              "p99_ms": 0.23,
+              "p99_conservative_ms": 0.32,
+              "max_ms": 0.32
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 4.85,
+              "p99_conservative_ms": 5.11,
+              "max_ms": 5.11
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 0.92,
+              "p99_ms": 2.22,
+              "p99_conservative_ms": 2.55,
+              "max_ms": 2.55
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.555,
+              "p99_ms": 10.28,
+              "p99_conservative_ms": 11.97,
+              "max_ms": 11.97
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.2,
+              "p99_ms": 4.31,
+              "p99_conservative_ms": 5.62,
+              "max_ms": 5.62
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        }
+      },
+      "client_budget_ms": 312.007
+    }
+  },
+  "exact_comparisons": [
+    {
+      "kind": "exact_comparison",
+      "phase": "exact_inventory",
+      "region": "gru",
+      "expected": 960,
+      "rows": 960,
+      "distinct": 960,
+      "missing": [],
+      "unexpected": [],
+      "changed": []
+    },
+    {
+      "kind": "exact_comparison",
+      "phase": "exact_inventory",
+      "region": "sjc",
+      "expected": 960,
+      "rows": 960,
+      "distinct": 960,
+      "missing": [],
+      "unexpected": [],
+      "changed": []
+    },
+    {
+      "kind": "exact_comparison",
+      "phase": "exact_inventory",
+      "region": "fra",
+      "expected": 960,
+      "rows": 960,
+      "distinct": 960,
+      "missing": [],
+      "unexpected": [],
+      "changed": []
+    }
+  ],
+  "inventories": [],
+  "cross_reads": {
+    "count": 1800,
+    "failures": 0,
+    "empty": 24
+  }
+}

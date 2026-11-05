@@ -1,0 +1,21 @@
+{
+  "raw_retained": true,
+  "all_product_events_retained": true,
+  "non_product_lines": [
+    {
+      "line": 1,
+      "reason": "runner metadata without event kind",
+      "keys": [
+        "removed",
+        "kept_live",
+        "freed_bytes",
+        "free_percent"
+      ]
+    },
+    {
+      "line": 2,
+      "reason": "runner local-seed status",
+      "text": "ts-heavy-any: local seed /home/mariogk/Projects/TerraScale/terrascale (238059 objects) in 8.015s"
+    }
+  ]
+}

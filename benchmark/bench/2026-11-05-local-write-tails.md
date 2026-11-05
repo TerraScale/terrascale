@@ -1,6 +1,6 @@
 # Concurrent regional local-write tails (#1105)
 
-Status: the original pooled completion claim was withdrawn after independent acceptance failed. See the independent failure and follow-up sections below.
+Status: #1105 closed after the reader-drain fix passed every100-write repeat in both the worker and independent Pro cohorts. The original failed cohorts and withdrawn pooled completion claim remain below.
 
 Date: 2026-11-05. Original comparable client: beta. GRU home, SJC/FRA replicas. Public Python SDK, public regional HTTPS APIs, fresh synthetic throwaway accounts. No load client ran on a serving node.
 
@@ -136,7 +136,7 @@ The HTTP routing regression uses the actual home and away apps with a durable pl
 
 CI42100601357 passed and all six nodes were healthy on `26338d315` at20:18:59Z; Auth release was skipped. Own Free and independent fresh Pro cohorts ran on delta inside the stable interval, with Python runtime source identical to SDK `ddbc3a87d`. Both completed900 default writes and1800 cross reads without SQL/HTTP errors. Independent confirmation reconciled all960 acknowledged IDs/values in every region. Its complete results, first inserts, per-repeat statistics and corrected endpoint timings are in the [acceptance report](2026-11-05-milestone-b-acceptance.md).
 
-**#1105 stays OPEN; every100-write repeat must pass.** Independent SJC repeat1 failed at p99 202.83ms endpoint app /400.024ms client, with maxima551.04 /745.894ms. The first insert passed (235.391ms client /39.61ms app). At n21, request `01M6PNZ85YKBDC4T1B180CH7NP`, native writer setup refused and successful fallback paid184ms home RTT. At n22, `01M6PNZ8T08P9HZG281SWP32AM`, mandatory post-forward catch-up took `local_begin=531.58ms`. Serving logs confirm a `TursoNativeException` at n21. This is a later reader/writer contention tail, not a cold first write. The candidate drains pooled SQL readers with the existing exclusive replica gate through short local native commit, releasing it before home-durable waiting. Mandatory catch-up, stream publication and partner holds remain intact. This candidate has no live proof yet.
+**#1105 stays OPEN; every100-write repeat must pass.** Independent SJC repeat1 failed at p99 202.83ms endpoint app /400.024ms client, with maxima551.04 /745.894ms. The first insert passed (235.391ms client /39.61ms app). At n21, request `01M6PNZ85YKBDC4T1B180CH7NP`, native writer setup refused and successful fallback paid184ms home RTT. At n22, `01M6PNZ8T08P9HZG281SWP32AM`, mandatory post-forward catch-up took `local_begin=531.58ms`. Serving logs confirm a `TursoNativeException` at n21. This is a later reader/writer contention tail, not a cold first write. The candidate drains pooled SQL readers with the existing exclusive replica gate through short local native commit, releasing it before home-durable waiting. Mandatory catch-up, stream publication and partner holds remain intact. At that point the reader-drain candidate had no live proof; its subsequent proofs are recorded below.
 
 The own workload passed every repeat. Its added post-cohort validator then hit `KeyError: n` because diagnostic events lacked a sequence index, after every measured write/read had completed. Full GRU inventory verifies960 IDs/values offline; away inventories were not reached. The diagnostic metadata bug is fixed. Both own synthetic accounts are confirmed deleted.
 
@@ -178,6 +178,39 @@ The own Free cohort ran on admitted **mariogk-dev**, through ts-heavy-any, start
 |FRA|2|45.820 /53.760|257.357 /266.770|PASS|
 |FRA|3|35.850 /44.150|248.772 /257.642|PASS|
 
-The harness completed successfully, but the runner returned1 because synthetic account deletion remained pending after its cleanup submissions. That exit is retained; it is not a workload failure or a silently ignored check. Cleanup is being completed separately. Acceptance received `mode:steer` HANDOFF/GO for its independent fresh Pro item2 rerun at21:03Z, inside the same freeze. #1105 remains open until independent confirmation is checked.
+Maximum local_begin was29.77ms in SJC /25.24ms in FRA; maximum local_seal was2.03 /2.29ms. Maximum server auth was11.29 /1.92ms. These are retained maxima, not sums of nested stages.
+
+The harness completed successfully, but the runner returned1 because synthetic account deletion remained pending after its cleanup submissions. That exit is retained; it is not a workload failure or a silently ignored check. Cleanup is being completed separately. Acceptance received `mode:steer` HANDOFF/GO for its independent fresh Pro item2 rerun at21:03Z, inside the same freeze. #1105 remained open at this worker handoff until independent confirmation was checked.
 
 Evidence: [raw JSONL](local-write-tails-20261105/reader-drain-own.jsonl.gz), [summary with all stages and routes](local-write-tails-20261105/reader-drain-own-summary.json), [gate and exact-inventory validation](local-write-tails-20261105/reader-drain-own-validation.json), [runner log](local-write-tails-20261105/reader-drain-own-runner.log.gz), [deployed readiness](local-write-tails-20261105/reader-drain-deployed-peers.json), [proof start](local-write-tails-20261105/reader-drain-proof-start-peers.json), [proof end](local-write-tails-20261105/reader-drain-proof-end-peers.json).
+
+
+## Independent Pro confirmation: item2 passes; #1105 closed
+
+The independent acceptance worker used the official SDK pinned at `ddbc3a87d7c16cedf918cb3754bad364f7c068eb`, client **delta**, and fresh Pro GRU-home/all-regions database `01M6PRBXSDAGS3GY5K1FP4ZDKG`. Measurement ran21:03:20.097479Z–21:06:28.796946Z, after the worker cohort and inside the same frozen interval. The [authoritative independent evidence](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6669577310) records every sample and all nine repeat gates passing. Its full updated [acceptance report](2026-11-05-milestone-b-acceptance.md) is shipped by that worker independently.
+
+**900/900 default writes,1800/1800 cross reads, zero application/API/auth errors. All960 acknowledged IDs and values match exactly once in all three regions. All600 away defaults commit locally. All30 home-durable writes are immediately visible from GRU.** Twenty-four immediate cross reads were empty while replication caught up; none of these responses were discarded. All300 path baselines precede all writes.
+
+| Region | Path baseline ms | Client limit ms | First insert client /app ms |
+|---|---:|---:|---:|
+| GRU |21.829|121.829|45.563 /23.36|
+| SJC |192.960|292.960|227.096 /33.19|
+| FRA |212.005|312.005|241.648 /28.76|
+
+| Region | Repeat | Server app p99 ms | Client p99 ms | Both gates |
+|---|---:|---:|---:|---|
+| GRU |1|29.24|53.764|PASS|
+| GRU |2|37.96|60.430|PASS|
+| GRU |3|28.93|51.895|PASS|
+| SJC |1|36.76|230.475|PASS|
+| SJC |2|52.92|247.525|PASS|
+| SJC |3|44.31|237.768|PASS|
+| FRA |1|37.77|250.988|PASS|
+| FRA |2|37.68|251.568|PASS|
+| FRA |3|31.49|244.848|PASS|
+
+Pooled SJC/FRA endpoint app p99 is51.61 /37.77ms; pooled client p99 is246.117 /251.568ms. These pooled values supplement the required repeat-level verdicts. First inserts are below300ms. Native setup no longer falls back home in either cohort, and the mandatory causal barrier remains intact.
+
+Raw [independent evidence](local-write-tails-20261105/reader-drain-independent.jsonl.gz) is retained exactly as supplied, including two runner metadata lines. The [analysis normalization record](local-write-tails-20261105/reader-drain-independent-normalization.json) identifies those two non-product lines; all product events are included in the [recomputed summary](local-write-tails-20261105/reader-drain-independent-summary.json). Authoritative acceptance baseline limits above use its nearest-rank p50/header-receipt calculation; rounded SDK durations used by the supplementary summarizer differ by only microseconds.
+
+[Issue #1105 closed with both cohorts and all repeat numbers](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6669592226). Deployed readiness and item2 HANDOFF were delivered to acceptance with `mode:steer`; the independent item2 rerun passed. Account cleanup follows separately under the parent's instruction and does not change the SQL verdict.
