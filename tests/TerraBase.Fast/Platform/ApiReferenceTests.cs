@@ -84,28 +84,28 @@ public sealed class ApiReferenceTests
 
         using var response = await client.GetAsync(Uri("/openapi/v1.json"));
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var document = json.RootElement;
-        var operations = document.GetProperty("paths").EnumerateObject()
+        var openApi = json.RootElement;
+        var operations = openApi.GetProperty("paths").EnumerateObject()
             .SelectMany(path => path.Value.EnumerateObject()
                 .Where(operation => operation.Value.TryGetProperty("responses", out _))
                 .Select(operation => (Line: $"{operation.Name.ToUpperInvariant()} {path.Name} {Security(operation.Value)} {operation.Value.GetProperty("operationId").GetString()} {operation.Value.GetProperty("tags")[0].GetString()}", Operation: operation.Value)))
             .ToList();
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(document.GetProperty("paths").EnumerateObject().Any(path =>
+        await Assert.That(openApi.GetProperty("paths").EnumerateObject().Any(path =>
             path.Name.StartsWith("/management/", StringComparison.OrdinalIgnoreCase)
             || path.Name.StartsWith("/v1/management/", StringComparison.OrdinalIgnoreCase))).IsFalse();
-        await Assert.That(document.GetProperty("info").GetProperty("version").GetString()).IsEqualTo(ServiceVersion.Value);
-        var server0 = document.GetProperty("servers")[0];
+        await Assert.That(openApi.GetProperty("info").GetProperty("version").GetString()).IsEqualTo(ServiceVersion.Value);
+        var server0 = openApi.GetProperty("servers")[0];
         await Assert.That(server0.GetProperty("url").GetString()).IsEqualTo("/");
         await Assert.That(server0.GetProperty("description").GetString()).Contains("gru-1");
-        var schemes = document.GetProperty("components").GetProperty("securitySchemes");
+        var schemes = openApi.GetProperty("components").GetProperty("securitySchemes");
         await Assert.That(schemes.EnumerateObject().Count()).IsEqualTo(1);
         await Assert.That(schemes.GetProperty("TsAuth").GetProperty("type").GetString()).IsEqualTo("http");
         await Assert.That(schemes.GetProperty("TsAuth").GetProperty("scheme").GetString()).IsEqualTo("bearer");
         await Assert.That(schemes.GetProperty("TsAuth").GetProperty("bearerFormat").GetString()).IsEqualTo("JWT");
         await Assert.That(schemes.GetProperty("TsAuth").GetProperty("description").GetString()).Contains("project access token requests receive 401");
-        await Assert.That(string.Join(',', document.GetProperty("x-tagGroups").EnumerateArray().Select(group => group.GetProperty("name").GetString())))
+        await Assert.That(string.Join(',', openApi.GetProperty("x-tagGroups").EnumerateArray().Select(group => group.GetProperty("name").GetString())))
             .IsEqualTo("Management,Data,System");
         await Assert.That(string.Join('\n', operations.Select(operation => operation.Line).Order(StringComparer.Ordinal)))
             .IsEqualTo(Operations.ReplaceLineEndings("\n"));

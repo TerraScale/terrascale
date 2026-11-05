@@ -57,5 +57,6 @@
   {"path": "^src/TerraScale\\.Dashboard/web/assets/css/(?:base|controls)\\.css$", "repo": "terrascale", "terms": ["documents"], "match": "\\bShellDocument\\b", "reason": "Comments name the Razor HTML shell layout that owns these styles."},
   {"path": "^src/TerraScale\\.Dashboard/web/assets/js/(?:button-loading|code-editor/index)\\.js$", "repo": "terrascale", "terms": ["documents"], "match": "\\bdocument\\.(?:createElementNS|fonts)\\b", "reason": "Browser SVG spinner creation and web font loading."},
   {"path": "^tests/TerraScale\\.Dashboard\\.E2E/BrowserAccessibility\\.cs$", "repo": "terrascale", "terms": ["documents"], "match": "\\baxe\\.run\\(selector \\|\\| document, options\\)", "reason": "Playwright runs axe on the browser DOM root when no selector was requested."},
-  {"path": "^src/TerraScale\\.Dashboard/web/assets/js/workspace\\.js$", "repo": "terrascale", "terms": ["documents"], "match": "\\bupdate\\(document\\)", "reason": "Apply workspace navigation scoping to the browser DOM root."}
+  {"path": "^src/TerraScale\\.Dashboard/web/assets/js/workspace\\.js$", "repo": "terrascale", "terms": ["documents"], "match": "\\bupdate\\(document\\)", "reason": "Apply workspace navigation scoping to the browser DOM root."},
+  {"path": "^tests/TerraBase\\.Slow/(?:Sync/LocalWriteWorld|Shapes/RegionShapeStreamTests)\\.cs$", "repo": "terrascale", "terms": ["engine-brand"], "match": "\\b(?:TerraBase\\.Engine\\.Turso|TursoReplicas)\\b", "reason": "Retained replication fixture namespace and type references bind the pinned SQL engine; no retired public API."}
 ]

@@ -120,12 +120,12 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
                         settings["region"] = "sjc";
                         s3.Configure(settings);
                     },
-                    collection =>
+                    overrides =>
                     {
-                        s3.Route(collection);
-                        collection.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new Serving()));
-                        collection.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new Peers()));
-                        collection.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new HomeAt(api.Server.BaseAddress)));
+                        s3.Route(overrides);
+                        overrides.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new Serving()));
+                        overrides.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new Peers()));
+                        overrides.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new HomeAt(api.Server.BaseAddress)));
                     });
             }
 
