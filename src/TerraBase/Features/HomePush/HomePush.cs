@@ -654,6 +654,11 @@ internal sealed class HomePush(
             {
                 applied = null;
                 reason = error.GetType().Name;
+                if (error is StorageBusyException)
+                {
+                    // StorageBusy has a fixed message; its stack identifies the refusing safeguard without logging payloads.
+                    logger.ZLogWarning(error, $"A home push apply was refused by storage");
+                }
             }
             finally
             {
