@@ -59,7 +59,7 @@ cases = [
     ({"api.txt": "SQL rows"}, "invalid", 2, set()),
     ({"shortcut": ("/unreadable/outside/Hrana",)}, "fail", 1, {"hrana"}),
     ({"shortcut": ("api.txt",), "api.txt": "webhooks"}, "fail", 1, {"webhooks"}),
-    ({"api.cs": "IDocumentStore TerraBaseDocumentsClient DocumentKey CollectionKey CreateCollectionAsync QueryDocumentsAsync"}, "fail", 1, {"documents", "collections"}),
+    ({"api.cs": "IDocumentStore TerraBaseDatabaseClient DocumentKey CollectionKey CreateCollectionAsync QueryDocumentsAsync"}, "fail", 1, {"documents", "collections"}),
     ({"parser.cs": 'using var document = JsonDocument.Parse("{}"); document.RootElement; document.Dispose();'}, "fail", 0, set()),
     ({"parser.cs": 'using var document = JsonDocument.Parse("{}"); document.RootElement; QueryDocumentsAsync();'}, "fail", 1, {"documents"}),
     ({"index.js": "document.appendChild(element); node.ownerDocument"}, "fail", 0, set()),

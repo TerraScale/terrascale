@@ -1,7 +1,7 @@
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>Configures a <see cref="TerraBaseDocumentsClient"/>.</summary>
-public sealed record TerraBaseDocumentsClientOptions
+/// <summary>Configures a <see cref="TerraBaseDatabaseClient"/>.</summary>
+public sealed record TerraBaseDatabaseClientOptions
 {
     /// <summary>
     /// HTTPS origin of the TerraBase client listener, for example <c>https://api.terrascale.tech</c>, or the plain-HTTP
@@ -42,7 +42,7 @@ public sealed record TerraBaseDocumentsClientOptions
 /// <see cref="HttpClient"/> that it never disposes. Thread-safe. Requests are sent once: a lost response leaves the
 /// outcome unknown. Do not automatically replay a mutation. Use <see cref="TerraBaseSqlClient"/> for SQL.
 /// </summary>
-public sealed class TerraBaseDocumentsClient
+public sealed class TerraBaseDatabaseClient
 {
     private readonly TerraBaseConnection connection;
 
@@ -50,14 +50,14 @@ public sealed class TerraBaseDocumentsClient
     /// Creates a client and validates <paramref name="options"/>. The caller-owned HttpClient must disable automatic
     /// redirects; use <see cref="TerraBaseHttp.CreateHandler"/>. The SDK cannot inspect or change its handler settings.
     /// </summary>
-    public TerraBaseDocumentsClient(HttpClient httpClient, TerraBaseDocumentsClientOptions options)
+    public TerraBaseDatabaseClient(HttpClient httpClient, TerraBaseDatabaseClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline, TerraBaseConnection.DefaultMaxResponseBytes,
             options.AccessTokenProvider, anonymousAllowed: true, region: options.Region);
     }
 
-    internal TerraBaseDocumentsClient(TerraBaseConnection connection) => this.connection = connection;
+    internal TerraBaseDatabaseClient(TerraBaseConnection connection) => this.connection = connection;
 
     /// <summary>Canonical lifecycle and usage with project-token authority; does not create identity records.</summary>
     public TerraBaseProjectClient Project(string projectId) =>
@@ -74,7 +74,7 @@ public sealed class TerraBaseDocumentsClient
 /// <param name="Name">Database name, unique within the project.</param>
 public sealed record TerraBaseDatabaseInfo(string Id, string ProjectId, string Name);
 
-/// <summary>One TerraBase database. Thread-safe; obtain it from <see cref="TerraBaseDocumentsClient.Database"/>.</summary>
+/// <summary>One TerraBase database. Thread-safe; obtain it from <see cref="TerraBaseDatabaseClient.Database"/>.</summary>
 public sealed partial class TerraBaseDatabase
 {
     private static readonly TerraBaseJsonContext Json = TerraBaseJsonContext.Wire;
