@@ -68,7 +68,7 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
     internal const string CommitHeader = "X-TerraBase-Commit-Rows";
     internal const int MaxHeaderBytes = 48 * 1024;
 
-    private const string Subjects = "terrabase.local.*.*.*.*";
+    private const string Subjects = "terrabase.provisional.*.*.*.*";
 
     /// <summary>The value of <see cref="CommitHeader"/> for a forwarded write's commits, or null when they are too large.</summary>
     internal static string? EncodeCommits(IReadOnlyList<IReadOnlyList<CapturedRowChange>> commits)
@@ -242,7 +242,7 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
             {
                 await nats.ConnectAsync().ConfigureAwait(false);
                 _ = await js.CreateOrUpdateStreamAsync(new StreamConfig(StreamName,
-                    [$"terrabase.local.{options.Region}.>"])
+                    [$"terrabase.provisional.{options.Region}.>"])
                 {
                     Storage = StreamConfigStorage.File,
                     Retention = StreamConfigRetention.Limits,
@@ -331,7 +331,7 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
     }
 
     private string Subject(TenantContext database) =>
-        $"terrabase.local.{options.Region}.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}";
+        $"terrabase.provisional.{options.Region}.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}";
 
     private string StreamName => "TERRABASE_PROVISIONAL_" + options.Region.ToUpperInvariant();
 
