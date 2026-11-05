@@ -243,7 +243,7 @@ async fn background_renewal_keeps_valid_token_and_shares_expired_waiters() {
     };
     {
         let mut cached = key.cached.lock().await;
-        let Some(super::auth::Cached::Token {
+        let Some(crate::v1::auth::Cached::Token {
             refresh_at,
             expires_at,
             ..
@@ -267,7 +267,7 @@ async fn background_renewal_keeps_valid_token_and_shares_expired_waiters() {
         .unwrap();
     {
         let mut cached = key.cached.lock().await;
-        let Some(super::auth::Cached::Token { expires_at, .. }) = cached.as_mut() else {
+        let Some(crate::v1::auth::Cached::Token { expires_at, .. }) = cached.as_mut() else {
             unreachable!()
         };
         *expires_at = tokio::time::Instant::now();
