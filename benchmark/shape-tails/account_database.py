@@ -3,10 +3,13 @@ tag=os.environ['F9F5_PROOF_TAG']
 root=pathlib.Path.home()/'.local/state/ts-throwaway-account'
 state=json.loads((root/(tag+'.json')).read_text())
 key=(root/(tag+'.key')).read_text().strip()
-form=urllib.parse.urlencode({'grant_type':'client_credentials','project':state['projectId']}).encode()
-headers={'Authorization':'Basic '+base64.b64encode((key[:26]+':'+key).encode()).decode(),'Content-Type':'application/x-www-form-urlencoded'}
-with urllib.request.urlopen(urllib.request.Request('https://auth.terrascale.tech/terrascale/oauth/token',form,headers),timeout=20) as response: bearer=json.load(response)['access_token']
-target=root/(tag+'.token');target.touch(mode=0o600,exist_ok=True);target.chmod(0o600);target.write_text(bearer)
+def refresh_bearer():
+ global bearer
+ form=urllib.parse.urlencode({'grant_type':'client_credentials','project':state['projectId']}).encode()
+ headers={'Authorization':'Basic '+base64.b64encode((key[:26]+':'+key).encode()).decode(),'Content-Type':'application/x-www-form-urlencoded'}
+ with urllib.request.urlopen(urllib.request.Request('https://auth.terrascale.tech/terrascale/oauth/token',form,headers),timeout=20) as response: bearer=json.load(response)['access_token']
+ target=root/(tag+'.token');target.touch(mode=0o600,exist_ok=True);target.chmod(0o600);target.write_text(bearer)
+refresh_bearer()
 def call(region,path,method='GET',body=None):
  data=None if body is None else json.dumps(body).encode()
  h={'Authorization':'Bearer '+bearer,'Content-Type':'application/json'}

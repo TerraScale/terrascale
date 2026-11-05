@@ -23,6 +23,7 @@ if sys.argv[1]=='prepare':
 else:
  baseline=metrics();out=[]
  for repeat in range(3):
+  p.refresh_bearer()
   before=metrics();started=time.perf_counter();times=[]
   for batch in range(16):
    times.append(execute([{'sql':'UPDATE cdc_load SET value=? WHERE id=1','args':[f'{repeat}-{batch}-{row}-'+'x'*1024]} for row in range(64)]))

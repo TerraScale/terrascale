@@ -16,4 +16,6 @@ The tail proof runs a client on each replica node. It bootstraps through that re
 
 The load proof uses an account without shape subscriptions, so its CDC can drain after backup and replica acknowledgments. It runs three measured rounds of 1,024 updates with 1 KiB values, in sixteen transactions per round. Each round takes at most 24 observations, five seconds apart, and requires three consecutive observations at baseline plus 256 or below. This avoids accepting a stale pre-write gauge sample. It records backup metrics and the proof database's database/WAL file lengths. The gauge covers all open home databases; concurrent unrelated work can affect it. A failed drain is a failed proof and leaves its measurements in the output.
 
+The runner refreshes its project access token before each measured burst, so a long drain wait cannot expire the next burst's credential. It never retries a write request.
+
 The floor integration test supplies the safety proof for live shapes, failed backup delivery, R3 pulls and the R7 registration seam. A consumer that stops advancing must retain its history; this benchmark never bypasses a floor.
