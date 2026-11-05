@@ -52,7 +52,9 @@ response. When the shape is up to date, the answer adds:
   pending set, and `_ts_applied` in the pulled pages suppresses late confirmed or rejected images before projection.
 - Ops use the shape's filter and columns, with move-in and move-out. A row a pending transaction inserted is keyed
   `~<transaction>.<row id>` until the home confirms it, because its home row id is not known yet. Later pending changes
-  to that row use the same key; changes to home rows use the home row id.
+  to that row use the same key; changes to home rows resolve the home row id by primary key. If a receiver missed
+  the insert, an update of a row absent from its home pages uses a provisional key, and a delete of an absent row
+  is omitted. A writer-local row id never identifies an unrelated home row after a stream gap.
 - Live responses that carry `local` are `Cache-Control: private, no-store`.
 - `local` requires `live=true` and is `0` or 16 lowercase hex characters (`400 invalid_request` otherwise). The home
   region has no pending local writes and ignores it.
