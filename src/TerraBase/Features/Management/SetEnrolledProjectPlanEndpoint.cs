@@ -5,7 +5,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog) : Endpoint<PlanRequest, IResult>
+internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -37,7 +37,8 @@ internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog) : 
             Validation error => ErrorResponse.From(error),
             TerraBase.Tenancy.PlanTier plan => await catalog.SetEnrolledPlanAsync(project, plan, cancellationToken).ConfigureAwait(false) switch
             {
-                Organization value => TypedResults.Ok(value),
+                Organization value => await fanout.PublishAsync(HttpContext, value.Id, plan, cancellationToken).ConfigureAwait(false) is { } error
+                    ? ErrorResponse.From(error) : TypedResults.Ok(value),
                 NotFound error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),

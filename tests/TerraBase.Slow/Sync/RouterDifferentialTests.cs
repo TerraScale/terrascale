@@ -173,7 +173,6 @@ public sealed class RouterDifferentialTests
             var sjc = await StartAsync("sjc", issuer, regions, nats);
             regions["sjc"] = sjc.Server.BaseAddress;
             var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
-            // Home-only mode writes at gru as fast as it can; the Enterprise plan has no request rate budget there.
             await gru.SetPlanAsync(gru.User, organization, "enterprise", token);
             var project = await gru.CreateProjectAsync(organization, "Project");
             var bearer = issuer.Mint(gru.User, descriptor =>
@@ -261,28 +260,18 @@ public sealed class RouterDifferentialTests
         private static async Task<(HttpStatusCode Status, string Body, string? Route)> ExecuteAsync(
             HttpClient client, ManagedDatabaseRef database, string[] sql, CancellationToken token, bool homeDurable = false)
         {
-            for (var attempt = 0; ; attempt++)
+            using var request = new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri(database.Data + "/sql/execute"))
             {
-                using var request = new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri(database.Data + "/sql/execute"))
-                {
-                    Content = JsonContent.Create(new { statements = sql.Select(text => new { sql = text }).ToArray() }),
-                };
-                if (homeDurable)
-                {
-                    request.Headers.Add("TerraScale-Durability", "home");
-                }
-
-                using var response = await client.SendAsync(request, token);
-                var body = await response.Content.ReadAsStringAsync(token);
-                // sjc admits the organization as Hobby (it holds no plan for it): honor its request budget like a client.
-                if (response.StatusCode == HttpStatusCode.TooManyRequests && body.Contains("tenant_busy", StringComparison.Ordinal) && attempt < 100)
-                {
-                    await Task.Delay(response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1), token);
-                    continue;
-                }
-
-                return (response.StatusCode, body, response.Headers.TryGetValues("TerraScale-Write-Route", out var route) ? route.Single() : null);
+                Content = JsonContent.Create(new { statements = sql.Select(text => new { sql = text }).ToArray() }),
+            };
+            if (homeDurable)
+            {
+                request.Headers.Add("TerraScale-Durability", "home");
             }
+
+            using var response = await client.SendAsync(request, token);
+            var body = await response.Content.ReadAsStringAsync(token);
+            return (response.StatusCode, body, response.Headers.TryGetValues("TerraScale-Write-Route", out var route) ? route.Single() : null);
         }
 
         public async ValueTask DisposeAsync()
