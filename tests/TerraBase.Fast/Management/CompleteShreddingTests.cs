@@ -152,7 +152,7 @@ public sealed class CompleteShreddingTests
         await Assert.That(nativeReplica.Holds(tenant)).IsFalse();
         await Assert.That(Directory.GetFiles(replicaFiles)).IsEmpty();
         await Assert.That(await other.OpenAsync(tenant, payload, token)).IsNull();
-        await Assert.That(() => other.SealAsync(tenant, packed, token)).Throws<DatabaseShreddedException>();
+        await Assert.That(async () => { _ = await other.SealAsync(tenant, packed, token); }).Throws<DatabaseShreddedException>();
         await Assert.That(await other.OpenAsync(snapshot, snapshotPayload, token)).IsNull();
         await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);
         await Assert.That(api.Server.Services.GetRequiredService<HoldStore>().Count).IsEqualTo(0);
