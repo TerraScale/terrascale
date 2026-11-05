@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
@@ -8,6 +9,7 @@ using NATS.Client.JetStream.Models;
 using NATS.Client.KeyValueStore;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Revisions;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -18,27 +20,36 @@ internal sealed record NodeLease(string Node, string Region, string Session);
 
 internal sealed record HomeLease(string OrganizationId, string ProjectId, string DatabaseId, string Home, string Node, long Epoch, string Session);
 
+internal sealed record HeldRevisionAnswer(string Region, string? Revision);
+
 internal sealed class HomeLeases(
-    TerraBaseOptions options, IReplicaCatalog catalog, HomeLeaseGate fences, IStorageEngine engine, IMeterFactory meters, ILogger<HomeLeases> logger)
-    : BackgroundService
+    TerraBaseOptions options, IReplicaCatalog catalog, IReplicaPeers peers, IDatabaseReplicas replicas, DatabaseFences fences, HomeLeaseGate leaseGate,
+    RegionReplication replication, IStorageEngine engine, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger) : BackgroundService
 {
     internal const string Bucket = "terrabase-homes";
     internal static readonly TimeSpan Ttl = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan Grace = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RenewEvery = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan Margin = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ScanEvery = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan AskTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan Backoff = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan StartScan = TimeSpan.FromSeconds(10);
+    private const int ClaimRounds = 3;
     private const int WrongLastSequence = 10071;
 
     private readonly ConcurrentDictionary<string, (HomeLease Lease, ulong Revision)> _homes = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, NodeLease> _nodes = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, bool> _claiming = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _confirming = new(1, 1);
+    private readonly HttpClient _http = PeerHttp.Create(credential);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private NatsConnection? _nats;
     private NatsJSContext? _js;
     private INatsKVStore? _kv;
     private string _session = Ulid.NewUlid().ToString();
     private ulong? _nodeRevision;
+    private Counter<long>? _failovers;
     private Counter<long>? _demotions;
 
     private string NodeKey => "node." + options.MachineId;
@@ -59,8 +70,9 @@ internal sealed class HomeLeases(
                 ReconnectWaitMax = TimeSpan.FromSeconds(1),
             });
             _js = new NatsJSContext(_nats);
+            _failovers = _meter.CreateCounter<long>("terrabase.home.failovers", "{failover}", "Databases this node took over as home after their home's lease expired.");
             _demotions = _meter.CreateCounter<long>("terrabase.home.demotions", "{demotion}", "Databases this node stopped homing because another node holds their lease.");
-            _ = _meter.CreateObservableGauge("terrabase.home.leased", () => fences.Leased.Count, "{database}", "Databases whose writes on this node need its home lease.");
+            _ = _meter.CreateObservableGauge("terrabase.home.leased", () => leaseGate.Leased.Count, "{database}", "Databases whose writes on this node need its home lease.");
             using var scan = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             scan.CancelAfter(StartScan);
             try
@@ -88,11 +100,63 @@ internal sealed class HomeLeases(
     public override void Dispose()
     {
         _confirming.Dispose();
+        _http.Dispose();
         _meter.Dispose();
         base.Dispose();
     }
 
     internal bool Ready => _kv is not null && _nodeRevision is not null;
+
+    internal bool Active => _js is not null;
+
+    internal Func<TenantContext, string, long, CancellationToken, Task<bool>>? FailOver { get; set; }
+
+    internal async ValueTask<bool> TakeAsync(TenantContext database, string fromRegion, long epoch, bool fromDeadNode, CancellationToken cancellationToken)
+    {
+        if (_js is null)
+        {
+            return true;
+        }
+
+        if (_kv is not { } kv || !Ready)
+        {
+            return false;
+        }
+
+        var id = database.DatabaseId!;
+        NatsKVEntry<byte[]>? current;
+        try
+        {
+            current = await kv.GetEntryAsync<byte[]>(HomeKey(id), cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is NatsKVKeyNotFoundException or NatsKVKeyDeletedException)
+        {
+            current = null;
+        }
+
+        var existing = current?.Value is { } bytes ? Decode(bytes) : null;
+        if (existing is not null && (existing.Home != fromRegion || existing.Epoch >= epoch || fromDeadNode && _nodes.ContainsKey(existing.Node)))
+        {
+            return false;
+        }
+
+        var taken = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId, epoch, _session);
+        var value = JsonSerializer.SerializeToUtf8Bytes(taken, TerraBaseJsonContext.Default.HomeLease);
+        try
+        {
+            var revision = current is null
+                ? await kv.CreateAsync(HomeKey(id), value, cancellationToken: cancellationToken).ConfigureAwait(false)
+                : await kv.UpdateAsync(HomeKey(id), value, current.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
+            _homes[id] = (taken, revision);
+            leaseGate.Lease(id, held: true);
+            return true;
+        }
+        catch (Exception error) when (error is NatsKVWrongLastRevisionException or NatsKVCreateException)
+        {
+            logger.ZLogInformation($"Another node changed a home lease first; this node does not take it");
+            return false;
+        }
+    }
 
     internal HomeLease? Find(string database) => _homes.TryGetValue(database, out var entry) ? entry.Lease : null;
 
@@ -139,7 +203,7 @@ internal sealed class HomeLeases(
                 _nodeRevision = _nodeRevision is { } revision
                     ? await PublishNodeAsync(js, lease, revision, cancellationToken).ConfigureAwait(false)
                     : await TakeNodeAsync(js, kv, lease, cancellationToken).ConfigureAwait(false);
-                fences.Renewed(sent + (long)((Ttl - Margin).TotalSeconds * TimeProvider.System.TimestampFrequency));
+                leaseGate.Renewed(sent + (long)((Ttl - Margin).TotalSeconds * TimeProvider.System.TimestampFrequency));
                 if (fresh)
                 {
                     logger.ZLogInformation($"This node holds a new home lease session");
@@ -163,9 +227,9 @@ internal sealed class HomeLeases(
     {
         _nodeRevision = null;
         _session = Ulid.NewUlid().ToString();
-        foreach (var database in fences.Leased)
+        foreach (var database in leaseGate.Leased)
         {
-            fences.Lease(database, held: false);
+            leaseGate.Lease(database, held: false);
         }
     }
 
@@ -227,7 +291,7 @@ internal sealed class HomeLeases(
                 if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
                     && placement.Home == options.Region && (placement.AllRegions || placement.Replicas.Count > 0))
                 {
-                    fences.Lease(database.DatabaseId!, held: false);
+                    leaseGate.Lease(database.DatabaseId!, held: false);
                 }
             }
 
@@ -259,7 +323,7 @@ internal sealed class HomeLeases(
 
                     if (placement is { AllRegions: false, Replicas.Count: 0 })
                     {
-                        fences.Unlease(database.DatabaseId!);
+                        leaseGate.Unlease(database.DatabaseId!);
                         continue;
                     }
 
@@ -281,13 +345,13 @@ internal sealed class HomeLeases(
         var id = database.DatabaseId!;
         if (_homes.TryGetValue(id, out var known) && known.Lease is { Node: var node, Session: var session } && node == options.MachineId && session == _session)
         {
-            fences.Lease(id, held: true);
+            leaseGate.Lease(id, held: true);
             return;
         }
 
-        if (!fences.Leased.Contains(id))
+        if (!leaseGate.Leased.Contains(id))
         {
-            fences.Lease(id, held: false);
+            leaseGate.Lease(id, held: false);
         }
 
         NatsKVEntry<byte[]>? current;
@@ -315,7 +379,7 @@ internal sealed class HomeLeases(
                 ? await kv.CreateAsync(HomeKey(id), value, cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await kv.UpdateAsync(HomeKey(id), value, current.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
             _homes[id] = (lease, revision);
-            fences.Lease(id, held: true);
+            leaseGate.Lease(id, held: true);
         }
         catch (Exception error) when (error is NatsKVWrongLastRevisionException or NatsKVCreateException)
         {
@@ -344,6 +408,22 @@ internal sealed class HomeLeases(
 
     private async Task ObserveAsync(NatsKVEntry<byte[]> entry, CancellationToken cancellationToken)
     {
+        if (entry.Key.StartsWith("node.", StringComparison.Ordinal))
+        {
+            var node = entry.Key["node.".Length..];
+            if (entry.Operation == NatsKVOperation.Put && entry.Value is { } value
+                && JsonSerializer.Deserialize(value, TerraBaseJsonContext.Default.NodeLease) is { } lease)
+            {
+                _nodes[node] = lease;
+            }
+            else if (_nodes.TryRemove(node, out var gone) && node != options.MachineId)
+            {
+                Expired(gone, cancellationToken);
+            }
+
+            return;
+        }
+
         if (!entry.Key.StartsWith("home.", StringComparison.Ordinal) || entry.Operation != NatsKVOperation.Put || entry.Value is not { } bytes
             || Decode(bytes) is not { } home)
         {
@@ -358,9 +438,9 @@ internal sealed class HomeLeases(
         }
 
         var recorded = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var found } ? found : null;
-        if (fences.Leased.Contains(home.DatabaseId))
+        if (leaseGate.Leased.Contains(home.DatabaseId))
         {
-            if (recorded is null || recorded.Version <= home.Epoch)
+            if ((recorded is null || recorded.Version <= home.Epoch) && !fences.Held.Contains(home.DatabaseId))
             {
                 await DemoteAsync(database, home, cancellationToken).ConfigureAwait(false);
             }
@@ -368,13 +448,121 @@ internal sealed class HomeLeases(
         else if (recorded is { } placement && (placement.Home != home.Home || placement.Version < home.Epoch) && placement.Version <= home.Epoch)
         {
             await catalog.UpdatePlacementAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
+            replication.WakeCatalog(home.Home);
+        }
+
+        if (!_nodes.ContainsKey(home.Node) && home.Home != options.Region)
+        {
+            Expired(new NodeLease(home.Node, home.Home, home.Session), cancellationToken);
+        }
+    }
+
+    private void Expired(NodeLease gone, CancellationToken cancellationToken)
+    {
+        foreach (var (id, (lease, _)) in _homes)
+        {
+            if (lease.Node == gone.Node && replicas.Holds(new TenantContext(lease.OrganizationId, PlanTier.Hobby, lease.ProjectId, id)) && _claiming.TryAdd(id, true))
+            {
+                _ = ClaimAsync(lease, cancellationToken);
             }
+        }
+    }
+
+    private async Task ClaimAsync(HomeLease lease, CancellationToken cancellationToken)
+    {
+        var database = new TenantContext(lease.OrganizationId, PlanTier.Hobby, lease.ProjectId, lease.DatabaseId);
+        try
+        {
+            for (var round = 0; round < ClaimRounds && !cancellationToken.IsCancellationRequested; round++)
+            {
+                await Task.Delay(Grace, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+                if (_kv is null || !_homes.TryGetValue(lease.DatabaseId, out var known) || known.Lease != lease || _nodes.ContainsKey(lease.Node) || !Ready)
+                {
+                    return;
+                }
+
+                if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
+                    || replicas.HeldRevision(database) is not { } mine)
+                {
+                    return;
+                }
+
+                if (round < ClaimRounds - 1 && await AheadAsync(database, placement, lease.Home, mine, cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+
+                var epoch = lease.Epoch + 1;
+                if (FailOver is { } failOver && await failOver(database, lease.Home, epoch, cancellationToken).ConfigureAwait(false))
+                {
+                    _failovers?.Add(1);
+                    logger.ZLogWarning($"This node took over a database from {lease.Home:@From} at epoch {epoch:@Epoch}, holding {mine.ToString():@Revision}");
+                }
+                else
+                {
+                    logger.ZLogInformation($"This replica did not take over a database; another node holds its lease or its home came back");
+                }
+
+                return;
+            }
+        }
+        catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            logger.ZLogWarning(error, $"A failover attempt stopped");
+        }
+        finally
+        {
+            _ = _claiming.TryRemove(lease.DatabaseId, out _);
+        }
+    }
+
+    private async Task<bool> AheadAsync(TenantContext database, DatabasePlacement placement, string home, DatabaseRevision mine, CancellationToken cancellationToken)
+    {
+        var others = placement.AllRegions ? null : placement.Replicas.ToHashSet(StringComparer.Ordinal);
+        var peersList = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
+        var asks = peersList.Where(peer => peer.Region != home && peer.Region != options.Region && (others is null || others.Contains(peer.Region)))
+            .Select(peer => HeldAsync(peer, database, cancellationToken));
+        foreach (var answer in await Task.WhenAll(asks).ConfigureAwait(false))
+        {
+            if (answer is { Revision: { } text } && DatabaseRevision.TryParse(text, out var theirs)
+                && (Compare(theirs, mine) > 0 || Compare(theirs, mine) == 0 && string.CompareOrdinal(answer.Region, options.Region) < 0))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private async Task<HeldRevisionAnswer?> HeldAsync(ReplicaPeer peer, TenantContext database, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(AskTimeout);
+        try
+        {
+            using var response = await _http.GetAsync(new Uri(peer.Internal,
+                $"/v1/sync/organizations/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}/held"), timeout.Token).ConfigureAwait(false);
+            return response.StatusCode == HttpStatusCode.OK
+                ? await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.HeldRevisionAnswer, timeout.Token).ConfigureAwait(false)
+                : null;
+        }
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or JsonException && !cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    internal static int Compare(DatabaseRevision left, DatabaseRevision right)
+    {
+        var incarnation = left.Incarnation.CompareTo(right.Incarnation);
+        return incarnation != 0 ? incarnation : left.Generation != right.Generation ? left.Generation.CompareTo(right.Generation) : left.Frame.CompareTo(right.Frame);
     }
 
     private async Task DemoteAsync(TenantContext database, HomeLease home, CancellationToken cancellationToken)
     {
         var id = database.DatabaseId!;
-        fences.Unlease(id);
+        fences.Moved(id, home.Home);
+        leaseGate.Unlease(id);
         if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement } && placement.Version <= home.Epoch)
         {
             await catalog.UpdatePlacementAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
@@ -382,6 +570,7 @@ internal sealed class HomeLeases(
 
         try
         {
+            fences.Release(id);
             _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception error) when (error is IOException or InvalidOperationException)
@@ -391,6 +580,7 @@ internal sealed class HomeLeases(
 
         _demotions?.Add(1);
         logger.ZLogWarning($"This node no longer homes a database: {home.Home:@Home} holds its lease at epoch {home.Epoch:@Epoch}; it follows as a replica");
+        replication.WakeCatalog(home.Home);
     }
 
     private static DatabasePlacement Moved(DatabasePlacement placement, HomeLease home) => placement.AllRegions
