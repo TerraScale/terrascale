@@ -40,12 +40,13 @@ response. When the shape is up to date, the answer adds:
   `TB-Shape-Local` carries the same value.
 - At the head, a live request answers as soon as the set differs from `local`, and otherwise waits for a commit as before.
   A local commit on the same node wakes waiting tails at once; other nodes and replica regions subscribe directly to
-  `terrabase.local.*.*.*.*`. The writer publishes to
-  `terrabase.local.<origin>.<organization>.<project>.<database>` with its transaction id as `Nats-Msg-Id`.
+  `terrabase.provisional.*.*.*.*`. The writer publishes to
+  `terrabase.provisional.<origin>.<organization>.<project>.<database>` with its transaction id as `Nats-Msg-Id`.
   `TERRABASE_PROVISIONAL_<ORIGIN>` retains those subjects in the origin region, using one file-backed replica,
   64 MiB, a 1 MiB message limit, ten-minute retention/deduplication, and discard-old retention.
   Its row images are sealed as TBP1 under the database envelope key before publication; receiving regions decrypt
   only while custody permits it. Database erasure also purges that database's provisional subject and pending rows.
+  The sealed subject namespace prevents raw local notices from entering the retained stream during a rolling update.
   Live subscribers receive the publication in one hop without a pull through home or waiting for the storage ack.
   The provisional publisher has eight pending messages, each at most 1 MiB of captured rows; the wire limit includes
   TBP1's 78-byte overhead. An overflow falls
