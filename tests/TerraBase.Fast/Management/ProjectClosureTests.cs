@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Features.Backup;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -18,7 +19,7 @@ public sealed class ProjectClosureTests
     public async Task Account_erasure_revokes_existing_project_keys_and_the_current_backup_destination()
     {
         var s3 = new FakeS3();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, s3.Route);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => { s3.Route(services); ManualBackupHosting.Configure(services); });
         var database = await api.CreateManagedDatabaseAsync();
         var route = $"/v1/management/organizations/{database.Organization}/projects/{database.Project}";
         using var issued = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
@@ -43,6 +44,7 @@ public sealed class ProjectClosureTests
         {
             using var response = await PutAsync(api.Server.Client, database.Project, closure, database.Organization, 2, token);
             await Assert.That(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Accepted).IsTrue();
+            await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);
             return response.StatusCode == HttpStatusCode.OK;
         }, timeout: TimeSpan.FromSeconds(60));
         using var revoked = await ManagementApi.SqlAsync(data, database, "SELECT 1");

@@ -1,8 +1,12 @@
+using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using TerraBase.Features.Shapes;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.HomeApply;
@@ -31,8 +35,10 @@ public sealed class CompleteShreddingTests
             [new RegionChange("insert", "items", null, new Dictionary<string, JsonElement> { ["value"] = JsonSerializer.SerializeToElement(sentinel) })]);
         var packed = HomePush.Encode(transaction);
         var payload = await crypto.SealAsync(tenant, packed, token);
-        using var held = await api.Server.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/sync/holds"),
-            new HeldTransaction(1, "sjc-1", "gru", tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, 1, payload), TerraBaseJsonContext.Default.HeldTransaction, token);
+        using var holdBody = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(
+            new HeldTransaction(1, "sjc-1", "gru", tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, 1, payload), TerraBaseJsonContext.Default.HeldTransaction));
+        holdBody.Headers.ContentType = new("application/json");
+        using var held = await api.Server.Client.PostAsync(ManagementApi.Uri("/v1/sync/holds"), holdBody, token);
         await Assert.That(held.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
         await using (var read = await store.BeginTransactionAsync(write: false, token))
@@ -59,8 +65,16 @@ public sealed class CompleteShreddingTests
     [Test]
     public async Task Custody_failure_never_acknowledges_shredding_and_durable_deletion_retries(CancellationToken token)
     {
-        var s3 = new FakeS3();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => { s3.Route(services); ManualBackupHosting.Configure(services); });
+        var s3 = new FakeS3 { R2 = true };
+        using var cloudflare = new FakeCloudflare();
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
+        {
+            s3.Route(services);
+            cloudflare.Route(services);
+            ManualBackupHosting.Configure(services);
+            services.Remove(services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ShapeCdnPurge)));
+        });
         var database = await api.CreateManagedDatabaseAsync();
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
         var scope = BackupLayout.KeyScope(tenant);
@@ -72,5 +86,27 @@ public sealed class CompleteShreddingTests
         s3.FailPut = _ => false;
         await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);
         await Assert.That(() => api.Server.Services.GetRequiredService<DataKeys>().CurrentAsync(scope, token)).Throws<DatabaseShreddedException>();
+
+        // A durable entry survives both an interrupted object delete and a refused Cloudflare request.
+        var services = api.Server.Services;
+        var custody = services.GetRequiredService<KeyCustody>();
+        var objectKey = "v1/shapes/h1-0000000000000000/" + new string('a', 64);
+        var url = "https://" + TerraBase.Configuration.ShapeStorageSettings.CdnHost + "/" + objectKey;
+        using var body = new MemoryStream([1, 2, 3]);
+        await custody.Store.PutAsync(objectKey, body, token);
+        await Assert.That(await services.GetRequiredService<IShapeCdnPurge>().QueueAsync(url, token)).IsTrue();
+        await services.GetRequiredService<ShapeCdnPurge>().RunOnceAsync(token);
+        await Assert.That(cloudflare.Purged).IsEmpty();
+        _ = await custody.Store.DeleteAsync(objectKey, token);
+        using var refused = Purger("refused-token");
+        await refused.RunOnceAsync(token);
+        await Assert.That(cloudflare.Purged).IsEmpty();
+        using var restarted = Purger(FakeCloudflare.Token);
+        await restarted.RunOnceAsync(token);
+        await Assert.That(cloudflare.Purged).Contains(url[8..(url.LastIndexOf('/') + 1)]);
+
+        ShapeCdnPurge Purger(string credential) => new(services.GetRequiredService<IHttpClientFactory>(), credential,
+            TimeProvider.System, services.GetRequiredService<IMeterFactory>(), services.GetRequiredService<ILogger<ShapeCdnPurge>>(),
+            services.GetRequiredService<SystemCatalog>(), custody);
     }
 }
