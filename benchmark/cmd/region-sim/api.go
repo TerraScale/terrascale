@@ -55,7 +55,11 @@ func (s *sqlAPI) bearer() string {
 }
 
 func (s *sqlAPI) exec(ctx context.Context, n *node, statements ...stmt) (apiReply, error) {
-	body, _ := json.Marshal(map[string]any{"statements": statements})
+	return s.execDurable(ctx, n, "local", statements...)
+}
+
+func (s *sqlAPI) execDurable(ctx context.Context, n *node, durability string, statements ...stmt) (apiReply, error) {
+	body, _ := json.Marshal(map[string]any{"statements": statements, "durability": durability})
 	url := fmt.Sprintf("%s/v1/projects/%s/databases/%s/sql/execute", n.base(), s.project, s.db)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
