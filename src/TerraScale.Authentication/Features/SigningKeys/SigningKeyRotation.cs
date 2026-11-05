@@ -6,7 +6,7 @@ using ZLogger;
 namespace TerraScale.Authentication.Features.SigningKeys;
 
 /// <summary>
-/// Keeps the serving issuer's signing keys usable and rotated on every replica. At startup it creates ts-auth's collections
+/// Keeps the serving issuer's signing keys usable and rotated on every replica. At startup it creates ts-auth's tables
 /// in its seeded TerraBase database (<see cref="AuthStore.ProvisionAsync"/>, idempotent), registers the configured OIDC
 /// clients (<see cref="ClientRegistration"/>), seeds the platform owner and projects, then provisions the first signing
 /// key if absent and checks every stored key under this master key, retrying (after 5 s, doubling up to 5 min, so an

@@ -90,10 +90,10 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
             var token = Prefix + RandomNumberGenerator.GetString(Alphabet, 52);
             var invitation = new InvitationRecord(AuthStore.NewId(), Instance, organizationId, projectId, email, role, caller.Id, now, now + Lifetime, "pending", Tokens.Sha256Hex(token));
             // Orders the invitation against a deletion of the organization or project, whose invitations are deleted after it.
-            List<StoreOperation> operations = [authority, AuthStore.Require(AuthStore.OrganizationCollection, Instance, organizationId, PlatformDirectory.Filter("exists", "/id"))];
+            List<StoreOperation> operations = [authority, AuthStore.Require(AuthStore.OrganizationTable, Instance, organizationId, PlatformDirectory.Filter("exists", "/id"))];
             if (projectId is not null)
             {
-                operations.Add(AuthStore.Require(AuthStore.ProjectCollection, Instance, projectId, PlatformDirectory.Filter("exists", "/id")));
+                operations.Add(AuthStore.Require(AuthStore.ProjectTable, Instance, projectId, PlatformDirectory.Filter("exists", "/id")));
             }
 
             int? claim = null;
@@ -115,7 +115,7 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
             }
 
             operations.Add(AuthStore.Claim(Instance, TokenKind, invitation.TokenHash, invitation.Id));
-            operations.Add(AuthStore.Create(AuthStore.InvitationCollection, Instance, invitation.Id, Serialize(invitation)));
+            operations.Add(AuthStore.Create(AuthStore.InvitationTable, Instance, invitation.Id, Serialize(invitation)));
             operations.Add(directory.Audit(organizationId, caller.Id, "invitation.created", email, projectId is null ? role : $"{projectId}/{role}"));
             return new PlatformDirectory.Plan<(InvitationRecord, string, string)>(operations, (invitation, token, organizationName), claim, PendingConflict());
         }, cancellationToken).ConfigureAwait(false);
@@ -153,7 +153,7 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
             conditions.Add(PlatformDirectory.Equal("/projectId", projectId));
         }
 
-        var page = await directory.PageAsync(AuthStore.InvitationCollection, conditions, PlatformJson.Default.InvitationRecord, "/id", limit, after, cancellationToken).ConfigureAwait(false);
+        var page = await directory.PageAsync(AuthStore.InvitationTable, conditions, PlatformJson.Default.InvitationRecord, "/id", limit, after, cancellationToken).ConfigureAwait(false);
         return new([.. page.Items.Select(item => item.Value).Where(item => item.InstanceId == Instance && item.OrganizationId == organizationId && (projectId is null || item.ProjectId == projectId))], page.Next);
     }
 
@@ -289,7 +289,7 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
     {
         var record = invitation.Value;
         var decided = record with { Status = status, DecidedAt = clock.GetUtcNow(), DecidedBy = userId };
-        List<StoreOperation> operations = [AuthStore.Replace(AuthStore.InvitationCollection, Instance, record.Id, Serialize(decided), invitation.Version)];
+        List<StoreOperation> operations = [AuthStore.Replace(AuthStore.InvitationTable, Instance, record.Id, Serialize(decided), invitation.Version)];
         var pending = PendingKey(record.OrganizationId, record.ProjectId, record.Email);
         if (await store.FindUniqueAsync(Instance, PendingKind, pending, cancellationToken).ConfigureAwait(false) is { } held && held.OwnerId == record.Id)
         {
@@ -336,9 +336,9 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
 
     private async Task<Versioned<InvitationRecord>?> ReadAsync(string invitationId, CancellationToken cancellationToken)
     {
-        var document = await store.GetAsync(AuthStore.InvitationCollection, Instance, invitationId, cancellationToken).ConfigureAwait(false);
-        return document?.Document.Deserialize(PlatformJson.Default.InvitationRecord) is { } invitation && invitation.InstanceId == Instance && invitation.Id == invitationId
-            ? new(invitation, document.Version)
+        var rowData = await store.GetAsync(AuthStore.InvitationTable, Instance, invitationId, cancellationToken).ConfigureAwait(false);
+        return rowData?.Body.Deserialize(PlatformJson.Default.InvitationRecord) is { } invitation && invitation.InstanceId == Instance && invitation.Id == invitationId
+            ? new(invitation, rowData.Version)
             : null;
     }
 }

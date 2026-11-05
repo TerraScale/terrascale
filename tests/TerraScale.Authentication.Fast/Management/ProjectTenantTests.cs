@@ -37,9 +37,9 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         var listed = (await oidc.OkAsync(HttpMethod.Get, $"{root}/clients", token)).GetProperty("items");
         await Assert.That(listed.GetArrayLength()).IsEqualTo(1);
         await Assert.That(listed[0].TryGetProperty("client_secret", out _)).IsFalse();
-        var stored = await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.OidcApplicationCollection, project, clientId);
-        await Assert.That(stored!.Document.GetRawText()).DoesNotContain(secret);
-        await Assert.That(stored.Document.GetProperty("instanceId").GetString()).IsEqualTo(project);
+        var stored = await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.OidcApplicationTable, project, clientId);
+        await Assert.That(stored!.Body.GetRawText()).DoesNotContain(secret);
+        await Assert.That(stored.Body.GetProperty("instanceId").GetString()).IsEqualTo(project);
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token, body with { redirect_uris = InsecureRedirect })).IsEqualTo((400, "invalid_request"));
         var settings = await oidc.OkAsync(HttpMethod.Get, $"{root}/settings", token);
         await Assert.That(settings.GetProperty("methods").GetProperty("sign_up").GetBoolean()).IsTrue();
