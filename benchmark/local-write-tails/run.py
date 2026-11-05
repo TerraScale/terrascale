@@ -16,11 +16,16 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--tag', required=True)
 parser.add_argument('--output', required=True)
+parser.add_argument('--existing', action='store_true')
+parser.add_argument('--config', type=Path)
 args = parser.parse_args()
-root = Path.home() / '.local/state/ts-throwaway-account'
-state = json.loads((root / (args.tag + '.json')).read_text())
-config = {'key': (root / (args.tag + '.key')).read_text().strip(),
-          'project': state['projectId'], 'database': 'localtails'}
+if args.config:
+    config = json.loads(args.config.read_text())
+else:
+    root = Path.home() / '.local/state/ts-throwaway-account'
+    state = json.loads((root / (args.tag + '.json')).read_text())
+    config = {'key': (root / (args.tag + '.key')).read_text().strip(),
+              'project': state['projectId'], 'database': 'localtails'}
 output = open(args.output, 'w')
 REGIONS = ['gru', 'sjc', 'fra']
 events = []
@@ -71,9 +76,17 @@ def usage(label):
 def worker(source):
     clients = {r:client(r) for r in REGIONS}
     try:
-        for r,(c,h,last) in clients.items():
-            attempt('warmup',r,lambda c=c:c.database(config['database']).query('SELECT 1 AS ready'),last,source=source)
         c,h,last=clients[source]
+        for n in range(31):
+            attempt('baseline' if n else 'baseline_cold',source,lambda:h.get(f'{c.base_url}/healthz').raise_for_status(),last,n=n)
+        for r,(c,h,last) in clients.items():
+            for readiness in range(60):
+                _,ok=attempt('warmup',r,lambda c=c:c.database(config['database']).query('SELECT 1 AS ready'),last,source=source)
+                timing=last.get('headers',{}).get('server-timing','')
+                if ok and (r=='gru' or 'home;dur=' not in timing and 'replica_open;dur=' in timing): break
+            else: raise RuntimeError('replica did not become ready')
+        c,h,last=clients[source]
+        attempt('warmup',source,lambda:c.database(config['database']).query('SELECT 1 AS ready'),last,source=source)
         for repeat in range(1,4):
             failures=0
             for n in range(100):
@@ -94,15 +107,16 @@ def worker(source):
 
 if __name__=='__main__':
     emit({'kind':'environment','host':os.uname().nodename,'sdk_revision':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())})
-    c,h,last=client('gru')
-    try:
-        token = c._bearer()
-        response = h.post(f'{c.base_url}/v1/projects/{config["project"]}/databases', headers={'Authorization':'Bearer '+token},
-                          json={'name':config['database'], 'homeRegion':'gru', 'allRegions':True})
-        response.raise_for_status()
-        emit({'kind':'created','database':response.json()['id']})
-        c.database(config['database']).execute('CREATE TABLE acceptance_rows (id TEXT PRIMARY KEY, writer TEXT, sequence INTEGER, body TEXT)')
-    finally:h.close()
+    if not args.existing:
+        c,h,last=client('gru')
+        try:
+            token = c._bearer()
+            response = h.post(f'{c.base_url}/v1/projects/{config["project"]}/databases', headers={'Authorization':'Bearer '+token},
+                              json={'name':config['database'], 'homeRegion':'gru', 'allRegions':True})
+            response.raise_for_status()
+            emit({'kind':'created','database':response.json()['id']})
+            c.database(config['database']).execute('CREATE TABLE acceptance_rows (id TEXT PRIMARY KEY, writer TEXT, sequence INTEGER, body TEXT)')
+        finally:h.close()
     usage('before')
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         list(pool.map(worker,REGIONS))
