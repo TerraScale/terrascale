@@ -71,7 +71,11 @@ eventual consistency.
 3. **Pulls.** A follower pulls once per batch of notices, at most 8 pulls at a time per node. The replica's sync client
    still makes its own `pull-updates` request; when a pushed answer starts at or before the revision the client sends
    and ends after it (same incarnation), that request is answered from the pushed bytes without a round trip, since a
-   page answer holds the final content of every page changed after its base. Otherwise the request goes to the home.
+   page answer holds the final content of every page changed after its base. A pull that needs the home (the sweep, a
+   reconnect, read-your-writes, or no pushed answer that covers the replica) first fetches the home's answer for the
+   revision it holds, up to 1 MiB reserved against the memory budget, and then applies it as a pushed answer; a larger or
+   full answer is fetched by the sync client itself. Readers wait for a pull only while it applies, never while it waits
+   on the home, and a pull that finds the home unchanged applies nothing.
    A node keeps at most 8 pushed answers per replica, reserved against its memory budget. A notice for a revision the
    replica already holds is ignored. A failed pull is retried with backoff from 50 ms to 2 s until it succeeds. Every
    replica also pulls from the home on the 30-second sweep and after every NATS reconnect, so lost notices and network
