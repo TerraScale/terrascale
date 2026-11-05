@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
     public sealed class BackupPaginationJourneyTests(DashboardRootFixture fixture)
     {
         [Test]
+        [Category("Slow")]
         public async Task HappyPagesTraverseBackupsAndDatabasesExactlyOnce()
         {
             await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root);

@@ -24,6 +24,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
         }
 
         [Test]
+        [Category("Slow")]
         public async Task SignUpStateSurvivesAColdRestartOfBothReplicas()
         {
             await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
