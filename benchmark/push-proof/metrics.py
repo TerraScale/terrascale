@@ -58,7 +58,7 @@ if args.health_samples:
                                              for argument in ("-o", "/dev/null", f"http://{peer_address}:8081/healthz")]], input=config.encode())
         peer_health_ms[node] = {"region": region, "health": json.loads(get("healthz", peer_address)), "samples_ms": [round(float(line) * 1000, 3) for line in elapsed.decode().splitlines()]}
         metrics = get("metrics", peer_address).decode().splitlines()
-        peer_write_metrics[node] = [line for line in metrics if line.startswith(("terrabase_push_", "terrabase_catalog_cache_lookups_"))]
+        peer_write_metrics[node] = [line for line in metrics if line.startswith(("terrabase_push_", "terrabase_catalog_cache_lookups_", "terrabase_keys_refresh_"))]
         if region == environment[b"TS_REGION"].decode():
             peer_local_ack_metrics[node] = [line for line in metrics
                                             if line.startswith(("terrabase_localack_partner", "terrabase_localwrites_available"))]
