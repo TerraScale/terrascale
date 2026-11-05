@@ -107,28 +107,28 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 return ManagementErrors.NotFound;
             }
 
-            if (organization.Plan == plan)
+            if (organization.Plan == plan && await IsPlanPublishedAsync(transaction, organizationId, plan, cancellationToken).ConfigureAwait(false))
             {
                 return organization;
             }
 
             organization = organization with { Plan = plan };
             _ = await CatalogTables.PutOrganizationAsync(transaction, organization, cancellationToken).ConfigureAwait(false);
+            await PublishPlanAsync(transaction, organizationId, plan, cancellationToken).ConfigureAwait(false);
             return organization;
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<SetPlanResult> SetStoragePlanAsync(string organizationId, PlanTier plan, CancellationToken cancellationToken) =>
         await WriteAsync<SetPlanResult>(async transaction =>
         {
-            // A deleted organization stays deleted; Hobby is the default, so a missing organization needs no record for it.
             var organization = await CatalogTables.OrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
-            if (await CatalogTables.RetiredAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false) || organization is null && plan == PlanTier.Hobby
+            if (await CatalogTables.RetiredAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false)
                 || organization is not null && organization.CreatedBy != OperatorHandler.KeyId)
             {
                 return ManagementErrors.NotFound;
             }
 
-            if (organization?.Plan == plan)
+            if (organization?.Plan == plan && await IsPlanPublishedAsync(transaction, organizationId, plan, cancellationToken).ConfigureAwait(false))
             {
                 return organization;
             }
@@ -136,6 +136,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             // Created as enrollment creates it (ResolveProjectAsync), which then adopts it with this plan.
             organization = (organization ?? new Organization(organizationId, organizationId, OperatorHandler.KeyId, time.GetUtcNow())) with { Plan = plan };
             _ = await CatalogTables.PutOrganizationAsync(transaction, organization, cancellationToken).ConfigureAwait(false);
+            await PublishPlanAsync(transaction, organizationId, plan, cancellationToken).ConfigureAwait(false);
 
             return organization;
         }, static error => error, cancellationToken).ConfigureAwait(false);
