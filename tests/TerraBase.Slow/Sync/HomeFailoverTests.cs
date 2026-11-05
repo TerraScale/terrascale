@@ -61,6 +61,7 @@ public sealed class HomeFailoverTests
         var pushed = new ConcurrentQueue<string>();
         var pushedDuringCut = 0;
         var unknown = 0;
+        var sjcStatuses = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
         using var stop = new CancellationTokenSource();
         var writers = new[] { (all, "all"), (local, "local") }.Select(pair => Task.Run(async () =>
         {
@@ -96,6 +97,12 @@ public sealed class HomeFailoverTests
                         new { sql = "INSERT INTO acked (id) VALUES (?)", args = new[] { row } },
                     },
                 }, token);
+                if (Volatile.Read(ref cut) == 1 && sjcLeases.Find(all.Id)?.Home != "sjc")
+                {
+                    var body = await response.Content.ReadAsStringAsync(token);
+                    sjcStatuses.AddOrUpdate($"{(int)response.StatusCode} {(response.Headers.TryGetValues("X-TerraBase-Region", out var regions) ? regions.First() : "-")} {body[..Math.Min(160, body.Length)]}", 1, (_, n) => n + 1);
+                }
+
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
                     pushed.Enqueue(row);
@@ -131,7 +138,7 @@ public sealed class HomeFailoverTests
         await Assert.That(acked[all.Id].Where(row => !allStored.Contains(row))).IsEmpty();
         await Assert.That(ackedAfterCut).IsEqualTo(0);
         await Assert.That(pushed.Where(row => !allStored.Contains(row))).IsEmpty().Because("the new home applies the pushes its former home never consumed");
-        await Assert.That(pushedDuringCut).IsGreaterThan(0);
+        await Assert.That(pushedDuringCut).IsGreaterThan(0).Because(string.Join(" | ", sjcStatuses.Select(pair => $"{pair.Value}x {pair.Key}")));
         var tally = await TallyAsync(viaSjc, all, token);
         await Assert.That(tally).IsBetween((long)pushed.Count, (long)pushed.Count + Volatile.Read(ref unknown)).Because("_ts_applied applies each pushed transaction once");
 
