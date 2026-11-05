@@ -67,6 +67,7 @@ public sealed class HomeFailoverTests
         var oldStore = (await oldEngine.OpenDatabaseAsync(oldTenant, token))!;
         var cut = 0;
         var ackedAfterCut = 0;
+        var writeStatuses = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
         var pushed = new ConcurrentQueue<string>();
         var pushedDuringCut = 0;
         var unknown = 0;
@@ -87,6 +88,7 @@ public sealed class HomeFailoverTests
                     statements = new[] { new { sql = "INSERT INTO acked (id) VALUES (?)", args = new[] { row } } },
                     durability,
                 }, token);
+                writeStatuses.AddOrUpdate($"{durability} {(int)response.StatusCode}", 1, (_, count) => count + 1);
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
                     rows.Enqueue(row);
@@ -139,8 +141,16 @@ public sealed class HomeFailoverTests
             }
         }, token)).ToArray();
 
-        await TerraBaseTestServer.EventuallyAsync(async _ => acked.Values.All(rows => rows.Count >= 10)
-            && (await ReplicaCountAsync(viaSjc, all, token)) >= 10 && (await ReplicaCountAsync(viaSjc, local, token)) >= 10, TimeSpan.FromSeconds(30));
+        try
+        {
+            await TerraBaseTestServer.EventuallyAsync(async _ => acked.Values.All(rows => rows.Count >= 10)
+                && (await ReplicaCountAsync(viaSjc, all, token)) >= 10 && (await ReplicaCountAsync(viaSjc, local, token)) >= 10, TimeSpan.FromSeconds(30));
+        }
+        catch
+        {
+            Console.WriteLine($"Before partition: all acknowledged={acked[all.Id].Count}, local acknowledged={acked[local.Id].Count}, all replica={await ReplicaCountAsync(viaSjc, all, token)}, local replica={await ReplicaCountAsync(viaSjc, local, token)}; writes={string.Join(", ", writeStatuses.Select(pair => $"{pair.Key}:{pair.Value}"))}; tasks={string.Join(", ", writers.Select(writer => writer.Status))}");
+            throw;
+        }
         gruNats.Cut();
         Volatile.Write(ref cut, 1);
 
