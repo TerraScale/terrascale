@@ -14,6 +14,9 @@ formatting and runs the Fast suite. `make benchmark-build` also builds the
   to replica visibility, optionally timing replication notices.
 - [`region-sim`](region-sim/README.md) drives a local SQL cluster with the real CLI.
 - [`shape-tails`](shape-tails/README.md) measures SQL subscription delivery.
+- [`overlay-proof`](overlay-proof/README.md) proves sjc provisional, confirmed
+  and revert states; [`cmd/overlay-bench`](cmd/overlay-bench/main.go) measures
+  forwarded-write visibility on a region's live shape tail.
 - [`orm-matrix`](orm-matrix/) exercises PostgreSQL clients and ORMs.
 - [`dotnet`](dotnet/README.md) holds endpoint, logging and engine diagnostics.
 

@@ -1,0 +1,4732 @@
+{
+  "source": "6cacd06cf63aa75d91eaac5d1230b550ffc87fae",
+  "captured_at": "2026-11-05T12:20:41.573076+00:00",
+  "health": {
+    "gru": {
+      "captured_at": "2026-11-05T11:48:48.111872+00:00",
+      "image": "ghcr.io/terrascale/terrabase@sha256:e8a4665a262477a6bb008949d98c292daf06f379fbbe42697b14bfa4862922ad",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "gru",
+        "storageFormat": "22-41a88901325a",
+        "revision": "6cacd06cf63aa75d91eaac5d1230b550ffc87fae",
+        "machine": "ts-gru-1"
+      },
+      "metrics": [
+        "terrabase_push_applies_total{otel_scope_name=\"TerraScale.TerraBase\",state=\"confirmed\"} 44",
+        "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+      ]
+    },
+    "sjc": {
+      "captured_at": "2026-11-05T11:48:49.753797+00:00",
+      "image": "ghcr.io/terrascale/terrabase@sha256:e8a4665a262477a6bb008949d98c292daf06f379fbbe42697b14bfa4862922ad",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "sjc",
+        "storageFormat": "22-41a88901325a",
+        "revision": "6cacd06cf63aa75d91eaac5d1230b550ffc87fae",
+        "machine": "ts-sjc-1"
+      },
+      "metrics": [
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"0\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"5\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"10\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"25\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"50\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"75\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"100\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"250\"} 44",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"500\"} 45",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"750\"} 45",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"1000\"} 45",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"2500\"} 45",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"5000\"} 45",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"7500\"} 45",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"10000\"} 45",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"+Inf\"} 45",
+        "terrabase_push_lag_milliseconds_sum{otel_scope_name=\"TerraScale.TerraBase\"} 8871",
+        "terrabase_push_lag_milliseconds_count{otel_scope_name=\"TerraScale.TerraBase\"} 45",
+        "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+      ]
+    },
+    "fra": {
+      "captured_at": "2026-11-05T11:48:50.194902+00:00",
+      "image": "ghcr.io/terrascale/terrabase@sha256:e8a4665a262477a6bb008949d98c292daf06f379fbbe42697b14bfa4862922ad",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "fra",
+        "storageFormat": "22-41a88901325a",
+        "revision": "6cacd06cf63aa75d91eaac5d1230b550ffc87fae",
+        "machine": "ts-fra-1"
+      },
+      "metrics": [
+        "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+      ]
+    }
+  },
+  "forwarded": [
+    {
+      "repeat": 1,
+      "write": 1,
+      "writeMs": 355.289,
+      "ackToProvisionalMs": 30.138,
+      "ackToConfirmedMs": 43.353,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 2,
+      "writeMs": 196.532,
+      "ackToProvisionalMs": 22.267,
+      "ackToConfirmedMs": 34.212,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 3,
+      "writeMs": 204.798,
+      "ackToProvisionalMs": 24.798,
+      "ackToConfirmedMs": 37.49,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 4,
+      "writeMs": 195.833,
+      "ackToProvisionalMs": 4.204,
+      "ackToConfirmedMs": 35.944,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 5,
+      "writeMs": 201.417,
+      "ackToProvisionalMs": 4.68,
+      "ackToConfirmedMs": 35.315,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 6,
+      "writeMs": 197.507,
+      "ackToProvisionalMs": 39.178,
+      "ackToConfirmedMs": 50.226,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 7,
+      "writeMs": 207.871,
+      "ackToProvisionalMs": 23.14,
+      "ackToConfirmedMs": 35.479,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 8,
+      "writeMs": 196.03,
+      "ackToProvisionalMs": 23.797,
+      "ackToConfirmedMs": 36.326,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 9,
+      "writeMs": 205.093,
+      "ackToProvisionalMs": 26.127,
+      "ackToConfirmedMs": 38.553,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 10,
+      "writeMs": 197.653,
+      "ackToProvisionalMs": 24.314,
+      "ackToConfirmedMs": 36.902,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 11,
+      "writeMs": 197.845,
+      "ackToProvisionalMs": 3.88,
+      "ackToConfirmedMs": 31.504,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 12,
+      "writeMs": 197.323,
+      "ackToProvisionalMs": 32.085,
+      "ackToConfirmedMs": 46.058,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 13,
+      "writeMs": 198.161,
+      "ackToProvisionalMs": 3.455,
+      "ackToConfirmedMs": 29.235,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 14,
+      "writeMs": 192.765,
+      "ackToProvisionalMs": 3.418,
+      "ackToConfirmedMs": 30.247,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 15,
+      "writeMs": 202.284,
+      "ackToProvisionalMs": 4.844,
+      "ackToConfirmedMs": 38.341,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 16,
+      "writeMs": 204.147,
+      "ackToProvisionalMs": 2.642,
+      "ackToConfirmedMs": 224.278,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 17,
+      "writeMs": 208.209,
+      "ackToProvisionalMs": 4.313,
+      "ackToConfirmedMs": 34.774,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 18,
+      "writeMs": 197.299,
+      "ackToProvisionalMs": 3.194,
+      "ackToConfirmedMs": 67.665,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 19,
+      "writeMs": 198.627,
+      "ackToProvisionalMs": 24.549,
+      "ackToConfirmedMs": 36.061,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 1,
+      "write": 20,
+      "writeMs": 196.11,
+      "ackToProvisionalMs": 21.528,
+      "ackToConfirmedMs": 33.869,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "warmup",
+      "measuredRepeat": null
+    },
+    {
+      "repeat": 2,
+      "write": 1,
+      "writeMs": 196.659,
+      "ackToProvisionalMs": 27.262,
+      "ackToConfirmedMs": 37.996,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 2,
+      "writeMs": 194.329,
+      "ackToProvisionalMs": 22.52,
+      "ackToConfirmedMs": 33.764,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 3,
+      "writeMs": 203.901,
+      "ackToProvisionalMs": 3.463,
+      "ackToConfirmedMs": 34.294,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 4,
+      "writeMs": 194.082,
+      "ackToProvisionalMs": 25.661,
+      "ackToConfirmedMs": 38.532,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 5,
+      "writeMs": 202.898,
+      "ackToProvisionalMs": 23.645,
+      "ackToConfirmedMs": 35.07,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 6,
+      "writeMs": 196.14,
+      "ackToProvisionalMs": 2.822,
+      "ackToConfirmedMs": 87.651,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 7,
+      "writeMs": 197.829,
+      "ackToProvisionalMs": 2.477,
+      "ackToConfirmedMs": 65.137,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 8,
+      "writeMs": 195.627,
+      "ackToProvisionalMs": 22.88,
+      "ackToConfirmedMs": 33.032,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 9,
+      "writeMs": 198.775,
+      "ackToProvisionalMs": 3.485,
+      "ackToConfirmedMs": 28.914,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 10,
+      "writeMs": 192.952,
+      "ackToProvisionalMs": 4.133,
+      "ackToConfirmedMs": 35.274,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 11,
+      "writeMs": 203.481,
+      "ackToProvisionalMs": 4.981,
+      "ackToConfirmedMs": 228.608,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 12,
+      "writeMs": 201.711,
+      "ackToProvisionalMs": 3.66,
+      "ackToConfirmedMs": 31.905,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 13,
+      "writeMs": 201.879,
+      "ackToProvisionalMs": 23.516,
+      "ackToConfirmedMs": 35.526,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 14,
+      "writeMs": 199.465,
+      "ackToProvisionalMs": 1.093,
+      "ackToConfirmedMs": 31.255,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 15,
+      "writeMs": 196.213,
+      "ackToProvisionalMs": 4.511,
+      "ackToConfirmedMs": 34.98,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 16,
+      "writeMs": 196.643,
+      "ackToProvisionalMs": 3.558,
+      "ackToConfirmedMs": 85.488,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 17,
+      "writeMs": 195.954,
+      "ackToProvisionalMs": 2.795,
+      "ackToConfirmedMs": 32.188,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 18,
+      "writeMs": 197.121,
+      "ackToProvisionalMs": 4.261,
+      "ackToConfirmedMs": 28.253,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 19,
+      "writeMs": 195.841,
+      "ackToProvisionalMs": 23.226,
+      "ackToConfirmedMs": 38.28,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 2,
+      "write": 20,
+      "writeMs": 207.986,
+      "ackToProvisionalMs": 23.713,
+      "ackToConfirmedMs": 35.212,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 1
+    },
+    {
+      "repeat": 3,
+      "write": 1,
+      "writeMs": 194.444,
+      "ackToProvisionalMs": 3.994,
+      "ackToConfirmedMs": 32.051,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 2,
+      "writeMs": 205.977,
+      "ackToProvisionalMs": 3.472,
+      "ackToConfirmedMs": 91.478,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 3,
+      "writeMs": 193.973,
+      "ackToProvisionalMs": 3.634,
+      "ackToConfirmedMs": 33.475,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 4,
+      "writeMs": 226.142,
+      "ackToProvisionalMs": 2.575,
+      "ackToConfirmedMs": 66.238,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 5,
+      "writeMs": 205.581,
+      "ackToProvisionalMs": 0.43,
+      "ackToConfirmedMs": 227.284,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 6,
+      "writeMs": 206.3,
+      "ackToProvisionalMs": 4.584,
+      "ackToConfirmedMs": 227.772,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 7,
+      "writeMs": 195.899,
+      "ackToProvisionalMs": 22.44,
+      "ackToConfirmedMs": 34.766,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 8,
+      "writeMs": 200.539,
+      "ackToProvisionalMs": 2.996,
+      "ackToConfirmedMs": 85.512,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 9,
+      "writeMs": 205.953,
+      "ackToProvisionalMs": 3.252,
+      "ackToConfirmedMs": 85.923,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 10,
+      "writeMs": 196.252,
+      "ackToProvisionalMs": 22.067,
+      "ackToConfirmedMs": 35.703,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 11,
+      "writeMs": 202.227,
+      "ackToProvisionalMs": 2.533,
+      "ackToConfirmedMs": 30.396,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 12,
+      "writeMs": 198.033,
+      "ackToProvisionalMs": 4.173,
+      "ackToConfirmedMs": 31.042,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 13,
+      "writeMs": 201.028,
+      "ackToProvisionalMs": 22.369,
+      "ackToConfirmedMs": 32.502,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 14,
+      "writeMs": 201.906,
+      "ackToProvisionalMs": 2.196,
+      "ackToConfirmedMs": 33.953,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 15,
+      "writeMs": 204.406,
+      "ackToProvisionalMs": 23.701,
+      "ackToConfirmedMs": 34.128,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 16,
+      "writeMs": 214.89,
+      "ackToProvisionalMs": 23.943,
+      "ackToConfirmedMs": 35.328,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 17,
+      "writeMs": 207.402,
+      "ackToProvisionalMs": 2.88,
+      "ackToConfirmedMs": 32.532,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 18,
+      "writeMs": 208.393,
+      "ackToProvisionalMs": 4.438,
+      "ackToConfirmedMs": 29.432,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 19,
+      "writeMs": 211.327,
+      "ackToProvisionalMs": 21.425,
+      "ackToConfirmedMs": 31.126,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 3,
+      "write": 20,
+      "writeMs": 204.971,
+      "ackToProvisionalMs": 8.427,
+      "ackToConfirmedMs": 43.424,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 2
+    },
+    {
+      "repeat": 4,
+      "write": 1,
+      "writeMs": 216.059,
+      "ackToProvisionalMs": 3.228,
+      "ackToConfirmedMs": 227.244,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 2,
+      "writeMs": 202.268,
+      "ackToProvisionalMs": 3.036,
+      "ackToConfirmedMs": 64.984,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 3,
+      "writeMs": 200.364,
+      "ackToProvisionalMs": 32.083,
+      "ackToConfirmedMs": 59.948,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 4,
+      "writeMs": 198.459,
+      "ackToProvisionalMs": 2.913,
+      "ackToConfirmedMs": 28.423,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 5,
+      "writeMs": 197.898,
+      "ackToProvisionalMs": 3.459,
+      "ackToConfirmedMs": 28.947,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 6,
+      "writeMs": 226.065,
+      "ackToProvisionalMs": 2.637,
+      "ackToConfirmedMs": 31.994,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 7,
+      "writeMs": 199.999,
+      "ackToProvisionalMs": 4.787,
+      "ackToConfirmedMs": 247.287,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 8,
+      "writeMs": 206.987,
+      "ackToProvisionalMs": 4,
+      "ackToConfirmedMs": 30.443,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 9,
+      "writeMs": 198.008,
+      "ackToProvisionalMs": 19.927,
+      "ackToConfirmedMs": 33.325,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 10,
+      "writeMs": 194.006,
+      "ackToProvisionalMs": 2.703,
+      "ackToConfirmedMs": 31.362,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 11,
+      "writeMs": 199.195,
+      "ackToProvisionalMs": 22.604,
+      "ackToConfirmedMs": 32.707,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 12,
+      "writeMs": 196.587,
+      "ackToProvisionalMs": 22.163,
+      "ackToConfirmedMs": 33.807,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 13,
+      "writeMs": 195.345,
+      "ackToProvisionalMs": 21.544,
+      "ackToConfirmedMs": 32.488,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 14,
+      "writeMs": 194.92,
+      "ackToProvisionalMs": 2.58,
+      "ackToConfirmedMs": 30.101,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 15,
+      "writeMs": 192.711,
+      "ackToProvisionalMs": 23.065,
+      "ackToConfirmedMs": 33.507,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 16,
+      "writeMs": 200.284,
+      "ackToProvisionalMs": 4.316,
+      "ackToConfirmedMs": 227.223,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 17,
+      "writeMs": 198.501,
+      "ackToProvisionalMs": 18.268,
+      "ackToConfirmedMs": 28.748,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 18,
+      "writeMs": 201.82,
+      "ackToProvisionalMs": 4.266,
+      "ackToConfirmedMs": 30.498,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 19,
+      "writeMs": 197.091,
+      "ackToProvisionalMs": 29.54,
+      "ackToConfirmedMs": 39.303,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    },
+    {
+      "repeat": 4,
+      "write": 20,
+      "writeMs": 193.256,
+      "ackToProvisionalMs": 5.178,
+      "ackToConfirmedMs": 33.149,
+      "provisionalFirst": true,
+      "provisionalKeyIsHome": true,
+      "phase": "measured",
+      "measuredRepeat": 3
+    }
+  ],
+  "local": {
+    "database": "f7local1793881128",
+    "region": "sjc",
+    "warmup": [
+      {
+        "pages": [
+          {
+            "next_offset": "7",
+            "local": "2db7d55ddf58273e",
+            "provisional": [
+              {
+                "id": "01M6NTBJAN4H80AXJ87DFGXH7T",
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "~01M6NTBJAN4H80AXJ87DFGXH7T.1",
+                    "row": {
+                      "id": "01M6NTBHZZV5XHJT8WJVKTDB63",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "confirmed": [],
+            "revert": [],
+            "ops": []
+          },
+          {
+            "next_offset": "11",
+            "local": "0",
+            "provisional": [],
+            "confirmed": [
+              "01M6NTBJAN4H80AXJ87DFGXH7T"
+            ],
+            "revert": [],
+            "ops": [
+              {
+                "op": "insert",
+                "key": "1",
+                "row": {
+                  "id": "01M6NTBHZZV5XHJT8WJVKTDB63",
+                  "v": "sjc"
+                }
+              }
+            ]
+          }
+        ],
+        "transaction": "01M6NTBJAN4H80AXJ87DFGXH7T",
+        "state": "confirmed",
+        "status": 200,
+        "code": null,
+        "route": "route=local; reason=ulid_insert; commit=local",
+        "region": "sjc",
+        "write_ms": 406.54966700822115,
+        "write_to_provisional_ms": 206.7163330502808,
+        "ack_to_provisional_ms": -199.83333395794034,
+        "ack_to_settled_ms": 197.44894606992602
+      },
+      {
+        "pages": [
+          {
+            "next_offset": "11",
+            "local": "eb91e211c91c6be5",
+            "provisional": [
+              {
+                "id": "01M6NTBJWRBFMQKP7HX2VN3YMH",
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "~01M6NTBJWRBFMQKP7HX2VN3YMH.2",
+                    "row": {
+                      "id": "01M6NTBJQJZ45CTXDG7ED5DDWB",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "confirmed": [],
+            "revert": [],
+            "ops": []
+          },
+          {
+            "next_offset": "15",
+            "local": "0",
+            "provisional": [],
+            "confirmed": [
+              "01M6NTBJWRBFMQKP7HX2VN3YMH"
+            ],
+            "revert": [],
+            "ops": [
+              {
+                "op": "insert",
+                "key": "2",
+                "row": {
+                  "id": "01M6NTBJQJZ45CTXDG7ED5DDWB",
+                  "v": "sjc"
+                }
+              }
+            ]
+          }
+        ],
+        "transaction": "01M6NTBJWRBFMQKP7HX2VN3YMH",
+        "state": "confirmed",
+        "status": 200,
+        "code": null,
+        "route": "route=local; reason=ulid_insert; commit=local",
+        "region": "sjc",
+        "write_ms": 205.29959700070322,
+        "write_to_provisional_ms": 23.996036034077406,
+        "ack_to_provisional_ms": -181.3035609666258,
+        "ack_to_settled_ms": 208.01790803670883
+      },
+      {
+        "pages": [
+          {
+            "next_offset": "15",
+            "local": "9216dbd48ee863ab",
+            "provisional": [
+              {
+                "id": "01M6NTBKEBPMBX72CKC6EB5B11",
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "~01M6NTBKEBPMBX72CKC6EB5B11.3",
+                    "row": {
+                      "id": "01M6NTBK96204GBGN3TBRABAV5",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "confirmed": [],
+            "revert": [],
+            "ops": []
+          },
+          {
+            "next_offset": "19",
+            "local": "0",
+            "provisional": [],
+            "confirmed": [
+              "01M6NTBKEBPMBX72CKC6EB5B11"
+            ],
+            "revert": [],
+            "ops": [
+              {
+                "op": "insert",
+                "key": "3",
+                "row": {
+                  "id": "01M6NTBK96204GBGN3TBRABAV5",
+                  "v": "sjc"
+                }
+              }
+            ]
+          }
+        ],
+        "transaction": "01M6NTBKEBPMBX72CKC6EB5B11",
+        "state": "confirmed",
+        "status": 200,
+        "code": null,
+        "route": "route=local; reason=ulid_insert; commit=local",
+        "region": "sjc",
+        "write_ms": 204.3877060059458,
+        "write_to_provisional_ms": 24.375759065151215,
+        "ack_to_provisional_ms": -180.0119469407946,
+        "ack_to_settled_ms": 209.8356878850609
+      },
+      {
+        "pages": [
+          {
+            "next_offset": "19",
+            "local": "9afb819ff854461f",
+            "provisional": [
+              {
+                "id": "01M6NTBKZZ7Z6SCZZATVCZWG6Z",
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "~01M6NTBKZZ7Z6SCZZATVCZWG6Z.4",
+                    "row": {
+                      "id": "01M6NTBKTT97Y2EX5KHDN4F6BF",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "confirmed": [],
+            "revert": [],
+            "ops": []
+          },
+          {
+            "next_offset": "23",
+            "local": "0",
+            "provisional": [],
+            "confirmed": [
+              "01M6NTBKZZ7Z6SCZZATVCZWG6Z"
+            ],
+            "revert": [],
+            "ops": [
+              {
+                "op": "insert",
+                "key": "4",
+                "row": {
+                  "id": "01M6NTBKTT97Y2EX5KHDN4F6BF",
+                  "v": "sjc"
+                }
+              }
+            ]
+          }
+        ],
+        "transaction": "01M6NTBKZZ7Z6SCZZATVCZWG6Z",
+        "state": "confirmed",
+        "status": 200,
+        "code": null,
+        "route": "route=local; reason=ulid_insert; commit=local",
+        "region": "sjc",
+        "write_ms": 205.39355697110295,
+        "write_to_provisional_ms": 23.943274980410933,
+        "ack_to_provisional_ms": -181.45028199069202,
+        "ack_to_settled_ms": 214.7273449227214
+      },
+      {
+        "pages": [
+          {
+            "next_offset": "23",
+            "local": "abf0dd4f923e0c58",
+            "provisional": [
+              {
+                "id": "01M6NTBMHS9HFF0BEQXDF76YFZ",
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "~01M6NTBMHS9HFF0BEQXDF76YFZ.5",
+                    "row": {
+                      "id": "01M6NTBMCM40DBNKKKJD7TNH2F",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "confirmed": [],
+            "revert": [],
+            "ops": []
+          },
+          {
+            "next_offset": "27",
+            "local": "0",
+            "provisional": [],
+            "confirmed": [
+              "01M6NTBMHS9HFF0BEQXDF76YFZ"
+            ],
+            "revert": [],
+            "ops": [
+              {
+                "op": "insert",
+                "key": "5",
+                "row": {
+                  "id": "01M6NTBMCM40DBNKKKJD7TNH2F",
+                  "v": "sjc"
+                }
+              }
+            ]
+          }
+        ],
+        "transaction": "01M6NTBMHS9HFF0BEQXDF76YFZ",
+        "state": "confirmed",
+        "status": 200,
+        "code": null,
+        "route": "route=local; reason=ulid_insert; commit=local",
+        "region": "sjc",
+        "write_ms": 244.383845012635,
+        "write_to_provisional_ms": 23.347868118435144,
+        "ack_to_provisional_ms": -221.03597689419985,
+        "ack_to_settled_ms": 196.17341202683747
+      }
+    ],
+    "repeats": [
+      {
+        "repeat": 1,
+        "samples": [
+          {
+            "pages": [
+              {
+                "next_offset": "27",
+                "local": "0e9d7bf732f09412",
+                "provisional": [
+                  {
+                    "id": "01M6NTBN4W1YPSN8SP4QDY56D3",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBN4W1YPSN8SP4QDY56D3.6",
+                        "row": {
+                          "id": "01M6NTBMZ31P6FH1PPB2ST2JWM",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "31",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBN4W1YPSN8SP4QDY56D3"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "6",
+                    "row": {
+                      "id": "01M6NTBMZ31P6FH1PPB2ST2JWM",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBN4W1YPSN8SP4QDY56D3",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 228.09729794971645,
+            "write_to_provisional_ms": 58.02238592877984,
+            "ack_to_provisional_ms": -170.0749120209366,
+            "ack_to_settled_ms": 200.32833912409842
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "31",
+                "local": "da72122d735cc70c",
+                "provisional": [
+                  {
+                    "id": "01M6NTBNPFMCF08RRS169CK5SD",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBNPFMCF08RRS169CK5SD.7",
+                        "row": {
+                          "id": "01M6NTBNH68PV898Q2A7FVCGNZ",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "36",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBNPFMCF08RRS169CK5SD"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "7",
+                    "row": {
+                      "id": "01M6NTBNH68PV898Q2A7FVCGNZ",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBNPFMCF08RRS169CK5SD",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 208.73211603611708,
+            "write_to_provisional_ms": 27.19947206787765,
+            "ack_to_provisional_ms": -181.53264396823943,
+            "ack_to_settled_ms": 217.9808218497783
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "36",
+                "local": "b8ea775321657e87",
+                "provisional": [
+                  {
+                    "id": "01M6NTBP8C5NEWH01N8XEXV8P0",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBP8C5NEWH01N8XEXV8P0.8",
+                        "row": {
+                          "id": "01M6NTBP37QPR2ZY12V2M0XDAR",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "40",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBP8C5NEWH01N8XEXV8P0"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "8",
+                    "row": {
+                      "id": "01M6NTBP37QPR2ZY12V2M0XDAR",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBP8C5NEWH01N8XEXV8P0",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 201.40563184395432,
+            "write_to_provisional_ms": 24.318558862432837,
+            "ack_to_provisional_ms": -177.0870729815215,
+            "ack_to_settled_ms": 55.33211515285075
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "40",
+                "local": "4ae5650591a04b1d",
+                "provisional": [
+                  {
+                    "id": "01M6NTBPN478F3Q2938HPS3STK",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBPN478F3Q2938HPS3STK.9",
+                        "row": {
+                          "id": "01M6NTBPFYGQE2TXBEHMJ2QPM8",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "44",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBPN478F3Q2938HPS3STK"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "9",
+                    "row": {
+                      "id": "01M6NTBPFYGQE2TXBEHMJ2QPM8",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBPN478F3Q2938HPS3STK",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 208.9561577886343,
+            "write_to_provisional_ms": 24.330799002200365,
+            "ack_to_provisional_ms": -184.62535878643394,
+            "ack_to_settled_ms": 48.98756300099194
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "44",
+                "local": "f92b3c23d2535cd6",
+                "provisional": [
+                  {
+                    "id": "01M6NTBQ1W67KRW83MJT5EVA4Z",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBQ1W67KRW83MJT5EVA4Z.10",
+                        "row": {
+                          "id": "01M6NTBPWPYZ9ZH8TAZWGCFBEK",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "48",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBQ1W67KRW83MJT5EVA4Z"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "10",
+                    "row": {
+                      "id": "01M6NTBPWPYZ9ZH8TAZWGCFBEK",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBQ1W67KRW83MJT5EVA4Z",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.80728791840374,
+            "write_to_provisional_ms": 24.8607259709388,
+            "ack_to_provisional_ms": -177.94656194746494,
+            "ack_to_settled_ms": 52.39160195924342
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "48",
+                "local": "3808c7af5a173c05",
+                "provisional": [
+                  {
+                    "id": "01M6NTBQEPQNAQGHTJ1GJJ2GXP",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBQEPQNAQGHTJ1GJJ2GXP.11",
+                        "row": {
+                          "id": "01M6NTBQ9CXG6Y2W756SD82SXD",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "52",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBQEPQNAQGHTJ1GJJ2GXP"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "11",
+                    "row": {
+                      "id": "01M6NTBQ9CXG6Y2W756SD82SXD",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBQEPQNAQGHTJ1GJJ2GXP",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 208.37103202939034,
+            "write_to_provisional_ms": 31.50276211090386,
+            "ack_to_provisional_ms": -176.86826991848648,
+            "ack_to_settled_ms": 56.42832815647125
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "52",
+                "local": "a02f9869323323dd",
+                "provisional": [
+                  {
+                    "id": "01M6NTBQVH3BTTDSE1J90A29NK",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBQVH3BTTDSE1J90A29NK.12",
+                        "row": {
+                          "id": "01M6NTBQPBVPPEWTZ9NP0YGPKM",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "56",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBQVH3BTTDSE1J90A29NK"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "12",
+                    "row": {
+                      "id": "01M6NTBQPBVPPEWTZ9NP0YGPKM",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBQVH3BTTDSE1J90A29NK",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.92961015366018,
+            "write_to_provisional_ms": 28.630329063162208,
+            "ack_to_provisional_ms": -174.29928109049797,
+            "ack_to_settled_ms": 58.438189793378115
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "56",
+                "local": "ba33e8def9fb51c0",
+                "provisional": [
+                  {
+                    "id": "01M6NTBR8CWD5KWTASD6X6K59G",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBR8CWD5KWTASD6X6K59G.13",
+                        "row": {
+                          "id": "01M6NTBR365DP5241S4FEMQN6Y",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "60",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBR8CWD5KWTASD6X6K59G"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "13",
+                    "row": {
+                      "id": "01M6NTBR365DP5241S4FEMQN6Y",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBR8CWD5KWTASD6X6K59G",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 203.11089092865586,
+            "write_to_provisional_ms": 24.25835793837905,
+            "ack_to_provisional_ms": -178.8525329902768,
+            "ack_to_settled_ms": 53.187651094049215
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "60",
+                "local": "fa86d636d9341e60",
+                "provisional": [
+                  {
+                    "id": "01M6NTBRN27MQPAQYM98PR6WGK",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBRN27MQPAQYM98PR6WGK.14",
+                        "row": {
+                          "id": "01M6NTBRFXQNVAKDHNVBPQ0RMH",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "64",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBRN27MQPAQYM98PR6WGK"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "14",
+                    "row": {
+                      "id": "01M6NTBRFXQNVAKDHNVBPQ0RMH",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBRN27MQPAQYM98PR6WGK",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 205.35587798804045,
+            "write_to_provisional_ms": 23.55191088281572,
+            "ack_to_provisional_ms": -181.80396710522473,
+            "ack_to_settled_ms": 52.21023899503052
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "64",
+                "local": "07e5ecdbd0a9e5b2",
+                "provisional": [
+                  {
+                    "id": "01M6NTBS1T2E85Y23B55VBTB4S",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBS1T2E85Y23B55VBTB4S.15",
+                        "row": {
+                          "id": "01M6NTBRWNYZ2EVN3XQNWB29CJ",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "69",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBS1T2E85Y23B55VBTB4S"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "15",
+                    "row": {
+                      "id": "01M6NTBRWNYZ2EVN3XQNWB29CJ",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBS1T2E85Y23B55VBTB4S",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 203.94714106805623,
+            "write_to_provisional_ms": 24.20463808812201,
+            "ack_to_provisional_ms": -179.74250297993422,
+            "ack_to_settled_ms": 229.47963397018611
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "69",
+                "local": "cd30813f6a8ad10c",
+                "provisional": [
+                  {
+                    "id": "01M6NTBSM7GN1MA8000PSVV62V",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBSM7GN1MA8000PSVV62V.16",
+                        "row": {
+                          "id": "01M6NTBSF2ZD6BT01KGG0PBR9F",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "73",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBSM7GN1MA8000PSVV62V"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "16",
+                    "row": {
+                      "id": "01M6NTBSF2ZD6BT01KGG0PBR9F",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBSM7GN1MA8000PSVV62V",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 210.7672591228038,
+            "write_to_provisional_ms": 22.89334195666015,
+            "ack_to_provisional_ms": -187.87391716614366,
+            "ack_to_settled_ms": 43.90014382079244
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "73",
+                "local": "86ba31a42269d928",
+                "provisional": [
+                  {
+                    "id": "01M6NTBT14RJ5318SD2B7A2SJH",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBT14RJ5318SD2B7A2SJH.17",
+                        "row": {
+                          "id": "01M6NTBSVQHFHKC77571D25MDA",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "77",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBT14RJ5318SD2B7A2SJH"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "17",
+                    "row": {
+                      "id": "01M6NTBSVQHFHKC77571D25MDA",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBT14RJ5318SD2B7A2SJH",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 221.8270660378039,
+            "write_to_provisional_ms": 36.35381697677076,
+            "ack_to_provisional_ms": -185.47324906103313,
+            "ack_to_settled_ms": 29.40177801065147
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "77",
+                "local": "7eca63fbe0475a4a",
+                "provisional": [
+                  {
+                    "id": "01M6NTBTDD9H8FFWNQMTRDNW5N",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBTDD9H8FFWNQMTRDNW5N.18",
+                        "row": {
+                          "id": "01M6NTBT88P79NWAA3D81E3PJQ",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "81",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBTDD9H8FFWNQMTRDNW5N"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "18",
+                    "row": {
+                      "id": "01M6NTBT88P79NWAA3D81E3PJQ",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBTDD9H8FFWNQMTRDNW5N",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 211.84787200763822,
+            "write_to_provisional_ms": 29.469459084793925,
+            "ack_to_provisional_ms": -182.3784129228443,
+            "ack_to_settled_ms": 50.24289689026773
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "81",
+                "local": "276b3e2303ee68df",
+                "provisional": [
+                  {
+                    "id": "01M6NTBTT9RM0F9SFDSX9AJX3M",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBTT9RM0F9SFDSX9AJX3M.19",
+                        "row": {
+                          "id": "01M6NTBTN5DKTVAJDQ43MW3Q9S",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "85",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBTT9RM0F9SFDSX9AJX3M"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "19",
+                    "row": {
+                      "id": "01M6NTBTN5DKTVAJDQ43MW3Q9S",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBTT9RM0F9SFDSX9AJX3M",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.55016488954425,
+            "write_to_provisional_ms": 22.07413292489946,
+            "ack_to_provisional_ms": -180.4760319646448,
+            "ack_to_settled_ms": 210.4455349035561
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "85",
+                "local": "6510fb30d2e96212",
+                "provisional": [
+                  {
+                    "id": "01M6NTBVC3XYFXQ429HYH06KBB",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBVC3XYFXQ429HYH06KBB.20",
+                        "row": {
+                          "id": "01M6NTBV6RATGSN920T3040F2K",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "89",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBVC3XYFXQ429HYH06KBB"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "20",
+                    "row": {
+                      "id": "01M6NTBV6RATGSN920T3040F2K",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBVC3XYFXQ429HYH06KBB",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 212.1336350683123,
+            "write_to_provisional_ms": 29.797862051054835,
+            "ack_to_provisional_ms": -182.33577301725745,
+            "ack_to_settled_ms": 53.79269691184163
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "89",
+                "local": "0af09bb3a4fc4260",
+                "provisional": [
+                  {
+                    "id": "01M6NTBVS0MMYN4TK3GECJNF0R",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBVS0MMYN4TK3GECJNF0R.21",
+                        "row": {
+                          "id": "01M6NTBVKR7F2N7G495DK4NTWM",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "94",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBVS0MMYN4TK3GECJNF0R"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "21",
+                    "row": {
+                      "id": "01M6NTBVKR7F2N7G495DK4NTWM",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBVS0MMYN4TK3GECJNF0R",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 215.42843291535974,
+            "write_to_provisional_ms": 27.86507993005216,
+            "ack_to_provisional_ms": -187.56335298530757,
+            "ack_to_settled_ms": 205.37183713167906
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "94",
+                "local": "8246687b81e1c0cf",
+                "provisional": [
+                  {
+                    "id": "01M6NTBWATECM7QF37SF3RX4G3",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBWATECM7QF37SF3RX4G3.22",
+                        "row": {
+                          "id": "01M6NTBW5KJHQWEJB571T887SJ",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "98",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBWATECM7QF37SF3RX4G3"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "22",
+                    "row": {
+                      "id": "01M6NTBW5KJHQWEJB571T887SJ",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBWATECM7QF37SF3RX4G3",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 203.90677987597883,
+            "write_to_provisional_ms": 25.66157397814095,
+            "ack_to_provisional_ms": -178.24520589783788,
+            "ack_to_settled_ms": 54.71562803722918
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "98",
+                "local": "58c7738349eb97d5",
+                "provisional": [
+                  {
+                    "id": "01M6NTBWQH1FNFRZRDEKQ2N6GY",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBWQH1FNFRZRDEKQ2N6GY.23",
+                        "row": {
+                          "id": "01M6NTBWJCCVZW25G9VGTH8SR9",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "102",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBWQH1FNFRZRDEKQ2N6GY"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "23",
+                    "row": {
+                      "id": "01M6NTBWJCCVZW25G9VGTH8SR9",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBWQH1FNFRZRDEKQ2N6GY",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.7564870659262,
+            "write_to_provisional_ms": 24.23899807035923,
+            "ack_to_provisional_ms": -178.51748899556696,
+            "ack_to_settled_ms": 56.03780294768512
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "102",
+                "local": "e479be1509b35cd7",
+                "provisional": [
+                  {
+                    "id": "01M6NTBX4EQKC7YD898VJX5AW0",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBX4EQKC7YD898VJX5AW0.24",
+                        "row": {
+                          "id": "01M6NTBWZ53303MM2KJ7PKJBQ6",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "107",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBX4EQKC7YD898VJX5AW0"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "24",
+                    "row": {
+                      "id": "01M6NTBWZ53303MM2KJ7PKJBQ6",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBX4EQKC7YD898VJX5AW0",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 214.57802294753492,
+            "write_to_provisional_ms": 27.60459715500474,
+            "ack_to_provisional_ms": -186.97342579253018,
+            "ack_to_settled_ms": 201.34499110281467
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "107",
+                "local": "4a7cd9e83b626daa",
+                "provisional": [
+                  {
+                    "id": "01M6NTBXP1FE82V21TP0GWVAAD",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBXP1FE82V21TP0GWVAAD.25",
+                        "row": {
+                          "id": "01M6NTBXGVFYA6RWJTR9FCG25J",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "111",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBXP1FE82V21TP0GWVAAD"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "25",
+                    "row": {
+                      "id": "01M6NTBXGVFYA6RWJTR9FCG25J",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBXP1FE82V21TP0GWVAAD",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.40724296309054,
+            "write_to_provisional_ms": 23.438549134880304,
+            "ack_to_provisional_ms": -178.96869382821023,
+            "ack_to_settled_ms": 53.2886921428144
+          }
+        ],
+        "p50_ack_to_provisional_ms": -180.1092674722895
+      },
+      {
+        "repeat": 2,
+        "samples": [
+          {
+            "pages": [
+              {
+                "next_offset": "111",
+                "local": "3511c3ad2e97db62",
+                "provisional": [
+                  {
+                    "id": "01M6NTBY2PW8GRM33TFABTXWGR",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBY2PW8GRM33TFABTXWGR.26",
+                        "row": {
+                          "id": "01M6NTBXXHF6TEPMN3PF7FY0KC",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "115",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBY2PW8GRM33TFABTXWGR"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "26",
+                    "row": {
+                      "id": "01M6NTBXXHF6TEPMN3PF7FY0KC",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBY2PW8GRM33TFABTXWGR",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 200.82334498874843,
+            "write_to_provisional_ms": 21.198124159127474,
+            "ack_to_provisional_ms": -179.62522082962096,
+            "ack_to_settled_ms": 49.86213310621679
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "115",
+                "local": "3c2b28fe55cc11ac",
+                "provisional": [
+                  {
+                    "id": "01M6NTBYF86CQ2GS6DCV556NCG",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBYF86CQ2GS6DCV556NCG.27",
+                        "row": {
+                          "id": "01M6NTBYA2QX4G26F38PKRTN9X",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "119",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBYF86CQ2GS6DCV556NCG"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "27",
+                    "row": {
+                      "id": "01M6NTBYA2QX4G26F38PKRTN9X",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBYF86CQ2GS6DCV556NCG",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 204.36762599274516,
+            "write_to_provisional_ms": 22.857303032651544,
+            "ack_to_provisional_ms": -181.51032296009362,
+            "ack_to_settled_ms": 214.01757700368762
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "119",
+                "local": "e67fbf4a87d0b80f",
+                "provisional": [
+                  {
+                    "id": "01M6NTBZ11J17X6ATSSN8BPC7A",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBZ11J17X6ATSSN8BPC7A.28",
+                        "row": {
+                          "id": "01M6NTBYVVGGGKRRBAC3CW1H90",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "123",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBZ11J17X6ATSSN8BPC7A"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "28",
+                    "row": {
+                      "id": "01M6NTBYVVGGGKRRBAC3CW1H90",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBZ11J17X6ATSSN8BPC7A",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 205.38075687363744,
+            "write_to_provisional_ms": 24.251118069514632,
+            "ack_to_provisional_ms": -181.1296388041228,
+            "ack_to_settled_ms": 53.30941220745444
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "123",
+                "local": "b1ebfc9f22f97257",
+                "provisional": [
+                  {
+                    "id": "01M6NTBZDTEGTK6XSDGCMBRVZ6",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBZDTEGTK6XSDGCMBRVZ6.29",
+                        "row": {
+                          "id": "01M6NTBZ8MZCJWKM5PVHEC32V5",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "127",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBZDTEGTK6XSDGCMBRVZ6"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "29",
+                    "row": {
+                      "id": "01M6NTBZ8MZCJWKM5PVHEC32V5",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBZDTEGTK6XSDGCMBRVZ6",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 201.6119142062962,
+            "write_to_provisional_ms": 23.515830049291253,
+            "ack_to_provisional_ms": -178.09608415700495,
+            "ack_to_settled_ms": 55.15347281470895
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "127",
+                "local": "05338882c16df6a8",
+                "provisional": [
+                  {
+                    "id": "01M6NTBZTJRGJTEG6SQ6X9WZSX",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTBZTJRGJTEG6SQ6X9WZSX.30",
+                        "row": {
+                          "id": "01M6NTBZNBJ78966MW1Y110K3Z",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "132",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTBZTJRGJTEG6SQ6X9WZSX"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "30",
+                    "row": {
+                      "id": "01M6NTBZNBJ78966MW1Y110K3Z",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTBZTJRGJTEG6SQ6X9WZSX",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 204.89203208126128,
+            "write_to_provisional_ms": 26.344183133915067,
+            "ack_to_provisional_ms": -178.5478489473462,
+            "ack_to_settled_ms": 212.9220839124173
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "132",
+                "local": "b14eaad0028e727c",
+                "provisional": [
+                  {
+                    "id": "01M6NTC0C97B1SADWFNDHHW221",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC0C97B1SADWFNDHHW221.31",
+                        "row": {
+                          "id": "01M6NTC073CZJXPSKVPEJTAVB2",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "136",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC0C97B1SADWFNDHHW221"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "31",
+                    "row": {
+                      "id": "01M6NTC073CZJXPSKVPEJTAVB2",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC0C97B1SADWFNDHHW221",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 205.7211610954255,
+            "write_to_provisional_ms": 26.631226064637303,
+            "ack_to_provisional_ms": -179.08993503078818,
+            "ack_to_settled_ms": 57.76990298181772
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "136",
+                "local": "7082b1bbbda26de6",
+                "provisional": [
+                  {
+                    "id": "01M6NTC0S8DFVMMVJABCJ6B23Q",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC0S8DFVMMVJABCJ6B23Q.32",
+                        "row": {
+                          "id": "01M6NTC0M12D2WVZRC80FVPCMM",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "141",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC0S8DFVMMVJABCJ6B23Q"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "32",
+                    "row": {
+                      "id": "01M6NTC0M12D2WVZRC80FVPCMM",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC0S8DFVMMVJABCJ6B23Q",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 203.8869799580425,
+            "write_to_provisional_ms": 26.287501910701394,
+            "ack_to_provisional_ms": -177.5994780473411,
+            "ack_to_settled_ms": 210.11221199296415
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "141",
+                "local": "42b9267b45a0bba1",
+                "provisional": [
+                  {
+                    "id": "01M6NTC1AX7FEHQXBYZCB19EMJ",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC1AX7FEHQXBYZCB19EMJ.33",
+                        "row": {
+                          "id": "01M6NTC15NDTYZ027K60QVE9MS",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "145",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC1AX7FEHQXBYZCB19EMJ"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "33",
+                    "row": {
+                      "id": "01M6NTC15NDTYZ027K60QVE9MS",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC1AX7FEHQXBYZCB19EMJ",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 207.21301902085543,
+            "write_to_provisional_ms": 25.94145806506276,
+            "ack_to_provisional_ms": -181.27156095579267,
+            "ack_to_settled_ms": 52.73068509995937
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "145",
+                "local": "f12d286811b5b9ae",
+                "provisional": [
+                  {
+                    "id": "01M6NTC1QMMXXB6S4ANGK6Y9H4",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC1QMMXXB6S4ANGK6Y9H4.34",
+                        "row": {
+                          "id": "01M6NTC1JF7GDWN48JQC2G6J1E",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "149",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC1QMMXXB6S4ANGK6Y9H4"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "34",
+                    "row": {
+                      "id": "01M6NTC1JF7GDWN48JQC2G6J1E",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC1QMMXXB6S4ANGK6Y9H4",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 203.60305695794523,
+            "write_to_provisional_ms": 22.934623062610626,
+            "ack_to_provisional_ms": -180.6684338953346,
+            "ack_to_settled_ms": 48.630117904394865
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "149",
+                "local": "0ee29c66eb1cc1c6",
+                "provisional": [
+                  {
+                    "id": "01M6NTC24CNTQS5EP3MNW4CGFT",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC24CNTQS5EP3MNW4CGFT.35",
+                        "row": {
+                          "id": "01M6NTC1Z2ZPQD2A46TYDJTKTB",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "153",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC24CNTQS5EP3MNW4CGFT"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "35",
+                    "row": {
+                      "id": "01M6NTC1Z2ZPQD2A46TYDJTKTB",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC24CNTQS5EP3MNW4CGFT",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 206.1222461052239,
+            "write_to_provisional_ms": 29.153415001928806,
+            "ack_to_provisional_ms": -176.9688311032951,
+            "ack_to_settled_ms": 82.06202206201851
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "153",
+                "local": "53ad1549f1b0a6eb",
+                "provisional": [
+                  {
+                    "id": "01M6NTC2HXXXTJWQH5KH32GNT2",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC2HXXXTJWQH5KH32GNT2.36",
+                        "row": {
+                          "id": "01M6NTC2CR6VPVBE4X7QZ7BYNA",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "157",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC2HXXXTJWQH5KH32GNT2"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "36",
+                    "row": {
+                      "id": "01M6NTC2CR6VPVBE4X7QZ7BYNA",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC2HXXXTJWQH5KH32GNT2",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.47500389814377,
+            "write_to_provisional_ms": 22.429737960919738,
+            "ack_to_provisional_ms": -180.04526593722403,
+            "ack_to_settled_ms": 59.273041086271405
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "157",
+                "local": "080ae6a569bcb2b4",
+                "provisional": [
+                  {
+                    "id": "01M6NTC2YW5QGSDAD7RKZJPTDJ",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC2YW5QGSDAD7RKZJPTDJ.37",
+                        "row": {
+                          "id": "01M6NTC2SMRT986WMDM7TCQH3K",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "161",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC2YW5QGSDAD7RKZJPTDJ"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "37",
+                    "row": {
+                      "id": "01M6NTC2SMRT986WMDM7TCQH3K",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC2YW5QGSDAD7RKZJPTDJ",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 205.16235497780144,
+            "write_to_provisional_ms": 27.117870980873704,
+            "ack_to_provisional_ms": -178.04448399692774,
+            "ack_to_settled_ms": 55.66723900847137
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "161",
+                "local": "0322f2d4ce246a8d",
+                "provisional": [
+                  {
+                    "id": "01M6NTC3BK68J2RJNCMMZZJYQR",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC3BK68J2RJNCMMZZJYQR.38",
+                        "row": {
+                          "id": "01M6NTC36FHVK18QD623CA4SP2",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "165",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC3BK68J2RJNCMMZZJYQR"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "38",
+                    "row": {
+                      "id": "01M6NTC36FHVK18QD623CA4SP2",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC3BK68J2RJNCMMZZJYQR",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 200.8895450271666,
+            "write_to_provisional_ms": 21.472485968843102,
+            "ack_to_provisional_ms": -179.4170590583235,
+            "ack_to_settled_ms": 49.89229282364249
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "165",
+                "local": "ca7dc0979900a43d",
+                "provisional": [
+                  {
+                    "id": "01M6NTC3R5XFY2YA55J3ZGAH4X",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC3R5XFY2YA55J3ZGAH4X.39",
+                        "row": {
+                          "id": "01M6NTC3K073T39F5N8C922WHW",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "169",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC3R5XFY2YA55J3ZGAH4X"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "39",
+                    "row": {
+                      "id": "01M6NTC3K073T39F5N8C922WHW",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC3R5XFY2YA55J3ZGAH4X",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 204.11322312429547,
+            "write_to_provisional_ms": 22.58085901848972,
+            "ack_to_provisional_ms": -181.53236410580575,
+            "ack_to_settled_ms": 52.14035790413618
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "169",
+                "local": "74cd016230cc8d4c",
+                "provisional": [
+                  {
+                    "id": "01M6NTC44V60KYYQPV4BC0DF4K",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC44V60KYYQPV4BC0DF4K.40",
+                        "row": {
+                          "id": "01M6NTC3ZQNCH0EBW9VYE3JNDJ",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "174",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC44V60KYYQPV4BC0DF4K"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "40",
+                    "row": {
+                      "id": "01M6NTC3ZQNCH0EBW9VYE3JNDJ",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC44V60KYYQPV4BC0DF4K",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 199.12928598932922,
+            "write_to_provisional_ms": 21.574247861281037,
+            "ack_to_provisional_ms": -177.55503812804818,
+            "ack_to_settled_ms": 212.56283996626735
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "174",
+                "local": "9589ffefc03cb0a9",
+                "provisional": [
+                  {
+                    "id": "01M6NTC4PD1868WB3XD1FATJWJ",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC4PD1868WB3XD1FATJWJ.41",
+                        "row": {
+                          "id": "01M6NTC4H9XG9T5BVGS1PWPSWP",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "179",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC4PD1868WB3XD1FATJWJ"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "41",
+                    "row": {
+                      "id": "01M6NTC4H9XG9T5BVGS1PWPSWP",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC4PD1868WB3XD1FATJWJ",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.27056089788675,
+            "write_to_provisional_ms": 23.373467847704887,
+            "ack_to_provisional_ms": -178.89709305018187,
+            "ack_to_settled_ms": 212.89320406503975
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "179",
+                "local": "5e2e9147f164f200",
+                "provisional": [
+                  {
+                    "id": "01M6NTC583FE9YR8ZVEVPAM0W1",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC583FE9YR8ZVEVPAM0W1.42",
+                        "row": {
+                          "id": "01M6NTC52YYC9X08TPX7S4R1KM",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "183",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC583FE9YR8ZVEVPAM0W1"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "42",
+                    "row": {
+                      "id": "01M6NTC52YYC9X08TPX7S4R1KM",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC583FE9YR8ZVEVPAM0W1",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 203.37973395362496,
+            "write_to_provisional_ms": 24.033075897023082,
+            "ack_to_provisional_ms": -179.34665805660188,
+            "ack_to_settled_ms": 51.08638689853251
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "183",
+                "local": "1c45b13404c804ce",
+                "provisional": [
+                  {
+                    "id": "01M6NTC5MR7CF3NS4E5R3EK2JM",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC5MR7CF3NS4E5R3EK2JM.43",
+                        "row": {
+                          "id": "01M6NTC5FK81T8SJ0F47EPQ2VN",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "187",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC5MR7CF3NS4E5R3EK2JM"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "43",
+                    "row": {
+                      "id": "01M6NTC5FK81T8SJ0F47EPQ2VN",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC5MR7CF3NS4E5R3EK2JM",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 205.19851613789797,
+            "write_to_provisional_ms": 23.248187033459544,
+            "ack_to_provisional_ms": -181.95032910443842,
+            "ack_to_settled_ms": 51.389710046350956
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "187",
+                "local": "817bfc1fa2aad9d8",
+                "provisional": [
+                  {
+                    "id": "01M6NTC61J8R3S80999WBNKJFA",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC61J8R3S80999WBNKJFA.44",
+                        "row": {
+                          "id": "01M6NTC5WAZKXP1HVTYH5M8SXS",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "191",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC61J8R3S80999WBNKJFA"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "44",
+                    "row": {
+                      "id": "01M6NTC5WAZKXP1HVTYH5M8SXS",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC61J8R3S80999WBNKJFA",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 207.5339430011809,
+            "write_to_provisional_ms": 26.173260994255543,
+            "ack_to_provisional_ms": -181.36068200692534,
+            "ack_to_settled_ms": 54.51018502935767
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "191",
+                "local": "876c837d1ba237fd",
+                "provisional": [
+                  {
+                    "id": "01M6NTC6EAGSG1F36MJEYAVE3B",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC6EAGSG1F36MJEYAVE3B.45",
+                        "row": {
+                          "id": "01M6NTC696W8Q7N6PZ68F97W6Y",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "195",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC6EAGSG1F36MJEYAVE3B"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "45",
+                    "row": {
+                      "id": "01M6NTC696W8Q7N6PZ68F97W6Y",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC6EAGSG1F36MJEYAVE3B",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 203.78649909980595,
+            "write_to_provisional_ms": 22.120174020528793,
+            "ack_to_provisional_ms": -181.66632507927716,
+            "ack_to_settled_ms": 48.06267190724611
+          }
+        ],
+        "p50_ack_to_provisional_ms": -179.52113994397223
+      },
+      {
+        "repeat": 3,
+        "samples": [
+          {
+            "pages": [
+              {
+                "next_offset": "195",
+                "local": "4bef895084990604",
+                "provisional": [
+                  {
+                    "id": "01M6NTC6TY4ZDG78KQK3SJ81PS",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC6TY4ZDG78KQK3SJ81PS.46",
+                        "row": {
+                          "id": "01M6NTC6NRJJ38G13S2CRQ10KN",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "199",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC6TY4ZDG78KQK3SJ81PS"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "46",
+                    "row": {
+                      "id": "01M6NTC6NRJJ38G13S2CRQ10KN",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC6TY4ZDG78KQK3SJ81PS",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 200.43466100469232,
+            "write_to_provisional_ms": 23.629190865904093,
+            "ack_to_provisional_ms": -176.80547013878822,
+            "ack_to_settled_ms": 53.578855004161596
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "199",
+                "local": "8e65ca79e6a2f74b",
+                "provisional": [
+                  {
+                    "id": "01M6NTC786TH74C843A9Y5JGBD",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC786TH74C843A9Y5JGBD.47",
+                        "row": {
+                          "id": "01M6NTC72CZAXWTBST6SAW38WA",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "203",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC786TH74C843A9Y5JGBD"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "47",
+                    "row": {
+                      "id": "01M6NTC72CZAXWTBST6SAW38WA",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC786TH74C843A9Y5JGBD",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 224.27561483345926,
+            "write_to_provisional_ms": 44.142626924440265,
+            "ack_to_provisional_ms": -180.132987909019,
+            "ack_to_settled_ms": 78.47262010909617
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "203",
+                "local": "47998cdb2de62c60",
+                "provisional": [
+                  {
+                    "id": "01M6NTC7NPRY5B71Q514DW61R8",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC7NPRY5B71Q514DW61R8.48",
+                        "row": {
+                          "id": "01M6NTC7GH3JDFP1VT6BZ7WRJ1",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "207",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC7NPRY5B71Q514DW61R8"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "48",
+                    "row": {
+                      "id": "01M6NTC7GH3JDFP1VT6BZ7WRJ1",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC7NPRY5B71Q514DW61R8",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 199.79857304133475,
+            "write_to_provisional_ms": 22.356376983225346,
+            "ack_to_provisional_ms": -177.4421960581094,
+            "ack_to_settled_ms": 53.146850084885955
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "207",
+                "local": "3877d3545114121e",
+                "provisional": [
+                  {
+                    "id": "01M6NTC82BBH6EVQ0H5197YG7T",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC82BBH6EVQ0H5197YG7T.49",
+                        "row": {
+                          "id": "01M6NTC7X55W64K50A7853HJSW",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "211",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC82BBH6EVQ0H5197YG7T"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "49",
+                    "row": {
+                      "id": "01M6NTC7X55W64K50A7853HJSW",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC82BBH6EVQ0H5197YG7T",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 205.1537949591875,
+            "write_to_provisional_ms": 23.300986969843507,
+            "ack_to_provisional_ms": -181.852807989344,
+            "ack_to_settled_ms": 47.168820863589644
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "211",
+                "local": "eab1602ce797b7d2",
+                "provisional": [
+                  {
+                    "id": "01M6NTC8EWQ3AKR2VZC8SRR3YK",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC8EWQ3AKR2VZC8SRR3YK.50",
+                        "row": {
+                          "id": "01M6NTC89QW9C5ED1PNKNZ7MMG",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "215",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC8EWQ3AKR2VZC8SRR3YK"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "50",
+                    "row": {
+                      "id": "01M6NTC89QW9C5ED1PNKNZ7MMG",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC8EWQ3AKR2VZC8SRR3YK",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.64844596385956,
+            "write_to_provisional_ms": 24.693483021110296,
+            "ack_to_provisional_ms": -177.95496294274926,
+            "ack_to_settled_ms": 56.61397008225322
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "215",
+                "local": "3ca1faf178480e9e",
+                "provisional": [
+                  {
+                    "id": "01M6NTC8VNESM5Y8WVEPPDG295",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC8VNESM5Y8WVEPPDG295.51",
+                        "row": {
+                          "id": "01M6NTC8PH1G3KF5FBEE098RPJ",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "219",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC8VNESM5Y8WVEPPDG295"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "51",
+                    "row": {
+                      "id": "01M6NTC8PH1G3KF5FBEE098RPJ",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC8VNESM5Y8WVEPPDG295",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 205.4814777802676,
+            "write_to_provisional_ms": 21.70184883289039,
+            "ack_to_provisional_ms": -183.7796289473772,
+            "ack_to_settled_ms": 49.32740610092878
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "219",
+                "local": "70edf821057854f7",
+                "provisional": [
+                  {
+                    "id": "01M6NTC98BK64KPK1Y1G1D2DKV",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC98BK64KPK1Y1G1D2DKV.52",
+                        "row": {
+                          "id": "01M6NTC9363PW3D8TKSNHPVQH0",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "223",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC98BK64KPK1Y1G1D2DKV"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "52",
+                    "row": {
+                      "id": "01M6NTC9363PW3D8TKSNHPVQH0",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC98BK64KPK1Y1G1D2DKV",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 201.6444350592792,
+            "write_to_provisional_ms": 23.988996166735888,
+            "ack_to_provisional_ms": -177.65543889254332,
+            "ack_to_settled_ms": 60.510494047775865
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "223",
+                "local": "cff69910af3537f6",
+                "provisional": [
+                  {
+                    "id": "01M6NTC9NHNVVVXWJT4QE5RPXB",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTC9NHNVVVXWJT4QE5RPXB.53",
+                        "row": {
+                          "id": "01M6NTC9G2XM4E2505BYE6D2RY",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "227",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTC9NHNVVVXWJT4QE5RPXB"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "53",
+                    "row": {
+                      "id": "01M6NTC9G2XM4E2505BYE6D2RY",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTC9NHNVVVXWJT4QE5RPXB",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 211.29878517240286,
+            "write_to_provisional_ms": 32.96129801310599,
+            "ack_to_provisional_ms": -178.33748715929687,
+            "ack_to_settled_ms": 54.165101842954755
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "227",
+                "local": "d750914179fd2102",
+                "provisional": [
+                  {
+                    "id": "01M6NTCA29D2YASN4QHJ8RNV3X",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCA29D2YASN4QHJ8RNV3X.54",
+                        "row": {
+                          "id": "01M6NTC9X25RTMGSJEEXA7V5G4",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "231",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCA29D2YASN4QHJ8RNV3X"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "54",
+                    "row": {
+                      "id": "01M6NTC9X25RTMGSJEEXA7V5G4",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCA29D2YASN4QHJ8RNV3X",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 206.09144610352814,
+            "write_to_provisional_ms": 26.776948012411594,
+            "ack_to_provisional_ms": -179.31449809111655,
+            "ack_to_settled_ms": 52.697284845635295
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "231",
+                "local": "c50ad3af2ca7f2b2",
+                "provisional": [
+                  {
+                    "id": "01M6NTCAF0GACEWSSJYFCR2BBQ",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCAF0GACEWSSJYFCR2BBQ.55",
+                        "row": {
+                          "id": "01M6NTCA9VKWFR503H1R1WVCRG",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "235",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCAF0GACEWSSJYFCR2BBQ"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "55",
+                    "row": {
+                      "id": "01M6NTCA9VKWFR503H1R1WVCRG",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCAF0GACEWSSJYFCR2BBQ",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.7779680211097,
+            "write_to_provisional_ms": 24.06463702209294,
+            "ack_to_provisional_ms": -178.71333099901676,
+            "ack_to_settled_ms": 59.02927811257541
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "235",
+                "local": "4fbf7e95b7457430",
+                "provisional": [
+                  {
+                    "id": "01M6NTCAW0E4FJ4GQV5QZ6A7CZ",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCAW0E4FJ4GQV5QZ6A7CZ.56",
+                        "row": {
+                          "id": "01M6NTCAPQ9KRJ84QKAMG0YFVJ",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "239",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCAW0E4FJ4GQV5QZ6A7CZ"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "56",
+                    "row": {
+                      "id": "01M6NTCAPQ9KRJ84QKAMG0YFVJ",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCAW0E4FJ4GQV5QZ6A7CZ",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 271.8890409450978,
+            "write_to_provisional_ms": 26.93398902192712,
+            "ack_to_provisional_ms": -244.95505192317069,
+            "ack_to_settled_ms": 39.46633287705481
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "239",
+                "local": "f5e8505ac871b915",
+                "provisional": [
+                  {
+                    "id": "01M6NTCBA94T86FFCCJQ1ZGHSF",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCBA94T86FFCCJQ1ZGHSF.57",
+                        "row": {
+                          "id": "01M6NTCB55QY3BNRX4FCGSMB1V",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "244",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCBA94T86FFCCJQ1ZGHSF"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "57",
+                    "row": {
+                      "id": "01M6NTCB55QY3BNRX4FCGSMB1V",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCBA94T86FFCCJQ1ZGHSF",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 200.62562311068177,
+            "write_to_provisional_ms": 22.119414061307907,
+            "ack_to_provisional_ms": -178.50620904937387,
+            "ack_to_settled_ms": 59.77228586561978
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "244",
+                "local": "2fdb7169965aa885",
+                "provisional": [
+                  {
+                    "id": "01M6NTCBQ61DZ3DZEK8RCDYR62",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCBQ61DZ3DZEK8RCDYR62.58",
+                        "row": {
+                          "id": "01M6NTCBHZXD2YM6MWG5TM8Q7S",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "248",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCBQ61DZ3DZEK8RCDYR62"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "58",
+                    "row": {
+                      "id": "01M6NTCBHZXD2YM6MWG5TM8Q7S",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCBQ61DZ3DZEK8RCDYR62",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.8138879686594,
+            "write_to_provisional_ms": 24.231678107753396,
+            "ack_to_provisional_ms": -178.582209860906,
+            "ack_to_settled_ms": 56.712611112743616
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "248",
+                "local": "fdff0a683ca76d2d",
+                "provisional": [
+                  {
+                    "id": "01M6NTCC455N2W9ZDG6C05Q2E1",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCC455N2W9ZDG6C05Q2E1.59",
+                        "row": {
+                          "id": "01M6NTCBYSPF32RRKR6K10ZHJ4",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "253",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCC455N2W9ZDG6C05Q2E1"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "59",
+                    "row": {
+                      "id": "01M6NTCBYSPF32RRKR6K10ZHJ4",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCC455N2W9ZDG6C05Q2E1",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 209.74260801449418,
+            "write_to_provisional_ms": 29.92058382369578,
+            "ack_to_provisional_ms": -179.8220241907984,
+            "ack_to_settled_ms": 51.96151603013277
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "253",
+                "local": "99d047b7143b9fa7",
+                "provisional": [
+                  {
+                    "id": "01M6NTCCGTGQR5RMSN1B2V6E69",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCCGTGQR5RMSN1B2V6E69.60",
+                        "row": {
+                          "id": "01M6NTCCBNXDYJAP57TGX7JT4N",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "257",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCCGTGQR5RMSN1B2V6E69"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "60",
+                    "row": {
+                      "id": "01M6NTCCBNXDYJAP57TGX7JT4N",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCCGTGQR5RMSN1B2V6E69",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 204.83819115906954,
+            "write_to_provisional_ms": 37.52563102170825,
+            "ack_to_provisional_ms": -167.3125601373613,
+            "ack_to_settled_ms": 37.392268888652325
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "257",
+                "local": "a12e787f27376e43",
+                "provisional": [
+                  {
+                    "id": "01M6NTCCX5JFESKTXK1F862TQQ",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCCX5JFESKTXK1F862TQQ.61",
+                        "row": {
+                          "id": "01M6NTCCQY3YEGZNGYXB6B4CXC",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "262",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCCX5JFESKTXK1F862TQQ"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "61",
+                    "row": {
+                      "id": "01M6NTCCQY3YEGZNGYXB6B4CXC",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCCX5JFESKTXK1F862TQQ",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 211.43254707567394,
+            "write_to_provisional_ms": 27.345834067091346,
+            "ack_to_provisional_ms": -184.0867130085826,
+            "ack_to_settled_ms": 56.56864889897406
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "262",
+                "local": "f319e544964bf5cb",
+                "provisional": [
+                  {
+                    "id": "01M6NTCDA64ASV6H5G48X4HGZG",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCDA64ASV6H5G48X4HGZG.62",
+                        "row": {
+                          "id": "01M6NTCD50SEDJ7ZFX5XXNKESA",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "266",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCDA64ASV6H5G48X4HGZG"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "62",
+                    "row": {
+                      "id": "01M6NTCD50SEDJ7ZFX5XXNKESA",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCDA64ASV6H5G48X4HGZG",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.0078389905393,
+            "write_to_provisional_ms": 24.415239924564958,
+            "ack_to_provisional_ms": -177.59259906597435,
+            "ack_to_settled_ms": 54.34066383168101
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "266",
+                "local": "fad7aac964c6cdc8",
+                "provisional": [
+                  {
+                    "id": "01M6NTCDPW1828N5WTD7XKH5KZ",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCDPW1828N5WTD7XKH5KZ.63",
+                        "row": {
+                          "id": "01M6NTCDHPM6J513SVMQN92BJP",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "270",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCDPW1828N5WTD7XKH5KZ"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "63",
+                    "row": {
+                      "id": "01M6NTCDHPM6J513SVMQN92BJP",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCDPW1828N5WTD7XKH5KZ",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 202.6881268247962,
+            "write_to_provisional_ms": 24.601802928373218,
+            "ack_to_provisional_ms": -178.08632389642298,
+            "ack_to_settled_ms": 79.23722919076681
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "270",
+                "local": "39725420a2840760",
+                "provisional": [
+                  {
+                    "id": "01M6NTCE4BSFW8BZHTB4ZF4JCP",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCE4BSFW8BZHTB4ZF4JCP.64",
+                        "row": {
+                          "id": "01M6NTCDZ7PDPNNMGNRDF86ZJ0",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "274",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCE4BSFW8BZHTB4ZF4JCP"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "64",
+                    "row": {
+                      "id": "01M6NTCDZ7PDPNNMGNRDF86ZJ0",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCE4BSFW8BZHTB4ZF4JCP",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 201.5611140523106,
+            "write_to_provisional_ms": 22.958944085985422,
+            "ack_to_provisional_ms": -178.60216996632516,
+            "ack_to_settled_ms": 60.17213105224073
+          },
+          {
+            "pages": [
+              {
+                "next_offset": "274",
+                "local": "d5e8eed90052f67e",
+                "provisional": [
+                  {
+                    "id": "01M6NTCEH94CXBCS6ZYKVNXFPW",
+                    "ops": [
+                      {
+                        "op": "insert",
+                        "key": "~01M6NTCEH94CXBCS6ZYKVNXFPW.65",
+                        "row": {
+                          "id": "01M6NTCEC3B2FRTXRQCJ9ZY7WN",
+                          "v": "sjc"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "confirmed": [],
+                "revert": [],
+                "ops": []
+              },
+              {
+                "next_offset": "279",
+                "local": "0",
+                "provisional": [],
+                "confirmed": [
+                  "01M6NTCEH94CXBCS6ZYKVNXFPW"
+                ],
+                "revert": [],
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "65",
+                    "row": {
+                      "id": "01M6NTCEC3B2FRTXRQCJ9ZY7WN",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "transaction": "01M6NTCEH94CXBCS6ZYKVNXFPW",
+            "state": "confirmed",
+            "status": 200,
+            "code": null,
+            "route": "route=local; reason=ulid_insert; commit=local",
+            "region": "sjc",
+            "write_ms": 206.0062049422413,
+            "write_to_provisional_ms": 25.71333502419293,
+            "ack_to_provisional_ms": -180.29286991804838,
+            "ack_to_settled_ms": 52.12087812833488
+          }
+        ],
+        "p50_ack_to_provisional_ms": -178.59218991361558
+      }
+    ],
+    "revert_attempts": [
+      {
+        "pages": [
+          {
+            "next_offset": "279",
+            "local": "7b78c454de4fbe5c",
+            "provisional": [
+              {
+                "id": "01M6NTCEZKDMYEHJPH8DKBXPBX",
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "~01M6NTCEZKDMYEHJPH8DKBXPBX.66",
+                    "row": {
+                      "id": "01M6NTCERVM7PATE1CN30T2F4H",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "confirmed": [],
+            "revert": [],
+            "ops": []
+          },
+          {
+            "next_offset": "279",
+            "local": "66fecc429a08c694",
+            "provisional": [
+              {
+                "id": "01M6NTCEZKDMYEHJPH8DKBXPBX",
+                "ops": [
+                  {
+                    "op": "insert",
+                    "key": "~01M6NTCEZKDMYEHJPH8DKBXPBX.66",
+                    "row": {
+                      "id": "01M6NTCERVM7PATE1CN30T2F4H",
+                      "v": "sjc"
+                    }
+                  }
+                ]
+              }
+            ],
+            "confirmed": [],
+            "revert": [],
+            "ops": []
+          },
+          {
+            "next_offset": "285",
+            "local": "0",
+            "provisional": [],
+            "confirmed": [],
+            "revert": [
+              "01M6NTCEZKDMYEHJPH8DKBXPBX"
+            ],
+            "ops": [
+              {
+                "op": "insert",
+                "key": "66",
+                "row": {
+                  "id": "01M6NTCERVM7PATE1CN30T2F4H",
+                  "v": "gru"
+                }
+              }
+            ]
+          }
+        ],
+        "provisional_at": 1266966.996065821,
+        "settled_at": 1266967.798577033,
+        "transaction": "01M6NTCEZKDMYEHJPH8DKBXPBX",
+        "state": "revert",
+        "attempt": 1,
+        "local_status": 400,
+        "home_status": 200,
+        "home_code": null,
+        "local_code": "primary_key_violation"
+      }
+    ],
+    "read_retries": [
+      {
+        "status": 503,
+        "code": "unavailable",
+        "request_id": "01M6NTBHEWSHRM3SZPGNAQHJZA",
+        "at_unix": 1793881130.4738195
+      },
+      {
+        "status": 503,
+        "code": "unavailable",
+        "request_id": "01M6NTBHJFT9G8Y6VRXRK9V5K7",
+        "at_unix": 1793881130.5773396
+      },
+      {
+        "status": 503,
+        "code": "unavailable",
+        "request_id": "01M6NTBHNNQN0VNC2NGBQ8SJQQ",
+        "at_unix": 1793881130.6804178
+      },
+      {
+        "status": 503,
+        "code": "unavailable",
+        "request_id": "01M6NTBHRWCRSCSDD7CP33TEX2",
+        "at_unix": 1793881130.783203
+      }
+    ],
+    "revert_proven": true,
+    "database_deleted": true
+  },
+  "cleanup": {
+    "database_deleted": true,
+    "account_deleted": true,
+    "regional_credentials_removed": true
+  },
+  "health_after": {
+    "gru": {
+      "captured_at": "2026-11-05T12:23:48.787437+00:00",
+      "image": "ghcr.io/terrascale/terrabase@sha256:41d311290e6190572e48928e2ebceec5459cf8895a8092cadca0f603eb8d8515",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "gru",
+        "storageFormat": "22-41a88901325a",
+        "revision": "d38f9b02e73c49d2322cc33fc042f0a068ca414a",
+        "machine": "ts-gru-1"
+      },
+      "metrics": [
+        "terrabase_push_applies_total{otel_scope_name=\"TerraScale.TerraBase\",state=\"confirmed\"} 225",
+        "terrabase_push_applies_total{otel_scope_name=\"TerraScale.TerraBase\",state=\"reverted\"} 1",
+        "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+      ]
+    },
+    "sjc": {
+      "captured_at": "2026-11-05T12:22:02.162691+00:00",
+      "image": "ghcr.io/terrascale/terrabase@sha256:41d311290e6190572e48928e2ebceec5459cf8895a8092cadca0f603eb8d8515",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "sjc",
+        "storageFormat": "22-41a88901325a",
+        "revision": "d38f9b02e73c49d2322cc33fc042f0a068ca414a",
+        "machine": "ts-sjc-1"
+      },
+      "metrics": [
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"0\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"5\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"10\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"25\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"50\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"75\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"100\"} 0",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"250\"} 224",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"500\"} 226",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"750\"} 226",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"1000\"} 226",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"2500\"} 226",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"5000\"} 226",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"7500\"} 226",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"10000\"} 226",
+        "terrabase_push_lag_milliseconds_bucket{otel_scope_name=\"TerraScale.TerraBase\",le=\"+Inf\"} 226",
+        "terrabase_push_lag_milliseconds_sum{otel_scope_name=\"TerraScale.TerraBase\"} 43448",
+        "terrabase_push_lag_milliseconds_count{otel_scope_name=\"TerraScale.TerraBase\"} 226",
+        "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 1",
+        "terrabase_push_reverts_total{otel_scope_name=\"TerraScale.TerraBase\"} 1"
+      ]
+    },
+    "fra": {
+      "captured_at": "2026-11-05T12:23:55.885214+00:00",
+      "image": "ghcr.io/terrascale/terrabase@sha256:41d311290e6190572e48928e2ebceec5459cf8895a8092cadca0f603eb8d8515",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "fra",
+        "storageFormat": "22-41a88901325a",
+        "revision": "d38f9b02e73c49d2322cc33fc042f0a068ca414a",
+        "machine": "ts-fra-1"
+      },
+      "metrics": [
+        "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+      ]
+    }
+  }
+}
