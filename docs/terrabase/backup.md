@@ -14,8 +14,7 @@ The older scheduled backups (`…/backups`, local snapshot files next to the dat
 Slices 1 (shipping and restore), 2 (shipper leases) and 3 (retention by plan, daily restore drills, records in TerraBase)
 of TS-633 are done. Not done yet:
 
-- No restore over an existing database, and no disaster-recovery path that rebuilds a whole data directory
-  (`_system.db` included) from the bucket.
+- No disaster-recovery path that rebuilds a whole data directory (`_system.db` included) from the bucket.
 - Objects of a deleted database stay in the bucket until its erasure pass deletes them, but its keys are destroyed at
   deletion, so they cannot be decrypted ([crypto-shredding](crypto-shredding.md)).
 - No segment compaction (see [Compared with Litestream](#compared-with-litestream)).
@@ -388,6 +387,19 @@ so metadata latency cannot move the retention floor during a restore. Window rea
 reference time before reading metadata.
 
 The result holds every transaction committed before `pointInTime`, or the restore answers `409`.
+
+### Restore in place
+
+`POST /v1/projects/{project}/databases/{database}/point-in-time/rewind` with `{"pointInTime": "…"}` (optional
+`destination`) restores the database itself: it rebuilds the state as of `pointInTime` exactly like a restore, then, in
+one transaction on the database's writer, drops its tables, indexes, views and triggers and recreates them with every
+row (rowids kept) from that state; foreign keys are off and triggers are created after the rows. The database keeps its
+id, name, credentials and database allowance, so a Free organization can recover from an accidental `DROP` or
+`DELETE`. Changes committed after `pointInTime` are discarded. The rewind is captured like any write, so a later restore
+can undo it, and it starts a new revision incarnation (D18): a replica holding an older revision rebootstraps
+(`OtherIncarnation`) instead of continuing incrementally. The time rules and errors match a restore; nothing changes on
+an error. CLI: `ts backup rewind <db> <time> -yes`; dashboard: Backups → point-in-time → Restore in place. A deleted
+database stays unrestorable.
 
 ### Proven history
 
