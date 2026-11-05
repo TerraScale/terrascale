@@ -341,7 +341,7 @@ export const ptBr: Messages = {
     regionsAria: 'Regiões em operação',
     missionTitle: 'Uma plataforma para bancos de dados, chaves e cobrança.',
     pillars: [
-      { title: 'SQL sobre Turso' },
+      { title: 'Bancos de dados SQL' },
       { title: 'Uma região de escrita e réplicas criptografadas' },
       { title: 'Tetos de escrita por plano' },
     ],
