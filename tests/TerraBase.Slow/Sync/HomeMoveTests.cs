@@ -9,13 +9,13 @@ using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
 using TerraBase.Testing;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Slow.Sync;
 
 public sealed class HomeMoveTests
 {
     private static readonly Faker Faker = new();
-    private static readonly string[] SjcOnly = ["sjc"];
 
     [Test]
     public async Task A_home_moves_under_writes_without_losing_an_acknowledged_write_and_the_old_home_refuses_writes()
@@ -38,7 +38,7 @@ public sealed class HomeMoveTests
         using var viaGru = gru.WithToken(bearer);
         using var viaSjc = sjc.WithToken(bearer);
         var name = "moving" + Faker.Random.AlphaNumeric(6).ToLowerInvariant();
-        using var created = await viaGru.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name, replicaRegions = SjcOnly }, token);
+        using var created = await viaGru.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name, allRegions = true }, token);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync(token));
         var id = (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
         var sql = ManagementApi.Uri($"/v1/projects/{project}/databases/{name}/sql/execute");
@@ -48,6 +48,23 @@ public sealed class HomeMoveTests
         }
 
         var replication = sjc.Server.Services.GetRequiredService<RegionReplication>();
+        await replication.SyncCatalogsAsync(token);
+        await replication.PullAllAsync(token);
+        await Assert.That(replication.Following.Select(database => database.DatabaseId)).Contains(id);
+
+        // Lease observations carry all-regions mode without an explicit region list. A same-epoch
+        // catalog answer must not make that replica stop following or reject a home-session open.
+        using (var placement = await viaGru.PatchAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/{id}"), new { allRegions = true }, token))
+        {
+            await Assert.That(placement.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await placement.Content.ReadAsStringAsync(token));
+            var tenant = new TenantContext(organization, PlanTier.Hobby, project, id);
+            var record = await gru.Server.Services.GetRequiredService<IReplicaCatalog>().FindAsync(tenant, token) is TenantDatabaseRecord found
+                ? found : throw new InvalidOperationException("the home placement is missing");
+            var epoch = record.Placement.Version;
+            await sjc.Server.Services.GetRequiredService<IReplicaCatalog>().UpdatePlacementAsync(
+                tenant, new DatabasePlacement("gru", [], epoch, AllRegions: true), token);
+        }
+
         await replication.SyncCatalogsAsync(token);
         await replication.PullAllAsync(token);
         await Assert.That(replication.Following.Select(database => database.DatabaseId)).Contains(id);
