@@ -1,4 +1,7 @@
 import './workspace.js';
+import { installSdkTabs } from './sdk-tabs.js';
+
+installSdkTabs();
 
 // Shared feedback for native form submissions and Datastar requests. Keep
 // submit controls enabled so their name/value still reaches the server.
