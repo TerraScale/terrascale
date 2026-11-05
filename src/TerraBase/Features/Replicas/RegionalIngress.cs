@@ -15,7 +15,10 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
 
     internal async Task<IDisposable> EnterAsync(CancellationToken token)
     {
-        await _slots.WaitAsync(token).ConfigureAwait(false);
+        if (!await _slots.WaitAsync(0, token).ConfigureAwait(false))
+        {
+            throw new Qos.QosMemoryException("regional ingress is full");
+        }
         try
         {
             while (true)

@@ -362,6 +362,7 @@ internal sealed class RegionalHandoff(
             return false;
         }
 
+        IDisposable? admission = null;
         await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -383,7 +384,7 @@ internal sealed class RegionalHandoff(
             {
                 return false;
             }
-            using var admission = await services.GetRequiredService<RegionalIngress>().HoldAsync(cancellationToken).ConfigureAwait(false);
+            admission = await services.GetRequiredService<RegionalIngress>().HoldAsync(cancellationToken).ConfigureAwait(false);
             owners.Drain();
             logger.ZLogInformation($"Regional handoff source fenced: {options.MachineId:@Source} to {target:@Target}, epoch {owner.Epoch:@Epoch}");
             var catalog = services.GetRequiredService<IReplicaCatalog>();
@@ -462,6 +463,16 @@ internal sealed class RegionalHandoff(
             var next = new RegionalOwner(options.Region, target, owner.Epoch + 1, options.MachineId);
             _ = await kv.UpdateAsync(options.Region, Encode(next), entry.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
             Observe(next);
+            while (true)
+            {
+                using var ready = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), cancellationToken).ConfigureAwait(false);
+                if (ready.IsSuccessStatusCode && await ready.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, cancellationToken).ConfigureAwait(false)
+                    is { Writer: true, Ready: true, Owner: var active } && active == target)
+                {
+                    break;
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
+            }
             logger.ZLogInformation($"Regional writer moved to {target:@Node} at epoch {next.Epoch:@Epoch} after {positions.Count:@Databases} applied positions were proven");
             return true;
         }
@@ -473,6 +484,7 @@ internal sealed class RegionalHandoff(
             }
             finally
             {
+                admission?.Dispose();
                 _changing.Release();
             }
         }
