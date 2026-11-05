@@ -104,7 +104,7 @@ internal sealed class HomeSessionEndpoint(
         return await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) switch
         {
             TenantDatabaseRecord { Placement: var placement } when placement.Home == options.Region && placement.Replicas.Contains(open.Region)
-                && open.Epoch <= placement.Version => database,
+                && open.Epoch == placement.Version => database,
             Errors.Unavailable unavailable => new SqlError(SqlErrors.Unavailable, unavailable.Message),
             _ => NotHere,
         };
