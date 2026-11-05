@@ -6,8 +6,7 @@ namespace TerraBase.Features.Regions;
 public sealed record RegionPeer(string Region, Uri Address);
 
 /// <summary>
-/// One node of every other region: its first line in the peers file, the region's founder and data owner. A region's other nodes hold
-/// its local writes (R10) and serve no cross-region requests.
+/// The observed CAS-fenced writer of every other region. Every regional peer follows applied state and retains R10 holds.
 /// </summary>
 public interface IRegionPeers
 {
