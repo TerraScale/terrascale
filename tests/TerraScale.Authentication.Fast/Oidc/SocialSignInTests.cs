@@ -19,7 +19,7 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
 
     [Test]
     [Arguments("google")]
-    public async Task End_users_sign_up_and_back_in_with_the_projects_provider(string provider)
+    public async Task A_verified_provider_creates_only_its_project_identity_and_rejects_unverified_email(string provider)
     {
         using var providers = new FakeSocialProviders();
         await using var oidc = await OidcHarness.StartAsync(fixture, services: providers.Route);
@@ -29,7 +29,7 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
         using var page = await oidc.Client.GetAsync($"/ui/{project}/sign-in");
         await Assert.That(await page.Content.ReadAsStringAsync()).Contains($"/ui/{project}/social/{provider}");
 
-        // First sign-in creates the account in the project tenant; the second signs the same account in.
+        // The provider creates an account in the project tenant. The full returning-user journey runs in Slow.
         var email = this.faker.Internet.Email(provider: "example.test").ToLowerInvariant();
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
         await Assert.That(await SignInAsync(oidc, providers, project, provider, email)).IsNotNull();
@@ -46,8 +46,6 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
             _ => FakeSocialProviders.OidcIssuer,
         });
         await Assert.That(await users.FindByEmailAsync(OidcIssuer.InstanceId, email)).IsNull();
-        await Assert.That(await SignInAsync(oidc, providers, project, provider, email)).IsNotNull();
-        await Assert.That((await users.FindByEmailAsync(project, email))!.Id).IsEqualTo(created!.Id);
 
         // An address the provider did not verify signs nobody in.
         await Assert.That(await SignInAsync(oidc, providers, project, provider, "unverified-" + email, verified: false, subject: "67890")).IsNull();
