@@ -127,6 +127,7 @@ func newNATS(dir, logDir, token string) (*nats, error) {
 	}
 	n := &nats{bin: bin, conf: filepath.Join(dir, "nats.conf"), logPath: filepath.Join(logDir, "nats.log"), port: port}
 	conf := fmt.Sprintf("listen: \"127.0.0.1:%d\"\nauthorization { token: %q }\n", port, token)
+	conf += fmt.Sprintf("jetstream { store_dir: %q }\n", filepath.Join(dir, "jetstream"))
 	return n, writeFile0600(n.conf, []byte(conf))
 }
 
