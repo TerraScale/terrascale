@@ -105,17 +105,15 @@ the invitations the dashboard sends. ts-auth does not enforce it.
 
 The dashboard keeps its own state in the `ts-dashboard` database of the
 ts-dashboard project `00000000000000000000000005`, which TerraBase seeds on every
-start (terrascale `PlatformDatabases.cs`). It reaches TerraBase's private
-listener at `TS_DASHBOARD_TERRABASE_URL` when set (any environment, an http(s)
-origin such as `http://127.0.0.1:8081`), defaulting to that loopback origin
-only in Development; otherwise it refuses to
-start. Only the `terrabase-state` HTTP client sends
-`X-TerraBase-Peer-Credential`, and only to that origin: its handler
-(`TerraBasePeerCredential`) refuses any other destination and its primary
-handler follows no redirects. The shared `platform` client (ts-auth, the public
-TerraBase API, Stripe, status) never carries it. gru stays the single home until cross-region conditional writes are
-proven. Startup creates missing collections (`409 name_taken` counts as
-created) and never creates or replaces the database. The platform project has
+start (terrascale `PlatformDatabases.cs`). State calls use MagicOnion on TerraBase's
+private listener, with the peer credential and no customer token. gru stays the
+single home until cross-region conditional writes are proven. In gru the listener
+is `TS_DASHBOARD_TERRABASE_URL`; other regions discover gru's NetBird address in
+`TS_PEERS_FILE` and use the same private port. Missing gru membership fails closed,
+so a regional dashboard never creates independent sessions or Personal workspaces
+in its local platform database. Development without peers uses its local listener.
+The RPC transport follows no redirects. Startup creates missing SQL tables and
+never creates or replaces the database. The platform project has
 no customer members or keys; no customer token reaches this database.
 
 ## TerraBase origin and regions

@@ -65,10 +65,10 @@ namespace TerraScale.Dashboard.Platform.Rpc
             : throw new InvalidOperationException($"Set {OriginName}: only Development defaults to the loopback TerraBase.");
         }
 
-        // The operator's client, for the dashboard's own state in the local region.
-        public T Platform<T>() where T : IService<T>
+        // The operator's client, local unless the platform database names its home.
+        public T Platform<T>(string? databaseRegion = null) where T : IService<T>
         {
-            return Create<T>(local);
+            return Create<T>(Endpoint(databaseRegion));
         }
 
         // A client that acts with the user's scoped ts-auth token in the region that serves the database (local when null).
