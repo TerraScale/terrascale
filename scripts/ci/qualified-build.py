@@ -9,13 +9,30 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 REPO = 'TerraScale/terrascale'
 
 
 def gh(*args):
-    return subprocess.check_output(['gh', *args], text=True)
+    if args[:2] != ('release', 'download'):
+        return subprocess.check_output(['gh', *args], text=True)
+    # A failed transfer may leave a partial destination. The manifest's
+    # digest and source checks below still admit only the original bytes.
+    args = (*args, '--clobber')
+    for attempt in range(3):
+        try:
+            return subprocess.check_output(['gh', *args], text=True, stderr=subprocess.PIPE,
+                                           timeout=25)
+        except subprocess.CalledProcessError as error:
+            if error.stderr:
+                diagnostic = re.sub(r'(https?://[^?\s)]+)\?[^\s)]+', r'\1?[redacted]', error.stderr)
+                print(diagnostic, file=sys.stderr, end='')
+            if attempt == 2 or not re.search(r'(?i)(?:HTTP\s+|status(?: code)?[:= ]+|returned error: )5[0-9]{2}\b', error.stderr or ''):
+                raise
+            print(f'Transient release download failure; retry {attempt + 1}/2 in {2 ** attempt}s', file=sys.stderr)
+            time.sleep(2 ** attempt)
 
 
 def digest(path):
@@ -156,5 +173,5 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
         sys.exit('FAILED ' + str(error))

@@ -62,9 +62,9 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
     pins = vendor / "SHA256SUMS"
     pins.write_text("".join(hashes + parser_hashes))
     curl = fixture / "curl"
-    curl.write_text("#!/usr/bin/env python3\nimport os,pathlib,shutil,sys\na=sys.argv\nurl=a[a.index('--tlsv1.2')+1]\nshutil.copyfile(pathlib.Path(os.environ['TEST_NATIVE_ASSETS'])/url.rsplit('/',1)[1], a[a.index('-o')+1])\n")
+    curl.write_text("#!/usr/bin/env python3\nimport os,pathlib,shutil,sys\na=sys.argv\nurl=a[a.index('--tlsv1.2')+1]\nassert a[a.index('--retry')+1] == '6'\nassert a[a.index('--retry-max-time')+1] == '120'\nassert a[a.index('--connect-timeout')+1] == '10'\nassert a[a.index('--max-time')+1] == '30'\nwith open(os.environ['TEST_NATIVE_CALLS'], 'a') as calls: calls.write(url.rsplit('/',1)[1]+'\\n')\nshutil.copyfile(pathlib.Path(os.environ['TEST_NATIVE_ASSETS'])/url.rsplit('/',1)[1], a[a.index('-o')+1])\n")
     curl.chmod(0o755)
-    env = {**os.environ, "PATH": f"{fixture}:{os.environ['PATH']}", "TEST_NATIVE_ASSETS": str(assets)}
+    env = {**os.environ, "PATH": f"{fixture}:{os.environ['PATH']}", "TEST_NATIVE_ASSETS": str(assets), "TEST_NATIVE_CALLS": str(fixture / "calls")}
     output = fixture / "native"
 
     def run(script, *arguments, succeeds=True):
@@ -103,6 +103,10 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
 
     run("download-turso-native.sh", output)
     run("verify-turso-native.sh", output)
+    calls = (fixture / "calls").read_text()
+    for _ in range(5):
+        run("download-turso-native.sh", output)
+        assert (fixture / "calls").read_text() == calls, "Verified pins must not hit the release host again"
     for rid in ("linux-x64", "linux-arm64"):
         assert (output / f"runtimes/{rid}/native/libturso_sdk_kit.so").read_bytes() == (assets / f"terrascale-turso-{rid}.so").read_bytes()
         assert (output / f"runtimes/{rid}/native/libterrascale_sql_parser.so").read_bytes() == (assets / f"terrascale-sql-parser-{rid}.so").read_bytes()
