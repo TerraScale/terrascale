@@ -219,9 +219,20 @@ public sealed class CompleteShreddingTests
         using var refused = Purger("refused-token");
         await refused.RunOnceAsync(token);
         await Assert.That(cloudflare.Purged).IsEmpty();
+        cloudflare.VerificationStatus = HttpStatusCode.OK;
+        using (var acceptedButStale = Purger(FakeCloudflare.Token))
+        {
+            await acceptedButStale.RunOnceAsync(token);
+        }
+        await Assert.That(cloudflare.Purged).Contains(url[8..(url.LastIndexOf('/') + 1)]);
+        var accepted = cloudflare.Purged.Count;
+        cloudflare.VerificationStatus = HttpStatusCode.NotFound;
         using var restarted = Purger(FakeCloudflare.Token);
         await restarted.RunOnceAsync(token);
-        await Assert.That(cloudflare.Purged).Contains(url[8..(url.LastIndexOf('/') + 1)]);
+        await Assert.That(cloudflare.Purged.Count).IsEqualTo(accepted + 1);
+        using var finished = Purger(FakeCloudflare.Token);
+        await finished.RunOnceAsync(token);
+        await Assert.That(cloudflare.Purged.Count).IsEqualTo(accepted + 1);
 
         ShapeCdnPurge Purger(string credential) => new(services.GetRequiredService<IHttpClientFactory>(), credential,
             TimeProvider.System, services.GetRequiredService<IMeterFactory>(), services.GetRequiredService<ILogger<ShapeCdnPurge>>(),
