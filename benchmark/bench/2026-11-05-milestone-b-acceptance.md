@@ -1,12 +1,12 @@
 # Milestone B end-to-end acceptance — 2026-11-05
 
-**Overall: PASS against the pooled gates, with a repeat-level latency failure.** The final fresh Pro cohort accepts 900/900 writes and 1800/1800 cross reads, and every region passes the pooled 300-write origin/client p99 gates. **SJC repeat 1 fails both latency gates** (202.83 ms endpoint /400.024 ms client); its home fallback and following 551.04 ms endpoint outlier remain disclosed. SQL reads do not increase billable write units. Three post-fix home moves preserve every acknowledged row, and a fresh CDN deletion returns 404 in all three POPs within 20 seconds. Original failures and the failed rollout cohort are retained below.
+**Latest default-ack result: PASS in every repeat.** The independent fresh Pro reader-drain confirmation accepts 900/900 writes and 1,800/1,800 cross reads with zero errors; all nine 100-write repeats meet endpoint p99 <100 ms and client p99 <own baseline+100 ms. Every one of 960 acknowledged IDs and full values matches exactly in all three regions. The original failed cohorts, including the earlier SJC repeat failure, remain below. SQL reads are unbilled, three post-fix home moves preserve all acknowledged rows, and CDN deletion passes within 20 seconds. **The separately assigned item 1 rerun during a zero-downtime rollout is pending.**
 
 | Item | Result | Independently observed evidence |
 |---|---|---|
 | Fresh account, Free → Pro | PASS | Hosted sign-up, real email verification, dashboard onboarding, API key creation, and public Stripe **sandbox** checkout; Pro active. No real-money activation. |
-| 1. Write each region; read other regions | PASS after fix; rollout FAIL retained | Final fresh Pro confirmation: 900/900 writes, 1,800/1800 cross reads, 960 acknowledged IDs/values exactly once in every region. Each baseline plan: 900/900 writes; 1,800 cross-region read requests, all served in the requested region. Final pre-move reconciliation includes every acknowledged ID exactly once. Eventual visibility, not immediate cross-region read-your-writes. Post-fix rollout run: 898/900 writes; 4 cross-read SQL errors; all 958 acknowledged rows reconcile exactly in all regions. |
-| 2. Default local ack | PASS pooled; FAIL SJC repeat 1 | Final pooled GRU/SJC/FRA endpoint p99: 54.47/79.61/50.64 ms; client: 77.193/275.416/265.568 ms, all below own baseline+100 ms. SJC repeat 1: 202.83/400.024 ms, both FAIL. SJC 299/300 and FRA 300/300 default writes commit locally; one SJC home fallback. [#1105 evidence](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6668472420). |
+| 1. Write each region; read other regions | PASS steady state; rollout rerun PENDING | Latest fresh Pro: 900/900 writes,1,800/1,800 cross reads,960 acknowledged IDs/values exactly once in all regions. All1,800 reads identify the requested region;24 first reads are empty (eventual visibility). Earlier rollout FAIL retained; independent zero-downtime rollout rerun awaits HANDOFF. |
+| 2. Default local ack | PASS after reader-drain fix, all 9 repeats | Latest fresh Pro: 900/900 writes; pooled endpoint p99 GRU/SJC/FRA 34.82/51.61/37.77 ms, client55.313/246.117/251.568 ms. Every100-write repeat passes both gates. All600 away writes commit locally. Earlier SJC repeat1 FAIL retained. [#1105 independent proof](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6669577310). |
 | 2. Opt-in home-durable ack | PASS | 30 accepted home-durable writes per plan; additional Pro functional check: 9/9 writes immediately visible at home; each post-fix cohort adds 30/30 immediate home reads. |
 | 3. SQL reads are not billed | PASS | Pro read-only workload: 300/300 successful reads; write units stay 981; usage charges stay $0.00. Read fair-use units are separate. |
 | 3. CDN cache in all regions | PASS | SDK-used shape ciphertext: 200/HIT at GRU, SJC and FRA with `terrascale-js/0.0.19`; matching bytes and digest. |
@@ -302,6 +302,109 @@ Stock psql with `sslmode=verify-full` also succeeds through all three regional P
 
 One SJC insert during move 2 returns HTTP 400 `sql_error`: request `01M6PMJE24DEMZDJ63M4MDZ7CH`, row `01M6PMJDYQKVTJ0B1EB6VTKVSZ`, client UTC 19:56:59.223754Z → 19:56:59.425580Z, 201.805 ms client / 9.45 ms origin app. Sanitized SDK message: `the database does not exist`; SQLSTATE `0A000`, statement 0. It is absent from all final inventories and was never acknowledged. This serving defect is recorded in [#1105](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6667871689) and the [R9 evidence](https://github.com/TerraScale/terrascale/issues/1106#issuecomment-6667871258); passing acknowledged-row preservation does not erase it.
 
+## Independent reader-drain fix confirmation — every repeat
+
+Client `delta`; SDK `ddbc3a87d7c16cedf918cb3754bad364f7c068eb`. Fresh Pro database `01M6PRBXSDAGS3GY5K1FP4ZDKG`, home GRU, all regions. Probe start `2026-11-05T21:03:20.097479+00:00`. Server revision below is the deployment handoff declaration; HTTP measurements are independent.
+
+```json
+{
+  "kind": "environment",
+  "host": "delta",
+  "pid": 809563,
+  "mode": "local-ack",
+  "sdk_revision": "ddbc3a87d7c16cedf918cb3754bad364f7c068eb",
+  "declared_server_revision": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+  "at": "2026-11-05T21:03:20.097479+00:00",
+  "stop_file": "/tmp/mb-acceptance-rerun-env-q7538pfl/probe.stop"
+}
+```
+
+The 100 SELECT-1 baselines per region precede every measured insert. Path baseline is nearest-rank p50 of successful client duration minus the last endpoint `app` timing. Every repeat is retained. Missing timing or fewer than 100 samples prevents a latency PASS.
+
+| Region | Baseline success / attempts | Client / endpoint p50 ms | Path baseline ms | Client p99 budget ms |
+|---|---:|---:|---:|---:|
+| gru | 100/100 | 23.552 / 1.73 | 21.829 | 121.829 |
+| sjc | 100/100 | 194.503 / 1.49 | 192.960 | 292.960 |
+| fra | 100/100 | 213.426 / 1.41 | 212.005 | 312.005 |
+
+| Region | Repeat | Accepted / attempts | Client p50 / p99 ms | Endpoint p50 / p99 ms | Endpoint samples | Client / endpoint max ms | Local / home commits | Endpoint / client gates |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| gru | 1 | 100/100 | 34.576 / 53.764 | 12.34 / 29.24 | 100/100 | 55.313 / 34.82 | 0 / 0 | PASS / PASS |
+| gru | 2 | 100/100 | 34.472 / 60.430 | 12.26 / 37.96 | 100/100 | 95.401 / 72.62 | 0 / 0 | PASS / PASS |
+| gru | 3 | 100/100 | 34.770 / 51.895 | 12.45 / 28.93 | 100/100 | 71.777 / 49.68 | 0 / 0 | PASS / PASS |
+| gru | pooled | 300/300 | 34.609 / 55.313 | 12.38 / 34.82 | 300/300 | 95.401 / 72.62 | 0 / 0 | PASS / PASS |
+| sjc | 1 | 100/100 | 216.001 / 230.475 | 21.50 / 36.76 | 100/100 | 240.086 / 44.55 | 100 / 0 | PASS / PASS |
+| sjc | 2 | 100/100 | 219.386 / 247.525 | 24.55 / 52.92 | 100/100 | 248.170 / 54.35 | 100 / 0 | PASS / PASS |
+| sjc | 3 | 100/100 | 215.697 / 237.768 | 21.54 / 44.31 | 100/100 | 249.419 / 54.83 | 100 / 0 | PASS / PASS |
+| sjc | pooled | 300/300 | 216.308 / 246.117 | 21.88 / 51.61 | 300/300 | 249.419 / 54.83 | 300 / 0 | PASS / PASS |
+| fra | 1 | 100/100 | 234.154 / 250.988 | 21.06 / 37.77 | 100/100 | 251.625 / 38.52 | 100 / 0 | PASS / PASS |
+| fra | 2 | 100/100 | 234.918 / 251.568 | 21.79 / 37.68 | 100/100 | 256.886 / 39.71 | 100 / 0 | PASS / PASS |
+| fra | 3 | 100/100 | 234.639 / 244.848 | 21.83 / 31.49 | 100/100 | 264.844 / 49.88 | 100 / 0 | PASS / PASS |
+| fra | pooled | 300/300 | 234.529 / 251.568 | 21.63 / 37.77 | 300/300 | 264.844 / 49.88 | 300 / 0 | PASS / PASS |
+
+| Region | First insert client / endpoint ms | Request ID | Route |
+|---|---:|---|---|
+| gru | 45.563 / 23.36 | `01M6PRCQ9BZFMT51B4GSWHBR4S` | absent (GRU home endpoint) |
+| sjc | 227.096 / 33.19 | `01M6PRCQC3J49DAYWC2B42E0NG` | `route=local; reason=ulid_insert; commit=local` |
+| fra | 241.648 / 28.76 | `01M6PRCQC90MK3RJKQPZ4ETN4F` | `route=local; reason=ulid_insert; commit=local` |
+
+| Write → read | Successful / attempts | Client p50 / p99 ms | Visible first read | Target-local response header |
+|---|---:|---:|---:|---:|
+| gru → sjc | 300/300 | 201.809 / 220.378 | 293/300 | 300/300 |
+| gru → fra | 300/300 | 214.707 / 237.047 | 300/300 | 300/300 |
+| sjc → gru | 300/300 | 22.172 / 41.169 | 298/300 | 300/300 |
+| sjc → fra | 300/300 | 214.492 / 236.272 | 293/300 | 300/300 |
+| fra → gru | 300/300 | 22.323 / 34.700 | 296/300 | 300/300 |
+| fra → sjc | 300/300 | 195.084 / 228.299 | 296/300 | 300/300 |
+
+Exact ID/value comparisons:
+
+```json
+[
+  {
+    "kind": "exact_comparison",
+    "phase": "exact_inventory",
+    "region": "gru",
+    "expected": 960,
+    "rows": 960,
+    "distinct": 960,
+    "missing": [],
+    "unexpected": [],
+    "changed": []
+  },
+  {
+    "kind": "exact_comparison",
+    "phase": "exact_inventory",
+    "region": "sjc",
+    "expected": 960,
+    "rows": 960,
+    "distinct": 960,
+    "missing": [],
+    "unexpected": [],
+    "changed": []
+  },
+  {
+    "kind": "exact_comparison",
+    "phase": "exact_inventory",
+    "region": "fra",
+    "expected": 960,
+    "rows": 960,
+    "distinct": 960,
+    "missing": [],
+    "unexpected": [],
+    "changed": []
+  }
+]
+```
+
+Failed application attempts: **0**. Raw API HTTP-error responses, including any SDK-recovered response: **0**. Auth HTTP-error responses: **0**. First immediate home-durable checks: **30/30**.
+
+Every 100-write repeat latency gate: **PASS**. Baselines finish before every write: **True**. Exact inventories in all three regions: **PASS**. Strict item 2 result: **PASS**.
+
+Deployment handoff: all six nodes healthy on `006bc37f24d99d9984b876ca9d432e580a4f8155` at20:57:45.966967Z; [CI42106659778](https://github.com/TerraScale/terrascale/actions/runs/42106659778) succeeds. The parent grants a freeze, the fixer finishes its cohort first, and this independent cohort runs21:03:20.097479Z–21:06:28.796946Z without overlapping fixer load. Public hosted signup creates a separate Free identity, `mariogk+mb-rerun-20261105-b1c4@terrascale.tech`; public Stripe Sandbox checkout upgrades it to Pro before database creation. Original account cleanup remains complete. The new account/database are retained temporarily for the separately assigned rollout proof; cleanup follows that proof.
+
+All600 away writes carry exactly `route=local; reason=ulid_insert; commit=local`. GRU home writes omit that route header. Every raw response retains UTC, headers and request ID; no error or latency sample is removed. The24 empty first cross reads are eventual-visibility misses; final exact reconciliation has zero missing, duplicate, unexpected or changed rows. [Independent #1105 evidence](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6669577310). The prior SJC repeat failure above remains historical evidence.
+
 ## Independent CDN deletion rerun after #1107 fix
 
 The deployment handoff identifies `afa0171a52` with CI [42094199071](https://github.com/TerraScale/terrascale/actions/runs/42094199071). A fresh all-regions Pro database `01M6PKKYX90SWSYCBYH9304XSK` (`milestone-b-cdn-retest`), home gru, has nine seeded rows. Official JavaScript SDK subscriptions reach all nine rows in all three regions. Its one SDK-used sealed URL is warmed twice in every POP, returning **200/HIT in GRU/SJC/FRA** with the SDK user agent; second-request Ages are 39/41/41. No manual purge is performed by acceptance.
@@ -333,7 +436,7 @@ Screenshots were captured with preview tools from the fresh account. Placement i
 | Pro usage after writes | [dark](../../docs/qa/milestone-b-acceptance-20261105/usage-pro-after-writes-dark.png) |
 | Pro billing before/after reads | [before](../../docs/qa/milestone-b-acceptance-20261105/billing-pro-before.png), [after](../../docs/qa/milestone-b-acceptance-20261105/billing-pro-after-reads.png) |
 
-## Final cleanup
+## Original account cleanup
 
 The original and dedicated CDN databases were deleted earlier. The reserved, latency/R9 and final confirmation databases are deleted through the public SDK; SQL and metadata return 404 `unknown_database` in GRU/SJC/FRA for each. The final database's previously valid shape-key requests return 200 before deletion and404 afterward in all 3 regions. All 3 regional database lists are empty. Final confirmation DELETE completes **20:28:33.875825Z**.
 

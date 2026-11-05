@@ -46,6 +46,10 @@ Retained on beta under `/home/mariogk/.t3/worktrees/terrascale/t3-b1c4ae61/bench
 | `summary.json` | 960 | `eea659fb8a1b42b119cc8607922458f808db31881051c16c479c7210c9121a97` |
 | `credential-cleanup.json` | 451 | `671b4340d6dbfbcfaa49f02d2052ecd4465000440854b842411d86d00d1df85d` |
 
+| `rerun-account-setup.json` | 580 | `9aa96d35f196acf866e592bb8e2049859219f82cedc844c8a0089df069deb42b` |
+| `reader-drain-rerun.jsonl` | 2797365 | `5b326df1e16663b782d0606c8c4ad9858c924243c48987de0a9e0fb443cd9ce3` |
+| `reader-drain-rerun-summary.json` | 9210 | `350a7e7d53d916309092ef679dd210e1db8482e0039e3ac5ea77ac5d896d6203` |
+
 ## Screenshot manifest
 
 Captured through preview tools; placement uses supported light and dark appearances. Files are unchanged PNG captures.
@@ -7753,3 +7757,7 @@ Shipped SDK ddbc3a87d source,960 rows in all3 regions. No epoch-key values are r
   "owned_preview_tabs_remaining": 0
 }
 ```
+
+## Independent reader-drain confirmation
+
+[Independent evidence comment](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6669577310). The new raw JSONL retains all300 baselines,900 default writes,1,800 cross reads,60 comparison writes,30 immediate home-durable checks,three full inventories and every auth exchange. No failed application/API/auth response occurs. The summary uses the last repeated endpoint `app` timing and checks all nine repeats separately. All960 full rows are retained in each inventory; zero missing, duplicate, unexpected or changed IDs. The original credentials/account are gone; the separately created Pro rerun account is active pending the rollout proof and its final cleanup.
