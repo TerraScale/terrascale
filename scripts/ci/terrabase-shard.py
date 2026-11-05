@@ -19,7 +19,8 @@ for path in Path("tests/TerraBase.Fast").rglob("*.cs"):
     match = re.search(r"^namespace (TerraBase\.Fast[\w.]*);", path.read_text(), re.M)
     if match:
         namespaces.add(match[1])
-assigned = [{n for n in namespaces if n.split(".")[2] in group} for group in groups]
+# Assembly fixtures can use the root namespace; keep them in the catch-all shard.
+assigned = [{n for n in namespaces if len(n.split(".")) > 2 and n.split(".")[2] in group} for group in groups]
 assigned.append(namespaces - set.union(*assigned))
 assert set.union(*assigned) == namespaces
 assert sum(map(len, assigned)) == len(namespaces)
