@@ -43,6 +43,13 @@ public sealed class RegionalWriterCrashTests
         {
             await writer.StartAsync(token);
             await follower.StartAsync(token);
+            using var initial = PeerTls.CreateClient(writer.Address);
+            await TerraBaseTestServer.EventuallyAsync(async _ =>
+            {
+                using var status = await initial.GetAsync(ManagementApi.Uri("/v1/rollout/status"), token);
+                var body = await status.Content.ReadFromJsonAsync<JsonElement>(token);
+                return body.GetProperty("writer").GetBoolean() && body.GetProperty("ready").GetBoolean();
+            }, TimeSpan.FromSeconds(10));
             using var management = PeerTls.CreateClient(writer.Address);
             management.DefaultRequestHeaders.Add("X-TerraBase-User-Id", EntityIds.New().ToString());
             var organization = await CreateAsync("/v1/management/organizations", new { name = "Crash drill" });
@@ -176,7 +183,10 @@ public sealed class RegionalWriterCrashTests
                 ["directory"] = DirectoryPath, ["node"] = name, ["address"] = address, ["port"] = port,
                 ["peers"] = peers, ["nats"] = nats.Url.ToString(), ["token"] = nats.Token,
             }.ToJsonString(), token);
-            File.SetUnixFileMode(configPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(configPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
             var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet")
             {
                 RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
