@@ -1,4 +1,5 @@
 using TerraBase.Hosting;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace TerraBase.Features.Replicas;
 
@@ -89,7 +90,7 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
     {
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
             new Uri(address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()));
-        if (context.Request.ContentLength is > 0 || context.Request.Headers.ContainsKey("Transfer-Encoding"))
+        if (context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
         {
             request.Content = new StreamContent(context.Request.Body);
             if (context.Request.ContentType is { } contentType)
