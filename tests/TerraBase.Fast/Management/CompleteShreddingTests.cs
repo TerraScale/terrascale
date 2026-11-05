@@ -49,7 +49,7 @@ public sealed class CompleteShreddingTests
                     MachineId = "origin",
                     PeersFile = peerFile,
                     InternalPort = remote.Server.BaseAddress.Port,
-                }, remote.Server.Credential));
+                }, remote.Server.Credential, provider.GetRequiredService<KeyRevocationLocal>()));
         });
         var database = await api.CreateManagedDatabaseAsync();
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
@@ -77,6 +77,14 @@ public sealed class CompleteShreddingTests
             var persisted = JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.HeldTransaction)!;
             await Assert.That(await crypto.OpenAsync(tenant, persisted.Payload!, token)).IsEquivalentTo(packed);
         }
+        // A native replica's local page key must disappear before the peer acknowledges shredding.
+        var nativeReplica = remote.Server.Services.GetRequiredService<IDatabaseReplicas>();
+        using var peerHttp = PeerTls.CreateClient(api.Server.BaseAddress);
+        await nativeReplica.OpenAsync(tenant, api.Server.PullAddress(tenant), peerHttp, token);
+        await Assert.That(nativeReplica.Holds(tenant)).IsTrue();
+        var replicaFiles = Path.Combine(remote.Server.Services.GetRequiredService<TerraBaseOptions>().DataDirectory,
+            ".replicas", tenant.OrganizationId, tenant.ProjectId!);
+        await Assert.That(Directory.GetFiles(replicaFiles)).IsNotEmpty();
         // Warm a separate server's cache. Deletion must revoke it over the actual authenticated peer RPC.
         var remoteCustody = remote.Server.Services.GetRequiredService<KeyCustody>();
         var observedStore = new ObservedStore(remoteCustody.Store);
@@ -109,6 +117,8 @@ public sealed class CompleteShreddingTests
         await Assert.That(certificate?.KeysShreddedAt).IsNotNull();
         await Assert.That(s3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Keys(BackupLayout.KeyScope(tenant)), StringComparison.Ordinal)
             && !key.EndsWith("/shredded", StringComparison.Ordinal))).IsEmpty();
+        await Assert.That(nativeReplica.Holds(tenant)).IsFalse();
+        await Assert.That(Directory.GetFiles(replicaFiles)).IsEmpty();
         await Assert.That(await other.OpenAsync(tenant, payload, token)).IsNull();
         await Assert.That(await other.OpenAsync(snapshot, snapshotPayload, token)).IsNull();
         await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(token);

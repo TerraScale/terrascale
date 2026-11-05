@@ -45,7 +45,7 @@ are outside the new guarantee and must not be presented as F11-protected.
 | JetStream provisional shape messages | TBP1 under the database envelope key; shredded keys prevent decryption and erasure purges the local origin subject. |
 | Regional partner holds and their system backups | The exact TBP1 ciphertext from JetStream; no decoded SQL is persisted in the hold record. |
 | Shape objects in R2/CDN | Existing TBS1 epoch derivation under the database envelope key; deletion removes owned objects and queues their CDN purge. |
-| Region key caches | Warm selection and decode use bounded memory caches. Cold decode checks permanent custody authority. DELETE synchronously evicts every node through authenticated gRPC and requires every acknowledgement. |
+| Region key caches | Warm selection and decode use bounded memory caches. Cold decode checks permanent custody authority. DELETE synchronously evicts every node and retires native replicas through authenticated gRPC, requiring every acknowledgement. |
 | Tenant/project closure | Existing permanent closure enumerates every database and records individual deletion authorities. |
 
 TBP1 adds 78 bytes: magic, data-key ULID, random 32-byte salt, and a 16-byte GCM tag. HKDF-SHA256 derives a unique
@@ -55,7 +55,7 @@ JetStream and the partner reuse the same bytes. Warm key selection and decode pe
 and rotation access R2. Each node shares invalidation across its platform and customer managers. A generation fence
 prevents an in-flight unwrap or rotation from publishing a cached key after eviction. DELETE returns 503 if any
 discovered peer, including hold partners, cannot acknowledge the tombstone and synchronous eviction. A restarted
-node starts cold and refuses the permanent tombstone; cached decodes after successful DELETE cannot bypass it. Home consumption and partner takeover decrypt before applying; a shredded payload is discarded.
+node starts cold and refuses the permanent tombstone. Revocation records local catalog deletion authority, stops native followers, deletes their page-key sidecars and files, and verifies local engine erasure before acknowledging. Follower admission is serialized with teardown and rechecks the local catalog, so a stale catalog listing cannot recreate a deleted replica; cached decodes after successful DELETE cannot bypass it. Home consumption and partner takeover decrypt before applying; a shredded payload is discarded.
 No read-pull behavior or quorum/durability policy changes.
 
 ## Convergence and CDN purge

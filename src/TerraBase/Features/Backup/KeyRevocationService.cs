@@ -5,7 +5,7 @@ namespace TerraBase.Features.Backup;
 
 // The internal listener authenticates the existing peer credential. A peer still cannot invalidate
 // a live database: the permanent unsnapshotted tombstone is required before touching its caches.
-internal sealed class KeyRevocationService(KeyCustody custody) : KeyRevocation.KeyRevocationBase
+internal sealed class KeyRevocationService(KeyRevocationLocal local) : KeyRevocation.KeyRevocationBase
 {
     public override async Task<KeyRevocationReply> Revoke(KeyRevocationRequest request, ServerCallContext context)
     {
@@ -14,12 +14,6 @@ internal sealed class KeyRevocationService(KeyCustody custody) : KeyRevocation.K
             throw new RpcException(new Status(StatusCode.InvalidArgument, "invalid database scope"));
         }
         var database = new TenantContext(request.Organization, PlanTier.Hobby, request.Project, request.Database);
-        var scope = BackupLayout.KeyScope(database);
-        if (await ShredRecords.ReadAsync(custody.Store, scope, context.CancellationToken).ConfigureAwait(false) is null)
-        {
-            return new KeyRevocationReply();
-        }
-        custody.Revocations.Forget(scope);
-        return new KeyRevocationReply { Revoked = true };
+        return new KeyRevocationReply { Revoked = await local.RevokeAsync(database, context.CancellationToken).ConfigureAwait(false) };
     }
 }
