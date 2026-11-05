@@ -144,3 +144,26 @@ The remaining benchmark subtest groups passed three admitted beta repeats after 
 The 75-case candidate `e82ec484f` took 25.823 seconds and had a 16.542-second maximum for `A_cut_link_loses_nothing_a_pull_while_pending_applies_nothing_twice_and_redelivery_applies_once`. It is rejected timing proof. The complete multi-host JetStream local-write/cut-link drill subsequently moved unchanged to Slow in `01ce035ae` (rebased move source `47ee2a785`). Its independent Slow run passed both cases without skips, maximum 2.5474384 seconds, as recorded above. No assertion or recovery coverage was deleted.
 
 The restarted admitted proof at `99c979f19` passed the hard gates with 57 TerraBase Fast cases plus four driver cases: 8.285 seconds suite wall, maximum 4.291 seconds. The same audit passed all 12 areas' Fast timing checks. Docs and Dashboard subsequently failed artifact publication because their exact-source release tags already existed; those are failed overall qualifications, despite successful Fast phases. Their qualification helpers now verify an existing release's successful exact-revision proof and archive integrity before reusing it, after completing the fresh audits and tests. Published assets are never overwritten. The Docs archive also identifies the source in both built revision files; Dashboard binds every application file and its qualification log through hashes.
+
+## Hard-gate follow-up after qualification repair
+
+The requested restart passed all 12 Fast timing gates at `99c979f19`. The two affected qualification helpers then shipped through normal ts-ship at `32aa154a4f153902115eebe8df95255a7b079fdc`; Docs and Dashboard reran for that exact revision. The other ten areas have identical source across this rebase. Each area uses one admitted ts-heavy-any job, full default parallelism, and the enforced 30-second suite / 10-second case gates. The maximum column conservatively includes separately executed release tests; Dashboard uses its complete 9.402-second release runner as an upper bound.
+
+| Area | Fast wall (s) | Maximum case / bound (s) | Source |
+|---|---:|---:|---|
+| auth | 13.321 | 4.739 | `99c979f19` |
+| terrabase | 8.285 | 4.291 | `99c979f19` |
+| dashboard | 12.738 | ≤9.402 | `32aa154a4` |
+| libs | 6.938 | 0.504 | `99c979f19` |
+| sdk-dotnet | 7.067 | 0.994 | `99c979f19` |
+| sdk-js | 5.475 | 1.275 | `99c979f19` |
+| sdk-go | 3.367 | 2.010 | `99c979f19` |
+| sdk-python | 1.453 | 0.170 | `99c979f19` |
+| sdk-rust | 3.198 | 1.020 | `99c979f19` |
+| docs | 0.663 | 1.128 | `32aa154a4` |
+| landing | 0.223 | 0.016 | `99c979f19` |
+| benchmark | 8.443 | 4.430 | `99c979f19` |
+
+The accepted qualification repair retains every fresh audit, Fast run, formatting check and runtime smoke. Reuse requires a successful exact-source release proof from the existing trusted publisher plus the verified published artifact. Twelve local fixture controls cover valid reuse and refusal of wrong revision, corrupt checksum, failed proof, untrusted proof and changed source/log identity; an admitted beta job verified both actual published artifacts using the final validators. The first candidate requiring identical bytes from two fresh site builds was rejected after discovering nondeterministic site output, and its superseded Dashboard job was stopped by its exact owned key. No published asset was overwritten.
+
+Final code qualification log: `/home/mariogk/.local/state/ts-ship/20261105T005800-b2746046.log`. Original all-area restart log: `/tmp/wrk1084-restart-proofs.log`.
