@@ -288,15 +288,15 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
 
     private async Task<(TotpCredentialRecord Record, string Version)?> ReadAsync(string instanceId, string userId, CancellationToken cancellationToken)
     {
-        var document = await store.GetAsync(AuthStore.MfaCollection, instanceId, userId, cancellationToken).ConfigureAwait(false);
-        if (document is null)
+        var rowData = await store.GetAsync(AuthStore.MfaTable, instanceId, userId, cancellationToken).ConfigureAwait(false);
+        if (rowData is null)
         {
             return null;
         }
 
         try
         {
-            var record = document.Document.Deserialize(MfaJson.Default.TotpCredentialRecord);
+            var record = rowData.Body.Deserialize(MfaJson.Default.TotpCredentialRecord);
             if (record is null || record.InstanceId != instanceId || record.UserId != userId || record.EnrollmentEpoch < 0
                 || record.LastAcceptedStep < -1 || record.RecoveryHashes is null || record.RecoveryHashes.Count > RecoveryCount
                 || record.RecoveryHashes.Any(hash => hash is not { Length: 64 } || !hash.All(char.IsAsciiHexDigitLower))
@@ -325,7 +325,7 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
                 }
             }
 
-            return (record, document.Version);
+            return (record, rowData.Version);
         }
         catch (Exception error) when (error is JsonException or CryptographicException or InvalidDataException)
         {
@@ -380,8 +380,8 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         (UserRecord User, string Version)? advanced, MfaAuthorization? authorization, CancellationToken cancellationToken)
     {
         var serialized = JsonSerializer.SerializeToElement(record, MfaJson.Default.TotpCredentialRecord);
-        var credential = version is null ? AuthStore.Create(AuthStore.MfaCollection, user.InstanceId, user.Id, serialized)
-            : AuthStore.Replace(AuthStore.MfaCollection, user.InstanceId, user.Id, serialized, version);
+        var credential = version is null ? AuthStore.Create(AuthStore.MfaTable, user.InstanceId, user.Id, serialized)
+            : AuthStore.Replace(AuthStore.MfaTable, user.InstanceId, user.Id, serialized, version);
         var epoch = new JsonObject
         {
             ["and"] = new JsonArray(
@@ -391,8 +391,8 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         };
         using var filter = JsonDocument.Parse(epoch.ToJsonString());
         var account = advanced is { } change
-            ? AuthStore.Replace(AuthStore.UserCollection, user.InstanceId, user.Id, JsonSerializer.SerializeToElement(change.User, IdentityJson.Default.UserRecord), change.Version)
-            : AuthStore.Require(AuthStore.UserCollection, user.InstanceId, user.Id, filter.RootElement);
+            ? AuthStore.Replace(AuthStore.UserTable, user.InstanceId, user.Id, JsonSerializer.SerializeToElement(change.User, IdentityJson.Default.UserRecord), change.Version)
+            : AuthStore.Require(AuthStore.UserTable, user.InstanceId, user.Id, filter.RootElement);
         if (authorization is not null && authorization.ExpiresAt <= clock.GetUtcNow())
         {
             return false;
@@ -411,7 +411,7 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
 
     private static string Context(UserRecord user) => Context(user.InstanceId, user.Id);
 
-    private static string Context(string instanceId, string userId) => "totp:" + AuthStore.NaturalKeyId(instanceId, AuthStore.MfaCollection, userId);
+    private static string Context(string instanceId, string userId) => "totp:" + AuthStore.NaturalKeyId(instanceId, AuthStore.MfaTable, userId);
 }
 
 /// <summary>A live sign-in challenge: its user with the proof lineage a completed session carries, and its one-use slot.</summary>

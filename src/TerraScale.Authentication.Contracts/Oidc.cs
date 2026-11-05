@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace TerraScale.Authentication.Contracts;
 
 /// <summary>
-/// An OpenID Connect client (collection <c>oidc_applications</c>, addressed by instance and client id). OpenIddict owns
+/// An OpenID Connect client (table <c>oidc_applications</c>, addressed by instance and client id). OpenIddict owns
 /// the field values; <see cref="ClientSecret"/> is the PBKDF2 hash it produces, never the secret.
 /// </summary>
 public sealed class OidcApplication
@@ -59,7 +59,7 @@ public sealed class OidcApplication
     public string? Version { get; set; }
 }
 
-/// <summary>An authorization granted to a client: one per sign-in (collection <c>oidc_authorizations</c>).</summary>
+/// <summary>An authorization granted to a client: one per sign-in (table <c>oidc_authorizations</c>).</summary>
 public sealed class OidcAuthorization
 {
     /// <summary>Canonical ULID.</summary>
@@ -95,7 +95,7 @@ public sealed class OidcAuthorization
 }
 
 /// <summary>
-/// A token entry (collection <c>oidc_tokens</c>). Status changes, such as redeeming a code or refresh token, are
+/// A token entry (table <c>oidc_tokens</c>). Status changes, such as redeeming a code or refresh token, are
 /// conditional writes on <see cref="Version"/> locally; replicated winner claims select one usable branch across regions. A reference token's
 /// <see cref="ReferenceId"/> is OpenIddict's SHA-256 digest of the bearer handle, and <see cref="Payload"/> is the
 /// token encrypted under a key derived from the master key.

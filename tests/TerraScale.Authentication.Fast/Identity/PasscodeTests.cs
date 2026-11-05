@@ -43,7 +43,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         await Assert.That(signedIn).IsNotNull();
         await Assert.That((await sessions.ResolveAsync("instance", signedIn!.Token))!.Value.User.Id).IsEqualTo(user.Id);
         await Assert.That(await passcodes.VerifyAsync("instance", Email, latest.Code)).IsNull();
-        var stored = (await database.RowsAsync("passcodes")).Single().Document;
+        var stored = (await database.RowsAsync("passcodes")).Single().Body;
         await Assert.That(stored.GetProperty("consumed").GetBoolean()).IsTrue();
         await Assert.That((await database.RowsAsync("sessions")).Count).IsEqualTo(1);
     }
@@ -52,7 +52,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
     {
         var store = new AuthStore(fixture.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth"), clock);
         var users = new Users(store, clock);
-        var totp = new TotpCredentials(store, users, new AttemptLimiter(new TerraBaseDocumentStore(store), clock, options), options, clock);
+        var totp = new TotpCredentials(store, users, new AttemptLimiter(new TerraBaseRecordStore(store), clock, options), options, clock);
         var sessions = new Sessions(store, users, totp, clock);
         return (users, sessions, new Passcodes(store, users, sessions, clock, options));
     }

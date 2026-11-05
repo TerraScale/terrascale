@@ -57,7 +57,7 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
     public async Task<(SessionRecord Session, UserRecord User)?> ResolveAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
         await this.ReadLiveAsync(instanceId, token, cancellationToken).ConfigureAwait(false) is { } live ? (live.Session, live.User) : null;
 
-    /// <summary>As <see cref="ResolveAsync"/>, with the version of the session document a caller's commit can be bound to.</summary>
+    /// <summary>As <see cref="ResolveAsync"/>, with the version of the session record a caller's commit can be bound to.</summary>
     internal Task<(SessionRecord Session, string Version, UserRecord User)?> ResolveVersionedAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
         this.ReadLiveAsync(instanceId, token, cancellationToken);
 
@@ -85,7 +85,7 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         }
 
         using var filter = JsonDocument.Parse(live.ToJsonString());
-        return AuthStore.Require(AuthStore.SessionCollection, session.InstanceId, session.TokenHash, filter.RootElement.Clone());
+        return AuthStore.Require(AuthStore.SessionTable, session.InstanceId, session.TokenHash, filter.RootElement.Clone());
     }
 
     /// <summary>
@@ -126,14 +126,14 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         // A concurrent revocation or policy reduction can change the version; reread before retrying.
         for (var round = 0; round < 2; round++)
         {
-            var document = await store.GetAsync(AuthStore.SessionCollection, instanceId, tokenHash, cancellationToken).ConfigureAwait(false);
-            var session = document?.Document.Deserialize(IdentityJson.Default.SessionRecord);
+            var rowData = await store.GetAsync(AuthStore.SessionTable, instanceId, tokenHash, cancellationToken).ConfigureAwait(false);
+            var session = rowData?.Body.Deserialize(IdentityJson.Default.SessionRecord);
             if (session is null || session.InstanceId != instanceId)
             {
                 return false;
             }
 
-            if (session.Revoked || await this.TryRevokeAsync(session, document!.Version, AuthStore.NewCredentialBinding("session", session.TokenHash), cancellationToken).ConfigureAwait(false))
+            if (session.Revoked || await this.TryRevokeAsync(session, rowData!.Version, AuthStore.NewCredentialBinding("session", session.TokenHash), cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
@@ -164,7 +164,7 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
             }
 
             var advanced = JsonSerializer.SerializeToElement(current.User with { AuthEpoch = current.User.AuthEpoch + 1, AuthStamp = AuthStore.NewId() }, IdentityJson.Default.UserRecord);
-            if (await store.CompareAndPutAsync(AuthStore.UserCollection, instanceId, userId, advanced, current.Version, cancellationToken).ConfigureAwait(false))
+            if (await store.CompareAndPutAsync(AuthStore.UserTable, instanceId, userId, advanced, current.Version, cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
@@ -186,12 +186,12 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         var total = 0;
         while (true)
         {
-            var batch = await store.QueryAsync(AuthStore.SessionCollection, filter.RootElement, batchSize, cancellationToken).ConfigureAwait(false);
+            var batch = await store.QueryAsync(AuthStore.SessionTable, filter.RootElement, batchSize, cancellationToken).ConfigureAwait(false);
             var deleted = 0;
-            foreach (var document in batch)
+            foreach (var rowData in batch)
             {
-                if (document.Document.Deserialize(IdentityJson.Default.SessionRecord) is { } session
-                    && await store.CompareAndDeleteAsync(AuthStore.SessionCollection, session.InstanceId, session.TokenHash, document.Version, cancellationToken).ConfigureAwait(false))
+                if (rowData.Body.Deserialize(IdentityJson.Default.SessionRecord) is { } session
+                    && await store.CompareAndDeleteAsync(AuthStore.SessionTable, session.InstanceId, session.TokenHash, rowData.Version, cancellationToken).ConfigureAwait(false))
                 {
                     deleted++;
                 }
@@ -199,7 +199,7 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
 
             total += deleted;
             // A full batch may hide more. A batch that deleted nothing went to a competing replica, which keeps draining;
-            // stopping then also ends the loop on any document that cannot be deleted.
+            // stopping then also ends the loop on any record that cannot be deleted.
             if (batch.Count < batchSize || deleted == 0)
             {
                 return total;
@@ -232,9 +232,9 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         return await store.TransactAsync(
         [
             // A pending account closure temporarily blocks new sign-ins; cancellation restores them without changing credentials.
-            AuthStore.Absent(AuthStore.ClosureJobCollection, user.InstanceId, ClosureJob.Key("account", user.Id)),
-            AuthStore.Require(AuthStore.UserCollection, user.InstanceId, user.Id, filter.RootElement),
-            AuthStore.Create(AuthStore.SessionCollection, user.InstanceId, session.TokenHash,
+            AuthStore.Absent(AuthStore.ClosureJobTable, user.InstanceId, ClosureJob.Key("account", user.Id)),
+            AuthStore.Require(AuthStore.UserTable, user.InstanceId, user.Id, filter.RootElement),
+            AuthStore.Create(AuthStore.SessionTable, user.InstanceId, session.TokenHash,
                 JsonSerializer.SerializeToElement(session, IdentityJson.Default.SessionRecord)),
         ], cancellationToken).ConfigureAwait(false) is null ? new IssuedSession(token, session) : null;
     }
@@ -250,21 +250,21 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         var lifetime = await this.GetLifetimeAsync(instanceId, cancellationToken).ConfigureAwait(false);
         for (var round = 0; round < 3; round++)
         {
-            var document = await store.GetAsync(AuthStore.SessionCollection, instanceId, hash, cancellationToken).ConfigureAwait(false);
-            var session = document?.Document.Deserialize(IdentityJson.Default.SessionRecord);
+            var rowData = await store.GetAsync(AuthStore.SessionTable, instanceId, hash, cancellationToken).ConfigureAwait(false);
+            var session = rowData?.Body.Deserialize(IdentityJson.Default.SessionRecord);
             if (session is null || session.Revoked || session.InstanceId != instanceId || !Tokens.FixedTimeEquals(session.TokenHash, hash)
                 || session.ExpiresAt <= clock.GetUtcNow())
             {
                 return null;
             }
 
-            var version = document!.Version;
+            var version = rowData!.Version;
             var policyExpiry = session.CreatedAt + lifetime;
             if (policyExpiry < session.ExpiresAt)
             {
                 // Persist even an already elapsed reduction: later policy increases must not revive this cookie.
                 session = session with { ExpiresAt = policyExpiry };
-                var shortened = await store.ReplaceAsync(AuthStore.SessionCollection, instanceId, hash,
+                var shortened = await store.ReplaceAsync(AuthStore.SessionTable, instanceId, hash,
                     JsonSerializer.SerializeToElement(session, IdentityJson.Default.SessionRecord), version, cancellationToken).ConfigureAwait(false);
                 if (shortened is null)
                 {
@@ -289,7 +289,7 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         await store.TransactAsync(
         [
             AuthStore.CredentialClaim(session.InstanceId, binding),
-            AuthStore.Replace(AuthStore.SessionCollection, session.InstanceId, session.TokenHash,
+            AuthStore.Replace(AuthStore.SessionTable, session.InstanceId, session.TokenHash,
                 JsonSerializer.SerializeToElement(session with { Revoked = true }, IdentityJson.Default.SessionRecord), version),
         ], cancellationToken).ConfigureAwait(false) is null;
 }

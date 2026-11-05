@@ -66,7 +66,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         var shared = this.owner ?? throw new InvalidOperationException("TerraBase fixture has not initialized its owner.");
         var project = await this.Server.Management().CreateProjectAsync(shared.UserId, shared.Organization.Id, AuthStore.NewId());
         var tenant = shared with { Project = project };
-        await this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
+        await this.Server.Databases(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
         var database = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         if (provision)
         {
@@ -107,7 +107,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     /// <summary>Creates and provisions another copy of the tenant's storage, <paramref name="name"/>: another region's.</summary>
     public async Task<TerraBaseSqlDatabase> CreateCopyAsync(TerraBaseTestTenant tenant, string name)
     {
-        await this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, name).CreateAsync();
+        await this.Server.Databases(tenant.ApiKey).Database(tenant.Project.Id, name).CreateAsync();
         var copy = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, name);
         await new AuthStore(copy, TimeProvider.System).ProvisionAsync();
         return copy;
@@ -121,8 +121,8 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     public static JsonElement Json(string json)
     {
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.Clone();
+        using var rowData = JsonDocument.Parse(json);
+        return rowData.RootElement.Clone();
     }
 
     public async ValueTask DisposeAsync()
