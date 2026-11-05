@@ -537,7 +537,12 @@ internal sealed class HomeLeases(
             return;
         }
 
-        _homes[home.DatabaseId] = (home, entry.Revision);
+        var observed = _homes.AddOrUpdate(home.DatabaseId, (home, entry.Revision),
+            (_, known) => entry.Revision > known.Revision ? (home, entry.Revision) : known);
+        if (observed.Revision != entry.Revision)
+        {
+            return;
+        }
         var database = new TenantContext(home.OrganizationId, PlanTier.Hobby, home.ProjectId, home.DatabaseId);
         if (home.Node == options.MachineId)
         {
