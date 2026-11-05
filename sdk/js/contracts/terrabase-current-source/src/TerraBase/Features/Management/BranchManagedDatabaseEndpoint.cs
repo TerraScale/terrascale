@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/databases/{database}/branches</c>: creates a database as a snapshot copy of another.</summary>
-internal sealed class BranchManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<NameRequest, IResult>
+internal sealed class BranchManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<ForkRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -15,7 +15,7 @@ internal sealed class BranchManagedDatabaseEndpoint(IManagementService managemen
         Post(ProjectApiRoute.Database + "/branches");
         Name("branchDatabase");
         Summary("Branches (clones) a database");
-        Description("The branch is a new database in the same project holding a consistent copy of the source taken now; later writes to either are independent. The copy preserves the source primary, replica regions and allRegions choice. name follows the database name rules. Sent to the source database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home." + " " + ProjectApiRoute.IdentityDescription);
+        Description("The branch is a new database in the same project holding a consistent copy of the source taken now; later writes to either are independent. The copy preserves the source primary, replica regions and allRegions choice. name follows the database name rules; the branch does not inherit the source's TTL." + DatabaseTtl.Description + " Sent to the source database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -31,11 +31,11 @@ internal sealed class BranchManagedDatabaseEndpoint(IManagementService managemen
     }
 
     /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken) =>
+    public override ValueTask<IResult> HandleAsync(ForkRequest request, CancellationToken cancellationToken) =>
         BranchAsync(HttpContext, request, management, options, ManagementRoute.Value(HttpContext, "database"), cancellationToken);
 
     internal static async ValueTask<IResult> BranchAsync(
-        HttpContext context, NameRequest request, IManagementService management, TerraBaseOptions options, string sourceId, CancellationToken cancellationToken)
+        HttpContext context, ForkRequest request, IManagementService management, TerraBaseOptions options, string sourceId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var placement = await DatabaseRegions.ElsewhereAsync(context, management, options.Region);
@@ -50,10 +50,16 @@ internal sealed class BranchManagedDatabaseEndpoint(IManagementService managemen
             };
         }
 
-        return ManagementRoute.CheckDatabaseName(request) switch
+        if (DatabaseTtl.Invalid(request.TtlSeconds) is { } invalidTtl)
+        {
+            return ErrorResponse.From(invalidTtl);
+        }
+
+        return ManagementRoute.CheckDatabaseName(new NameRequest(request.Name)) switch
         {
             Validation error => ErrorResponse.From(error),
-            string name => await management.BranchDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"), sourceId, name, cancellationToken) switch
+            string name => await management.BranchDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"), sourceId, name, cancellationToken,
+                request.TtlSeconds) switch
             {
                 ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(context, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(context))),
                 NotFound error => ManagementRoute.DatabaseNotFound(error),

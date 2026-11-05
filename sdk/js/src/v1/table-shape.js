@@ -58,7 +58,7 @@ export class V1TableShape {
 
   /** @param {V1Transport} transport @param {string} database @param {string} table @param {V1TableShapeRequest} [request] */
   constructor(transport, database, table, request = {}) {
-    if (typeof table !== "string" || !tablePattern.test(table)) throw new TypeError("A table name is 1 to 63 letters, digits and underscores, not starting with a digit, _tb_, turso_ or sqlite_.");
+    if (typeof table !== "string" || !tablePattern.test(table)) throw new TypeError("A table name is 1 to 63 letters, digits and underscores, not starting with a digit or a reserved engine prefix.");
     if (request === null || typeof request !== "object" || Array.isArray(request)) throw new TypeError("A shape request is { where?, columns? }.");
     const { where, columns, ...extra } = request;
     for (const member of Object.keys(extra)) throw new TypeError(`Unknown shape member ${member}.`);

@@ -323,9 +323,7 @@ client, with its own origin, instance and credentials. A server-only Better Auth
 database adapter is planned; the package exports no `./better-auth` entrypoint.
 The optional live catalog check needs `TB_V1_MANAGEMENT_TOKEN` with `databases:read`
 in addition to `TB_V1_URL` and `TB_V1_PROJECT`; data-only keys are insufficient.
-Webhook dead-letter replay uses the documented `endpointId:eventId` delivery
-selector; both references must be canonical ULIDs. Entity pages reject null and
-primitive records; recovery-code pages contain strings.
+Entity pages reject null and primitive records; recovery-code pages contain strings.
 
 Hosted identity and OIDC network methods accept a final `{ signal }` argument;
 list methods keep it in their existing options. Failures retain `kind: "transport"`:

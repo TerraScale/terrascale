@@ -1,7 +1,6 @@
 {
   "repository": "https://github.com/TerraScale/terrascale",
-  "revision": "1c94fe262795ea87f55248989e04f5b93f2f40bf",
-  "pullRequest": "https://github.com/TerraScale/terrascale/pull/602",
+  "revision": "1c569494df18212d1f2f071e72be73f09d587c13",
   "inputs": {
     "CompleteFileUploadEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/CompleteFileUploadEndpoint.cs",
@@ -29,11 +28,11 @@
     },
     "FileStorageContracts.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/FileStorageContracts.cs",
-      "sha256": "aa99318bec1303d579930ed0ac9e4abc0517971339148a14c06fe8a080b136b7"
+      "sha256": "de8beb180e5edfaa11180b869e7eac597645d432adb94a0a7116cd83981ac66e"
     },
     "FileStorageRoute.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/FileStorageRoute.cs",
-      "sha256": "dbf67d5097ae9628abf5534db2358bd10bacfc56a3a7cd3df92bcb189a83e15c"
+      "sha256": "2769cb5f3c43c019c5a10b41ce4b8cb1afc878e0a39a6130b8e59447ec5126e1"
     },
     "ListBucketFilesEndpoint.cs.txt": {
       "sourcePath": "src/TerraBase/Features/FileStorage/ListBucketFilesEndpoint.cs",
