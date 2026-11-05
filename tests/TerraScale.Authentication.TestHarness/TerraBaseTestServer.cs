@@ -117,11 +117,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public TerraBaseManagementClient Management() => new(this.Http, new TerraBaseManagementClientOptions { BaseAddress = this.InternalAddress });
 
     /// <summary>A Documents API client on the client listener, authenticated with <paramref name="apiKey"/>.</summary>
-    public TerraBaseDocumentsClient Documents(string apiKey) =>
-        new(this.PublicHttp, new TerraBaseDocumentsClientOptions { BaseAddress = this.ClientAddress, ApiKey = apiKey });
+    public TerraBaseDatabaseClient Documents(string apiKey) =>
+        new(this.PublicHttp, new TerraBaseDatabaseClientOptions { BaseAddress = this.ClientAddress, ApiKey = apiKey });
 
     /// <summary>A Documents API client on the internal listener with the peer credential: how ts-auth reaches TerraBase.</summary>
-    public TerraBaseDocumentsClient InternalDocuments() => new(this.Http, new TerraBaseDocumentsClientOptions { BaseAddress = this.InternalAddress });
+    public TerraBaseDatabaseClient InternalDocuments() => new(this.Http, new TerraBaseDatabaseClientOptions { BaseAddress = this.InternalAddress });
 
     public TerraBaseSqlClient Sql(string apiKey) => new(this.PublicHttp, new TerraBaseSqlClientOptions { BaseAddress = this.ClientAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) });
 
