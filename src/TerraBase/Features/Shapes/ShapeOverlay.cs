@@ -163,15 +163,32 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
         var now = time.GetTimestamp();
         var pending = _databases.GetOrAdd(Key(database), _ => new Pending());
         _ = Interlocked.Add(ref _bytes, -pending.Expire(now - (long)(Kept.TotalSeconds * time.TimestampFrequency)));
-        if (Interlocked.Read(ref _bytes) + transaction.Bytes > MaxBytes)
+        if (!Reserve(transaction.Bytes))
         {
             logger.ZLogInformation($"The shape overlay is full; a local transaction shows in shapes once the home confirms it");
             return false;
         }
 
         var (added, freed) = pending.Add(transaction with { AddedAt = now });
-        _ = Interlocked.Add(ref _bytes, (added ? transaction.Bytes : 0) - freed);
+        _ = Interlocked.Add(ref _bytes, -(added ? 0 : transaction.Bytes) - freed);
         return added;
+    }
+
+    private bool Reserve(long bytes)
+    {
+        while (true)
+        {
+            var held = Interlocked.Read(ref _bytes);
+            if (bytes > MaxBytes - held)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _bytes, held + bytes, held) == held)
+            {
+                return true;
+            }
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
