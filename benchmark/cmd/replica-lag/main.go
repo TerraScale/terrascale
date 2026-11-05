@@ -78,6 +78,7 @@ func main() {
 	repeats := flag.Int("repeats", 3, "measured repeats")
 	natsURL := flag.String("nats", "", "this region's NATS URL, to time notice arrival (optional)")
 	natsTokenFile := flag.String("nats-token-file", "", "file holding the TerraBase NATS token")
+	trace := flag.String("trace", "", "write every notice (arrival, revision, base, bytes) and write timing as JSON lines to this file")
 	out := flag.String("out", "", "write every sample as JSON lines to this file")
 	flag.Parse()
 	if *region == "" {
@@ -95,6 +96,16 @@ func main() {
 	name := fmt.Sprintf("lag-%s-%d", *region, time.Now().Unix())
 	if err := c.createDatabase(ctx, name, *home, *region); err != nil {
 		fail(err)
+	}
+
+	if *trace != "" {
+		f, err := os.OpenFile(*trace, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err != nil {
+			fail(err)
+		}
+
+		defer f.Close()
+		traceOut = f
 	}
 
 	err := c.measure(ctx, *home, *region, *writes, *repeats, *natsURL, *natsTokenFile, *out)
@@ -124,6 +135,7 @@ func (c *client) measure(ctx context.Context, home, region string, writes, repea
 		on := func(m *nats.Msg) {
 			at := time.Now()
 			if n, ok := readNotice(m.Data); ok && n.DatabaseID == c.database {
+				traceLine(map[string]any{"notice": at.UnixMicro(), "committedAt": n.CommittedAt, "revision": n.Revision, "base": n.Base, "bytes": len(m.Data)})
 				select {
 				case arrivals <- arrival{at: at, committed: time.UnixMilli(n.CommittedAt), pages: n.Base != nil}:
 				default:
@@ -205,7 +217,9 @@ func (c *client) one(ctx context.Context, id int, arrivals chan arrival) (sample
 	query := fmt.Sprintf("SELECT id FROM lag WHERE id = %d", id)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
+		before := time.Now()
 		rows, err := c.exec(ctx, c.read, query)
+		traceLine(map[string]any{"poll": id, "at": before.UnixMicro(), "ms": ms(time.Since(before)), "rows": rows, "error": err != nil, "headers": lastHeaders})
 		if err == nil && rows > 0 {
 			break
 		}
@@ -218,6 +232,7 @@ func (c *client) one(ctx context.Context, id int, arrivals chan arrival) (sample
 	}
 
 	seen := time.Now()
+	traceLine(map[string]any{"write": id, "sent": sent.UnixMicro(), "ack": ack.UnixMicro(), "visible": seen.UnixMicro()})
 	s := sample{WriteMs: ms(ack.Sub(sent)), AckToVisibleMs: ms(seen.Sub(ack))}
 	for {
 		select {
@@ -380,6 +395,9 @@ func (c *client) call(ctx context.Context, h *http.Client, method, path string, 
 
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if h == c.read {
+		lastHeaders = resp.Header.Get("X-Terrabase-Machine") + " " + resp.Header.Get("Server-Timing") + " " + resp.Header.Get("TerraScale-Write-Route") + " " + resp.Header.Get("Ts-Replay") + " " + resp.Header.Get("Via")
+	}
 	if resp.StatusCode != want {
 		return fmt.Errorf("%s %s: %d %s", method, path, resp.StatusCode, code(data))
 	}
@@ -459,6 +477,23 @@ func newHTTP(dial string) *http.Client {
 	}
 
 	return &http.Client{Transport: transport, Timeout: 30 * time.Second}
+}
+
+var (
+	lastHeaders string
+	traceOut    io.Writer
+	traceMu     sync.Mutex
+)
+
+func traceLine(v map[string]any) {
+	if traceOut == nil {
+		return
+	}
+
+	line, _ := json.Marshal(v)
+	traceMu.Lock()
+	defer traceMu.Unlock()
+	fmt.Fprintln(traceOut, string(line))
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
