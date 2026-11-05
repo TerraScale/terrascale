@@ -39,9 +39,10 @@ internal static class TursoCopy
         {
             Execute(copy, sql);
 
-            if (name is not ("_tb_shape_chunk" or "_tb_shape_snapshot"))
+            if (name != "_tb_shape_snapshot")
             {
-                CopyRows(source, copy, name, chunkRows, chunkBytes, cancellationToken);
+                CopyRows(source, copy, name, chunkRows, chunkBytes, cancellationToken,
+                    rowFilter: name == "_tb_shape_chunk" ? " WHERE handle >= '~grant:' AND handle < '~grant;' AND offset = 0" : "");
             }
         }
 
@@ -66,15 +67,14 @@ internal static class TursoCopy
     internal static void CopyRows(TursoConnection source, System.Data.Common.DbConnection copy, string table, CancellationToken cancellationToken) =>
         CopyRows(source, copy, table, long.MaxValue, long.MaxValue, cancellationToken, ownsTransaction: false);
 
-    internal static void CopyRows(TursoConnection source, System.Data.Common.DbConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken, bool ownsTransaction = true)
+    internal static void CopyRows(TursoConnection source, System.Data.Common.DbConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken, bool ownsTransaction = true, string rowFilter = "")
     {
         var (columns, alias) = TableShape.Read(source, table);
 
         var names = alias >= 0 ? columns.Select(TableShape.Quote).ToList() : ["rowid", .. columns.Select(TableShape.Quote)];
         var insert = $"INSERT INTO {TableShape.Quote(table)} ({string.Join(", ", names)}) VALUES ({string.Join(", ", names.Select((_, i) => $"$v{i}"))});";
         using var read = source.CreateCommand();
-        read.CommandText = $"SELECT {string.Join(", ", names)} FROM {TableShape.Quote(table)};";
-        // One native program per table, reset and rebound by the driver across chunk commits. No DDL runs until it is disposed.
+        read.CommandText = $"SELECT {string.Join(", ", names)} FROM {TableShape.Quote(table)}{rowFilter};";
         using var write = copy.CreateCommand();
         write.CommandText = insert;
         if (write is SqliteCommand prepared)

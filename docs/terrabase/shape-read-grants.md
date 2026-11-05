@@ -8,7 +8,7 @@ checks the token offline and applies the grant on every read. Shape reads stay f
 
 A grant belongs to one table of one database. It is stored in the database's internal shape metadata,
 replicated with its pages, and deleted with its database. Regional shape reads check the local replicated grant.
-Grant changes and revocations are captured in CDC so backup replay preserves them.
+Full snapshots copy active grants while discarding derived shape history. Grant changes and revocations are captured in CDC so backup replay preserves them.
 
 | Route | Scope | Answer |
 |---|---|---|
