@@ -1,0 +1,14 @@
+{
+  "verifiedAt": "2026-11-05T16:59:33.382743+00:00",
+  "revision": "80303f9d36c24cdea1976225bd234ecc4c40127a",
+  "format": "23-41a88901325a",
+  "nodes": 6,
+  "healthEvidence": "internal-health.json",
+  "benchmarkSha256": "940be8ebfbdf25b874cdb71b3aa528ebd8625214b5558cb08e3340d0808c65ed",
+  "rolloutReadyAt": "2026-11-05T16:58:09Z",
+  "fabricFrozenUntil": "2026-11-05T17:20:00Z",
+  "order": [
+    "fra",
+    "sjc"
+  ]
+}

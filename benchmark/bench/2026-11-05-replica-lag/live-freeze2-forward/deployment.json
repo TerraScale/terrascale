@@ -1,0 +1,15 @@
+{
+  "verifiedAt": "2026-11-05T17:09:30.793408+00:00",
+  "revisions": {
+    "gru": "80303f9d36c24cdea1976225bd234ecc4c40127a",
+    "fra": "80303f9d36c24cdea1976225bd234ecc4c40127a",
+    "sjc": "55fd5cb60be844ed31a157775d1c6c18ed985cdc"
+  },
+  "format": "23-41a88901325a",
+  "nodes": 6,
+  "healthEvidence": "internal-health.json",
+  "sourceCheck": "git diff80303f9d3..55fd5cb60--src/TerraBase is empty; all nodes contain required fixes",
+  "benchmarkSha256": "940be8ebfbdf25b874cdb71b3aa528ebd8625214b5558cb08e3340d0808c65ed",
+  "fabricFrozenUntil": "2026-11-05T17:25:00Z",
+  "noticeRestartIssue": "https://github.com/TerraScale/terrascale/issues/1104"
+}
