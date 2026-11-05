@@ -81,7 +81,7 @@ public sealed class RegionShapeStreamTests
         await Assert.That(await world.Api.Server.Services.GetRequiredService<IBackupKeyShredding>().DestroyAsync(world.Database, token)).IsTrue();
         await Assert.That(await world.Api.Server.Services.GetRequiredService<ITransactionCrypto>().OpenAsync(world.Database, encrypted.Data!, token)).IsNull();
         await world.Overlay.PurgeDeletedAsync(world.Database, token);
-        await Assert.That((await js.GetStreamAsync("TERRABASE_PROVISIONAL_SJC", cancellationToken: token)).Info.State.Messages).IsEqualTo(0UL);
+        await Assert.That((await js.GetStreamAsync("TERRABASE_PROVISIONAL_SJC", cancellationToken: token)).Info.State.Messages).IsEqualTo(0L);
     }
 
     [Test]
