@@ -35,6 +35,13 @@ credentials only from private account files; `WRITE_PROOF_ACCOUNT_ROOT` can
 point to a private temporary directory. Outputs contain measurements, routes,
 health and metrics, without credentials or SQL bodies.
 
+Add `--request-logs` to correlate every measured response's `X-Request-ID`
+with the exact server `latencyMs` observation. This requires `--snapshot-script`
+and reads the existing authenticated internal logs endpoint on every discovered
+SJC node, including pending observations. Missing or duplicate response IDs and
+missing server observations fail the proof. Request-log time includes response
+completion; `app` timing ends at response headers.
+
 `push-proof/metrics.py --health-samples 20` also measures direct internal HTTP/2
 health for every discovered peer. Each node gets one reused connection; its
 first sample includes TCP connection setup. This separates mesh RTT from the
