@@ -42,6 +42,7 @@ args = parser.parse_args()
 health = json.loads(get("healthz"))
 peer_health_ms = {}
 peer_local_ack_metrics = {}
+peer_write_metrics = {}
 if args.health_samples:
     for node, region, peer_address in peers:
         # One curl process per node reuses HTTP/2; first sample includes connect.
@@ -50,9 +51,12 @@ if args.health_samples:
                                            *[argument for _ in range(args.health_samples)
                                              for argument in ("-o", "/dev/null", f"http://{peer_address}:8081/healthz")]], input=config.encode())
         peer_health_ms[node] = {"region": region, "health": json.loads(get("healthz", peer_address)), "samples_ms": [round(float(line) * 1000, 3) for line in elapsed.decode().splitlines()]}
+        metrics = get("metrics", peer_address).decode().splitlines()
+        peer_write_metrics[node] = [line for line in metrics if line.startswith(("terrabase_push_", "terrabase_catalog_cache_lookups_"))]
         if region == "sjc":
-            peer_local_ack_metrics[node] = [line for line in get("metrics", peer_address).decode().splitlines()
+            peer_local_ack_metrics[node] = [line for line in metrics
                                             if line.startswith(("terrabase_localack_partner", "terrabase_localwrites_available"))]
 lines = [line for line in get("metrics").decode().splitlines() if line.startswith("terrabase_push_")]
 print(json.dumps({"captured_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                  "image": image, "health": health, "metrics": lines, "peer_internal_health_ms": peer_health_ms, "peer_local_ack_metrics": peer_local_ack_metrics}, indent=2))
+                  "image": image, "health": health, "metrics": lines, "peer_internal_health_ms": peer_health_ms,
+                  "peer_local_ack_metrics": peer_local_ack_metrics, "peer_write_metrics": peer_write_metrics}, indent=2))

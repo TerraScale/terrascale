@@ -52,3 +52,9 @@ Health snapshots also retain `peer_local_ack_metrics` for every discovered SJC
 node. These record partner health and local-write availability alongside the
 actual node identities, so a one-node acknowledgement is distinguishable from
 an acknowledgement with an in-region partner.
+
+Snapshots retain push and catalog-cache counters from every discovered peer.
+Compare their deltas around each repeat to distinguish home apply retries and
+attempt time from transport and to confirm catalog caches remain warm. The
+acknowledgement substeps in `Server-Timing` are nested inside the total `ack`
+span and must not be added to it.
