@@ -9,9 +9,9 @@ set -euo pipefail
 test "$#" -eq 2 || { echo "usage: $0 <owner/repo> <pull request number>" >&2; exit 2; }
 repo=$1 pr=$2
 
-# Files whose change can change what is on disk. The storage owners (T1 Turso engine, R5 counters and sets, R2b/R2c
+# Files whose change can change what is on disk. The storage owners (SQL storage, R5 counters and sets, R2b/R2c
 # client tables) keep this list current.
-storage='^src/TerraBase/Engine/(Turso|Lattices)/|^src/TerraBase/Engine/StoredDatabaseFile\.cs$'
+storage='^src/TerraBase/Engine/Turso/|^src/TerraBase/Engine/StoredDatabaseFile\.cs$'
 version_file=src/TerraBase/Engine/Turso/StorageFormat.cs
 
 files=$(gh api --paginate "repos/$repo/pulls/$pr/files" --jq '.[].filename')
