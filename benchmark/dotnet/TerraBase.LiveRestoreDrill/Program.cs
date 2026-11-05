@@ -10,6 +10,12 @@ using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.LiveRestoreDrill;
 
+if (args is ["--transaction-seal-cost"])
+{
+    TransactionSealCost.Run();
+    return;
+}
+
 var proof = new Proof();
 string? scratch = null;
 TursoStorageEngine? engine = null;

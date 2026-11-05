@@ -1,5 +1,8 @@
 # Crypto-shredding of deleted databases
 
+The [F11 deletion contract](crypto-shredding-f11.md) supersedes the original bucket-key custody described below.
+Wrapped keys now live outside all backup destinations; durable push and partner copies are sealed per database.
+
 When a database is deleted, directly or through a project or account erasure, its backup copies become unreadable
 right away. TerraBase destroys the database's data keys and leaves the old objects as they are.
 
