@@ -73,7 +73,7 @@ discarded with the file (`terrabase.home.demotions`).
 
 - Home commits: the lease check above.
 - Home sessions (`/v1/internal/sql/session`): the open frame carries the replica region's placement epoch; a home whose
-  own placement version is lower refuses with `wrong_region`, so the caller reads its placement again.
+  placement version differs refuses with `wrong_region`, so the caller reads its placement again.
 - Home apply (R6, R7): applies commit through the same engine path, so a node without the lease refuses them.
 
 ## Durability and RPO
