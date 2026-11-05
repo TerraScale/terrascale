@@ -13,7 +13,7 @@ npm project) bundles it with Lightning CSS into the single stylesheet
 
 ## Principles
 
-1. **Compose the kit.** Build pages from the shared slices in `Shared/UI/Slices/`
+1. **Compose the kit.** Build pages from the shared slices in `Common/UI/Slices/`
    and the shared `ts-*` classes below before writing new markup or CSS.
    There are no page-header, tab, card or stat helper components in C#;
    feature slices write that markup directly, as in the example below.
@@ -21,7 +21,7 @@ npm project) bundles it with Lightning CSS into the single stylesheet
    by hairlines, never boxed, and nothing glows (no gradients, blur or soft
    shadows; focus is a solid outline). Blue (`--ts-accent`) is the one accent
    for actions, tabs, charts and highlights. Only the navigation icons carry
-   their own tones (the `Item` list in `Shared/UI/Slices/ShellSidebar.cshtml`) so
+   their own tones (the `Item` list in `Common/UI/Slices/ShellSidebar.cshtml`) so
    sections are easy to find.
 3. **Spacing by gap.** Containers space their children with `gap`, never with
    margins. Use the 4px scale `--ts-s1`…`--ts-s12`.
@@ -42,7 +42,7 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 
 ```cshtml
 @inherits RazorSlice<TerraScale.Dashboard.Features.Databases.DatabasesPage>
-@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page">
 <h1 class="ts-sr-only">Databases</h1><div class="ts-page-actions"></div>
 <dl class="ts-stats" aria-label="Database totals">
@@ -58,7 +58,7 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 
 | Pattern | C# location and use |
 |---|---|
-| Page heading | Markup only: signed-in pages render `<h1 class="ts-sr-only">` and `.ts-page-actions`; `Shared/UI/Slices/ShellDocument.cshtml` sets the `<title>` |
+| Page heading | Markup only: signed-in pages render `<h1 class="ts-sr-only">` and `.ts-page-actions`; `Common/UI/Slices/ShellDocument.cshtml` sets the `<title>` |
 | Navigation tabs | Markup only: `nav.ts-tabs` with `a.ts-tab` and `aria-current` (e.g. `Features/Databases/DatabaseFrame.cshtml`) |
 | SDK language tabs | Shared `.sdk-tabs` stylesheet and keyboard handler; see [SDK language tabs](sdk-language-tabs.md) |
 | Card | Markup only: `section.ts-card` with `ts-card-head` and `ts-card-body`; `ts-card-flush` for tables |
@@ -68,8 +68,8 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 | Alert | Markup only: `ts-alert ts-alert-info/-success/-warning/-danger` with `ts-alert-title` and `ts-alert-body` |
 | Badge | Markup only: `ts-badge-neutral/-info/-success/-warning/-danger/-violet`, or `ts-badge-tone` with `data-tone` |
 | Field | Markup only: `div.ts-field` with `ts-label`, the control and, only on failure, an error |
-| Region map | `Shared/UI/Slices/RegionMap.cshtml` (decorative) and `Shared/UI/Slices/RegionPicker.cshtml` with `Shared/UI/RegionMapField.cs` (highlights hubs chosen in a select or checkbox group) |
-| Icons | `Shared/UI/Icons.cs` (`Icons.Render`) and `Shared/UI/Slices/ShellIcons.cs` |
+| Region map | `Common/UI/Slices/RegionMap.cshtml` (decorative) and `Common/UI/Slices/RegionPicker.cshtml` with `Common/UI/RegionMapField.cs` (highlights hubs chosen in a select or checkbox group) |
+| Icons | `Common/UI/Icons.cs` (`Icons.Render`) and `Common/UI/ShellIcons.cs` |
 
 ## Tabs and segmented controls
 
@@ -156,8 +156,8 @@ precompressed files. The Go application's hover speculation rules and
 
 Page navigations show a flat, full-width blue bar that pulses while the next
 page loads
-(`body.ts-nav-pending`, set by Datastar in `Shared/UI/Slices/ShellDocument.cshtml`
-and `Shared/UI/Slices/Document.cshtml`). A form
+(`body.ts-nav-pending`, set by Datastar in `Common/UI/Slices/ShellDocument.cshtml`
+and `Common/UI/Slices/Document.cshtml`). A form
 marked `data-submit-once` is not sent again while that navigation loads, and
 its submit buttons read as busy; use it where a second submission would fail
 or repeat an action. A long create shows its own progress inside the form:
