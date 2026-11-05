@@ -5,8 +5,8 @@ sealed change chunks, then a live tail, Electric style (PIVOT D8). Every respons
 so identical URLs return identical bytes and any cache can serve many readers for the cost of one.
 
 End users read shapes from the browser under table read grants: [shape read grants](shape-read-grants.md). A region's
-own writes show on its live tails as `provisional`, then `confirmed` or `revert` ([shape overlay](shape-overlay.md), F7).
-Region-to-region provisional changes (F8) are a later task. Protocol v1 (document collections over
+writes show on its live tails as `provisional`, then `confirmed` or `revert` ([shape overlay](shape-overlay.md), F7/F8).
+Other replica regions receive provisional changes directly over NATS; a missing direct delivery falls back to the home’s confirmed page path. Protocol v1 (document collections over
 `_tb_feed`) is gone.
 
 ## 1. Source: the home database's change capture
