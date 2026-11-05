@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
@@ -23,7 +24,8 @@ public sealed class ColdReplicaTests
         {
             await Assert.That(schema.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
-        var peers = new HomePeer();
+        var homeRegion = home.Server.Services.GetRequiredService<TerraBaseOptions>().Region;
+        var peers = new HomePeer(homeRegion);
         await using var away = await ManagementApi.StartAsync(settings => settings["region"] = "sjc", services =>
             services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(peers)), sharedIssuer: home.Issuer);
         // Let the initial empty catalog sweep finish before exposing the home to request forwarding.
@@ -32,7 +34,7 @@ public sealed class ColdReplicaTests
         peers.Address = home.Server.BaseAddress;
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
         await Assert.That(await away.Server.Services.GetRequiredService<IReplicaCatalog>().RecordAsync(
-            new ReplicaCatalogEntry(database.Organization, database.Project, database.Id, database.Name, "gru", ["sjc"], 1), token)).IsTrue();
+            new ReplicaCatalogEntry(database.Organization, database.Project, database.Id, database.Name, homeRegion, ["sjc"], 1), token)).IsTrue();
         await Assert.That(away.Server.Services.GetRequiredService<IDatabaseReplicas>().Holds(tenant)).IsFalse();
         using var client = away.WithToken(home.ProjectToken(database.Project, "sql:read sql:write"));
         var id = EntityIds.New().ToString();
@@ -46,7 +48,7 @@ public sealed class ColdReplicaTests
         await Assert.That(away.Server.Services.GetRequiredService<IDatabaseReplicas>().Holds(tenant)).IsFalse();
     }
 
-    private sealed class HomePeer : IReplicaPeers
+    private sealed class HomePeer(string region) : IReplicaPeers
     {
         private int _reads;
         public Uri? Address { get; set; }
@@ -54,7 +56,7 @@ public sealed class ColdReplicaTests
 
         public ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken)
         {
-            IReadOnlyList<ReplicaPeer> snapshot = Address is { } address ? [new("gru", "gru-1", address)] : [];
+            IReadOnlyList<ReplicaPeer> snapshot = Address is { } address ? [new(region, "home-1", address)] : [];
             if (Interlocked.Increment(ref _reads) == 2)
             {
                 InitialSweep.TrySetResult();
