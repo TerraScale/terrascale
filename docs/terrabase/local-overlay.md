@@ -3,7 +3,7 @@
 A write the router (R4) commits in a region that is not the database's home must reach the home quickly, exactly
 once and in commit order, and stay visible in its own region until the home's pages carry it. This note is the
 contract for that path. The home side is [home apply](home-apply.md) (R6). Shapes (F7) build their
-`provisional`, `confirmed` and `revert` states on the overlay described here.
+`provisional`, `confirmed` and `revert` states on the overlay described here ([shape overlay](shape-overlay.md)).
 
 ## Why the replica cannot hold local writes
 

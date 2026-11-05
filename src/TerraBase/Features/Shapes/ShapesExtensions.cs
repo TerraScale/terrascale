@@ -4,6 +4,7 @@ using Microsoft.OpenApi;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
+using TerraBase.Features.HomePush;
 using TerraBase.Features.Memory;
 
 namespace TerraBase.Features.Shapes;
@@ -49,7 +50,7 @@ public static class ShapesExtensions
                     var current = (HttpContext)state;
                     current.Response.Headers.CacheControl = current.Response.StatusCode is StatusCodes.Status200OK or StatusCodes.Status304NotModified
                         && current.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "getShape"
-                        && current.Request.Query["live"] == "true"
+                        && current.Request.Query["live"] == "true" && !current.Request.Query.ContainsKey("local")
                             ? "private, max-age=1, stale-while-revalidate=1"
                             : OriginNoStore.CacheControl;
                     return Task.CompletedTask;
@@ -105,6 +106,9 @@ public static class ShapesExtensions
             .AddSingleton<IShapeFlights<ShapeRead>>(provider => new ShapeFlights<ShapeRead>(provider.GetRequiredService<IStorageEngine>(),
                 provider.GetRequiredService<IShapeFlightSealer>(), provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IHostApplicationLifetime>(), provider.GetRequiredService<IShapeMetrics>()))
+            .AddSingleton<ShapeOverlay>()
+            .AddSingleton<ILocalCommitFeed>(provider => provider.GetRequiredService<ShapeOverlay>())
+            .AddHostedService(provider => provider.GetRequiredService<ShapeOverlay>())
             .AddSingleton<ReplicaShapeTails>()
             .AddSingleton<ShapeService>()
             .AddSingleton<IShapeLineages>(provider => provider.GetRequiredService<ShapeService>())

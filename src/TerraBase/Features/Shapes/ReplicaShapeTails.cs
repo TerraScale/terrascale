@@ -13,9 +13,13 @@ internal interface IReplicaShapeReader : IAsyncDisposable
     ValueTask<ShapeRead?> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, IMemoryBudget memory, CancellationToken cancellationToken);
 
     ValueTask<ShapeGrant?> ReadGrantAsync(string table, CancellationToken cancellationToken);
+
+    ValueTask<ShapeProvisional> ProvisionalAsync(ShapeScope scope, ShapeLineage lineage, IReadOnlyList<ProvisionalTransaction> pending, IMemoryBudget memory,
+        CancellationToken cancellationToken);
 }
 
-internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudget memory, TimeProvider time, IShapeFlights<ShapeRead> flights, ShapeControls controls) : IDisposable
+internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudget memory, TimeProvider time, IShapeFlights<ShapeRead> flights, ShapeControls controls,
+    ShapeOverlay overlay) : IDisposable
 {
     private readonly SemaphoreSlim _waiting = new(128, 128);
 
@@ -53,16 +57,17 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
             : new NotFound("the table has no read grant", "no_read_grant");
     }
 
-    internal async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
+    internal async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, string? local, CancellationToken cancellationToken)
     {
-        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, offset.ToString(System.Globalization.CultureInfo.InvariantCulture), true);
+        var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, local is null ? at : at + "~" + local, true);
         return ShapeService.Join(await flights.ReadAsync(request, Read, cancellationToken).ConfigureAwait(false));
 
         async ValueTask<ShapeRead> Read(CancellationToken token) =>
-            ShapeService.Detach(await WaitCoreAsync(scope, lineage, offset, token).ConfigureAwait(false));
+            ShapeService.Detach(await WaitCoreAsync(scope, lineage, offset, local, token).ConfigureAwait(false));
     }
 
-    private async ValueTask<ShapeRead> WaitCoreAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
+    private async ValueTask<ShapeRead> WaitCoreAsync(ShapeScope scope, ShapeLineage lineage, long offset, string? local, CancellationToken cancellationToken)
     {
         if (!await _waiting.WaitAsync(0, cancellationToken).ConfigureAwait(false))
         {
@@ -73,10 +78,12 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
         {
             using var admission = memory.TryReserve(MemoryLane.Foreground, 16 * 1024, scope.Database) ?? throw new QosMemoryException();
             var started = time.GetTimestamp();
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(50), time);
+            var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
             while (true)
             {
+                var changed = local is null ? null : overlay.Changed(scope.Database);
                 ShapeRead? answer;
+                ShapeProvisional? provisional = null;
                 await using (var reader = await replicas.BeginShapeReadAsync(scope.Database, cancellationToken).ConfigureAwait(false))
                 {
                     if (reader is null)
@@ -85,13 +92,19 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
                     }
 
                     answer = await reader.ReadAsync(scope, lineage, offset, memory, cancellationToken).ConfigureAwait(false);
+                    if (local is not null && answer is ShapeBody { UpToDate: true })
+                    {
+                        provisional = await reader.ProvisionalAsync(scope, lineage, overlay.Snapshot(scope.Database), memory, cancellationToken).ConfigureAwait(false);
+                        overlay.Held(scope.Database, provisional.Held);
+                    }
                 }
 
+                var timedOut = time.GetElapsedTime(started) >= TimeSpan.FromSeconds(20);
                 if (answer is ShapeBody body)
                 {
-                    if (body.NextOffset != offset.ToString(System.Globalization.CultureInfo.InvariantCulture) || time.GetElapsedTime(started) >= TimeSpan.FromSeconds(20))
+                    if (body.NextOffset != at || timedOut || (provisional is not null && provisional.Digest != local))
                     {
-                        return body;
+                        return provisional is null ? body : WithProvisional(body, provisional);
                     }
 
                     body.Lease?.Dispose();
@@ -100,12 +113,14 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
                 {
                     return failure;
                 }
-                else if (time.GetElapsedTime(started) >= TimeSpan.FromSeconds(20))
+                else if (timedOut)
                 {
                     return new Unavailable("the region replica has not reached the requested offset; retry later");
                 }
 
-                _ = await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
+                var tick = Task.Delay(TimeSpan.FromMilliseconds(50), time, cancellationToken);
+                _ = await Task.WhenAny(tick, changed ?? tick).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
             }
         }
         catch (Exception error) when (error is StorageBusyException or QosMemoryException)
@@ -119,6 +134,31 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
         finally
         {
             _waiting.Release();
+        }
+    }
+
+    /// <summary>Adds <c>"provisional":[…],"local":"…"</c> to an up-to-date body; provisional data is never sealed or mirrored.</summary>
+    private static ShapeBody WithProvisional(ShapeBody body, ShapeProvisional provisional)
+    {
+        using (body.Lease)
+        {
+            var json = body.Json.Span;
+            var digest = System.Text.Encoding.ASCII.GetBytes(provisional.Digest);
+            var joined = new byte[json.Length - 1 + 16 + provisional.Json.Length + 11 + digest.Length + 2];
+            var written = 0;
+            Append(json[..^1]);
+            Append(",\"provisional\":"u8);
+            Append(provisional.Json);
+            Append(",\"local\":\""u8);
+            Append(digest);
+            Append("\"}"u8);
+            return new ShapeBody(joined.AsMemory(0, written), body.NextOffset, body.UpToDate, Manifest: body.Manifest, Local: provisional.Digest);
+
+            void Append(ReadOnlySpan<byte> bytes)
+            {
+                bytes.CopyTo(joined.AsSpan(written));
+                written += bytes.Length;
+            }
         }
     }
 }

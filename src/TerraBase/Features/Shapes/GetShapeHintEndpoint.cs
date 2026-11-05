@@ -161,11 +161,12 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
             await SendAsync(socket, new ShapeHintFrame("ready"), stop.Token).ConfigureAwait(false);
             using var disconnected = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
             var receive = ReceiveCloseAsync(socket, disconnected);
+            var announced = ShapeProvisional.Empty;
             try
             {
                 while (!disconnected.IsCancellationRequested)
                 {
-                    var read = await live.WaitAsync(shape.Scope, shape.Lineage, offset, disconnected.Token).ConfigureAwait(false);
+                    var read = await live.WaitAsync(shape.Scope, shape.Lineage, offset, announced, disconnected.Token).ConfigureAwait(false);
                     if (read is not ShapeBody body)
                     {
                         await SendAsync(socket, new ShapeHintFrame("error", Code: read is MustRefetch ? "must_refetch" : "unavailable", RetryAfter: 1), disconnected.Token).ConfigureAwait(false);
@@ -181,13 +182,20 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                             break;
                         }
 
+                        var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        if (body.Local is { } local && local != announced && body.NextOffset == at)
+                        {
+                            await SendAsync(socket, new ShapeHintFrame("provisional", shape.Lineage.Handle, at, at, Local: local), disconnected.Token).ConfigureAwait(false);
+                            announced = local;
+                            continue;
+                        }
+
                         if (ShapeRoute.Decimal(body.NextOffset) is not { } next || next == offset)
                         {
                             await Task.Delay(TimeSpan.FromSeconds(1), time, disconnected.Token).ConfigureAwait(false);
                             continue;
                         }
 
-                        var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
                         var manifest = body.Manifest ?? new ShapeMirrorManifest(shape.Lineage.Handle, []);
                         await SendAsync(socket, new ShapeHintFrame("new_data", shape.Lineage.Handle, at, body.NextOffset, manifest), disconnected.Token).ConfigureAwait(false);
                         offset = next;

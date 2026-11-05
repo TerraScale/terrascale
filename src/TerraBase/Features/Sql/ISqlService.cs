@@ -77,6 +77,14 @@ internal interface ISqlSession : IAsyncDisposable
     }
 
     Routing.WriteRoute? LastRoute => null;
+
+    /// <summary>Keeps the row changes of this session's commits for <see cref="Committed"/> (a forwarded write, PIVOT F7).</summary>
+    void KeepCommitted()
+    {
+    }
+
+    /// <summary>The row changes of the commits since <see cref="KeepCommitted"/>, in commit order.</summary>
+    IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => [];
 }
 
 internal sealed record SqlTableColumn(string Name, string? DeclType, bool NotNull, bool PrimaryKey, string? Default = null);

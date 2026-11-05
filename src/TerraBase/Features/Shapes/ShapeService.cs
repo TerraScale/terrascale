@@ -338,11 +338,11 @@ internal sealed class ShapeService(
         }
     }
 
-    public async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
+    public async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, string? local, CancellationToken cancellationToken)
     {
         if (replicaTails.Holds(scope.Database))
         {
-            return await replicaTails.WaitAsync(scope, lineage, offset, cancellationToken).ConfigureAwait(false);
+            return await replicaTails.WaitAsync(scope, lineage, offset, local, cancellationToken).ConfigureAwait(false);
         }
 
         if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is null)

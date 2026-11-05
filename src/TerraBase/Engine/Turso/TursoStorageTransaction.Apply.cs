@@ -49,7 +49,7 @@ internal sealed partial class TursoStorageTransaction
             var columns = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
             using var read = session.Connection.CreateCommand();
             read.Transaction = transaction;
-            read.CommandText = "SELECT change_type, table_name, before, after, updates FROM turso_cdc WHERE change_id >= $first AND change_type IN (-1, 0, 1) ORDER BY change_id;";
+            read.CommandText = "SELECT change_type, table_name, before, after, updates, id, change_id FROM turso_cdc WHERE change_id >= $first AND change_type IN (-1, 0, 1) ORDER BY change_id;";
             read.Parameters.AddWithValue("$first", first);
             using (var reader = read.ExecuteReader())
             {
@@ -66,8 +66,10 @@ internal sealed partial class TursoStorageTransaction
                         columns[table] = names = TableColumns(table);
                     }
 
-                    var before = reader.IsDBNull(2) ? null : SqliteRecord.Decode(TursoSession.Bytes(reader, 2), names.Length);
-                    var after = reader.IsDBNull(3) ? null : SqliteRecord.Decode(TursoSession.Bytes(reader, 3), names.Length);
+                    var beforeImage = reader.IsDBNull(2) ? null : TursoSession.Bytes(reader, 2);
+                    var afterImage = reader.IsDBNull(3) ? null : TursoSession.Bytes(reader, 3);
+                    var before = beforeImage is null ? null : SqliteRecord.Decode(beforeImage, names.Length);
+                    var after = afterImage is null ? null : SqliteRecord.Decode(afterImage, names.Length);
                     bool[]? updated = null;
                     if (!reader.IsDBNull(4))
                     {
@@ -75,7 +77,8 @@ internal sealed partial class TursoStorageTransaction
                         updated = [.. flags.Select(flag => flag is long set && set != 0)];
                     }
 
-                    changes.Add(new CapturedRowChange(table, (int)reader.GetInt64(0), names, before, after, updated));
+                    changes.Add(new CapturedRowChange(table, (int)reader.GetInt64(0), names, before, after, updated,
+                        reader.IsDBNull(5) ? null : new CapturedImages(reader.GetInt64(5), beforeImage, afterImage, reader.GetInt64(6))));
                 }
             }
 

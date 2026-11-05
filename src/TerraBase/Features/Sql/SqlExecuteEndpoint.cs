@@ -9,6 +9,7 @@ using TerraBase.Features.HomePush;
 using TerraBase.Features.Management;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Shapes;
 using TerraBase.Features.Sql.Routing;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -19,7 +20,7 @@ namespace TerraBase.Features.Sql;
 /// <summary><c>POST /v1/projects/{project}/databases/{database}/sql/execute</c>: runs relational SQL statements.</summary>
 internal sealed class SqlExecuteEndpoint(
     ISqlService sql, IAuthorizationService authorization, ITenantDirectory tenants, IReplicaCatalog placements, IDatabaseReplicas replicas, IReplicaPeers peers,
-    WriteRouter router, ILocalWrites local, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+    WriteRouter router, ILocalWrites local, TerraBaseOptions options, ShapeOverlay overlay) : EndpointWithoutRequest<IResult>
 {
 
     /// <inheritdoc />
@@ -113,9 +114,21 @@ internal sealed class SqlExecuteEndpoint(
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
         {
+            var forwarded = Listeners.IsForwarded(HttpContext);
+            if (forwarded)
+            {
+                session.KeepCommitted();
+            }
+
             session.BeginRequest();
             var outcome = await SqlBatch.RunAsync(session, commands, cancellationToken);
             await session.EndRequestAsync();
+            if (forwarded && outcome is SqlExecuteBody && ShapeOverlay.EncodeCommits(session.Committed) is { } committed)
+            {
+                // The replica region shows these rows on its shape tails at once, until its next pull holds them (PIVOT F7).
+                HttpContext.Response.Headers[ShapeOverlay.CommitHeader] = committed;
+            }
+
             return outcome switch
             {
                 SqlExecuteBody answered => TypedResults.Json(answered, TerraBaseJsonContext.Default.SqlExecuteBody),
@@ -321,7 +334,13 @@ internal sealed class SqlExecuteEndpoint(
         }
 
         await HomeForwarding.ForwardAsync(HttpContext, new HomeNode(home, node.Internal), body,
-            writing is not null && local.LastPushed(writing) is { } pushed ? $"{options.Region} {pushed}" : null);
+            writing is not null && local.LastPushed(writing) is { } pushed ? $"{options.Region} {pushed}" : null, response =>
+            {
+                if (writing is not null && response.IsSuccessStatusCode && response.Headers.TryGetValues(ShapeOverlay.CommitHeader, out var committed))
+                {
+                    overlay.Forwarded(writing, string.Concat(committed));
+                }
+            });
         return Results.Empty;
     }
 
