@@ -408,6 +408,7 @@ namespace TerraScale.Dashboard.E2E
             private readonly TerraScaleIdGenerator ids = new();
             private readonly object gate = new();
             private readonly Dictionary<string, ManagedDatabase> databases = [];
+            private ManagedDatabase? stalePlacement;
             private readonly Dictionary<string, ProducerSnapshot> snapshots = [];
             private readonly Dictionary<string, ProducerBackupPolicy> policies = [];
             private readonly Dictionary<string, BackupDestinationView> destinations = [];
@@ -658,6 +659,15 @@ namespace TerraScale.Dashboard.E2E
                                 HomeRegion: body.TryGetProperty("home", out var home) ? home.GetString()! : "gru",
                                 ReplicaRegions: body.TryGetProperty("replicas", out var replicas) ? replicas.EnumerateArray().Select(value => value.GetString()!).ToArray() : ["sfo"]);
                             databases[external.Id] = external;
+                        }
+                        break;
+                    case "external-home":
+                        lock (gate)
+                        {
+                            var changed = databases.Values.Single(value => value.Name == body.GetProperty("name").GetString());
+                            var target = body.GetProperty("value").GetString()!;
+                            stalePlacement = changed;
+                            databases[changed.Id] = changed with { HomeRegion = target, ReplicaRegions = [.. (changed.ReplicaRegions ?? []).Where(region => region != target).Append(changed.HomeRegion).Order(StringComparer.Ordinal)] };
                         }
                         break;
                     case "external-delete":
@@ -1017,7 +1027,7 @@ namespace TerraScale.Dashboard.E2E
                         }
 
                         var page = owned.Where(value => string.CompareOrdinal(value.Id, after) > 0).Take(limit + 1).ToArray();
-                        return Results.Json(new { items = page.Take(limit).Select(value => Wire(value, answering)).ToArray(), next = page.Length > limit ? page[limit - 1].Id : null });
+                        return Results.Json(new { items = page.Take(limit).Select(value => Wire(answering == "gru" && stalePlacement is { } stale && stale.Id == value.Id ? stale : value, answering)).ToArray(), next = page.Length > limit ? page[limit - 1].Id : null });
                     }
                 }
                 if (parts.Length == 4)
