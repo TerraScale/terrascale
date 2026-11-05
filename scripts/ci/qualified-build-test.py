@@ -91,6 +91,18 @@ with tempfile.TemporaryDirectory(prefix='ci-inherited-proof-test-') as scratch:
         git('commit', '--quiet', '-m', 'fixture')
         return git('rev-parse', 'HEAD')
     base = commit('src/service.cs', 'checked input\n')
+    # Minimal real project graphs let the classifier prove independent code.
+    for area, project in {'libs': 'src/TerraScale.Logging/Logging.csproj',
+                          'auth': 'src/TerraScale.Authentication/Auth.csproj',
+                          'terrabase': 'src/TerraBase/TerraBase.csproj'}.items():
+        file = Path(project)
+        file.parent.mkdir(parents=True, exist_ok=True)
+        extra = '<ItemGroup><Compile Include="../../benchmark/dotnet/LocalBenchmarkHost.cs" /></ItemGroup>' if area == 'terrabase' else ''
+        file.write_text('<Project>' + extra + '</Project>')
+        Path(area + '.slnf').write_text(json.dumps({'solution': {'projects': [project]}}))
+    git('add', '.')
+    git('commit', '--quiet', '-m', 'fixture project graphs')
+    base = git('rev-parse', 'HEAD')
     receipt = {**manifest, 'revision': base}
     payload = json.dumps(receipt)
     import hashlib
@@ -108,13 +120,13 @@ with tempfile.TemporaryDirectory(prefix='ci-inherited-proof-test-') as scratch:
         (target / 'manifest.json').write_text(payload)
         return ''
     qualified.statuses, qualified.gh = statuses, gh
-    def full_verify(revision):
+    def full_verify(revision, area='terrabase'):
         with tempfile.TemporaryDirectory(dir=root) as output, contextlib.redirect_stdout(io.StringIO()):
-            source, selected = qualified.proof_source('terrabase', revision)
-            return qualified.verify('terrabase', source, Path(output), rows=selected)
-    def must_reject(revision):
+            source, selected = qualified.proof_source(area, revision)
+            return qualified.verify(area, source, Path(output), rows=selected)
+    def must_reject(revision, area='terrabase'):
         try:
-            full_verify(revision)
+            full_verify(revision, area)
         except ValueError:
             return
         raise AssertionError('Inherited proof bypassed source or trust boundary')
@@ -152,7 +164,7 @@ with tempfile.TemporaryDirectory(prefix='ci-inherited-proof-test-') as scratch:
     os.chdir(repository)
     for path in ('src/service.cs', 'tests/fixture.md', 'scripts/ci/qualified-build.py',
                  '.github/workflows/ci.yml', 'sdk/dotnet/README.md',
-                 'docs-site/content.md', 'docs/auth/openapi.yaml', 'Directory.Build.props'):
+                 'benchmark/dotnet/LocalBenchmarkHost.cs', 'docs/terrabase/contract.yaml', 'Directory.Build.props'):
         git('checkout', '--quiet', '--detach', second)
         changed = commit(path, 'changed executable or test input\n')
         tip = commit('docs/after.md', 'docs after source edit\n')
@@ -166,5 +178,31 @@ with tempfile.TemporaryDirectory(prefix='ci-inherited-proof-test-') as scratch:
     commit('docs/right.md', 'right\n')
     git('merge', '--quiet', '--no-ff', left, '-m', 'fixture merge')
     must_reject(git('rev-parse', 'HEAD'))
+    # TerraBase-only changes must reuse Libraries proof (8811ba597 regression).
+    libs_receipt = {**receipt, 'area': 'libs'}
+    payload = json.dumps(libs_receipt)
+    libs_rows = {name.replace('/terrabase', '/libs'): copy.deepcopy(row) for name, row in accepted.items()}
+    libs_rows['ci-build/libs']['description'] = 'Checked build; manifest sha256 ' + hashlib.sha256(payload.encode()).hexdigest()
+    by_revision = {base: libs_rows}
+    for path in ('src/TerraBase/HomePush.cs', 'tests/TerraBase.Fast/Example.cs',
+                 'src/TerraScale.Authentication/Auth.cs', 'src/TerraScale.Dashboard/Page.cs',
+                 'benchmark/cmd/region-sim/api.go', 'sdk/go/client.go', 'docs-site/content.md'):
+        git('checkout', '--quiet', '--detach', second)
+        tip = commit(path, 'independent area input\n')
+        assert full_verify(tip, 'libs') == libs_receipt
+    for path in ('src/TerraScale.Logging/Logging.cs', 'libs.slnf', 'Directory.Build.props',
+                 'sdk/dotnet/client.cs', 'scripts/ci/test-area.sh', 'src/Unknown/Input.cs',
+                 'benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Example.cs'):
+        git('checkout', '--quiet', '--detach', second)
+        tip = commit(path, 'shared or Libraries input\n')
+        must_reject(tip, 'libs')
+    # A future project reference makes that dependency an input automatically.
+    git('checkout', '--quiet', '--detach', second)
+    dependency = commit('src/TerraScale.Logging/Logging.csproj',
+                        '<Project><ItemGroup><ProjectReference Include="../TerraBase/TerraBase.csproj" /></ItemGroup></Project>')
+    by_revision[dependency] = libs_rows
+    changed = commit('src/TerraBase/HomePush.cs', 'newly linked Libraries dependency\n')
+    must_reject(changed, 'libs')
     os.chdir(original_cwd)
+print('qualified-build-test: area inputs, transitive project references and linked benchmark helpers: ok')
 print('qualified-build-test: docs-only ancestry, shallow checkout, source changes, merges and newer-result precedence: ok')
