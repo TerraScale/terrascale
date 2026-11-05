@@ -14,13 +14,13 @@ internal sealed class RegionalStatusEndpoint(RegionalHandoff handoff) : Endpoint
         Tags("Administration");
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
-        Produces(StatusCodes.Status204NoContent);
+        Produces<RegionalStatus>();
         Produces(StatusCodes.Status503ServiceUnavailable);
     }
 
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
-        return ValueTask.FromResult<IResult>(TypedResults.Json(handoff.Status, TerraBaseJsonContext.Default.RegionalStatus));
+        return TypedResults.Json(await handoff.StatusAsync(cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.RegionalStatus);
     }
 }
