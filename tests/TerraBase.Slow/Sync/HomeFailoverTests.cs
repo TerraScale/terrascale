@@ -10,6 +10,7 @@ using TerraBase.Features.HomeApply;
 using TerraBase.Features.HomePush;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Sql;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -55,6 +56,7 @@ public sealed class HomeFailoverTests
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gruLeases.Find(all.Id)?.Home == "gru" && gruLeases.Find(local.Id)?.Home == "gru"
             && sjcLeases.Find(all.Id) is not null && sjcLeases.Find(local.Id) is not null), TimeSpan.FromSeconds(30));
 
+        var originalEpoch = gruLeases.Find(all.Id)!.Epoch;
         var acked = new ConcurrentDictionary<string, ConcurrentQueue<string>>(StringComparer.Ordinal)
         {
             [all.Id] = new ConcurrentQueue<string>(),
@@ -152,6 +154,14 @@ public sealed class HomeFailoverTests
         gruNats.Heal();
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gruLeases.Find(local.Id)?.Home == "sjc" && oldStore.IsClosed), TimeSpan.FromSeconds(60));
         await Assert.That(await RefusesWriteAsync(oldStore, token)).IsTrue().Because("the former home cannot write even through a handle opened before failover");
+        await Assert.That(sjcLeases.Find(all.Id)!.Epoch).IsEqualTo(originalEpoch + 1);
+        var stale = await gru.Server.Services.GetRequiredService<HomeSessions>().OpenAsync(tenant, "sjc", originalEpoch, canWrite: true, token);
+        if (stale is HomeSqlSession accepted)
+        {
+            await accepted.DisposeAsync();
+        }
+
+        await Assert.That(stale is SqlError { Code: SqlErrors.WrongRegion }).IsTrue().Because("the new home refuses a forwarded write session carrying the former epoch");
 
         await TerraBaseTestServer.EventuallyAsync(async _ => (await TryRowsAsync(viaSjc, all, token))?.IsSupersetOf(pushed) == true, TimeSpan.FromSeconds(30));
         var allStored = await RowsAsync(viaSjc, all, token);
