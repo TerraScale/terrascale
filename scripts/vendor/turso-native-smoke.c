@@ -223,8 +223,8 @@ static void dense_phrase_admission_smoke(turso_connection_t *connection) {
     body[tokens * 2] = '\0';
     execute(connection, "CREATE TABLE dense_docs(id INTEGER PRIMARY KEY, title TEXT)");
     turso_statement_t *statement = prepare(connection, "INSERT INTO dense_docs VALUES (1, ?1)");
-    expect(turso_statement_bind_positional_text(statement, 1, body, tokens * 2), TURSO_OK, "bind dense document");
-    expect(turso_statement_step(statement, &error), TURSO_DONE, "insert dense document");
+    expect(turso_statement_bind_positional_text(statement, 1, body, tokens * 2), TURSO_OK, "bind dense text");
+    expect(turso_statement_step(statement, &error), TURSO_DONE, "insert dense text");
     turso_statement_deinit(statement);
     free(body);
     execute(connection, "CREATE INDEX dense_fts ON dense_docs USING fts(title)");
@@ -325,11 +325,11 @@ static void carrying_slop_admission_smoke(turso_connection_t *connection) {
 }
 
 static void candidate_seek_smoke(turso_connection_t *connection) {
-    execute(connection, "CREATE TABLE collection(id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)");
-    execute(connection, "INSERT INTO collection VALUES ('00000000000000000000000001', '{\"body\":\"native\"}'), ('00000000000000000000000010', '{}'), ('000000000000000000000001E1', '{}')");
+    execute(connection, "CREATE TABLE records(id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)");
+    execute(connection, "INSERT INTO records VALUES ('00000000000000000000000001', '{\"body\":\"native\"}'), ('00000000000000000000000010', '{}'), ('000000000000000000000001E1', '{}')");
     /* Numeric-looking ULIDs must retain their text identity; json_each.value has ANY (numeric) affinity. */
     const char *ids = "[\"00000000000000000000000010\",\"00000000000000000000001000\",\"00000000000000000000000001\"]";
-    const char *from = " FROM (SELECT CAST(value AS TEXT) AS hit_id FROM json_each(?1)) AS hits CROSS JOIN collection ON collection.id = hits.hit_id";
+    const char *from = " FROM (SELECT CAST(value AS TEXT) AS hit_id FROM json_each(?1)) AS hits CROSS JOIN records ON records.id = hits.hit_id";
     char queries[5][2048];
     snprintf(queries[0], sizeof(queries[0]), "SELECT id, doc%s ORDER BY id LIMIT 3", from);
     snprintf(queries[1], sizeof(queries[1]), "SELECT id, doc%s WHERE id > '00000000000000000000000001' ORDER BY id LIMIT 3", from);
@@ -352,9 +352,9 @@ static void candidate_seek_smoke(turso_connection_t *connection) {
             detail[length] = '\0';
             printf("candidate plan %zu: %s\n", i, detail);
             fflush(stdout);
-            assert(strstr(detail, "SCAN collection") == NULL);
-            seeks += strstr(detail, "SEARCH collection USING INDEX sqlite_autoindex_collection_1 (id=?)") != NULL
-                || strstr(detail, "SEARCH collection USING COVERING INDEX sqlite_autoindex_collection_1 (id=?)") != NULL;
+            assert(strstr(detail, "SCAN records") == NULL);
+            seeks += strstr(detail, "SEARCH records USING INDEX sqlite_autoindex_records_1 (id=?)") != NULL
+                || strstr(detail, "SEARCH records USING COVERING INDEX sqlite_autoindex_records_1 (id=?)") != NULL;
         }
         expect(status, TURSO_DONE, sql);
         assert(seeks == (i == 4 ? 2 : 1));

@@ -52,7 +52,7 @@ public static class RequestIdentity
         return app;
     }
 
-    /// <summary>Install only on first-party transports; never on webhooks or third-party HTTP clients.</summary>
+    /// <summary>Install only on first-party transports; never on outbound callbacks or third-party HTTP clients.</summary>
     public static HttpMessageHandler Wrap(HttpMessageHandler inner, string? secret) => new Propagation(secret) { InnerHandler = inner };
 
     /// <summary>Creates a factory-managed handler restricted to one configured service origin.</summary>

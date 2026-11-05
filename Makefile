@@ -15,7 +15,7 @@ TS_DOTNET_DIR ?= sdk/dotnet
 TERRABASE_BINARY ?= $(CURDIR)/src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase
 REDOCLY := npx --yes @redocly/cli@2.57.0
 
-# Upstream's source of the vendored Turso driver keeps upstream's formatting: reformatting it would break the pristine
+# Upstream's source of the vendored SQL driver keeps upstream's formatting: reformatting it would break the pristine
 # import and the patch replay (src/vendor/Turso.Data.Sqlite/UPSTREAM.md).
 VENDORED_UPSTREAM := src/vendor/Turso.Data.Sqlite/src
 ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
@@ -45,7 +45,7 @@ restore:
 	dotnet restore $(SOLUTION) --locked-mode
 	dotnet restore $(ANALYZER_CHECK_PROJECT) --locked-mode
 
-# Pinned Turso native libraries (src/vendor/Turso.Native/SHA256SUMS), needed by every build of TerraBase or its driver.
+# Pinned storage engine native libraries (src/vendor/Turso.Native/SHA256SUMS), needed by every build of TerraBase or its driver.
 # Fetched only when the pins do not verify: a fresh checkout has none, and a partial or stale copy is replaced. The
 # download checks the same pins before it publishes a file.
 TURSO_NATIVE_DIR := src/vendor/Turso.Data.Sqlite/native
@@ -111,7 +111,7 @@ auth-build: auth-restore turso-native
 auth-audit:
 	dotnet run scripts/auth/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj
 
-# The served document, and the platform contract (TS-598) that later slices implement.
+# The served OpenAPI schema, and the platform contract (TS-598) that later slices implement.
 auth-openapi-check: auth-build
 	mkdir -p artifacts
 	scripts/auth/export-openapi.sh $(AUTH_HOST_DLL) artifacts/openapi.json

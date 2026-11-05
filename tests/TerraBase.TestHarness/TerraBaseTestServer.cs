@@ -118,14 +118,14 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 arguments[key] = value;
             }
 
-            var withoutSeed = platformSeed ? services : collection =>
+            var withoutSeed = platformSeed ? services : registrations =>
             {
-                foreach (var seed in collection.Where(descriptor => descriptor.ImplementationType == typeof(PlatformSeed)).ToList())
+                foreach (var seed in registrations.Where(descriptor => descriptor.ImplementationType == typeof(PlatformSeed)).ToList())
                 {
-                    collection.Remove(seed);
+                    registrations.Remove(seed);
                 }
 
-                services?.Invoke(collection);
+                services?.Invoke(registrations);
             };
             factory = new Factory(arguments, topology, withoutSeed, environmentName, PeerTls.Credential, linkedCancellation, testCancellation);
             factory.UseKestrel();
