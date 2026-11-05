@@ -1,5 +1,5 @@
-// Each document carries its own workspace through navigation, forms and SSE.
-// A different tab can change the account's opening preference without changing this document.
+// Each page carries its own workspace through navigation, forms and SSE.
+// A different tab can change the account's opening preference without changing this page.
 const organizationId = document.documentElement.dataset.workspaceOrganization;
 const projectId = document.documentElement.dataset.workspaceProject;
 const selection = {organizationId, projectId};

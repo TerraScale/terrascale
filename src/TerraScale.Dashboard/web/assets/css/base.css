@@ -1,4 +1,4 @@
-/* Fonts, reset, document defaults, accessibility helpers, and the
+/* Fonts, reset, page defaults, accessibility helpers, and the
    navigation progress bar. */
 
 /* Self-hosted variable Geist. "swap" shows the system face until the file
@@ -160,7 +160,7 @@ hr {
 }
 
 /* Navigation activity: Datastar sets body.ts-nav-pending while the next
-   document loads (see Common/UI/Slices/ShellDocument.cshtml). Reveal the bar in the
+   page loads (see Common/UI/Slices/ShellDocument.cshtml). Reveal the bar in the
    first paint after the click. A flat pulse shows an
    ongoing wait without implying a measured completion percentage. */
 body.ts-nav-pending::before {

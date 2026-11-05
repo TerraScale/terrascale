@@ -26,7 +26,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
                     openApi.Info.Description = "Same-origin dashboard APIs. Existing /api/v1 browser paths are preserved. " +
                         "New public APIs use /v1. Mutations require the current session and the _csrf form token " +
                         "bound to the same origin; authentication and membership checks run before actions. " +
-                        "This document covers explicitly annotated integration routes, not every UI page.";
+                        "This specification covers explicitly annotated integration routes, not every UI page.";
                     openApi.Components ??= new();
                     openApi.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
                     openApi.Components.SecuritySchemes["dashboardSession"] = new OpenApiSecurityScheme
@@ -74,7 +74,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
                         $"<link rel=\"stylesheet\" href=\"{assets.Url("css/terrascale.css")}\">")
                     .WithNonce((string)http.Items["nonce"]!);
             });
-            // Scalar 2.18.0 has no document-language setting. Fix the actual HTTP document as well as the DOM.
+            // Scalar 2.18.0 has no page-language setting. Fix the actual HTTP page as well as the DOM.
             reference.AddEndpointFilter(async (context, next) =>
             {
                 var result = await next(context);
@@ -119,7 +119,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
         {
             // Scalar's official csp-nonce meta supports its main CSS only. Its bundled Sonner,
             // CodeMirror and Vue theme style producers need the same nonce before insertion.
-            // Adapt only the pinned package asset, never document/DOM prototypes or untrusted markup.
+            // Adapt only the pinned package asset, never DOM prototypes or untrusted markup.
             using var resource = typeof(ScalarOptions).Assembly.GetManifestResourceStream("ScalarStaticAssets.scalar.js")
                 ?? throw new InvalidOperationException("Scalar bundle missing");
             var first = resource.ReadByte();

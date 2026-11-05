@@ -100,7 +100,7 @@ document.addEventListener('datastar-fetch', event => {
   }
 });
 
-// The browser can restore the old document from its back/forward cache.
+// The browser can restore the old page from its back/forward cache.
 window.addEventListener('pageshow', () => {
   for (const button of pending.keys()) stop(button, true);
   requests.clear();
