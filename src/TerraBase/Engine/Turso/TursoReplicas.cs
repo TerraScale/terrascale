@@ -29,8 +29,6 @@ internal sealed class TursoReplicas(
     internal const string KeyHeader = "TERRABASE-REPLICA-KEY-1\n";
     private const int MaxIdleConnections = 4;
     private const int MaxReadRows = 10_000;
-    private const int BeginAttempts = 25;
-    private static readonly TimeSpan BeginRetry = TimeSpan.FromMilliseconds(2);
 
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), Lazy<Task<Replica>>> _replicas = new();
     private long _position;
@@ -625,49 +623,13 @@ internal sealed class TursoReplicas(
 
         public async Task<IReplicaReader> BeginReadAsync(CancellationToken cancellationToken)
         {
-            for (var attempt = 1; ; attempt++)
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (!_idle.TryDequeue(out var native))
             {
-                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                TursoDatabaseHandle native;
-                if (_idle.TryDequeue(out var idle))
-                {
-                    _ = Interlocked.Decrement(ref _idleCount);
-                    native = idle;
-                }
-                else
-                {
-                    native = await sync.ConnectHandleAsync(cancellationToken).ConfigureAwait(false);
-                    try
-                    {
-                        Run(native, "PRAGMA query_only = 1;");
-                    }
-                    catch
-                    {
-                        Close(native);
-                        throw;
-                    }
-                }
-
+                native = await sync.ConnectHandleAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    Run(native, "BEGIN;");
-                    return new Reader(this, native);
-                }
-                catch (TursoException error) when (attempt < BeginAttempts)
-                {
-                    Close(native);
-                    if (attempt == 1)
-                    {
-                        logger.ZLogDebug($"A replica read could not begin while a pull applied; retrying: {error.GetType().Name:@Error}");
-                    }
-
-                    await Task.Delay(BeginRetry, cancellationToken).ConfigureAwait(false);
-                }
-                catch (TursoException error)
-                {
-                    Close(native);
-                    logger.ZLogInformation($"A replica read could not begin after {BeginAttempts} attempts; it runs at the home: {error.GetType().Name:@Error} {error.Message:@Reason}");
-                    throw;
+                    Run(native, "PRAGMA query_only = 1;");
                 }
                 catch
                 {
@@ -675,6 +637,22 @@ internal sealed class TursoReplicas(
                     throw;
                 }
             }
+            else
+            {
+                _ = Interlocked.Decrement(ref _idleCount);
+            }
+
+            try
+            {
+                Run(native, "BEGIN;");
+            }
+            catch
+            {
+                Close(native);
+                throw;
+            }
+
+            return new Reader(this, native);
         }
 
         public ValueTask DisposeAsync()
