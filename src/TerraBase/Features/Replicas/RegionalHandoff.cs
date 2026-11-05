@@ -13,7 +13,7 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed record RegionalPosition(string Organization, string Project, string Database, string Home, string Revision);
 internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions);
-internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer);
+internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready);
 internal sealed record RegionalDrain(string Target);
 
 /// <summary>
@@ -28,10 +28,14 @@ internal sealed class RegionalHandoff(
     internal const string Bucket = "terrabase-region-owners";
     private readonly SemaphoreSlim _changing = new(1, 1);
     private readonly HttpClient _http = PeerHttp.Create(credential);
+    private readonly Dictionary<string, TenantContext> _promoted = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _prepared = new(StringComparer.Ordinal);
     private INatsKVStore? _kv;
     private NatsConnection? _nats;
 
-    internal RegionalStatus Status => new(options.MachineId, owners.Find(options.Region)?.Node, owners.Find(options.Region)?.Epoch ?? 0, owners.Writer);
+    internal async Task<RegionalStatus> StatusAsync(CancellationToken cancellationToken) => new(options.MachineId, owners.Find(options.Region)?.Node,
+        owners.Find(options.Region)?.Epoch ?? 0, owners.Writer,
+        await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false));
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -106,7 +110,25 @@ internal sealed class RegionalHandoff(
                         throw new InvalidDataException("regional owner is outside admitted peers");
                     }
 
+                    var changed = owners.Find(region) != owner;
                     owners.Observe(owner);
+                    if (changed)
+                    {
+                        services.GetRequiredService<RegionReplication>().WakeCatalog(region);
+                        if (region == options.Region && owner.Node == options.MachineId)
+                        {
+                            _prepared.Clear();
+                            owners.Resume();
+                        }
+                        else if (region == options.Region)
+                        {
+                            foreach (var database in _promoted.Values)
+                            {
+                                services.GetRequiredService<RegionReplication>().Resume(database);
+                            }
+                            _promoted.Clear();
+                        }
+                    }
                     if (region == options.Region && owner.Node == options.MachineId)
                     {
                         // A quorum CAS, rather than a cached watch value, renews write admission.
@@ -137,6 +159,19 @@ internal sealed class RegionalHandoff(
 
     internal async Task<bool> PrepareAsync(RegionalPrepare request, CancellationToken cancellationToken)
     {
+        await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await PrepareCoreAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _changing.Release();
+        }
+    }
+
+    private async Task<bool> PrepareCoreAsync(RegionalPrepare request, CancellationToken cancellationToken)
+    {
         if (request.Positions.Count > 10_000 || !await PrimeAsync(request.Source, cancellationToken).ConfigureAwait(false))
         {
             return false;
@@ -147,6 +182,11 @@ internal sealed class RegionalHandoff(
         foreach (var position in request.Positions)
         {
             var database = Database(position);
+            if (_prepared.GetValueOrDefault(position.Database) == position.Revision)
+            {
+                continue;
+            }
+
             if (!DatabaseRevision.TryParse(position.Revision, out var expected)
                 || !await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false)
                 || replicas.HeldRevision(database) is not { } actual || actual.Incarnation != expected.Incarnation
@@ -161,7 +201,13 @@ internal sealed class RegionalHandoff(
         foreach (var position in request.Positions.Where(position => position.Home == options.Region))
         {
             var database = Database(position);
+            if (_prepared.GetValueOrDefault(position.Database) == position.Revision)
+            {
+                continue;
+            }
+
             await replication.SuspendAsync(database).ConfigureAwait(false);
+            _promoted[position.Database] = database;
             var detached = await replicas.DetachAsync(database, cancellationToken).ConfigureAwait(false);
             if (detached is null)
             {
@@ -172,10 +218,12 @@ internal sealed class RegionalHandoff(
             {
                 _ = await engine.DeleteDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
                 await services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
+                _prepared[position.Database] = position.Revision;
             }
-            finally
+            catch
             {
                 replication.Resume(database);
+                throw;
             }
         }
 
@@ -189,6 +237,46 @@ internal sealed class RegionalHandoff(
         }
 
         return true;
+    }
+
+    internal async Task<bool> VerifyAsync(RegionalPrepare request, CancellationToken cancellationToken)
+    {
+        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
+        if (!owners.Writer || request.Positions.Count > 10_000
+            || !nodes.Any(node => node.Name == request.Source && node.Region == options.Region && node.Name != options.MachineId))
+        {
+            return false;
+        }
+
+        var replication = services.GetRequiredService<RegionReplication>();
+        await replication.SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
+        var replicas = services.GetRequiredService<IDatabaseReplicas>();
+        var revisions = services.GetRequiredService<IDatabaseRevisions>();
+        foreach (var position in request.Positions)
+        {
+            var database = Database(position);
+            DatabaseRevision? actual;
+            if (position.Home == options.Region)
+            {
+                actual = await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                if (!await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
+                {
+                    return false;
+                }
+                actual = replicas.HeldRevision(database);
+            }
+
+            if (!DatabaseRevision.TryParse(position.Revision, out var expected) || actual is not { } applied
+                || applied.Incarnation != expected.Incarnation || DatabaseRevision.Compare(applied, expected) < 0)
+            {
+                return false;
+            }
+        }
+
+        return await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task<bool> DrainAsync(string target, CancellationToken cancellationToken)
@@ -216,12 +304,8 @@ internal sealed class RegionalHandoff(
             }
 
             var owner = Decode(entry.Value.Value!);
-            if (owner.Node == target)
-            {
-                return true; // Retry after an acknowledged or ambiguous successful CAS.
-            }
-
-            if (owner.Node != options.MachineId)
+            var promoting = owner.Node == options.MachineId;
+            if (!promoting && owner.Node != target)
             {
                 return false;
             }
@@ -249,7 +333,7 @@ internal sealed class RegionalHandoff(
                         }
 
                         DatabaseRevision? position;
-                        if (region == options.Region)
+                        if (region == options.Region && promoting)
                         {
                             _ = await revisions.DrainWritersAsync(database, cancellationToken).ConfigureAwait(false);
                             position = await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false);
@@ -259,7 +343,7 @@ internal sealed class RegionalHandoff(
                             position = replicas.HeldRevision(database);
                         }
 
-                        if (region == options.Region && position is null)
+                        if (region == options.Region && promoting && position is null)
                         {
                             return false;
                         }
@@ -276,11 +360,16 @@ internal sealed class RegionalHandoff(
             }
 
             var address = new UriBuilder(Uri.UriSchemeHttp, peer.Address.ToString(), options.InternalPort).Uri;
-            using var response = await _http.PostAsJsonAsync(new Uri(address, "/v1/rollout/prepare"),
+            using var response = await _http.PostAsJsonAsync(new Uri(address, promoting ? "/v1/rollout/prepare" : "/v1/rollout/verify"),
                 new RegionalPrepare(options.MachineId, positions), TerraBaseJsonContext.Default.RegionalPrepare, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 return false;
+            }
+
+            if (!promoting)
+            {
+                return true;
             }
 
             var next = new RegionalOwner(options.Region, target, owner.Epoch + 1);
