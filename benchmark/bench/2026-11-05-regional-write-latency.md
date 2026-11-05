@@ -8,7 +8,12 @@ sample's response `X-Request-ID` matched its SJC request-log observation, read
 through the existing authenticated internal logs endpoint. No observation was
 missing. The service's `latencyMs` measures the origin pipeline through response
 completion, including admission and execution, without client TLS or the edge.
-This supplies total server time before the new `Server-Timing` stages exist.
+This supplies the server measurement before the new `Server-Timing` stages
+exist. Its window starts in usage middleware, before routing, authentication
+and admission, but after the outer request-identity and pressure wrappers.
+The new `app` span starts earlier, at the outer SQL middleware, and ends at
+response headers. Paired log measurements remain the comparable before/after
+series; the header spans additionally partition origin work.
 
 All regions retained the same source around each repeat; all 360 measured rows
 reached GRU exactly once, and each database was deleted.
@@ -149,11 +154,13 @@ on its local path. Together these make remote confirmation part of every
 successful write, irrespective of the default local durability request.
 The roughly 196–206 ms default server medians match this WAN dependency.
 
-R10 owns enabling default local acknowledgements and the required durable
-regional partner copy. N1 owns activating the second nodes. This work does not
-weaken acknowledgement durability, change plan admission, or alter replica
-reads. The diagnostic header and benchmark separate those dependencies from
-other write-path cost.
+R10 owns default local acknowledgements and durable acknowledgement for the
+discovered regional quorum: a one-node region acknowledges on that node;
+with a discovered partner, both copies are required or the request waits for
+home. N1 owns activating the second nodes. The probe records actual membership
+and partner readiness; it never changes the quorum. This work preserves those
+durability rules, plan admission and replica reads. The diagnostic header and
+benchmark separate those dependencies from other write-path cost.
 
 ## Qualification attempts
 
@@ -173,10 +180,13 @@ Its commits are `c66293b80` (SQL timing), `fbc94428a` (probe and timing docs),
 `c674c42dd` (forced-home snapshot bypass) and `cced3a160` (baseline evidence).
 The final candidate passed TerraBase Fast in 10.864 s and Auth Fast in 8.909 s;
 benchmark Fast passed in 0.287 s. Main races caused required rebases and retests;
-no gate was bypassed.
+no gate was bypassed. CI completed successfully in [run 42034724081](https://github.com/TerraScale/terrascale/actions/runs/42034724081).
 
 The second synthetic account, `fastwrites-logs-20261105`, returned `DELETED`.
 Its local and SJC credential copies were removed. All raw evidence above was
 preserved before the verify lane's announced format-23 production reset.
-New live writes are held through the reset; final measurements will use a new
-account after the reset handoff.
+Authenticated health confirmed `cced3a160` serving in GRU, SJC and FRA on
+format `22-41a88901325a` before the reset
+([deployment snapshot](2026-11-05-regional-write-deployed.json)). New live writes
+are held through the reset; final measurements will use a new account after
+the reset handoff.
