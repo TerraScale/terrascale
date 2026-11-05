@@ -160,7 +160,7 @@ func parserError(err error) error {
 func helpOptions(name string) map[string]string {
 	options := make(map[string]string, len(helpFlags)+4)
 	if name == "shell" {
-		options[".run / .reset"] = "submit the full multiline buffer or discard it"
+		options[".run / .reset"] = "submit the buffer as one statement in its own transaction, or discard it"
 		options[".quit / .help"] = "exit with an empty buffer or show shell help; history is session-only"
 	}
 	for flag, text := range helpFlags {

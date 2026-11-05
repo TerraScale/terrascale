@@ -10,8 +10,10 @@ import (
 	v1 "terrascale.tech/sdk/v1"
 )
 
-const sqlShellHelp = `SQL shell: .run submits the entire buffer as one transaction; .reset discards it.
-.quit exits; .help shows this help. Enter SQL across any number of lines.
+const sqlShellHelp = `SQL shell: .run submits the buffer as one SQL statement in its own transaction;
+.reset discards it. .quit exits; .help shows this help. A statement spans any
+number of lines; give each further statement its own .run. Run independent
+statements in one atomic batch with the SDK's Batch API, not the shell.
 History is session-only; use Up/Down to recall submitted statements.
 `
 

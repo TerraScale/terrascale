@@ -6,10 +6,13 @@ rows, affected count and last insert ID from the SDK, preserving duplicate colum
 names and integers, as one JSON object.
 
 `ts shell app` starts a SQL shell with multiline input and session-only history
-of submitted statements (Up/Down). Enter `.run` on its own line to submit the entire
-buffer as one transaction, `.reset` to discard it. `.help` shows help; `.quit` exits.
-SQL strings, comments and trigger bodies retain their semicolons. Transactions cannot
-span submissions. No history file is written.
+of submitted statements (Up/Down). Enter `.run` on its own line to submit the
+buffer as one SQL statement in its own transaction, `.reset` to discard it. A
+statement spans any number of lines; give each further statement its own `.run`,
+because an engine call runs exactly one statement and the shell does not split
+SQL. For atomic multi-statement work use the SDK's Batch API. `.help` shows
+help; `.quit` exits. SQL strings, comments and trigger bodies retain their
+semicolons. Transactions cannot span submissions. No history file is written.
 
 Batch input also uses `.run`: `printf 'SELECT 1;\n.run\n' | ts --json shell app`.
 JSON emits typed result records as `{"type":"record","data":...}`, then

@@ -87,7 +87,8 @@ Options go before or after the command and its operands; -- ends options.
   backup rewind <db> <time> [platform|customer]
                                           restore the database in place to an RFC3339
                                           instant; later changes are lost; requires -yes
-  shell <db>                              multiline SQL; .run submits; session history
+  shell <db>                              multiline SQL; .run submits one statement;
+                                          session history
   functions deploy <db> <file.js | dir>   deploy or replace a JavaScript function
                                           (a dir deploys its index.js); the file
                                           is a plain script, not an ES module
