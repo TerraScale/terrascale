@@ -26,8 +26,10 @@ The SQL methods live on `Database` in the module on `main`; published tags preda
 ```bash
 mkdir quickstart && cd quickstart
 go mod init example.com/quickstart
-go get terrascale.tech/sdk@main
+go get terrascale.tech/sdk/v1@main terrascale.tech/sdk/tsauth@main
 ```
+
+The quickstart imports `terrascale.tech/sdk/v1` and `terrascale.tech/sdk/tsauth`, so `go get` names both; fetching only the root module leaves `go.sum` without `github.com/coder/websocket`, which `v1` needs.
 
 ## Run the quickstart
 
