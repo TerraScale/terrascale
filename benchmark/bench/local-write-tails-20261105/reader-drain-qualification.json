@@ -1,0 +1,12 @@
+{
+  "candidate": "a2cb09831",
+  "source_equivalence": "rebased current writer/test unchanged",
+  "full_fast": {
+    "service_tests": 66,
+    "service_seconds": 16.699,
+    "driver_tests": 4,
+    "driver_seconds": 7.307
+  },
+  "negative_control": "failed A_local_replica_writer_drains_readers_and_cancelled_admission_releases_its_gate (319ms)\n  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] AssertionException: Expected to throw OperationCanceledException\n  but no exception was thrown\n  \n  at Assert.That(action).Throws<OperationCanceledException>()\n    at TerraBase.Fast.Sync.RegionReplicaTests.A_local_replica_writer_drains_readers_and_cancelled_admission_releases_its_gate() in /home/mariogk/remote-builds/terrascale/refs-ts-proof-localtails-1105-reader-dra-9870c5019a11e5326a77cb49f9b4a433f4d96d78aee6560819884e4766c7952a/tests/TerraBase.Fast/Sync/RegionReplicaTests.cs:117\n    at TerraBase.Fast.Sync.RegionReplicaTests.A_local_replica_writer_drains_readers_and_cancelled_admission_releases_its_gate() in /home/mariogk/remote-builds/terrascale/refs-ts-proof-localtails-1105-reader-dra-9870c5019a11e5326a77cb49f9b4a433f4d96d78aee6560819884e4766c7952a/tests/TerraBase.Fast/Sync/RegionReplicaTests.cs:125\n    at TerraBase.Fast.Sync.RegionReplicaTests.A_local_replica_writer_drains_readers_and_cancelled_admission_releases_its_gate() in /home/mariogk/remote-builds/terrascale/refs-ts-proof-localtails-1105-reader-dra-9870c5019a11e5326a77cb49f9b4a433f4d96d78aee6560819884e4766c7952a/tests/TerraBase.Fast/Sync/RegionReplicaTests.cs:126\n    at TerraBase.Fast.Sync.RegionReplicaTests.A_local_replica_writer_drains_readers_and_cancelled_admission_releases_its_gate() in /home/mariogk/remote-builds/terrascale/refs-ts-proof-localtails-1105-reader-dra-9870c5019a11e5326a77cb49f9b4a433f4d96d78aee6560819884e4766c7952a/tests/TerraBase.Fast/Sync/RegionReplicaTests.cs:134\n    at TerraBase.Fast.Sync.RegionReplicaTests.A_local_replica_writer_drains_readers_and_cancelled_admission_releases_its_gate() in /home/mariogk/remote-builds/terrascale/refs-ts-proof-localtails-1105-reader-dra-9870c5019a11e5326a77cb49f9b4a433f4d96d78aee6560819884e4766c7952a/tests/TerraBase.Fast/Sync/RegionReplicaTests.cs:142\n       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---\n",
+  "driver_limitation": "After expected negative failure, report lookup used repository-relative path instead of test output working directory. Five positive repeats rerun separately."
+}
