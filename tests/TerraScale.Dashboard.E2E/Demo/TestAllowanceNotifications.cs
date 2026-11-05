@@ -3,7 +3,7 @@ using TerraScale.Dashboard.Features.Notifications;
 
 namespace TerraScale.Dashboard.E2E.Demo
 {
-    // Test hosts never reach the production allowance feed or send product mail.
+    // Test hosts never reach the production allowance snapshot or send product mail.
     sealed class TestAllowanceNotifications(TimeProvider clock) : IAllowanceNotificationBackend
     {
         private readonly object gate = new();
@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 observation = value;
                 deliveryConfigured = value is not null;
                 outcome = delivery;
-                operationsContract = operationContract ?? (supported ? AllowanceNotifications.OperationsContract : "document-operations-node-v1");
+                operationsContract = operationContract ?? (supported ? AllowanceNotifications.OperationsContract : "unsupported-operations-contract");
                 storageContract = supported ? "storage-bytes-regions-global-v1" : "logical-bytes-node-v1";
             }
         }
@@ -63,7 +63,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             {
                 if (!deliveryConfigured)
                 {
-                    throw new InvalidOperationException("The empty test allowance feed cannot send email.");
+                    throw new InvalidOperationException("The empty test allowance snapshot cannot send email.");
                 }
 
                 Attempts.Enqueue(alert);

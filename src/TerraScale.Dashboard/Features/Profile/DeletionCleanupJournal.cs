@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Platform.TsAuth;
 namespace TerraScale.Dashboard.Features.Profile
 {
     // Immutable authorization and opaque owned references survive ACK indefinitely.
-    // Local CAS fences are not a finite barrier against later regional LWW joins.
+    // Retain cleanup authority so delayed regional writes can be removed again.
     public sealed class DeletionCleanupJournal(IDashboardState state)
     {
         public const string Table = "dashboard_deletion_cleanup";
