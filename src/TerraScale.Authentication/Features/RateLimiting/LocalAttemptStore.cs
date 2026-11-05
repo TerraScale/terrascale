@@ -10,25 +10,25 @@ namespace TerraScale.Authentication.Features.RateLimiting;
 /// every sign-in failing closed. Bounded: past <see cref="Capacity"/> buckets, those untouched for an hour are dropped,
 /// and if none can be, new buckets are refused (the limiter then fails closed).
 /// </summary>
-internal sealed class LocalAttemptStore(TimeProvider clock) : IDocumentStore
+internal sealed class LocalAttemptStore(TimeProvider clock) : IRecordStore
 {
     /// <summary>Most buckets kept at once.</summary>
     internal const int Capacity = 100_000;
 
     private static readonly TimeSpan Idle = TimeSpan.FromHours(1);
 
-    private readonly ConcurrentDictionary<(string Collection, string Instance, string Key), Entry> buckets = new();
+    private readonly ConcurrentDictionary<(string Table, string Instance, string Key), Entry> buckets = new();
 
     private long versions;
 
     /// <inheritdoc />
-    public Task<Versioned<T>?> GetAsync<T>(string collection, string instanceId, string key, CancellationToken cancellationToken) =>
-        Task.FromResult(this.buckets.TryGetValue((collection, instanceId, key), out var entry) && entry.Document is T document
-            ? new Versioned<T>(document, entry.Version)
+    public Task<Versioned<T>?> GetAsync<T>(string table, string instanceId, string key, CancellationToken cancellationToken) =>
+        Task.FromResult(this.buckets.TryGetValue((table, instanceId, key), out var entry) && entry.Body is T rowData
+            ? new Versioned<T>(rowData, entry.Version)
             : null);
 
     /// <inheritdoc />
-    public Task<bool> TryCreateAsync<T>(string collection, string instanceId, string key, T document, CancellationToken cancellationToken)
+    public Task<bool> TryCreateAsync<T>(string table, string instanceId, string key, T rowData, CancellationToken cancellationToken)
     {
         if (this.buckets.Count >= Capacity)
         {
@@ -47,19 +47,19 @@ internal sealed class LocalAttemptStore(TimeProvider clock) : IDocumentStore
             }
         }
 
-        return Task.FromResult(this.buckets.TryAdd((collection, instanceId, key), this.Next(document)));
+        return Task.FromResult(this.buckets.TryAdd((table, instanceId, key), this.Next(rowData)));
     }
 
     /// <inheritdoc />
-    public Task<bool> TryReplaceAsync<T>(string collection, string instanceId, string key, T document, string version, CancellationToken cancellationToken)
+    public Task<bool> TryReplaceAsync<T>(string table, string instanceId, string key, T rowData, string version, CancellationToken cancellationToken)
     {
-        var address = (collection, instanceId, key);
+        var address = (table, instanceId, key);
         return Task.FromResult(this.buckets.TryGetValue(address, out var current) && current.Version == version
-            && this.buckets.TryUpdate(address, this.Next(document), current));
+            && this.buckets.TryUpdate(address, this.Next(rowData), current));
     }
 
-    private Entry Next(object? document) =>
-        new(document, Interlocked.Increment(ref this.versions).ToString(CultureInfo.InvariantCulture), clock.GetUtcNow());
+    private Entry Next(object? rowData) =>
+        new(rowData, Interlocked.Increment(ref this.versions).ToString(CultureInfo.InvariantCulture), clock.GetUtcNow());
 
-    private sealed record Entry(object? Document, string Version, DateTimeOffset Touched);
+    private sealed record Entry(object? Body, string Version, DateTimeOffset Touched);
 }

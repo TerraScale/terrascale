@@ -46,8 +46,8 @@ public static class HostedThemes
         {
             var services = context.RequestServices;
             var settings = await services.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, context.RequestAborted);
-            var project = (await services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, context.RequestAborted))
-                ?.Document.Deserialize(PlatformJson.Default.ProjectRecord);
+            var project = (await services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, tenant, context.RequestAborted))
+                ?.Body.Deserialize(PlatformJson.Default.ProjectRecord);
             context.Items[HostedTheme.ItemKey] = new HostedTheme(settings.Name ?? project?.Name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUp,
                 settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor)
             {

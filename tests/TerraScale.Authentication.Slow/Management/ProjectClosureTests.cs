@@ -58,6 +58,6 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     }
 
     private static async Task<ClosureJob?> JobAsync(OidcHarness oidc, string scope, string subject) =>
-        (await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key(scope, subject)))
-            ?.Document.Deserialize(ClosureJson.Default.ClosureJob);
+        (await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ClosureJobTable, "terrascale", ClosureJob.Key(scope, subject)))
+            ?.Body.Deserialize(ClosureJson.Default.ClosureJob);
 }

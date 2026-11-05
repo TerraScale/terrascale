@@ -128,11 +128,11 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             {
                 SecretBindings = caller.StepUpBindings,
             };
-            List<StoreOperation> operations = [.. StepUpProofs.Requirements(caller), authority.Assertion, AuthStore.Create(AuthStore.ApiKeyCollection, Instance, id, Serialize(key))];
+            List<StoreOperation> operations = [.. StepUpProofs.Requirements(caller), authority.Assertion, AuthStore.Create(AuthStore.ApiKeyTable, Instance, id, Serialize(key))];
             if (projectId is not null)
             {
                 // Orders the key against a deletion of the project.
-                operations.Add(AuthStore.Require(AuthStore.ProjectCollection, Instance, projectId, PlatformDirectory.Filter("exists", "/id")));
+                operations.Add(AuthStore.Require(AuthStore.ProjectTable, Instance, projectId, PlatformDirectory.Filter("exists", "/id")));
             }
 
             operations.Add(directory.Audit(organizationId, caller.Id, "api_key.created", id, string.Join(' ', scopes)));
@@ -157,8 +157,8 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             };
             List<StoreOperation> operations =
             [
-                AuthStore.Create(AuthStore.ApiKeyCollection, Instance, id, Serialize(key)),
-                AuthStore.Require(AuthStore.ProjectCollection, Instance, projectId, PlatformDirectory.Filter("exists", "/id")),
+                AuthStore.Create(AuthStore.ApiKeyTable, Instance, id, Serialize(key)),
+                AuthStore.Require(AuthStore.ProjectTable, Instance, projectId, PlatformDirectory.Filter("exists", "/id")),
                 directory.Audit(parent.OrganizationId, parent.Id, "api_key.scoped_created", id, database + " " + string.Join(' ', scopes)),
             ];
             return Task.FromResult(new PlatformDirectory.Plan<(ApiKeyRecord, string)>(operations, (key, secret)));
@@ -171,7 +171,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
         _ = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
         // An organization key's project is null; a project key's is its project.
         var project = new JsonObject { ["eq"] = new JsonArray("/projectId", projectId is null ? null : JsonValue.Create(projectId)) };
-        var page = await directory.PageAsync(AuthStore.ApiKeyCollection, [PlatformDirectory.Equal("/organizationId", organizationId), project],
+        var page = await directory.PageAsync(AuthStore.ApiKeyTable, [PlatformDirectory.Equal("/organizationId", organizationId), project],
             PlatformJson.Default.ApiKeyRecord, "/createdAt", limit, after, cancellationToken).ConfigureAwait(false);
         return new([.. page.Items.Select(key => key.Value).Where(key => key.InstanceId == Instance && key.OrganizationId == organizationId && key.ProjectId == projectId)], page.Next);
     }
@@ -190,7 +190,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
             return new PlatformDirectory.Plan<bool>(
-                [authority.Assertion, AuthStore.Delete(AuthStore.ApiKeyCollection, Instance, keyId, key.Version), directory.Audit(organizationId, userId, "api_key.revoked", keyId)], true);
+                [authority.Assertion, AuthStore.Delete(AuthStore.ApiKeyTable, Instance, keyId, key.Version), directory.Audit(organizationId, userId, "api_key.revoked", keyId)], true);
         }, cancellationToken);
 
     /// <summary>Replaces the key's IP allowlist (empty allows any address); its next token carries the new list.</summary>
@@ -201,7 +201,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
             var changed = key.Value with { AllowedCidrs = allowedCidrs };
             return new PlatformDirectory.Plan<ApiKeyRecord>(
-                [authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyCollection, Instance, keyId, Serialize(changed), key.Version),
+                [authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyTable, Instance, keyId, Serialize(changed), key.Version),
                     directory.Audit(organizationId, userId, "api_key.allowed_cidrs_changed", keyId, string.Join(' ', allowedCidrs))], changed);
         }, cancellationToken);
 
@@ -230,7 +230,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
                 PreviousSecretBindings = previousTtl > TimeSpan.Zero ? key.Value.SecretBindings : [],
             };
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(
-                [.. StepUpProofs.Requirements(caller), authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyCollection, Instance, keyId, Serialize(rotated), key.Version), directory.Audit(organizationId, caller.Id, "api_key.rotated", keyId)], (rotated, secret));
+                [.. StepUpProofs.Requirements(caller), authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyTable, Instance, keyId, Serialize(rotated), key.Version), directory.Audit(organizationId, caller.Id, "api_key.rotated", keyId)], (rotated, secret));
         }, cancellationToken);
 
     /// <summary>The key a client id names, unless it is unknown or expired. Callers authenticate its string first.</summary>
@@ -241,8 +241,8 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             return null;
         }
 
-        var document = await store.GetAsync(AuthStore.ApiKeyCollection, Instance, keyId, cancellationToken).ConfigureAwait(false);
-        if (document?.Document.Deserialize(PlatformJson.Default.ApiKeyRecord) is not { } key || key.InstanceId != Instance || key.Id != keyId
+        var rowData = await store.GetAsync(AuthStore.ApiKeyTable, Instance, keyId, cancellationToken).ConfigureAwait(false);
+        if (rowData?.Body.Deserialize(PlatformJson.Default.ApiKeyRecord) is not { } key || key.InstanceId != Instance || key.Id != keyId
             || key.ExpiresAt <= clock.GetUtcNow() || !await this.ParentActsAsync(key, cancellationToken).ConfigureAwait(false))
         {
             return null;
@@ -276,11 +276,11 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
         // The key, and the organization and project its token names, together: one storage round trip, where reading the key
         // first made two, and TerraBase's two-second answer window is spent on them (#853). The token is this issuer's own
         // signed claim, and the key must still belong to that organization: the same answer as the key's own reads.
-        var document = store.GetAsync(AuthStore.ApiKeyCollection, Instance, keyId, cancellationToken);
+        var rowData = store.GetAsync(AuthStore.ApiKeyTable, Instance, keyId, cancellationToken);
         var organization = directory.OrganizationAsync(organizationId, cancellationToken);
         var project = projectId is null ? Task.FromResult<Versioned<ProjectRecord>?>(null) : directory.ProjectAsync(projectId, cancellationToken);
-        await Task.WhenAll(document, organization, project).ConfigureAwait(false);
-        if ((await document.ConfigureAwait(false))?.Document.Deserialize(PlatformJson.Default.ApiKeyRecord) is not { } key || key.InstanceId != Instance || key.Id != keyId)
+        await Task.WhenAll(rowData, organization, project).ConfigureAwait(false);
+        if ((await rowData.ConfigureAwait(false))?.Body.Deserialize(PlatformJson.Default.ApiKeyRecord) is not { } key || key.InstanceId != Instance || key.Id != keyId)
         {
             return "key_revoked";
         }
@@ -324,20 +324,20 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
         var now = clock.GetUtcNow();
         try
         {
-            var document = await store.GetAsync(AuthStore.ApiKeyUsageCollection, Instance, key.Id, cancellationToken).ConfigureAwait(false);
-            if (document?.Document.Deserialize(PlatformJson.Default.ApiKeyUsageRecord) is { } usage && usage.LastUsedAt > now - UsageGranularity)
+            var rowData = await store.GetAsync(AuthStore.ApiKeyUsageTable, Instance, key.Id, cancellationToken).ConfigureAwait(false);
+            if (rowData?.Body.Deserialize(PlatformJson.Default.ApiKeyUsageRecord) is { } usage && usage.LastUsedAt > now - UsageGranularity)
             {
                 return;
             }
 
             var record = JsonSerializer.SerializeToElement(new ApiKeyUsageRecord(key.Id, Instance, key.OrganizationId, key.ProjectId, now), PlatformJson.Default.ApiKeyUsageRecord);
-            if (document is null)
+            if (rowData is null)
             {
-                await store.CreateAsync(AuthStore.ApiKeyUsageCollection, Instance, key.Id, record, cancellationToken).ConfigureAwait(false);
+                await store.CreateAsync(AuthStore.ApiKeyUsageTable, Instance, key.Id, record, cancellationToken).ConfigureAwait(false);
             }
             else
             {
-                await store.ReplaceAsync(AuthStore.ApiKeyUsageCollection, Instance, key.Id, record, document.Version, cancellationToken).ConfigureAwait(false);
+                await store.ReplaceAsync(AuthStore.ApiKeyUsageTable, Instance, key.Id, record, rowData.Version, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)
@@ -351,7 +351,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
     {
         ArgumentNullException.ThrowIfNull(keys);
         var uses = await Task.WhenAll(keys.Select(async key =>
-            (await store.GetAsync(AuthStore.ApiKeyUsageCollection, Instance, key.Id, cancellationToken).ConfigureAwait(false))?.Document
+            (await store.GetAsync(AuthStore.ApiKeyUsageTable, Instance, key.Id, cancellationToken).ConfigureAwait(false))?.Body
                 .Deserialize(PlatformJson.Default.ApiKeyUsageRecord) is { } usage && usage.InstanceId == Instance && usage.KeyId == key.Id
                 ? usage : null)).ConfigureAwait(false);
         return uses.OfType<ApiKeyUsageRecord>().ToDictionary(usage => usage.KeyId, usage => usage.LastUsedAt);
@@ -434,10 +434,10 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             return null;
         }
 
-        var document = await store.GetAsync(AuthStore.ApiKeyCollection, Instance, keyId, cancellationToken).ConfigureAwait(false);
-        return document?.Document.Deserialize(PlatformJson.Default.ApiKeyRecord) is { } key && key.InstanceId == Instance && key.Id == keyId
+        var rowData = await store.GetAsync(AuthStore.ApiKeyTable, Instance, keyId, cancellationToken).ConfigureAwait(false);
+        return rowData?.Body.Deserialize(PlatformJson.Default.ApiKeyRecord) is { } key && key.InstanceId == Instance && key.Id == keyId
             && key.OrganizationId == organizationId && key.ProjectId == projectId
-            ? new(key, document.Version)
+            ? new(key, rowData.Version)
             : null;
     }
 

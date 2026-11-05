@@ -10,7 +10,7 @@ public sealed class GetProjectUserEndpoint(TenantDirectory tenants, PlatformAuth
     public override void Configure()
     {
         Get(Root + "/users/{user}");
-        this.Document("get_project_user", "Get an end user", "Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectUserBody));
+        this.Describe("get_project_user", "Get an end user", "Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectUserBody));
     }
 
     /// <inheritdoc />

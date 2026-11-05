@@ -23,8 +23,8 @@ public sealed partial class OpenApiTests
         using var request = new HttpRequestMessage(HttpMethod.Get, "/openapi/v1.json");
         request.Headers.Host = "attacker.example";
         using var response = await server.Client.SendAsync(request);
-        var document = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
-        var paths = document.GetProperty("paths");
+        var rowData = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
+        var paths = rowData.GetProperty("paths");
         var export = paths.GetProperty("/v1/{project}/users/export").GetProperty("get");
         await Assert.That(export.GetProperty("parameters").EnumerateArray().Where(parameter => parameter.GetProperty("in").GetString() == "query")
             .Select(parameter => parameter.GetProperty("name").GetString()!).ToList()).IsEquivalentTo(["limit", "after", "format"]);
@@ -33,7 +33,7 @@ public sealed partial class OpenApiTests
         await Assert.That(exported.GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/DirectoryPageBody");
         await Assert.That(exported.GetProperty("headers").TryGetProperty("X-Export-Next", out _)).IsTrue();
 
-        var schemas = document.GetProperty("components").GetProperty("schemas");
+        var schemas = rowData.GetProperty("components").GetProperty("schemas");
         await Assert.That(schemas.GetProperty("DirectoryPageBody").GetProperty("properties").EnumerateObject().Select(field => field.Name).ToList())
             .IsEquivalentTo(["items", "next", "created_before"]);
         await Assert.That(schemas.GetProperty("DirectoryUserBody").GetProperty("properties").EnumerateObject().Select(field => field.Name).ToList())
@@ -45,12 +45,12 @@ public sealed partial class OpenApiTests
         var userInfo = paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get");
         await Assert.That(userInfo.GetProperty("responses").GetProperty("503").GetProperty("content").GetProperty("application/json")
             .GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/OAuthErrorBody");
-        await Assert.That(document.GetProperty("components").GetProperty("securitySchemes").GetProperty("platformUser")
+        await Assert.That(rowData.GetProperty("components").GetProperty("securitySchemes").GetProperty("platformUser")
             .GetProperty("description").GetString()).Contains("active MFA");
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(document.GetProperty("openapi").GetString()).StartsWith("3.");
-        await Assert.That(document.GetProperty("info").GetProperty("title").GetString()).IsEqualTo("TerraScale Auth API");
+        await Assert.That(rowData.GetProperty("openapi").GetString()).StartsWith("3.");
+        await Assert.That(rowData.GetProperty("info").GetProperty("title").GetString()).IsEqualTo("TerraScale Auth API");
         await Assert.That(paths.TryGetProperty("/healthz", out _)).IsTrue();
         await Assert.That(paths.TryGetProperty("/readyz", out _)).IsTrue();
         await Assert.That(paths.TryGetProperty("/admin/{asset}", out _)).IsTrue();
@@ -66,7 +66,7 @@ public sealed partial class OpenApiTests
         var healthz = paths.GetProperty("/healthz").GetProperty("get");
         await Assert.That(healthz.GetProperty("security").EnumerateArray().Single().EnumerateObject().Any()).IsFalse();
         // The server is the configured public origin, not whatever Host header the request sent.
-        await Assert.That(document.GetProperty("servers")[0].GetProperty("url").GetString()).IsEqualTo("https://auth.test.invalid");
+        await Assert.That(rowData.GetProperty("servers")[0].GetProperty("url").GetString()).IsEqualTo("https://auth.test.invalid");
 
         var operationIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var path in paths.EnumerateObject())
