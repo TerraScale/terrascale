@@ -85,6 +85,13 @@ namespace TerraScale.Dashboard.Features.Databases
                     return Results.Unauthorized();
                 }
 
+                if (!http.Request.HasFormContentType)
+                {
+                    const string unsupported = "Create a database with an HTML form (application/x-www-form-urlencoded or multipart/form-data).";
+                    return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: unsupported, openCreate: true, status: 415)
+                        : Results.Problem(unsupported, statusCode: 415);
+                }
+
                 var form = await http.Request.ReadFormAsync(http.RequestAborted);
                 if (!Csrf.Validate(http, form))
                 {
