@@ -65,6 +65,38 @@ not wait for the ten-second backup discovery interval to release a reader retain
 
 ## Convergence and CDN purge
 
+### CDN deadline after DELETE
+
+For URLs published by the current service, a successful database DELETE admits every owned shape URL to the durable
+CDN outbox before returning 204. With R2, the local catalog and Cloudflare healthy, every URL must return **404 in
+gru, sjc and fra within 420 seconds after the 204 response**. Cloudflare outages, throttling and inaccessible storage
+can exceed that deadline; work remains durable, and queue age and failure metrics expose the breach. Confidentiality
+still follows the synchronous key-destruction certificate.
+
+Every upload first writes a private ownership marker at `v1/shape-owners/<owner hash>/<handle>/<object hash>` in the
+existing shape bucket. Adopting an existing object writes the same marker before publishing it in a manifest. The
+public shape URL is unchanged. Peer revocation fences the engine and joins local shape publishers before acknowledging;
+this prevents an upload from recreating an object after deletion. DELETE lists only its ownership prefix, durably
+queues the exact URL, deletes the object, then removes its marker. Queue saturation refuses admission and successful
+DELETE rather than silently losing purge work. Bounded partial cleanup retries through the permanent deletion job.
+
+The outbox holds at most 2,000 URLs and processes the oldest 100 first. A pass has an 18-second deadline, on a two-second
+timer: twenty healthy passes consume at most 400 seconds, leaving 20 seconds within the stated deadline. R2-absence
+and public-CDN verification use at most 32 requests concurrently. Purges retain the twelve-second minimum request
+interval and exponential retry backoff; failed or interrupted passes retain their entries. A Cloudflare 2xx response
+must also contain `success: true`. The worker then GETs every exact public URL and requires 404 before removing the
+batch. Handle-prefix purge clears all Origin variants and all cache tiers, including Smart Tiered Cache.
+
+Metrics on the existing TerraBase meter are `terrabase.shape.cdn.purge_pending`,
+`terrabase.shape.cdn.purge_oldest_age` (seconds), `terrabase.shape.cdn.purge_attempts{outcome}` (accepted/failed), and
+`terrabase.shape.cdn.purges{outcome}` (purged/failed/verification_failed/unavailable/dropped). `dropped` means refused
+admission: the object and its inventory authority remain for retry. The queue-age gauge is refreshed from durable
+timestamps after restart. Previously queued scalar records remain readable during the deployment.
+
+Objects never published or adopted by this service revision still use the shared-inventory recovery sweep below.
+That sweep has no 420-second admission bound; it is also retained to discover orphaned objects. This distinction
+explains why F11's single-object observation did not establish the deadline for the later acceptance inventory.
+
 Every serving node, including regional hold partners, scans the shared custody namespace in pages of at most 128
 objects every two seconds. A tombstone becomes permanent local catalog deletion authority even after a partition or
 restart. Catalog maintenance then closes the local database. With a healthy, single-page custody inventory, region reads
@@ -79,11 +111,9 @@ over the shared object inventory. Each pass visits at most 16 database jobs. A f
 multiple minutes and multiple visits; the live evidence records the observed CDN completion time.
 These are scheduling bounds, not a promise that a failing storage provider responds within them.
 
-A CDN outbox entry is disk-synced before deleting an R2 object. A full outbox refuses the deletion so it can be retried.
-The worker verifies that the R2 object is absent before purging its handle prefix, clearing all browser Origin variants.
-Only a successful Cloudflare response removes the outbox entry. Restart, queue saturation and failed purge attempts
-retain work. Each worker processes at most 100 records per batch, with at least twelve seconds between purge requests.
-Purge is storage reclamation; key destruction is the confidentiality boundary.
+A CDN outbox entry is disk-synced before deleting an R2 object. The worker verifies R2 absence, Cloudflare acceptance
+and a public 404 before clearing it, as described above. Purge is storage reclamation; key destruction is the
+confidentiality boundary.
 
 ## Proof
 
