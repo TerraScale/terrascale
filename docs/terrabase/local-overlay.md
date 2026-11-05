@@ -130,8 +130,9 @@ quorum is available ([in-region ack](in-region-ack.md)): one node in a one-node 
   …, or `transaction_rolled_back`) for `reverted`, in which case the transaction is applied nowhere. The answer carries
   `TerraScale-Write-Route: …; commit=local`.
 - A request without the header (or `TerraScale-Durability: local`) commits locally while the discovered regional quorum
-  is healthy. When a partner exists, that node answers; it is acknowledged once that node holds it. Otherwise it, a request the router sends home, and every
-  write over SQL WebSocket and the Postgres wire are forwarded to the home whole.
+  is healthy. A one-node region acknowledges its own durable push; a region with a partner waits for that partner's
+  durable hold. An unavailable quorum, a request the router sends home, and every write over SQL WebSocket and the
+  Postgres wire are forwarded to the home whole.
 - A refused local transaction (a shape the capture cannot carry, a busy replica, a full push stream) is forwarded home
   instead; a commit whose outcome is unknown answers `503 unavailable`.
 
