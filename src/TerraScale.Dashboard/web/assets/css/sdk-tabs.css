@@ -1,0 +1,64 @@
+/* Shared by dashboard, docs and landing. Keep language controls quiet and flat. */
+.sdk-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.sdk-tabs > [role="tab"] {
+  appearance: none;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  margin: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--sdk-muted, var(--ts-ink-2));
+  font: 500 13px / 1.2 var(--ts-font-sans, sans-serif);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sdk-tabs > [role="tab"]:hover {
+  color: var(--sdk-ink, var(--ts-ink));
+}
+
+.sdk-tabs > [role="tab"][aria-selected="true"] {
+  color: var(--sdk-ink, var(--ts-ink));
+  border-bottom-color: var(--sdk-accent, var(--ts-link));
+}
+
+.sdk-tabs > [role="tab"]:focus-visible {
+  outline: 2px solid var(--sdk-accent, var(--ts-link));
+  outline-offset: -4px;
+  border-radius: 4px;
+}
+
+.sdk-tabs img {
+  display: block;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.sdk-tabs-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sdk-tabs-header > .sdk-tabs { flex: 1; }
+.sdk-tabs-header > button { flex: none; }
