@@ -62,6 +62,15 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await SubmitAsync("#create-database form", "Create database");
                     var databaseId = new Uri(page.Url).AbsolutePath.Split('/').ElementAtOrDefault(2);
                     await Assert.That(databaseId).IsNotNullOrEmpty().Because("Created database opens its details");
+                    var sdkTabs = page.Locator("#db-connect-sdk [role=tab]");
+                    await Assert.That(await sdkTabs.CountAsync()).IsEqualTo(5);
+                    await Assert.That(await sdkTabs.Locator("img").EvaluateAllAsync<bool>("icons => icons.every(icon => icon.complete && icon.naturalWidth > 0)")).IsTrue();
+                    await sdkTabs.First.FocusAsync();
+                    await sdkTabs.First.PressAsync("End");
+                    await page.Locator("#db-sdk-panel-rust:not([hidden])").WaitForAsync();
+                    await Assert.That(await page.Locator("#db-sdk-tab-rust").GetAttributeAsync("aria-selected")).IsEqualTo("true");
+                    await page.Locator("#db-sdk-tab-rust").PressAsync("ArrowRight");
+                    await page.Locator("#db-sdk-panel-python:not([hidden])").WaitForAsync();
                     await ShotAsync("database");
                     await GotoAsync("/databases");
                     await ShotAsync("databases-expiry");
