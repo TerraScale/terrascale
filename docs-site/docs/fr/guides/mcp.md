@@ -87,11 +87,13 @@ Supplying only `projectId` requires that project to belong to your saved organiz
 
 ## 4. Discover tools and check permissions
 
-Use your client's tool discovery (`tools/list`) for the current names, parameters and descriptions. A listed tool is not a grant of permission: calls still enforce membership, roles, resource access and availability. Current tools include:
+Use your client's tool discovery (`tools/list`) for the current names, parameters and descriptions; the server returns every tool in one page. A listed tool is not a grant of permission: calls still enforce membership, roles, resource access and availability. Current tools include:
 
 `execute_sql` runs reads, writes and schema changes; `run_sql` accepts reads only.
 `get_database_schema` lists SQL tables and their declared columns. `create_database` and `fork_database`
 accept `ttlHours`. Backup and restore tools preserve the source database. See the complete
 [agent database workflow](/fr/guides/agent-databases#agent-workflow), including scoped-key minting over an API key connection.
+
+Creating, rotating or restricting API keys requires a fresh dashboard confirmation: an unattended assistant call returns `step_up_required`, and you finish the action from the dashboard's **API keys** page. Listing and revoking keys work from the assistant.
 
 </div>
