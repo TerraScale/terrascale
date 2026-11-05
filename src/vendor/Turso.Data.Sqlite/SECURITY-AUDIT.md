@@ -34,7 +34,7 @@ their stated fixes. Open items are listed at the end.
 - Pinned in `Directory.Packages.props` (`0.8.2`) and referenced by Turso.Raw only (`Directory.Build.targets`). Every
   lock file (`locks/*.json`, `src/TerraBase/packages.lock.json`) resolves `0.8.2` with contentHash
   `3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg==`.
-- Source feed: nuget.org only (`NuGet.config` clears every other source; `https://api.nuget.org/v3/index.json`).
+- Source registry: nuget.org only (`NuGet.config` clears every other source; `https://api.nuget.org/v3/index.json`).
 - Verified: a locked-mode restore of Turso.Raw into an empty packages folder
   (`dotnet restore --locked-mode --packages <empty> --force`) downloaded the package from nuget.org and accepted that
   content hash (NuGet's content hash excludes the repository signature). The `.nupkg` file itself (159,968,857 bytes) has

@@ -93,6 +93,20 @@ cases = [
     ({"sdk/rust/Cargo.lock": 'name = "icu_collections"'}, "fail", 0, set()),
     ({"sdk/js/test/forbidden-surface.test.js": "/documents|collections/; createDocument"}, "fail", 1, {"documents"}),
 ]
+# Retained dependency symbols and ordinary framework APIs stay narrow.
+cases.extend([
+    ({"src/TerraBase/Engine/EngineExtensions.cs": "TursoStorageEngine TursoReplicas",
+      "src/vendor/Turso.Data.Sqlite/src/Turso.Data/TursoParameterCollection.cs": "DbParameterCollection TursoParameterCollection",
+      "scripts/vendor/turso-native-budget.patch": "DocumentIdentity std::collections documents",
+      ".github/workflows/ci.yml": "--term documents --term collections --term document-feeds --term lattices",
+      "scripts/auth/signup-mail-check.py": "self.feed(html)",
+      "ops/secrets/secrets.json": "STRIPE_WEBHOOK_SECRET Stripe webhook signatures"}, "fail", 0, set()),
+    ({"src/TerraBase/Engine/EngineExtensions.cs": "TursoStorageEngine CreateCollectionAsync QueryDocumentsAsync",
+      "scripts/vendor/turso-native-budget.patch": "DocumentIdentity CreateCollectionAsync QueryDocumentsAsync",
+      ".github/workflows/ci.yml": "--term documents CreateCollectionAsync QueryDocumentsAsync",
+      "ops/secrets/secrets.json": "STRIPE_WEBHOOK_SECRET webhooks"},
+     "fail", 1, {"collections", "documents", "webhooks"}),
+])
 for name in ["src/TerraScale.Endpoints/RequestBinder.cs", "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Properties/Resources.cs", "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/SqliteConnection.cs"]:
     source = Path(__file__).resolve().parents[2] / name
     cases.append(({name: source.read_text()}, "fail", 0, set()))
