@@ -73,7 +73,6 @@ public sealed class CdcRetentionTests
         await host.ShipAsync(TimeSpan.FromSeconds(3), token);
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(backup);
         await SetConsumerAsync(store, "replica:sjc", push, token);
-        await SweepAsync(store, fast.Handle!, host.Time.GetUtcNow(), token);
         await Assert.That(await OldestAsync(store, token)).IsGreaterThan(backup);
         await host.PutAsync("people", "two", "ahead-of-push", token);
         var replica = await ScalarAsync(store, "SELECT max(change_id) FROM turso_cdc WHERE change_type = 2;", token);
@@ -83,7 +82,6 @@ public sealed class CdcRetentionTests
         await SweepAsync(store, fast.Handle!, host.Time.GetUtcNow(), token);
         await Assert.That(await OldestAsync(store, token)).IsLessThanOrEqualTo(push);
         await SetConsumerAsync(store, "region-to-home", null, token);
-        await SweepAsync(store, fast.Handle!, host.Time.GetUtcNow(), token);
         await Assert.That(await OldestAsync(store, token)).IsGreaterThan(push);
         await SetConsumerAsync(store, "replica:sjc", null, token);
         for (var round = 0; round < 3; round++)

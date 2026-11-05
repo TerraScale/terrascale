@@ -8,6 +8,14 @@ internal sealed partial class TursoStorageTransaction
     private const long RetentionBytes = 64L * 1024 * 1024;
     private const string RetentionCut = "SELECT coalesce(max(change_id), 0) FROM turso_cdc WHERE change_id <= $below AND change_type = 2;";
 
+    private void TrimCdc()
+    {
+        var backup = store.BackupAnchor ?? 0;
+        var rewrite = store.RewriteAnchor;
+        _ = Trim(session.Connection, transaction, rewrite < 0 ? backup : Math.Min(backup, rewrite), store.IsSystem);
+        store.ObserveCdcSize(session.Connection, transaction);
+    }
+
     internal static bool Trim(SqliteConnection connection, SqliteTransaction? transaction, long below, bool isSystem)
     {
         using var command = connection.CreateCommand();
