@@ -29,7 +29,10 @@ Docs and landing share their public example source in `web/assets/js/sdk-example
 under the dashboard project.
 Existing copy controls continue to follow the selected snippet.
 
-Python, JavaScript, Go, .NET and Rust marks come from Simple Icons 16.0.0 (CC0).
+Python, JavaScript, Go and Rust marks come from Simple Icons 16.0.0 (CC0).
+.NET uses the official square logo from dotnet/brand. Landing also uses the MCP
+mark from Simple Icons and the Lucide terminal symbol; local license notices
+record their sources.
 Each site's public `language-icons/` directory contains identical SVGs and their
 source/license notice. They are bundled and served locally; no CDN dependency
 or runtime asset fetch from an icon provider is required.
