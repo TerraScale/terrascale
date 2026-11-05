@@ -10,7 +10,7 @@ public sealed class PutSsoConnectionEndpoint(SsoConnections connections, Platfor
     public override void Configure()
     {
         Put(Connection);
-        this.Document("put_sso_connection", "Create or change the organization's SSO connection", "Needs the owner role. A new domain starts unverified, with a fresh TXT verification value; the issuer's discovery document must name the same https issuer. client_secret may be omitted to keep the stored one. 409 conflict when another organization verified the domain or this organization has a connection for another domain.", "Single sign-on", typeof(SsoConnectionRequest), StatusCodes.Status200OK, typeof(SsoConnectionBody), conflict: true);
+        this.Describe("put_sso_connection", "Create or change the organization's SSO connection", "Needs the owner role. A new domain starts unverified, with a fresh TXT verification value; the issuer's discovery document must name the same https issuer. client_secret may be omitted to keep the stored one. 409 conflict when another organization verified the domain or this organization has a connection for another domain.", "Single sign-on", typeof(SsoConnectionRequest), StatusCodes.Status200OK, typeof(SsoConnectionBody), conflict: true);
     }
 
     /// <inheritdoc />

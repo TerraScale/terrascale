@@ -109,7 +109,7 @@ public sealed record EmailTemplateOverride(
     [property: JsonPropertyName("fields")] EmailTemplateFields Fields);
 
 /// <summary>
-/// One version of an instance's email configuration (collections <c>email_configs</c>, the current one, and
+/// One version of an instance's email configuration (tables <c>email_configs</c>, the current one, and
 /// <c>email_config_versions</c>, every one). Version 0 is the defaults and is never stored.
 /// </summary>
 /// <param name="InstanceId">The owning instance.</param>
@@ -144,10 +144,10 @@ public sealed record EmailConfig(
 public sealed class EmailSettings(AuthStore store, TimeProvider clock)
 {
     /// <summary>The current configuration, one per instance.</summary>
-    public const string Collection = "email_configs";
+    public const string Table = "email_configs";
 
     /// <summary>Every saved version, addressed by instance and version number.</summary>
-    public const string VersionCollection = "email_config_versions";
+    public const string VersionTable = "email_config_versions";
 
     /// <summary>The current configuration, or the defaults when nothing was saved.</summary>
     public async Task<EmailConfig> GetAsync(string instanceId, CancellationToken cancellationToken = default) =>
@@ -161,16 +161,16 @@ public sealed class EmailSettings(AuthStore store, TimeProvider clock)
             return EmailConfig.Defaults(instanceId);
         }
 
-        var document = await store.GetAsync(VersionCollection, instanceId, VersionKey(version), cancellationToken).ConfigureAwait(false);
-        return document is null ? null : Read(document.Document, instanceId);
+        var rowData = await store.GetAsync(VersionTable, instanceId, VersionKey(version), cancellationToken).ConfigureAwait(false);
+        return rowData is null ? null : Read(rowData.Body, instanceId);
     }
 
     /// <summary>The newest <paramref name="limit"/> saved versions, newest first.</summary>
     public async Task<IReadOnlyList<EmailConfig>> ListVersionsAsync(string instanceId, int limit, CancellationToken cancellationToken = default)
     {
         var filter = JsonSerializer.SerializeToElement(new JsonObject { ["eq"] = new JsonArray("/instance_id", instanceId) });
-        var items = await store.QueryAsync(VersionCollection, filter, limit, [new StoreSort("/version", "desc")], cancellationToken).ConfigureAwait(false);
-        return [.. items.Select(item => Read(item.Document, instanceId)).OrderByDescending(config => config.Version)];
+        var items = await store.QueryAsync(VersionTable, filter, limit, [new StoreSort("/version", "desc")], cancellationToken).ConfigureAwait(false);
+        return [.. items.Select(item => Read(item.Body, instanceId)).OrderByDescending(config => config.Version)];
     }
 
     /// <summary>
@@ -195,27 +195,27 @@ public sealed class EmailSettings(AuthStore store, TimeProvider clock)
             Change = change,
         };
         var record = JsonSerializer.SerializeToElement(next, EmailJson.Default.EmailConfig);
-        return await store.CommitVersionAsync(Collection, instanceId, instanceId, record, etag, VersionCollection, VersionKey(next.Version), cancellationToken).ConfigureAwait(false)
+        return await store.CommitVersionAsync(Table, instanceId, instanceId, record, etag, VersionTable, VersionKey(next.Version), cancellationToken).ConfigureAwait(false)
             ? next
             : null;
     }
 
     private async Task<(EmailConfig Config, string? Etag)> ReadAsync(string instanceId, CancellationToken cancellationToken)
     {
-        var document = await store.GetAsync(Collection, instanceId, instanceId, cancellationToken).ConfigureAwait(false);
-        return document is null ? (EmailConfig.Defaults(instanceId), null) : (Read(document.Document, instanceId), document.Version);
+        var rowData = await store.GetAsync(Table, instanceId, instanceId, cancellationToken).ConfigureAwait(false);
+        return rowData is null ? (EmailConfig.Defaults(instanceId), null) : (Read(rowData.Body, instanceId), rowData.Version);
     }
 
     /// <summary>
     /// A stored configuration, held to the same rules as API input, so rendering never meets a value it cannot use. Anything
     /// else is unavailable (503), and a code email then goes out with the defaults.
     /// </summary>
-    private static EmailConfig Read(JsonElement document, string instanceId)
+    private static EmailConfig Read(JsonElement rowData, string instanceId)
     {
         try
         {
             // The address already binds the instance; a mismatch means the record is not what it claims to be.
-            if (document.Deserialize(EmailJson.Default.EmailConfig) is { Branding: not null, Templates: not null } config && config.InstanceId == instanceId
+            if (rowData.Deserialize(EmailJson.Default.EmailConfig) is { Branding: not null, Templates: not null } config && config.InstanceId == instanceId
                 && config.Version > 0 && EmailValidation.Branding(config.Branding) == config.Branding
                 && config.Templates.All(entry => entry?.Fields is not null && AuthEmails.Kinds.TryGetValue(entry.Kind ?? string.Empty, out var kind)
                     && AuthEmails.Locales.Contains(entry.Locale) && EmailValidation.Fields(kind, entry.Fields) == entry.Fields)

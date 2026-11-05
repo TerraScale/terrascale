@@ -25,10 +25,10 @@ public readonly record struct AttemptRejection(DateTimeOffset Until, TimeSpan Re
 /// counted. Other storage faults (rejected credentials, damaged buckets), persistent contention, or a full in-memory
 /// store fail closed with 503; an attempt is never admitted unrecorded.
 /// </summary>
-public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, AuthOptions options, string region = "gru", ILogger<AttemptLimiter>? logger = null)
+public sealed class AttemptLimiter(IRecordStore storage, TimeProvider clock, AuthOptions options, string region = "gru", ILogger<AttemptLimiter>? logger = null)
 {
-    /// <summary>The TerraBase collection holding up to three regional <see cref="AttemptBucket"/> documents per limited subject, plus notice claims.</summary>
-    public const string Collection = "rate_limits";
+    /// <summary>The TerraBase table holding up to three regional <see cref="AttemptBucket"/> records per limited subject, plus notice claims.</summary>
+    public const string Table = "rate_limits";
 
     private static readonly TimeSpan DefaultWindow = TimeSpan.FromMinutes(1);
 
@@ -44,7 +44,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     private readonly int regionIndex = Array.IndexOf(Regions, region) is var index && index >= 0
         ? index : throw new ArgumentException("The auth region must be gru, sjc or fra.", nameof(region));
 
-    private readonly FailClosedDocumentStore store = new(storage);
+    private readonly FailClosedRecordStore store = new(storage);
 
     private readonly LocalAttemptStore local = new(clock);
 
@@ -85,7 +85,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     /// instance. Returns <see langword="null"/> when admitted; once <paramref name="maximum"/>
     /// attempts were admitted, returns the delay to the persisted window's end, rounded up to whole
     /// seconds (at least one), even when another replica's clock is ahead. Each distinct subject keeps
-    /// at most three regional bucket documents, so the subject must be an identifier the service already holds (user, client); a caller that
+    /// at most three regional bucket records, so the subject must be an identifier the service already holds (user, client); a caller that
     /// limits by attacker-chosen text must first <see cref="Fold"/> it. Windows are fixed
     /// multiples of <paramref name="window"/> (whole seconds); one purpose must always use the same window.
     /// </summary>
@@ -121,7 +121,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     public Task<TimeSpan?> AcquireTokenAsync(string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken) =>
         this.WithFallbackAsync(source => this.AcquireTokenAsync(source, instanceId, purpose, subject, burst, interval, cancellationToken), purpose, cancellationToken);
 
-    private async Task<TimeSpan?> AcquireTokenAsync(IDocumentStore source, string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken)
+    private async Task<TimeSpan?> AcquireTokenAsync(IRecordStore source, string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentException.ThrowIfNullOrEmpty(purpose);
@@ -135,16 +135,16 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         for (var attempt = 0; attempt < Math.Min(burst + 2L, MaxRounds); attempt++)
         {
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
-            var components = await Task.WhenAll(keys.Select(component => source.GetAsync<AttemptBucket>(Collection, instanceId, component, cancellationToken)));
+            var components = await Task.WhenAll(keys.Select(component => source.GetAsync<AttemptBucket>(Table, instanceId, component, cancellationToken)));
             // Window: the writer's clock at the write, in Unix milliseconds. Used: its debt then, in milliseconds.
-            if (components.Any(component => component is not null && (component.Document is not { Window: >= 0, Used: >= 0 }
-                || component.Document.Used > capacity || component.Document.Window > now + MaxClockSkew)))
+            if (components.Any(component => component is not null && (component.Body is not { Window: >= 0, Used: >= 0 }
+                || component.Body.Used > capacity || component.Body.Window > now + MaxClockSkew)))
             {
                 throw ApiException.Unavailable(new InvalidDataException("A stored token bucket holds an invalid write time or debt."));
             }
 
             var debts = components.Select(component => component is null ? 0
-                : Math.Max(0L, component.Document.Used - Math.Max(0L, now - component.Document.Window))).ToArray();
+                : Math.Max(0L, component.Body.Used - Math.Max(0L, now - component.Body.Window))).ToArray();
             var debt = debts.Sum();
             if (debt + step > capacity)
             {
@@ -155,8 +155,8 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
             // Stamped with this replica's clock: a faster reader drains it early (admitting up to the skew), never locks out.
             var bucket = new AttemptBucket(now, (int)(debts[this.regionIndex] + step));
             if (current is null
-                ? await source.TryCreateAsync(Collection, instanceId, keys[this.regionIndex], bucket, cancellationToken)
-                : await source.TryReplaceAsync(Collection, instanceId, keys[this.regionIndex], bucket, current.Version, cancellationToken))
+                ? await source.TryCreateAsync(Table, instanceId, keys[this.regionIndex], bucket, cancellationToken)
+                : await source.TryReplaceAsync(Table, instanceId, keys[this.regionIndex], bucket, current.Version, cancellationToken))
             {
                 return null;
             }
@@ -167,7 +167,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
 
     /// <summary>
     /// Claims one notice attempt for an actual account and authentication purpose at the persisted lockout deadline.
-    /// Uses the existing collection and conditional writes; newer deadlines supersede older ones, so a slower replica
+    /// Uses the existing table and conditional writes; newer deadlines supersede older ones, so a slower replica
     /// cannot claim an old episode again. Call on the mail worker after account lookup, never with a folded account id.
     /// The claim prevents duplicate send attempts, not delivery loss if a sender or process fails after claiming.
     /// </summary>
@@ -185,7 +185,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
                 return false;
             }
 
-            var current = await this.store.GetAsync<AttemptBucket>(Collection, instanceId, key, cancellationToken);
+            var current = await this.store.GetAsync<AttemptBucket>(Table, instanceId, key, cancellationToken);
             if (until <= clock.GetUtcNow())
             {
                 return false;
@@ -193,7 +193,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
 
             if (current is null)
             {
-                if (await this.store.TryCreateAsync(Collection, instanceId, key, notice, cancellationToken))
+                if (await this.store.TryCreateAsync(Table, instanceId, key, notice, cancellationToken))
                 {
                     // An expired claim may remain persisted, but must never authorize a send.
                     return until > clock.GetUtcNow();
@@ -202,17 +202,17 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
                 continue;
             }
 
-            if (current.Document is not { Window: > 0, Used: 1 } || current.Document.Window > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
+            if (current.Body is not { Window: > 0, Used: 1 } || current.Body.Window > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
             {
                 throw ApiException.Unavailable(new InvalidDataException("A stored lockout notice claim holds an invalid deadline or count."));
             }
 
-            if (current.Document.Window >= notice.Window)
+            if (current.Body.Window >= notice.Window)
             {
                 return false;
             }
 
-            if (await this.store.TryReplaceAsync(Collection, instanceId, key, notice, current.Version, cancellationToken))
+            if (await this.store.TryReplaceAsync(Table, instanceId, key, notice, current.Version, cancellationToken))
             {
                 return until > clock.GetUtcNow();
             }
@@ -225,7 +225,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, cooldown, cancellationToken), purpose, cancellationToken);
 
     // Runs a check on TerraBase; when that storage fails (not when the caller gave up), runs it on this replica's memory.
-    private async Task<T> WithFallbackAsync<T>(Func<IDocumentStore, Task<T>> check, string purpose, CancellationToken cancellationToken)
+    private async Task<T> WithFallbackAsync<T>(Func<IRecordStore, Task<T>> check, string purpose, CancellationToken cancellationToken)
     {
         try
         {
@@ -247,7 +247,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         }
     }
 
-    // Storage that is down, slow or overloaded. A rejected credential, a missing collection, persistent contention or a
+    // Storage that is down, slow or overloaded. A rejected credential, a missing table, persistent contention or a
     // damaged bucket still fails closed: those are faults to fix, not outages to ride out.
     private static bool Transient(Exception? failure) => failure switch
     {
@@ -258,7 +258,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         _ => false,
     };
 
-    private async Task<AttemptRejection?> AcquireAsync(IDocumentStore source, string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
+    private async Task<AttemptRejection?> AcquireAsync(IRecordStore source, string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentException.ThrowIfNullOrEmpty(purpose);
@@ -285,23 +285,22 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         {
             var now = clock.GetUtcNow();
             var number = cooldown ? now.ToUnixTimeMilliseconds() : now.ToUnixTimeSeconds() / windowSeconds;
-            // Each serving region owns one component. Replication never merges two regions' increments into a
-            // last-writer-wins integer, including when both regions create their first bucket during a partition.
-            var components = await Task.WhenAll(keys.Select(component => source.GetAsync<AttemptBucket>(Collection, instanceId, component, cancellationToken)));
+            // Each serving region owns one component, so concurrent regional increments retain their own counts.
+            var components = await Task.WhenAll(keys.Select(component => source.GetAsync<AttemptBucket>(Table, instanceId, component, cancellationToken)));
             foreach (var component in components)
             {
-                if (component is not null && (component.Document is not { Window: >= 0, Used: >= 0 }
-                    || component.Document.Window > latestWindow))
+                if (component is not null && (component.Body is not { Window: >= 0, Used: >= 0 }
+                    || component.Body.Window > latestWindow))
                 {
                     throw ApiException.Unavailable(new InvalidDataException("A stored attempt bucket holds an invalid window timestamp or count."));
                 }
             }
 
-            var latest = components.Where(component => component is not null).Select(component => component!.Document.Window).DefaultIfEmpty(number).Max();
+            var latest = components.Where(component => component is not null).Select(component => component!.Body.Window).DefaultIfEmpty(number).Max();
             var effective = cooldown
                 ? (number - latest) * TimeSpan.TicksPerMillisecond >= window.Ticks ? number : latest
                 : Math.Max(number, latest);
-            var used = components.Where(component => component?.Document.Window == effective).Sum(component => (long)component!.Document.Used);
+            var used = components.Where(component => component?.Body.Window == effective).Sum(component => (long)component!.Body.Used);
             if (used >= maximum)
             {
                 var end = cooldown
@@ -311,10 +310,10 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
             }
 
             var current = components[this.regionIndex];
-            var bucket = new AttemptBucket(effective, current?.Document.Window == effective ? checked(current.Document.Used + 1) : 1);
+            var bucket = new AttemptBucket(effective, current?.Body.Window == effective ? checked(current.Body.Used + 1) : 1);
             if (current is null
-                ? await source.TryCreateAsync(Collection, instanceId, key, bucket, cancellationToken)
-                : await source.TryReplaceAsync(Collection, instanceId, key, bucket, current.Version, cancellationToken))
+                ? await source.TryCreateAsync(Table, instanceId, key, bucket, cancellationToken)
+                : await source.TryReplaceAsync(Table, instanceId, key, bucket, current.Version, cancellationToken))
             {
                 return null;
             }

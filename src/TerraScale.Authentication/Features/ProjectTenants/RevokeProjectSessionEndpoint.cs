@@ -10,7 +10,7 @@ public sealed class RevokeProjectSessionEndpoint(TenantDirectory tenants, Platfo
     public override void Configure()
     {
         Delete(Root + "/sessions/{session}");
-        this.Document("revoke_project_session", "Revoke a session", "Needs the admin project role. Signs the session out; a revoked session answers 204 again.", "Project tenants", null, StatusCodes.Status204NoContent, null);
+        this.Describe("revoke_project_session", "Revoke a session", "Needs the admin project role. Signs the session out; a revoked session answers 204 again.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }
 
     /// <inheritdoc />

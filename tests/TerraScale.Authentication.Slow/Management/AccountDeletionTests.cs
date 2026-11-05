@@ -42,14 +42,14 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
         }
 
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<Sessions>().ResolveAsync("terrascale", session)).IsNull();
-        foreach (var (collection, field) in new[] { (AuthStore.SessionCollection, "/userId"), (AuthStore.MembershipCollection, "/userId"), (AuthStore.ProjectMemberCollection, "/userId"), (AuthStore.OidcTokenCollection, "/subject"), (AuthStore.OidcAuthorizationCollection, "/subject") })
+        foreach (var (table, field) in new[] { (AuthStore.SessionTable, "/userId"), (AuthStore.MembershipTable, "/userId"), (AuthStore.ProjectMemberTable, "/userId"), (AuthStore.OidcTokenTable, "/subject"), (AuthStore.OidcAuthorizationTable, "/subject") })
         {
-            await Assert.That(await store.QueryAsync(collection, "terrascale", field, alice.Id).CountAsync()).IsEqualTo(0);
+            await Assert.That(await store.QueryAsync(table, "terrascale", field, alice.Id).CountAsync()).IsEqualTo(0);
         }
 
         // Its sole organization is gone with its project; the shared one stays, without it.
-        await Assert.That(await store.GetAsync(AuthStore.OrganizationCollection, "terrascale", own)).IsNull();
-        await Assert.That(await store.GetAsync(AuthStore.ProjectCollection, "terrascale", project)).IsNull();
+        await Assert.That(await store.GetAsync(AuthStore.OrganizationTable, "terrascale", own)).IsNull();
+        await Assert.That(await store.GetAsync(AuthStore.ProjectTable, "terrascale", project)).IsNull();
         var members = (await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{shared}/members", bobToken)).GetProperty("items");
         await Assert.That(members.EnumerateArray().Select(member => member.GetProperty("user_id").GetString()!).ToArray()).IsEquivalentTo([bob.Id]);
         await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{shared}/projects/{sharedProject}", bobToken);

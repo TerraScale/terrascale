@@ -196,13 +196,13 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
 
     /// <summary>
     /// Structured log state rebuilt from a template and normalized values: scalars of exact,
-    /// known types as they are, exceptions as their scrubbed rendering, collections as bounded
+    /// known types as they are, exceptions as their scrubbed rendering, sequences as bounded
     /// renderings of their normalized elements, and every other object as a placeholder.
     /// </summary>
     private sealed class SafeState(IReadOnlyList<KeyValuePair<string, object?>> values, string message)
         : IReadOnlyList<KeyValuePair<string, object?>>
     {
-        // One budget per state across all of its values, nested collections and exception
+        // One budget per state across all of its values, nested sequences and exception
         // graphs, so no small self-referencing input can expand into a huge rendering.
         private const int MaxNodes = 2_000;
         private const int MaxElements = 100;
@@ -391,7 +391,7 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             }
             catch (Exception inspection) when (inspection is not OutOfMemoryException)
             {
-                // A collection that throws while enumerating is withheld, never rethrown.
+                // A sequence that throws while enumerating is withheld, never rethrown.
                 return $"[{items.GetType().Name} withheld]";
             }
 

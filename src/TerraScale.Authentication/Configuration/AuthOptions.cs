@@ -258,9 +258,9 @@ public sealed partial record AuthOptions
 
             try
             {
-                using var document = System.Text.Json.JsonDocument.Parse(raw);
+                using var rowData = System.Text.Json.JsonDocument.Parse(raw);
                 clients.Add(Features.ProjectTenants.SocialProviders.Seal(options, OidcIssuer.InstanceId, provider, null,
-                    document.RootElement.GetProperty("client_id").GetString(), document.RootElement.GetProperty("client_secret").GetString(), null, null, null));
+                    rowData.RootElement.GetProperty("client_id").GetString(), rowData.RootElement.GetProperty("client_secret").GetString(), null, null, null));
             }
             catch (Exception error) when (error is System.Text.Json.JsonException or InvalidOperationException or KeyNotFoundException or Contracts.ApiException)
             {

@@ -20,24 +20,24 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
     public async Task Account_cleanup_survives_restart_and_an_overdue_failure_without_touching_reused_email_or_another_tenant()
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
-        var faults = new CleanupFaults(AuthStore.SessionCollection) { InnerHandler = TerraBaseFixture.NewHandler() };
+        var faults = new CleanupFaults(AuthStore.SessionTable) { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(new HttpClient(faults)));
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
         var (alice, session, tokens) = await oidc.SignInAndRedeemAsync("deleted@example.test");
         var token = tokens.GetProperty("access_token").GetString()!;
-        var tokenIds = await store.QueryAsync(AuthStore.OidcTokenCollection, alice.InstanceId, "/subject", alice.Id)
-            .Select(document => document.Document.GetProperty("id").GetString()!).ToListAsync();
+        var tokenIds = await store.QueryAsync(AuthStore.OidcTokenTable, alice.InstanceId, "/subject", alice.Id)
+            .Select(rowData => rowData.Body.GetProperty("id").GetString()!).ToListAsync();
         var hash = new string('d', 64);
         await store.CreateChallengeAsync(alice.InstanceId, "recovery", hash, alice.Id, clock.UtcNow.AddHours(1));
         await store.ClaimUniqueAsync(alice.InstanceId, "synthetic-owned", "old", alice.Id);
         await oidc.Server.App.Services.GetRequiredService<Passcodes>().RequestAsync(alice.InstanceId, alice.Email);
-        await store.CreateAsync(AuthStore.MfaCollection, alice.InstanceId, alice.Id,
+        await store.CreateAsync(AuthStore.MfaTable, alice.InstanceId, alice.Id,
             TerraBaseFixture.Json($$"""{"instanceId":"{{alice.InstanceId}}","userId":"{{alice.Id}}","secretBox":null,"enabled":false,"enrollmentEpoch":0,"enrollmentExpiresAt":null,"lastAcceptedStep":-1,"recoveryHashes":[],"recoveryExpiresAt":null}"""));
 
         // Same subject id in another tenant must remain outside the job's authority.
         var unrelated = TerraBaseFixture.Json($$"""{"instanceId":"other-tenant","userId":"{{alice.Id}}","tokenHash":"{{hash}}"}""");
-        var other = await store.CreateAsync(AuthStore.SessionCollection, "other-tenant", hash, unrelated);
+        var other = await store.CreateAsync(AuthStore.SessionTable, "other-tenant", hash, unrelated);
         var requested = clock.UtcNow;
         faults.Fail = true;
         await oidc.OkAsync(HttpMethod.Delete, "/v1/terrascale/account", token, status: HttpStatusCode.NoContent);
@@ -59,14 +59,14 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
 
         // The old job must never look up this address again.
         await oidc.Server.App.Services.GetRequiredService<Passcodes>().RequestSignUpAsync(alice.InstanceId, alice.Email, "synthetic-hash", "synthetic-pending-token");
-        var signup = await store.GetAsync(AuthStore.PasscodeCollection, alice.InstanceId, "sign-up:" + alice.Email);
+        var signup = await store.GetAsync(AuthStore.PasscodeTable, alice.InstanceId, "sign-up:" + alice.Email);
         await Assert.That(signup).IsNotNull();
         var replacement = await users.CreateAsync(alice.InstanceId, alice.Email);
         await Assert.That(replacement!.Id).IsNotEqualTo(alice.Id);
 
         await oidc.Server.App.StopAsync();
         clock.UtcNow = requested.AddDays(31);
-        var restartFaults = new CleanupFaults(AuthStore.SessionCollection) { InnerHandler = TerraBaseFixture.NewHandler(), Fail = true };
+        var restartFaults = new CleanupFaults(AuthStore.SessionTable) { InnerHandler = TerraBaseFixture.NewHandler(), Fail = true };
         await using var restarted = await oidc.StartReplicaAsync(clock: clock, services: services => services.AddSingleton(new HttpClient(restartFaults)));
         var restartedStore = restarted.App.Services.GetRequiredService<AuthStore>();
         await Assert.That(await ReadinessWait.UntilAsync(async () => (await JobAsync(restartedStore, alice.InstanceId, "account", alice.Id)).Attempts > pending.Attempts, TimeSpan.FromSeconds(10))).IsTrue();
@@ -82,25 +82,25 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
         await Assert.That(finished.AuthLogicalVerifiedAt).IsEqualTo(clock.UtcNow);
         await Assert.That(finished.FailureCode).IsNull();
         await Assert.That(finished.DueAt).IsEqualTo(pending.DueAt);
-        foreach (var (collection, field) in new[]
+        foreach (var (table, field) in new[]
         {
-            (AuthStore.SessionCollection, "/userId"), (AuthStore.PasscodeCollection, "/userId"), (AuthStore.MfaCollection, "/userId"),
-            (AuthStore.OidcTokenCollection, "/subject"), (AuthStore.OidcAuthorizationCollection, "/subject"),
-            (AuthStore.UniqueCollection, "/ownerId"), (AuthStore.ChallengeCollection, "/subjectId"),
+            (AuthStore.SessionTable, "/userId"), (AuthStore.PasscodeTable, "/userId"), (AuthStore.MfaTable, "/userId"),
+            (AuthStore.OidcTokenTable, "/subject"), (AuthStore.OidcAuthorizationTable, "/subject"),
+            (AuthStore.UniqueTable, "/ownerId"), (AuthStore.ChallengeTable, "/subjectId"),
         })
         {
-            await Assert.That(await restartedStore.QueryAsync(collection, alice.InstanceId, field, alice.Id).AnyAsync()).IsFalse();
+            await Assert.That(await restartedStore.QueryAsync(table, alice.InstanceId, field, alice.Id).AnyAsync()).IsFalse();
         }
 
-        await Assert.That((await restartedStore.GetAsync(AuthStore.SessionCollection, "other-tenant", hash))!.Version).IsEqualTo(other.Version);
-        await Assert.That((await restartedStore.GetAsync(AuthStore.PasscodeCollection, alice.InstanceId, "sign-up:" + alice.Email))!.Version).IsEqualTo(signup!.Version);
+        await Assert.That((await restartedStore.GetAsync(AuthStore.SessionTable, "other-tenant", hash))!.Version).IsEqualTo(other.Version);
+        await Assert.That((await restartedStore.GetAsync(AuthStore.PasscodeTable, alice.InstanceId, "sign-up:" + alice.Email))!.Version).IsEqualTo(signup!.Version);
         await Assert.That(await restarted.App.Services.GetRequiredService<Users>().GetAsync(alice.InstanceId, replacement.Id)).IsNotNull();
         foreach (var tokenId in tokenIds)
         {
-            await Assert.That(await restartedStore.QueryAsync(AuthStore.UniqueCollection, alice.InstanceId, "/ownerId", tokenId).AnyAsync()).IsFalse();
+            await Assert.That(await restartedStore.QueryAsync(AuthStore.UniqueTable, alice.InstanceId, "/ownerId", tokenId).AnyAsync()).IsFalse();
         }
 
-        await Assert.ThrowsAsync<StorePreconditionFailedException>(() => restartedStore.CreateAsync(AuthStore.SessionCollection, alice.InstanceId, hash,
+        await Assert.ThrowsAsync<StorePreconditionFailedException>(() => restartedStore.CreateAsync(AuthStore.SessionTable, alice.InstanceId, hash,
             TerraBaseFixture.Json($$"""{"instanceId":"{{alice.InstanceId}}","userId":"{{alice.Id}}","tokenHash":"{{hash}}"}""")));
 
         clock.UtcNow = (await JobAsync(restartedStore, alice.InstanceId, "account", alice.Id)).NextAttemptAt;
@@ -112,9 +112,9 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
     }
 
     private static async Task<DeletionJob> JobAsync(AuthStore store, string instanceId, string scope, string subjectId) =>
-        (await store.GetAsync(AuthStore.DeletionJobCollection, instanceId, DeletionJob.Key(instanceId, scope, subjectId)))!.Document.Deserialize(DeletionJson.Default.DeletionJob)!;
+        (await store.GetAsync(AuthStore.DeletionJobTable, instanceId, DeletionJob.Key(instanceId, scope, subjectId)))!.Body.Deserialize(DeletionJson.Default.DeletionJob)!;
 
-    private sealed class CleanupFaults(params string[] collections) : DelegatingHandler
+    private sealed class CleanupFaults(params string[] tables) : DelegatingHandler
     {
         private int fail;
 
@@ -129,8 +129,8 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
             if (this.Fail && request.Content is not null && request.RequestUri!.AbsolutePath.EndsWith("/sql/execute", StringComparison.Ordinal))
             {
                 var body = await request.Content.ReadAsStringAsync(cancellationToken);
-                if (collections.Any(collection => body.Contains("FROM \\u0022" + collection + "\\u0022 WHERE 1 = 1", StringComparison.Ordinal)
-                    || body.Contains("FROM \\\"" + collection + "\\\" WHERE 1 = 1", StringComparison.Ordinal)))
+                if (tables.Any(table => body.Contains("FROM \\u0022" + table + "\\u0022 WHERE 1 = 1", StringComparison.Ordinal)
+                    || body.Contains("FROM \\\"" + table + "\\\" WHERE 1 = 1", StringComparison.Ordinal)))
                 {
                     throw new HttpRequestException("Synthetic cleanup outage");
                 }

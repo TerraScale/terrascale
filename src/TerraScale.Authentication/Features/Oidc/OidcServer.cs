@@ -400,7 +400,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         List<StoreOperation> operations =
         [
             AuthStore.CredentialClaim(tenant, binding),
-            AuthStore.Replace(AuthStore.OidcTokenCollection, tenant, identifier,
+            AuthStore.Replace(AuthStore.OidcTokenTable, tenant, identifier,
                 Redeemed(token, clock.GetUtcNow()), token.Version),
         ];
         string? approvedAuthorizationId = null;
@@ -429,8 +429,8 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             };
             approvedAuthorizationId = approval.Id;
             using var valid = JsonDocument.Parse("""{"eq":["/status","valid"]}""");
-            operations.Add(AuthStore.Require(AuthStore.OidcAuthorizationCollection, tenant, parentId, valid.RootElement.Clone()));
-            operations.Add(AuthStore.Create(AuthStore.OidcAuthorizationCollection, tenant, approval.Id,
+            operations.Add(AuthStore.Require(AuthStore.OidcAuthorizationTable, tenant, parentId, valid.RootElement.Clone()));
+            operations.Add(AuthStore.Create(AuthStore.OidcAuthorizationTable, tenant, approval.Id,
                 JsonSerializer.SerializeToElement(approval, OidcJson.Default.OidcAuthorization)));
         }
         else if (context.Request.IsDeviceCodeGrantType())
@@ -455,7 +455,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         if (await store.AreCredentialsCurrentAsync(tenant, inherited, context.CancellationToken).ConfigureAwait(false)
             && await store.TransactAsync(operations, context.CancellationToken).ConfigureAwait(false) is null)
         {
-            // Approval rewrites the existing device-code record; that record's LWW payload selects the approver.
+            // Approval rewrites the existing device-code record; its conditional SQL update selects the approver.
             // Only redemption that creates distinct successor credentials needs the additional branch binding.
             var bindings = addsBinding ? [.. inherited, binding] : inherited;
             CredentialLineage.Attach(context.Principal!, bindings);

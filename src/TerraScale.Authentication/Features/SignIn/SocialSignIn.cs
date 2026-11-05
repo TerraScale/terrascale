@@ -224,7 +224,7 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
             .FirstOrDefault();
     }
 
-    // Discovery of Google, Apple or the configured issuer; the document must name the same issuer (OIDC Discovery 4.3).
+    // Discovery of Google, Apple or the configured issuer; the record must name the same issuer (OIDC Discovery 4.3).
     private async Task<OpenIdConnectConfiguration> ConfigurationAsync(SocialProviderRecord provider, CancellationToken cancellationToken)
     {
         var issuer = provider.Provider switch
@@ -271,8 +271,8 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
     {
         try
         {
-            using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false), cancellationToken: cancellationToken).ConfigureAwait(false);
-            return document.RootElement.Clone();
+            using var rowData = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false), cancellationToken: cancellationToken).ConfigureAwait(false);
+            return rowData.RootElement.Clone();
         }
         catch (JsonException)
         {

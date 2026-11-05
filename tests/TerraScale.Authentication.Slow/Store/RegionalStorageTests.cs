@@ -66,7 +66,7 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     private static async Task<string> ProjectAsync(TerraBaseSqlDatabase copy)
     {
         var id = AuthStore.NewId();
-        await new AuthStore(copy, TimeProvider.System).CreateAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, id, Record);
+        await new AuthStore(copy, TimeProvider.System).CreateAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, id, Record);
         return id;
     }
 
@@ -75,7 +75,7 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     {
         await new KeyRing(new AuthStore(copy, TimeProvider.System), auth.App.Services.GetRequiredService<AuthOptions>(), TimeProvider.System)
             .ProvisionAsync(OidcIssuer.InstanceId, CancellationToken.None);
-        return (await copy.RowsAsync(AuthStore.SigningKeyCollection)).Single().Document.GetProperty("id").GetString()!;
+        return (await copy.RowsAsync(AuthStore.SigningKeyTable)).Single().Body.GetProperty("id").GetString()!;
     }
 
     private static async Task<HttpStatusCode> DiscoveryAsync(AuthTestServer auth, string project)
