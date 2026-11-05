@@ -157,8 +157,11 @@ public sealed class RegionalWriterCrashTests
             var options = (TerraBaseOptions)services.Last(descriptor => descriptor.ServiceType == typeof(TerraBaseOptions)).ImplementationInstance!;
             services.Replace(ServiceDescriptor.Singleton(options with
             {
-                MachineId = node, PeersFile = config["peers"]!.GetValue<string>(), InternalPort = config["port"]!.GetValue<int>(),
-                NatsUrl = new Uri(config["nats"]!.GetValue<string>()), NatsToken = config["token"]!.GetValue<string>(),
+                MachineId = node,
+                PeersFile = config["peers"]!.GetValue<string>(),
+                InternalPort = config["port"]!.GetValue<int>(),
+                NatsUrl = new Uri(config["nats"]!.GetValue<string>()),
+                NatsToken = config["token"]!.GetValue<string>(),
             }));
             services.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new Serving()));
             services.Replace(ServiceDescriptor.Singleton<DatabaseLifecycleCheckpoint>((step, database) =>
@@ -232,8 +235,13 @@ public sealed class RegionalWriterCrashTests
             var configPath = DirectoryPath + ".json";
             await File.WriteAllTextAsync(configPath, new JsonObject
             {
-                ["directory"] = DirectoryPath, ["node"] = name, ["address"] = address, ["port"] = port,
-                ["peers"] = peers, ["nats"] = nats.Url.ToString(), ["token"] = nats.Token,
+                ["directory"] = DirectoryPath,
+                ["node"] = name,
+                ["address"] = address,
+                ["port"] = port,
+                ["peers"] = peers,
+                ["nats"] = nats.Url.ToString(),
+                ["token"] = nats.Token,
             }.ToJsonString(), token);
             if (!OperatingSystem.IsWindows())
             {
@@ -241,7 +249,9 @@ public sealed class RegionalWriterCrashTests
             }
             var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet")
             {
-                RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
             };
             start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "TerraBase.Slow.dll"));
             start.ArgumentList.Add("--treenode-filter");
