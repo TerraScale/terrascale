@@ -87,6 +87,8 @@ internal sealed class HomePush(
 
     private IHlcClock Clock => clock;
 
+    private ITransactionCrypto Crypto => services.GetRequiredService<ITransactionCrypto>();
+
     private TimeProvider Time => time;
 
     private string Region => options.Region;
@@ -280,8 +282,9 @@ internal sealed class HomePush(
         var placement = await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placed }
             ? placed
             : throw new InvalidOperationException("the database has no placement");
-        return await _js!.PublishAsync(PushNames.Subject(options.Region, placement.Home, database), Encode(transaction), opts: new NatsJSPubOpts { MsgId = id },
-            headers: Headers(transaction.Hlc!.Value, placement.Version), cancellationToken: cancellationToken).ConfigureAwait(false);
+        return await _js!.PublishAsync(PushNames.Subject(options.Region, placement.Home, database),
+            await services.GetRequiredService<ITransactionCrypto>().SealAsync(database, Encode(transaction), cancellationToken).ConfigureAwait(false),
+            opts: new NatsJSPubOpts { MsgId = id }, headers: Headers(transaction.Hlc!.Value, placement.Version), cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task<ulong?> ReplayFromAsync(string origin, TenantContext database, string transactionId, CancellationToken cancellationToken)
@@ -427,7 +430,7 @@ internal sealed class HomePush(
             {
                 read++;
                 if (PushNames.Database(message.Subject) is { } database && message.Data is { } data && message.Metadata is { } metadata
-                    && TryDecode(data, out var transaction))
+                    && await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is { } transaction)
                 {
                     _ = _overlay.Add(database, metadata.Sequence.Stream, transaction);
                     _ = _pushed.AddOrUpdate(Key(database), metadata.Sequence.Stream, (_, known) => Math.Max(known, metadata.Sequence.Stream));
@@ -483,6 +486,21 @@ internal sealed class HomePush(
                 await Task.Delay(TimeSpan.FromSeconds(1), time, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    internal async Task PurgeDeletedAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        _overlay.DeleteDatabase(database);
+        _pushed.TryRemove(Key(database), out _);
+        _forwarded.TryRemove(Key(database), out _);
+        if (_js is not { } js)
+        {
+            return; // Regional hold partners own no JetStream origin stream.
+        }
+        _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
+        {
+            Filter = $"terrabase.push.{options.Region}.*.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}",
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task PurgesAsync(NatsJSContext js, CancellationToken cancellationToken)
@@ -601,7 +619,7 @@ internal sealed class HomePush(
 
     private async Task ApplyAsync(NatsConnection nats, INatsJSMsg<byte[]> message, CancellationToken cancellationToken)
     {
-        if (PushNames.Database(message.Subject) is not { } database || message.Data is not { } data || !TryDecode(data, out var transaction))
+        if (PushNames.Database(message.Subject) is not { } database || message.Data is not { } data || await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
         {
             logger.ZLogWarning($"A malformed pushed message is dropped");
             _applies?.Add(1, new KeyValuePair<string, object?>("state", "malformed"));
@@ -687,6 +705,12 @@ internal sealed class HomePush(
         }
     }
 
+    private async Task<RegionTransaction?> DecodeAsync(TenantContext database, byte[] data, CancellationToken cancellationToken)
+    {
+        var plain = await services.GetRequiredService<ITransactionCrypto>().OpenAsync(database, data, cancellationToken).ConfigureAwait(false);
+        return plain is not null && TryDecode(plain, out var transaction) ? transaction : null;
+    }
+
     internal static byte[] Encode(RegionTransaction transaction)
     {
         var json = JsonSerializer.SerializeToUtf8Bytes(transaction, TerraBaseJsonContext.Default.RegionTransaction);
@@ -744,7 +768,7 @@ internal sealed class HomePush(
             var changes = await PushChanges.FromCapturedAsync(writer, captured, cancellationToken).ConfigureAwait(false);
             var stamp = await push.Clock.NextAsync(cancellationToken).ConfigureAwait(false);
             var transaction = new RegionTransaction(Ulid.NewUlid().ToString(), push.Region, stamp, changes);
-            var payload = Encode(transaction);
+            var payload = await push.Crypto.SealAsync(database, Encode(transaction), cancellationToken).ConfigureAwait(false);
             if (payload.Length > MaxPayloadBytes)
             {
                 throw new LocalWriteRefusedException("a transaction larger than 8 MiB commits at the database's home");
@@ -771,7 +795,7 @@ internal sealed class HomePush(
 
             push._overlay.Published(database, transaction.Id!, acknowledged.Seq);
             _ = push._pushed.AddOrUpdate(Key(database), acknowledged.Seq, (_, known) => Math.Max(known, acknowledged.Seq));
-            var held = await push.Partner.HoldAsync(database, home, acknowledged.Seq, transaction, cancellationToken).ConfigureAwait(false);
+            var held = await push.Partner.HoldAsync(database, home, acknowledged.Seq, payload, cancellationToken).ConfigureAwait(false);
             try
             {
                 await writer.CommitAsync(cancellationToken).ConfigureAwait(false);

@@ -307,7 +307,7 @@ internal sealed class PointInTimeRestore(
         }
 
         // Checked before anything else: a deleted database's objects may still be listed, but nothing can decrypt them.
-        if (await ShredRecords.ReadAsync(backup.Store, BackupLayout.KeyScope(source), cancellationToken).ConfigureAwait(false) is { } shredded)
+        if (await backup.Keys.ShreddedAsync(BackupLayout.KeyScope(source), cancellationToken).ConfigureAwait(false) is { } shredded)
         {
             return Shredded(shredded.ShreddedAt);
         }

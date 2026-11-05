@@ -4,7 +4,10 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading.Channels;
+using System.Security.Cryptography;
+using System.Text;
+using TerraBase.Features.Backup;
+using TerraBase.Features.Management;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
 using ZLogger;
@@ -13,10 +16,10 @@ namespace TerraBase.Features.Shapes;
 
 internal interface IShapeCdnPurge
 {
-    bool Queue(string url);
+    Task<bool> QueueAsync(string url, CancellationToken cancellationToken);
 }
 
-internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, TimeProvider time, IMeterFactory meters, ILogger<ShapeCdnPurge> logger)
+internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, TimeProvider time, IMeterFactory meters, ILogger<ShapeCdnPurge> logger, SystemCatalog catalog, KeyCustody? custody)
     : BackgroundService, IShapeCdnPurge
 {
     internal const string HttpClientName = "cloudflare-api";
@@ -34,11 +37,12 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
     private DateTimeOffset _nextRequest;
     private static readonly TimeSpan FirstRetry = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(1);
-    private readonly Channel<string> _queue = Channel.CreateBounded<string>(new BoundedChannelOptions(QueueItems) { SingleReader = true });
+    private const string Outbox = "shape_cdn_purges";
+    private string? _after;
     private readonly Counter<long> _purges = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.shape.cdn.purges",
         description: "Shape CDN handle prefixes by purge outcome: purged, failed (Cloudflare refused or kept failing) or dropped (queue full).");
 
-    public bool Queue(string url)
+    public async Task<bool> QueueAsync(string url, CancellationToken cancellationToken)
     {
         if (url.Length != ObjectPrefix.Length + 84 || !url.StartsWith(ObjectPrefix, StringComparison.Ordinal)
             || !url.AsSpan(ObjectPrefix.Length, 3).SequenceEqual("h1-") || url[ObjectPrefix.Length + 19] != '/'
@@ -47,34 +51,75 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
         {
             return false;
         }
-
-        var prefix = url[8..(ObjectPrefix.Length + 20)];
-        if (_queue.Writer.TryWrite(prefix))
+        var id = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(url)));
+        return await catalog.WriteUncheckedAsync(async transaction =>
         {
+            if (await transaction.GetAsync(Outbox, id, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                return true;
+            }
+            var page = await transaction.ListAsync(Outbox, null, QueueItems, QueueItems * 1024L, cancellationToken).ConfigureAwait(false);
+            if (page.Records.Count == QueueItems || page.HasMore)
+            {
+                _purges.Add(1, new KeyValuePair<string, object?>("outcome", "dropped"));
+                return false; // The caller keeps its object and retries; no deletion loses its purge authority.
+            }
+            _ = await transaction.PutAsync(Outbox, id, JsonSerializer.SerializeToUtf8Bytes(url, ShapeCdnPurgeJsonContext.Default.String), cancellationToken).ConfigureAwait(false);
             return true;
-        }
-
-        _purges.Add(1, new KeyValuePair<string, object?>("outcome", "dropped"));
-        return false;
+        }, cancellationToken, durable: true).ConfigureAwait(false);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var batch = new List<string>(BatchUrls);
-        while (await _queue.Reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), time);
+        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            batch.Clear();
-            for (var scanned = 0; scanned < BatchUrls && _queue.Reader.TryRead(out var url); scanned++)
+            try
             {
-                if (!batch.Contains(url, StringComparer.Ordinal))
-                {
-                    batch.Add(url);
-                }
+                await RunOnceAsync(stoppingToken).ConfigureAwait(false);
             }
-
-            var outcome = await PurgeAsync(batch, stoppingToken).ConfigureAwait(false) ? "purged" : "failed";
-            _purges.Add(batch.Count, new KeyValuePair<string, object?>("outcome", outcome));
+            catch (Exception) when (!stoppingToken.IsCancellationRequested)
+            {
+                logger.ZLogWarning($"Shape CDN purge outbox is unavailable; durable work retries");
+            }
         }
+    }
+
+    internal async Task RunOnceAsync(CancellationToken token)
+    {
+        var page = await catalog.ReadUncheckedAsync(transaction => transaction.ListAsync(Outbox, _after, BatchUrls, BatchUrls * 1024L, token), token).ConfigureAwait(false);
+        var ready = new List<(string Id, string Prefix)>();
+        if (custody is null)
+        {
+            return;
+        }
+        foreach (var record in page.Records)
+        {
+            var url = JsonSerializer.Deserialize(record.Json.Span, ShapeCdnPurgeJsonContext.Default.String)!;
+            // Queue is durable BEFORE R2 DELETE. Never purge early, which could allow a cache refill before DELETE.
+            if (!await custody.Store.ReadAsync(new Uri(url).AbsolutePath[1..], static (_, _) => Task.CompletedTask, token).ConfigureAwait(false))
+            {
+                ready.Add((record.Id, url[8..(ObjectPrefix.Length + 20)]));
+            }
+        }
+        if (ready.Count > 0)
+        {
+            var batch = ready.Select(item => item.Prefix).Distinct(StringComparer.Ordinal).ToList();
+            var success = await PurgeAsync(batch, token).ConfigureAwait(false);
+            _purges.Add(batch.Count, new KeyValuePair<string, object?>("outcome", success ? "purged" : "failed"));
+            if (success)
+            {
+                _ = await catalog.WriteUncheckedAsync(async transaction =>
+                {
+                    foreach (var item in ready)
+                    {
+                        _ = await transaction.DeleteAsync(Outbox, item.Id, token).ConfigureAwait(false);
+                    }
+                    return true;
+                }, token, durable: true).ConfigureAwait(false);
+            }
+        }
+        _after = page.HasMore && page.Records.Count > 0 ? page.Records[^1].Id : null;
     }
 
     private async Task<bool> PurgeAsync(List<string> urls, CancellationToken cancellationToken)
@@ -129,6 +174,7 @@ internal sealed record ShapeCdnPurgeRequest(IReadOnlyList<string> Prefixes);
 internal sealed record ShapeCdnPurgeResponse(bool Success);
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(ShapeCdnPurgeRequest))]
 [JsonSerializable(typeof(ShapeCdnPurgeResponse))]
 internal sealed partial class ShapeCdnPurgeJsonContext : JsonSerializerContext;

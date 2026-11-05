@@ -37,7 +37,12 @@ public static class BackupExtensions
             .AddSingleton<S3ObjectStore>()
             .AddSingleton<IObjectStore>(provider => provider.GetRequiredService<S3ObjectStore>())
             .AddSingleton<IMasterKey>(master)
-            .AddSingleton<DataKeys>()
+            .AddSingleton<KeyCustody>()
+            .AddSingleton(provider => new Lazy<Management.EngineManagementService>(provider.GetRequiredService<Management.EngineManagementService>))
+            .AddSingleton<ShreddedDatabaseSweep>()
+            .AddHostedService(provider => provider.GetRequiredService<ShreddedDatabaseSweep>())
+            .AddSingleton(provider => new DataKeys(provider.GetRequiredService<KeyCustody>().Store, provider.GetRequiredService<IMasterKey>(),
+                provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<BackupSettings>()))
             .AddSingleton<BackupTargets>()
             .AddSingleton<ContinuousBackup>()
             .AddSingleton<IContinuousBackup>(provider => provider.GetRequiredService<ContinuousBackup>())
@@ -52,6 +57,8 @@ public static class BackupExtensions
     // Backup is off: nothing ships and nothing can be restored.
     private sealed class NoBackup : IContinuousBackup, IPointInTimeRestore, IBackupKeyShredding
     {
+        public Task<bool> DestroyAsync(TenantContext database, CancellationToken cancellationToken) => Task.FromResult(true);
+
         public void Shred(TenantContext database)
         {
         }

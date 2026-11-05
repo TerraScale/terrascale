@@ -411,7 +411,9 @@ internal sealed partial class EngineManagementService(
                 await UnregisterDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, token).ConfigureAwait(false) is TenantContext,
             cancellationToken).ConfigureAwait(false) switch
         {
-            bool deleted => deleted ? Shredded(deletable.Storage) : ManagementErrors.NotFound,
+            bool deleted => !deleted ? ManagementErrors.NotFound
+                : await shredding.Value.DestroyAsync(deletable.Storage, cancellationToken).ConfigureAwait(false) ? new Done()
+                : new Unavailable("database deletion committed; key destruction is pending and will retry"),
             Unavailable refused => refused,
         };
     }
