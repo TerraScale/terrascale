@@ -79,8 +79,10 @@ eventual consistency.
    the same gate as page apply, so a reader never begins while the checkpoint changes its WAL generation.
    A node keeps at most 8 pushed answers per replica, reserved against its memory budget. A notice for a revision the
    replica already holds is ignored. A failed pull is retried with backoff from 50 ms to 2 s until it succeeds. Every
-   replica also pulls from the home on the 30-second sweep and after every NATS reconnect, so lost notices and network
-   cuts converge. Without NATS settings a node logs a warning and replicas follow on the sweep alone. Status reports
+   replica pulls from the home on a catalog sweep when no changed revision has been applied for at least 30 seconds,
+   and after every NATS reconnect. Active replicas keep consuming pushed answers without recovery round trips ahead of
+   them. An idle replica is checked within two sweeps of its last applied change, so lost notices and network cuts converge.
+   Without NATS settings a node logs a warning and replicas follow on the sweep alone. Status reports
    to the home run beside the pull loop, never between pulls.
 4. **Restarts.** A restarted replica region reopens its replicas from their files and serves them before the home is
    reachable again; the next pull is incremental. A restarted home keeps its durable revision ledger, so replicas pull
@@ -93,13 +95,16 @@ Replicas never silently diverge from their home.
 1. **Exact revisions.** Every pull answer carries the home's snapshot revision in the `TerraBase-Revision` header, so a
    replica knows the exact revision (`ts1:<incarnation>:<generation>:<frame>`) it holds after each applied pull.
 2. **Rounds.** A follower runs a verification round about a minute after it starts and every 10 minutes after each
-   completed pass. It asks its home for
+   completed pass. The checksum request runs beside notice consumption, so its network wait does not delay new page
+   answers. The follower consumes its completed result and performs any required healing in its pull loop. It asks its
+   home for
    `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/checksums?revision=<held>`: the home
    takes a read snapshot, and only when it is still at that revision hashes the schema and every table in rowid ranges of
    at most 256 rows and 4 MiB (SHA-256 over typed values). A round stops after 64 ranges or 16 MiB and returns a cursor;
    the next round continues 5 seconds later until the pass covers every table. The replica hashes the same ranges in one
-   read snapshot at the same revision and compares. When the home moved on, the replica pulls and retries up to three
-   times, then skips the round for 30 seconds (`result="skipped"`). A replica that holds local writes its pulled
+   read snapshot at the same revision and compares. When either side moved on, the follower skips the round for
+   30 seconds (`result="skipped"`), continuing to apply incoming revisions while it waits. A replica that holds local writes its
+   pulled
    revision does not contain yet ([local overlay](local-overlay.md)) differs from the home on purpose, so it skips the
    same way until a pull holds them. The schema hash leaves out each node's own objects: the sync client's
    `turso_sync*`, the CDC logs `turso_cdc*` and the replica's local-write capture table `_ts_local_cdc`.
