@@ -56,6 +56,10 @@ curl -sS --fail-with-body --header @/dev/fd/3 \
 
 The C#, TypeScript, Go, Python and Rust SDKs call the same endpoint; see [SDKs](/guides/sdks).
 
+## Query from your application
+
+<SdkQueryTabs />
+
 ## What SQL supports
 
 - Tables, indexes (including partial and expression indexes), views and triggers.
