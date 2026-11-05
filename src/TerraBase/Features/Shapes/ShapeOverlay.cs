@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using NATS.Client.Core;
+using NATS.Client.JetStream;
+using NATS.Client.JetStream.Models;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.HomePush;
@@ -40,9 +42,9 @@ internal sealed record ProvisionalTransaction(string Id, string Origin, IReadOnl
 internal sealed partial class ShapeOverlayJsonContext : JsonSerializerContext;
 
 /// <summary>
-/// The local overlay as shapes see it (PIVOT F7): every local transaction of this region that the replica's pages do
-/// not hold yet. Commits on this node arrive through <see cref="ILocalCommitFeed"/>; the other nodes of the region
-/// send theirs over core NATS. Live tails show these as <c>provisional</c> until the home's pages confirm or revert them.
+/// The shape overlay (PIVOT F7/F8): transactions the replica's pages do not hold yet. Commits on this node arrive
+/// through <see cref="ILocalCommitFeed"/>; other nodes and regions send theirs directly over the origin's JetStream
+/// subjects. Live tails show these as <c>provisional</c> until the home's pages confirm or revert them.
 /// </summary>
 internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, ILogger<ShapeOverlay> logger) : BackgroundService, ILocalCommitFeed
 {
@@ -53,15 +55,18 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
 
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), Pending> _databases = new();
     private readonly Channel<(TenantContext Database, ProvisionalTransaction Transaction)> _outgoing =
-        Channel.CreateBounded<(TenantContext, ProvisionalTransaction)>(new BoundedChannelOptions(4096) { FullMode = BoundedChannelFullMode.DropOldest });
+        Channel.CreateBounded<(TenantContext, ProvisionalTransaction)>(new BoundedChannelOptions(8) { FullMode = BoundedChannelFullMode.DropOldest });
     private long _bytes;
     private NatsConnection? _nats;
+    private readonly TaskCompletionSource _subscribed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    internal Task Subscribed => _subscribed.Task;
 
     /// <summary>The home's answer to a forwarded write carries its commits' rows here; the region strips it.</summary>
     internal const string CommitHeader = "X-TerraBase-Commit-Rows";
     internal const int MaxHeaderBytes = 48 * 1024;
 
-    private string Subjects => $"terrabase.local.{options.Region}.>";
+    private const string Subjects = "terrabase.local.*.*.*.*";
 
     /// <summary>The value of <see cref="CommitHeader"/> for a forwarded write's commits, or null when they are too large.</summary>
     internal static string? EncodeCommits(IReadOnlyList<IReadOnlyList<CapturedRowChange>> commits)
@@ -105,7 +110,7 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
         foreach (var transaction in transactions ?? [])
         {
             if (transaction is { Id: { Length: > 0 }, HomeAfter: > 0, Rows: { } rows } && rows.All(row => row is { Table: { Length: > 0 }, Type: >= -1 and <= 1 })
-                && Add(database, transaction with { Origin = options.MachineId }) && _nats is not null)
+                && Add(database, transaction with { Origin = options.MachineId }) && _nats is not null && transaction.Bytes <= MaxMessageBytes)
             {
                 _ = _outgoing.Writer.TryWrite((database, transaction with { Origin = options.MachineId }));
             }
@@ -126,7 +131,7 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
         }
 
         var transaction = new ProvisionalTransaction(transactionId, options.MachineId, rows);
-        if (Add(database, transaction) && _nats is not null)
+        if (Add(database, transaction) && _nats is not null && transaction.Bytes <= MaxMessageBytes)
         {
             _ = _outgoing.Writer.TryWrite((database, transaction));
         }
@@ -184,6 +189,7 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
             MaxReconnectRetry = -1,
             ReconnectWaitMin = TimeSpan.FromMilliseconds(100),
             ReconnectWaitMax = TimeSpan.FromSeconds(2),
+            SubPendingChannelCapacity = 8,
         });
         _nats = nats;
         await Task.WhenAll(PublishAsync(nats, stoppingToken), SubscribeAsync(nats, stoppingToken)).ConfigureAwait(false);
@@ -191,6 +197,34 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
 
     private async Task PublishAsync(NatsConnection nats, CancellationToken cancellationToken)
     {
+        var js = new NatsJSContext(nats);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await nats.ConnectAsync().ConfigureAwait(false);
+                _ = await js.CreateOrUpdateStreamAsync(new StreamConfig("TERRABASE_PROVISIONAL_" + options.Region.ToUpperInvariant(),
+                    [$"terrabase.local.{options.Region}.>"])
+                {
+                    Storage = StreamConfigStorage.File,
+                    Retention = StreamConfigRetention.Limits,
+                    Discard = StreamConfigDiscard.Old,
+                    MaxAge = Kept,
+                    MaxBytes = MaxBytes,
+                    MaxMsgSize = MaxMessageBytes,
+                    DuplicateWindow = Kept,
+                    NumReplicas = 1,
+                    Placement = nats.ServerInfo?.Cluster is { Length: > 0 } ? new Placement { Tags = [$"region:{options.Region}"] } : null,
+                }, cancellationToken).ConfigureAwait(false);
+                break;
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogInformation($"The provisional stream retries; shapes still receive home confirmations: {error.GetType().Name:@Error}");
+                await Task.Delay(TimeSpan.FromSeconds(1), time, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         await foreach (var (database, transaction) in _outgoing.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
             var payload = JsonSerializer.SerializeToUtf8Bytes(transaction, ShapeOverlayJsonContext.Default.ProvisionalTransaction);
@@ -201,11 +235,15 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
 
             try
             {
-                await nats.PublishAsync(Subject(database), payload, cancellationToken: cancellationToken).ConfigureAwait(false);
+                // Live subscribers receive this publish directly, without a pull via the home or a storage-ack round trip.
+                // JetStream retains a bounded copy; R7 remains the durable write path, independently of this publication.
+                var ack = await js.PublishAsync(Subject(database), payload, opts: new NatsJSPubOpts { MsgId = transaction.Id },
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                ack.EnsureSuccess();
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
-                logger.ZLogInformation($"A provisional shape change stays on this node: {error.GetType().Name:@Error}");
+                logger.ZLogInformation($"A provisional shape change falls back to the home path: {error.GetType().Name:@Error}");
             }
         }
     }
@@ -216,7 +254,10 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
         {
             try
             {
-                await foreach (var message in nats.SubscribeAsync<byte[]>(Subjects, cancellationToken: cancellationToken).ConfigureAwait(false))
+                await using var subscription = await nats.SubscribeCoreAsync<byte[]>(Subjects, cancellationToken: cancellationToken).ConfigureAwait(false);
+                _ = await nats.PingAsync(cancellationToken).ConfigureAwait(false);
+                _subscribed.TrySetResult();
+                await foreach (var message in subscription.Msgs.ReadAllAsync(cancellationToken).ConfigureAwait(false))
                 {
                     if (Database(message.Subject) is not { } database || message.Data is not { Length: > 0 and <= MaxMessageBytes } data)
                     {
