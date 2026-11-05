@@ -121,7 +121,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 var action = new Uri(new Uri(origin), await page.Locator(form).GetAttributeAsync("action")).AbsolutePath;
                 var button = page.Locator(form).GetByRole(AriaRole.Button, new() { Name = name, Exact = true });
                 var response = page.WaitForResponseAsync(value => new Uri(value.Url).AbsolutePath == action && value.Request.Method == "POST");
-                // Playwright marks waitForNavigation obsolete; the journey needs it so the POST's document has loaded before asserting.
+                // Playwright marks waitForNavigation obsolete; the journey needs it so the POST's page has loaded before asserting.
 #pragma warning disable CS0612
                 var navigation = page.WaitForNavigationAsync(new() { WaitUntil = WaitUntilState.DOMContentLoaded });
 #pragma warning restore CS0612
