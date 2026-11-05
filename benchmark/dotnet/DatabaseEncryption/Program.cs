@@ -34,10 +34,10 @@ try
             {
                 connection.Open();
                 using var setup = connection.CreateCommand();
-                setup.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA wal_autocheckpoint=0; CREATE TABLE documents(id TEXT PRIMARY KEY, payload TEXT NOT NULL);";
+                setup.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA wal_autocheckpoint=0; CREATE TABLE bench_rows(id TEXT PRIMARY KEY, payload TEXT NOT NULL);";
                 setup.ExecuteNonQuery();
                 using var write = connection.CreateCommand();
-                write.CommandText = "INSERT INTO documents VALUES($id,$payload);";
+                write.CommandText = "INSERT INTO bench_rows VALUES($id,$payload);";
                 write.Parameters.AddWithValue("$id", string.Empty);
                 write.Parameters.AddWithValue("$payload", payload);
                 write.Prepare();
@@ -54,7 +54,7 @@ try
                 }
                 writeMs = clock.Elapsed.TotalMilliseconds;
                 using var read = connection.CreateCommand();
-                read.CommandText = "SELECT payload FROM documents WHERE id=$id;";
+                read.CommandText = "SELECT payload FROM bench_rows WHERE id=$id;";
                 read.Parameters.AddWithValue("$id", string.Empty);
                 read.Prepare();
                 clock.Restart();
@@ -85,7 +85,7 @@ try
             {
                 reopened.Open();
                 using var count = reopened.CreateCommand();
-                count.CommandText = "SELECT count(*) FROM documents;";
+                count.CommandText = "SELECT count(*) FROM bench_rows;";
                 if (Convert.ToInt64(count.ExecuteScalar(), CultureInfo.InvariantCulture) != rowCount)
                 {
                     throw new InvalidOperationException("Reopened database lost benchmark rows.");
