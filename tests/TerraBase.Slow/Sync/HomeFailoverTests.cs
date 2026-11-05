@@ -94,6 +94,7 @@ public sealed class HomeFailoverTests
                     continue;
                 }
 
+                await Task.Delay(TimeSpan.FromMilliseconds(50), token);
                 var row = "sjc-" + EntityIds.New();
                 using var response = await viaSjc.PostAsJsonAsync(all.Sql, new
                 {
@@ -139,7 +140,7 @@ public sealed class HomeFailoverTests
         await stop.CancelAsync();
         await Task.WhenAll(writers);
 
-        await TerraBaseTestServer.EventuallyAsync(async _ => (await RowsAsync(viaSjc, all, token)).IsSupersetOf(pushed), TimeSpan.FromSeconds(30));
+        await TerraBaseTestServer.EventuallyAsync(async _ => (await TryRowsAsync(viaSjc, all, token))?.IsSupersetOf(pushed) == true, TimeSpan.FromSeconds(30));
         var allStored = await RowsAsync(viaSjc, all, token);
         await Assert.That(acked[all.Id].Where(row => !allStored.Contains(row))).IsEmpty();
         await Assert.That(ackedAfterCut).IsEqualTo(0);
@@ -195,6 +196,15 @@ public sealed class HomeFailoverTests
     {
         using var response = await client.PostAsJsonAsync(database.Sql, new { statements = new[] { new { sql = "INSERT INTO acked (id) VALUES (?)", args = new[] { "probe-" + EntityIds.New() } } } }, token);
         return response.StatusCode;
+    }
+
+    private static async Task<HashSet<string>?> TryRowsAsync(HttpClient client, Database database, CancellationToken token)
+    {
+        using var read = await client.PostAsJsonAsync(database.Sql, new { statements = new[] { new { sql = "SELECT id FROM acked" } } }, token);
+        return read.StatusCode == HttpStatusCode.OK
+            ? (await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows").EnumerateArray()
+                .Select(row => row[0].GetString()!).ToHashSet(StringComparer.Ordinal)
+            : null;
     }
 
     private static async Task<HashSet<string>> RowsAsync(HttpClient client, Database database, CancellationToken token)
