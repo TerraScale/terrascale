@@ -139,7 +139,11 @@ public sealed class RegionShapeStreamTests
             var directory = Directory.CreateTempSubdirectory("terrabase-fra-shape-").FullName;
             var options = services.GetRequiredService<TerraBaseOptions>() with
             {
-                Region = "fra", MachineId = "fra-1", DataDirectory = directory, NatsUrl = link ?? nats.Url, NatsToken = nats.Token,
+                Region = "fra",
+                MachineId = "fra-1",
+                DataDirectory = directory,
+                NatsUrl = link ?? nats.Url,
+                NatsToken = nats.Token,
             };
             var replicas = new TursoReplicas(options, new TestMasterKey(), services.GetRequiredService<IMemoryBudget>(), NullLogger<TursoReplicas>.Instance);
             var overlay = new ShapeOverlay(options, TimeProvider.System, NullLogger<ShapeOverlay>.Instance);
