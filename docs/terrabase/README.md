@@ -11,6 +11,7 @@ Transport security: [TLS and authentication on every SQL surface](transport-secu
 Erasure: [Crypto-shredding of deleted databases](crypto-shredding.md), [F11 complete deletion contract](crypto-shredding-f11.md).
 Clock safety: [HLC and clock admission](hlc-clock.md).
 Placement: [Home region, replica regions, all-regions mode and moving the home](placement.md).
+Move durability: [Origin replay across a home move](home-move-origin-replay.md).
 
 TerraBase is TerraScale's database, moving to SQL only on Turso. The leaderless
 replication engine is removed; each database serves from one region until region

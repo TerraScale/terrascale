@@ -78,7 +78,7 @@ internal static class DatabaseRegions
                 await (await RecordAsync(context, project, database).ConfigureAwait(false) switch
                 {
                     ManagedDatabase record when !record.PlacedIn(region)
-                        && !(record.Replicas.Contains(region) && endpoint.Metadata.GetMetadata<ReplicaReads>() is not null)
+                        && !((record.AllRegions || record.Replicas.Contains(region)) && endpoint.Metadata.GetMetadata<ReplicaReads>() is not null)
                         => WrongRegion(record.Home(region), record.Regions(region)).ExecuteAsync(context),
                     ManagedDatabase => next(context),
                     NotFound => next(context),
