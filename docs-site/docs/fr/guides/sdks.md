@@ -22,6 +22,10 @@ Official SDKs for the TerraBase SQL API at `https://api.terrascale.tech`. Every 
 
 Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `/v1/projects/{project}/databases/{database}/sql/execute`, one request and one transaction each, with positional or named arguments and typed rows. The .NET and Go SDKs also open a WebSocket session on `/sql/ws` for interactive transactions (`begin`, `commit`, `rollback`). Primary keys are ULIDs from each SDK's ID generator.
 
+## Query from your application
+
+<SdkQueryTabs />
+
 ## Which entry do I call?
 
 - **SQL** goes through the SDK's database handle against `https://api.terrascale.tech`, with a project access token.
