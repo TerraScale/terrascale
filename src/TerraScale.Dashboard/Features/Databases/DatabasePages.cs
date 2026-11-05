@@ -136,6 +136,7 @@ namespace TerraScale.Dashboard.Features.Databases
     {
         public DatabaseConflictsPage? Conflicts { get; init; }
         public DatabaseReplication? Replication { get; init; }
+        public bool ReplicasSaved { get; init; }
         public string? BranchName { get; init; }
         public string TtlHours { get; init; } = "";
         public string PointInTime { get; init; } = "";

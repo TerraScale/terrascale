@@ -3,7 +3,7 @@
 <section class="ts-card ts-card-boxed" id="replication" aria-labelledby="replication-title">
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="replication-title">Replication</h2></div><div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@DatabaseService.Path(Model.Database.Id, "replication")">Refresh</a></div></header>
 <div class="ts-card-body">
-<span hidden data-on-interval__duration.10s="@("@get('" + DatabaseService.Path(Model.Database.Id, "replication") + "')")"></span>
+<span hidden @if(!(Model.Context.CanManage && Model.Database.Status == "ready")){<text>data-on-interval__duration.10s="@("@get('" + DatabaseService.Path(Model.Database.Id, "replication") + "')")"</text>}></span>
 @if(Model.Replication is { Error.Length: > 0 } failed){<div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@failed.Error</p></div>}
 @if(Model.Replication?.Status is { } replication){
 <dl class="ts-db-facts"><div><dt>Home region</dt><dd>@DatabasesPage.RegionDisplay(replication.HomeRegion)</dd></div></dl>
@@ -11,5 +11,20 @@
 else{<div class="ts-table-wrap" role="region" aria-label="Replica regions" tabindex="0"><table class="ts-table"><thead><tr><th scope="col">Replica region</th><th scope="col" class="ts-num">Lag</th><th scope="col">Last pulled</th><th scope="col">Last verified</th></tr></thead><tbody>
 @foreach(var replica in replication.Replicas){<tr data-replica-region="@replica.Region"><th scope="row">@DatabasesPage.RegionDisplay(replica.Region)</th><td class="ts-num">@TerraScale.Dashboard.Common.Formatting.MetricFormat.Latency(replica.LagMs)</td><td>@if(replica.LastPulledAt is { } pulled){<time datetime="@pulled.ToString("O", System.Globalization.CultureInfo.InvariantCulture)">@DatabaseReplication.Timestamp(pulled)</time>}else{<span>—</span>}</td><td>@if(replica.LastVerified is { } verified){<time datetime="@verified.ToString("O", System.Globalization.CultureInfo.InvariantCulture)">@DatabaseReplication.Timestamp(verified)</time>}else{<span>not yet verified</span>}</td></tr>}
 </tbody></table></div>}
+@if(Model.Context.CanManage && Model.Database.Status == "ready"){
+var home = replication.HomeRegion;
+var current = replication.Replicas.Select(replica => replica.Region).ToHashSet(StringComparer.Ordinal);
+var available = Model.Choices.Where(region => region.Id != home).ToArray();
+<form class="ts-form" method="post" action="/api/v1/dashboard/databases/replicas" data-submit-once aria-labelledby="replica-regions-title">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" />
+@if(Model.ReplicasSaved){<p class="ts-meta" role="status">Replica regions saved.</p>}
+<h3 class="ts-section-title" id="replica-regions-title">Replica regions</h3>
+@if(available.Length == 0){<p class="ts-meta">No other regions are available.</p>}
+else{<ul class="ts-db-replica-choices">
+@foreach(var region in available){<li><label class="ts-db-replica-choice"><input type="checkbox" name="replicaRegions" value="@region.Id" checked="@(current.Contains(region.Id))" /><span>@DatabasesPage.RegionDisplay(region.Code)</span></label></li>}
+</ul>}
+<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save replica regions</button></div>
+</form>
+}
 }
 </div></section>

@@ -1127,6 +1127,14 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.FromResult(renamed);
         }
 
+        public Task<ManagedDatabase> SetReplicaRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken)
+        {
+            var current = Database(scope, databaseId);
+            var placed = current with { ReplicaRegions = [.. replicaRegions.Order(StringComparer.Ordinal)] };
+            databases[databaseId] = placed;
+            return Task.FromResult(placed);
+        }
+
         public Task<ManagedDatabase> SetTtlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, long? ttlSeconds, CancellationToken cancellationToken)
         {
             var database = Database(scope, databaseId) with { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : (DateTimeOffset?)null };

@@ -278,6 +278,71 @@ namespace TerraScale.Dashboard.Common.Databases
             return database;
         }
 
+        public async Task<DatabaseRecord> SetReplicaRegionsAsync(AccountContext context, string id, IEnumerable<string> choices, CancellationToken cancellationToken)
+        {
+            context = await CurrentAsync(context, cancellationToken);
+            var database = Database(context, id);
+            if (!context.CanManage)
+            {
+                throw new AccountAccessException("Organization management access is required.");
+            }
+
+            if (database.Status != "ready")
+            {
+                throw new AccountAccessException("Only a ready database can change its replica regions.", 409);
+            }
+
+            var home = await HomeAsync(context, database, cancellationToken);
+            var requested = choices.Select(choice => choice.Trim()).Where(choice => choice.Length > 0).ToArray();
+            if (requested.Length != requested.Distinct(StringComparer.Ordinal).Count())
+            {
+                throw new AccountAccessException("Choose each replica region once.", 422);
+            }
+
+            if (requested.Contains(home.Id, StringComparer.Ordinal))
+            {
+                throw new AccountAccessException("The home region serves the database already. Choose replica regions other than " + home.Id + ".", 422);
+            }
+
+            if (requested.Length > 8)
+            {
+                throw new AccountAccessException("Choose at most 8 replica regions.", 422);
+            }
+
+            var catalog = await backend.RegionsAsync(cancellationToken);
+            var replicas = requested.Select(choice => DatabaseRegion.Resolve(catalog, choice) ?? throw new AccountAccessException("Choose regions listed by TerraScale discovery.", 422))
+                .Select(region => region.Id).ToArray();
+            var scope = Scope(context);
+            var remote = await backend.SetReplicaRegionsAsync(scope, home, id, [.. replicas.Order(StringComparer.Ordinal)], cancellationToken);
+            var placement = await RemotePlacementAsync(remote, cancellationToken);
+            if (remote.Id != id || remote.ProjectId != scope.ProjectId || remote.Name != database.Name || remote.HomeRegion != home.Id ||
+                remote.AllRegions != database.AllRegions || placement[0].Id != home.Id ||
+                !placement.Skip(1).Select(region => region.Id).Order(StringComparer.Ordinal).SequenceEqual(replicas.Order(StringComparer.Ordinal)))
+            {
+                throw new HttpRequestException("The placement change could not be confirmed. Reload Replication before retrying.");
+            }
+
+            await accounts.UpdateOrganizationAsync(context, org =>
+            {
+                if (!org.CanManage(context.UserId))
+                {
+                    throw new AccountAccessException("Organization management access is required.");
+                }
+
+                var current = org.Projects.GetValueOrDefault(scope.ProjectId)?.Databases.GetValueOrDefault(id)
+                    ?? throw new AccountAccessException("Database is unavailable.", 404);
+                current.Regions = [.. placement.Select(region => region.Code)];
+                current.AllRegions = remote.AllRegions;
+                current.Endpoint = placement[0].Api.ToString();
+                current.PlacementRevision = checked(current.PlacementRevision + 1);
+                org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.replicas", current.Name, "database", accounts.Now));
+            }, cancellationToken);
+            database.Regions = [.. placement.Select(region => region.Code)];
+            database.AllRegions = remote.AllRegions;
+            database.PlacementRevision = checked(database.PlacementRevision + 1);
+            return database;
+        }
+
         public async Task DeleteAsync(AccountContext context, string id, string confirmation, CancellationToken cancellationToken)
         {
             context = await CurrentAsync(context, cancellationToken);
