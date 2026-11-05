@@ -131,7 +131,9 @@ Reports land in `bench/results/` when a run produces evidence.
 
 [`scripts/free-reads.mjs`](scripts/free-reads.mjs) uses the JavaScript SDK's
 table-shape subscriptions against the production CDN. It measures table and
-filtered shapes at 1, 10, 100 and 1,000 readers, with three repeats per cell.
+filtered shapes at 1, 10, 100 and 1,000 listeners, with three repeats per cell.
+After F12, identical listeners on one SDK client share one upstream stream;
+this workload does not qualify independent-client fan-out.
 Run it through `ts-heavy-any` after installing the locked `sdk/js` dependencies.
 The admitted host needs its existing regional SSH access and a mode-0600 stdin
 file containing a throwaway account's `project` and `apiKey`. The key needs
@@ -151,6 +153,12 @@ recorded reader window. Feed it cleaned JSON-object records, then pass both
 receipt files to [`scripts/free-reads-report.py`](scripts/free-reads-report.py).
 Unavailable analytics remain unavailable. The method, limits and results are
 in [`bench/2026-11-04-f10-free-reads.md`](bench/2026-11-04-f10-free-reads.md).
+The F12 rerun and CPU comparison are in
+[`bench/2026-11-04-f10-post-f12.md`](bench/2026-11-04-f10-post-f12.md); its
+[`report generator`](scripts/free-reads-post-f12-report.py) takes the new
+cohorts, original cohorts, new R2 receipts and live deployment receipts in
+that order. The rerun calls `runFreeReads({ holdMs: 2000 })` from the shipped
+driver, retaining a two-second idle tail before each measured update.
 
 ## Cloud benchmark boundary
 
