@@ -51,7 +51,7 @@ const workers = {
   'json-worker': resolve(monacoDist, 'lsp/json/worker.mjs'),
 };
 
-// The JSON language service would fetch any http(s) $schema a document names,
+// The JSON language service would fetch any http(s) $schema a JSON buffer names,
 // from a worker the page's CSP does not govern; schemas stay local.
 const workerPatches = {
   'lsp/json/worker.mjs': [
@@ -223,7 +223,7 @@ async function build() {
     ...mainResult.outputFiles,
     { path: resolve(outdir, codicon.name), contents: codicon.contents },
     // Keep the pinned Datastar bundle intact so the layout's SRI hash applies.
-    // Serving it here avoids a CDN request on every document navigation.
+    // Serving it here avoids a CDN request on every page navigation.
     datastarFile,
     // The official bundle references this map. Keep it for production DevTools;
     // normal navigation does not request it.

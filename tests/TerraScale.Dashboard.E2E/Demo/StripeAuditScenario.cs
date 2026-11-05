@@ -110,8 +110,8 @@ namespace TerraScale.Dashboard.E2E
             var error = process.StandardError.ReadToEndAsync(deadline.Token);
             try
             {
-                var document = JsonSerializer.Serialize(identity ?? Identity());
-                await process.StandardInput.WriteAsync(document.AsMemory(), deadline.Token);
+                var payload = JsonSerializer.Serialize(identity ?? Identity());
+                await process.StandardInput.WriteAsync(payload.AsMemory(), deadline.Token);
                 process.StandardInput.Close();
                 await process.WaitForExitAsync(deadline.Token);
                 return new(process.ExitCode, await output, await error);

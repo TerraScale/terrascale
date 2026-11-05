@@ -108,7 +108,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         }
 
         [Test]
-        public async Task WrongProducerOrganizationDocumentKeyRejectsNativeContextSpendingAndCommandWrites()
+        public async Task WrongProducerOrganizationRowKeyRejectsNativeContextSpendingAndCommandWrites()
         {
             await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
             using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
