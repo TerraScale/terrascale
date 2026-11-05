@@ -73,11 +73,18 @@ internal sealed class DatabaseBackupPurge(
                 return;
             }
 
-            foreach (var job in page.Items.Where(job => job.BackupVerifiedAt is null))
+            foreach (var job in page.Items)
             {
                 var progress = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, ProgressKind,
                     job.Database.DatabaseId!, BackupPurgeJsonContext.Default.BackupPurgeProgress, token), token).ConfigureAwait(false)
                     ?? new BackupPurgeProgress(job.RequestedAt, null, null, null, null);
+                // A crash between the physical-erasure certificate and progress publication must
+                // not strand a closure forever. Repair missing key certificates even on verified jobs.
+                if (job.BackupVerifiedAt is not null && progress.KeysShreddedAt is not null)
+                {
+                    _pending.Verified(job.Database.DatabaseId!);
+                    continue;
+                }
                 try
                 {
                     progress = await PurgeAsync(job, progress, token).ConfigureAwait(false);
@@ -202,6 +209,22 @@ internal sealed class DatabaseBackupPurge(
         }
         while (after is not null);
 
+        // DELETE/tenant closure should see the certificate immediately, independently of the
+        // one-minute physical-erasure sweep. Keep authority and this local certificate durable.
+        var saved = await catalog.WriteDurableAsync(async transaction =>
+        {
+            var progress = await SystemCatalog.GetAsync(transaction, ProgressKind, database.DatabaseId!,
+                BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false)
+                ?? new BackupPurgeProgress(shredded.Value, null, null, null, null);
+            await SystemCatalog.PutAsync(transaction, ProgressKind, database.DatabaseId!,
+                progress with { KeysShreddedAt = shredded }, BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false);
+            return true;
+        }, static _ => false, token).ConfigureAwait(false);
+        if (!saved)
+        {
+            return null;
+        }
+
         return shredded;
     }
 
@@ -216,6 +239,8 @@ internal sealed class DatabaseBackupPurge(
         {
             return null;
         }
+
+        await services.GetRequiredService<KeyRevocationPeers>().RevokeAsync(database, token).ConfigureAwait(false);
 
         logger.ZLogInformation($"Backup keys of deleted database {database.DatabaseId:@Database} are destroyed");
         return record.ShreddedAt;
@@ -343,7 +368,10 @@ internal sealed class DatabaseBackupPurge(
     {
         _ = await catalog.WriteDurableAsync(async transaction =>
         {
-            await SystemCatalog.PutAsync(transaction, ProgressKind, job.Database.DatabaseId!, progress,
+            var current = await SystemCatalog.GetAsync(transaction, ProgressKind, job.Database.DatabaseId!,
+                BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false);
+            await SystemCatalog.PutAsync(transaction, ProgressKind, job.Database.DatabaseId!,
+                progress with { KeysShreddedAt = progress.KeysShreddedAt ?? current?.KeysShreddedAt },
                 BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false);
             return true;
         }, static _ => false, token).ConfigureAwait(false);
