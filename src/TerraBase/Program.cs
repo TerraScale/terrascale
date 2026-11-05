@@ -133,6 +133,7 @@ try
     }
 
     var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+    SqlRequestTiming.UseSqlRequestTiming(app);
     app.UseTerraBaseRestPipeline();
     app.UseTerraBaseForwardedRequests();
     app.UseTerraScaleRequestIdentity(() => TerraBase.Primitives.EntityIds.New().ToString(),
@@ -160,13 +161,19 @@ try
     });
     app.UseTerraBaseQosMemory();
     app.UseTerraBaseCatalogGate();
+    SqlRequestTiming.Checkpoint(app, "admission");
     app.UseAuthentication();
     app.UseTerraBaseProjectCheck();
     app.UseAuthorization();
+    SqlRequestTiming.Checkpoint(app, "auth");
     app.UseTerraBaseHomeForwarding();
+    SqlRequestTiming.Checkpoint(app, "home_lookup");
     app.UseTerraBaseQos();
+    SqlRequestTiming.Checkpoint(app, "qos");
     app.UseTerraBaseProjectCatalog();
+    SqlRequestTiming.Checkpoint(app, "project");
     app.UseTerraBaseDatabasePlacement();
+    SqlRequestTiming.Checkpoint(app, "placement");
     app.UseTerraBaseManagementRouteValidation();
     app.MapTerraScaleEndpoints();
     app.MapTerraScaleOpenApi().WithMetadata(new ListenerMetadata(TerraBaseListener.Client));

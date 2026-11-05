@@ -71,7 +71,9 @@ public sealed class WriteRouterTests
             using var response = await cluster.ViaSjc.SendAsync(request, token);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(sql[^1] + ": " + await response.Content.ReadAsStringAsync(token));
             await Assert.That(response.Headers.GetValues("TerraScale-Write-Route").Single()).IsEqualTo($"route={route}; reason={reason}; commit=home").Because(sql[^1]);
-            await Assert.That(response.Headers.GetValues("Server-Timing").Single()).Contains("desc=\"gru\"");
+            var timing = string.Join(", ", response.Headers.GetValues("Server-Timing"));
+            await Assert.That(timing).Contains("home;dur=");
+            await Assert.That(timing).Contains("desc=\"gru\"");
         }
 
         await Assert.That((await cluster.HomeAsync("SELECT count(*) FROM events", token))[0].GetInt64()).IsEqualTo(3);
