@@ -5,28 +5,14 @@ case ${1:-} in
   auth)
     mkdir -p "$RUNNER_TEMP/image-payloads/amd64"
     cp -a "$RUNNER_TEMP/auth-publish/." "$RUNNER_TEMP/image-payloads/amd64/"
-    make -o restore auth-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/image-payloads/arm64"
+    make auth-publish RUNTIME=linux-arm64 PUBLISH_DIR="$RUNNER_TEMP/image-payloads/arm64"
     ;;
   terrabase)
     arch=${2:?architecture required}
     case $arch in amd64) rid=linux-x64 ;; arm64) rid=linux-arm64 ;; *) exit 2 ;; esac
     # This required packaging proof produces the exact production payload once.
     # Keep ReadyToRun and all normal compiler/analyzer checks enabled.
-    # Qualification already restored both RIDs in locked mode and verified the
-    # pinned native library. Do not repeat the whole-solution restore per RID.
-    # The checked Release graph already compiled and analyzed every reference.
-    # Reuse its portable outputs so the two RID builds never write shared refs.
-    make -o restore -o turso-native terrabase-publish BuildProjectReferences=false RUNTIME="$rid" PUBLISH_DIR="$RUNNER_TEMP/image-payloads/$arch"
-    ;;
-  terrabase-all)
-    pids=()
-    for arch in amd64 arm64; do
-      bash "$0" terrabase "$arch" &
-      pids+=("$!")
-    done
-    result=0
-    for pid in "${pids[@]}"; do wait "$pid" || result=1; done
-    exit "$result"
+    make terrabase-publish RUNTIME="$rid" PUBLISH_DIR="$RUNNER_TEMP/image-payloads/$arch"
     ;;
   pack)
     area=${2:?area required}
@@ -51,5 +37,5 @@ case ${1:-} in
     sed -n "/ AS $binary\$/,/^FROM /p" Dockerfile | sed '1!{/^FROM /d;}' |
       sed -E "s/^COPY --from=publish-[^ ]+ \/out \/app$/ARG TARGETARCH\nCOPY \$\{TARGETARCH\}\/ \/app/"
     ;;
-  *) echo 'Expected auth | terrabase <arch> | terrabase-all | pack <area> [arch] | runtime-dockerfile <area>' >&2; exit 2 ;;
+  *) echo 'Expected auth | terrabase <arch> | pack <area> [arch] | runtime-dockerfile <area>' >&2; exit 2 ;;
 esac

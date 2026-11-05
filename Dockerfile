@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Dev hosts run the `test-libs`, `test-auth` and `test-terrabase` stages; CI verifies exact-commit dev-host receipts.
+# CI runs the `test-libs`, `test-auth` and `test-terrabase` stages on pull requests and merge groups (.github/workflows/ci.yml);
 # `make docker-test` builds `test`, all three. The `terrabase` and `ts-auth` stages publish to GHCR for ts-orch.
 # ts-auth builds ts-dotnet from source (named context `ts-dotnet`, sdk/dotnet); its tests start the TerraBase built from
 # this same tree (Makefile TERRABASE_BINARY).
@@ -9,7 +9,11 @@
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.3-resolute@sha256:3a9175b6c54b2f076817af1360f691c9994447b192faa48a1a1f112a516844c7 AS sdk
 
 FROM sdk AS base
-# Test processes use automatic CPU and GC discovery, with TUnit default parallelism.
+# Test hosts retain the eight-CPU .NET budget across runner types.
+# Publish/runtime stages have their own base and retain automatic CPU discovery.
+ARG DOTNET_PROCESSOR_COUNT=8
+ARG DOTNET_GCHeapCount=8
+ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT DOTNET_GCHeapCount=$DOTNET_GCHeapCount
 # The SDK image's ASPNETCORE_HTTP_PORTS=8080 makes Kestrel warn "Overriding address(es)", which tests that assert
 # on warnings see; the services choose their own listeners.
 # DOTNET_ROOT lets the framework-dependent `terrabase` apphost that ts-auth's tests start find the runtime.
@@ -57,14 +61,13 @@ RUN scripts/vendor/verify-turso-native.sh src/vendor/Turso.Data.Sqlite/native
 # builds its projects in Release with analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf) and runs its static
 # checks: BuildKit reuses it only for byte-identical inputs. The test stage runs the area's tests on that build (its
 # `dotnet build` calls reuse compiled outputs; `-o restore` retains the assets prepared by the build stage).
-# Test stages must execute uncached when qualifying a new candidate. build-auth also builds the TerraBase that
+# CI passes no-cache-filters for test-<area>, so tests always execute. build-auth also builds the TerraBase that
 # ts-auth's tests start (auth.slnf does not include it); publishing restores the SDK's linux-x64 assets.
 FROM source AS build-libs
 RUN make -o restore fmt-check libs-build SOLUTION=libs.slnf CONFIGURATION=Release
 
 FROM build-libs AS test-libs
-RUN make -o restore -o libs-build libs-check CONFIGURATION=Release \
-    && make -o restore -o libs-build libs-test CONFIGURATION=Release && touch /passed
+RUN make -o restore libs-check libs-test CONFIGURATION=Release && touch /passed
 
 FROM source AS build-auth
 ARG TS_AUTH_REVISION
@@ -75,8 +78,7 @@ RUN make -o restore -o auth-audit fmt-check auth-check auth-build SOLUTION=auth.
 
 FROM build-auth AS test-auth
 ARG TS_AUTH_REVISION
-RUN make -o restore auth-audit CONFIGURATION=Release \
-    && make -o restore auth-test-fast CONFIGURATION=Release && touch /passed
+RUN make -o restore auth-audit auth-test-fast CONFIGURATION=Release && touch /passed
 
 FROM source AS build-terrabase
 # The commit /healthz reports as revision (MSBuild reads it from the environment); the image has no .git.
