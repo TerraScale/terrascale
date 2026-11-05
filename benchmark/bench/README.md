@@ -5,6 +5,7 @@ Every measured run has a Markdown table, raw client JSONL and aggregate JSON in
 
 | Date | Evidence | Status |
 | --- | --- | --- |
+| 2026-11-05 | [Fast suite budgets (#1084)](2026-11-05-fast-suite-budgets-1084.md) | All 12 admitted suites under 30 s; every case under 10 s |
 | 2026-11-05 | [Regional shape tails and bounded CDC](2026-11-05-regional-shape-tails-and-cdc.md) | Regional tails proven; retention follow-up in progress |
 | 2026-10-12 | [Replication baseline, local three regions, old engine](2026-10-12-repl-local-baseline.md) | 1M documents verified in every region; local, before design C |
 | 2026-10-12 | [Cost of releasing abandoned Turso statements (#115), and of the native statement runner](2026-10-12-statement-drain.md) | Local, 2 CPUs (affinity + quota) and 512 MiB enforced on the server process; not a cloud measurement |
