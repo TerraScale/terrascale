@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, useId } from 'vue'
-import { CODE_SAMPLES, LANG_META } from '../../../../../landing-site/src/lib/highlight'
+import { CODE_SAMPLES, LANG_META } from '../../../../landing-site/src/lib/highlight'
 
 const id = useId()
 const languages = LANG_META.filter(language => language.icon)
