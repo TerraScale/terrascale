@@ -170,5 +170,30 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var refreshed = WebUtility.HtmlDecode(await client.GetStringAsync(DatabaseService.Path(databaseId, "replication")));
             await Assert.That(refreshed).Contains("data-home-region=\"FRA\"");
         }
+
+        // A JSON create is not a form submit: it is refused as unsupported media, never a 500, and reaches no data plane.
+        [Test]
+        public async Task JsonCreateIsRefusedAsUnsupportedMediaWithoutReachingTheDataPlane()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            using var client = scenario.CreateClient();
+            using var producer = scenario.CreateProviderClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+            using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru" } }))
+            {
+                await Assert.That(region.IsSuccessStatusCode).IsTrue();
+            }
+
+            using (var refused = await client.PostAsJsonAsync("/api/v1/dashboard/databases", new { name = "orders", homeRegion = "GRU" }))
+            {
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
+                await Assert.That(refused.Content.Headers.ContentType?.MediaType).IsEqualTo("application/problem+json");
+                var body = await refused.Content.ReadAsStringAsync();
+                await Assert.That(body).Contains("HTML form");
+            }
+
+            using var observations = JsonDocument.Parse(await producer.GetStringAsync("/__test/observations"));
+            await Assert.That(observations.RootElement.GetProperty("creates").GetInt32()).IsEqualTo(0);
+        }
     }
 }
