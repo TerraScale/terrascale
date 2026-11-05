@@ -158,6 +158,134 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             }
         }
 
+        [Test]
+        public async Task FailedNetworkEditsKeepDraftsReopenDialogAndLeaveSavedPolicyAlone()
+        {
+            var environment = new DemoEnvironment();
+            await environment.InitializeAsync();
+            await using var app = await StartAsync(environment, fixture.Root);
+            using var client = new HttpClient(new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = TestHttps.Validate,
+                AllowAutoRedirect = false,
+                CookieContainer = new CookieContainer()
+            })
+            { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(30) };
+            using var login = await HttpJourney.LoginAsync(client);
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            var csrf = await HttpJourney.CsrfAsync(client, "/api-keys");
+            string keyId;
+            using (var created = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+            { ["_csrf"] = csrf, ["name"] = "Draft " + Guid.NewGuid().ToString("N")[..8], ["scopes"] = "sql:read" }))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+                keyId = json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
+            }
+
+            using (var seeded = await PostHtmlAsync(client, "/api/v1/dashboard/credentials/allowed-cidrs", new()
+            { ["_csrf"] = csrf, ["keyId"] = keyId, ["allowedCidrs"] = "203.0.113.0/24" }))
+            {
+                await Assert.That(seeded.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            var drafts = new[] { ("key", "not-an-ip"), ("project", "999.999.0.0/24") };
+            foreach (var (target, invalid) in drafts)
+            {
+                var path = target == "project" ? "/api/v1/dashboard/credentials/project-allowed-cidrs" : "/api/v1/dashboard/credentials/allowed-cidrs";
+                var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["allowedCidrs"] = invalid };
+                if (target == "key")
+                {
+                    form["keyId"] = keyId;
+                }
+
+                using var failed = await PostHtmlAsync(client, path + "?q=draft&status=active", form);
+                var html = await failed.Content.ReadAsStringAsync();
+                await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+                await Assert.That(html).Contains("cidrs-" + keyId + "-cidrs\">" + invalid + "</textarea>");
+                await Assert.That(html).Contains("id=\"cidrs-" + keyId + "-error\"");
+                if (target == "key")
+                {
+                    await Assert.That(html).Contains("data-init=\"el.showModal(); document.getElementById(&quot;cidrs-" + keyId + "-cidrs&quot;).focus()\"");
+                    await Assert.That(html).Contains("aria-invalid=\"true\"");
+                    await Assert.That(html).Contains("name=\"q\" value=\"draft\"");
+                }
+                else
+                {
+                    await Assert.That(html).Contains("id=\"project-allowed-cidrs\" name=\"allowedCidrs\" rows=\"4\" spellcheck=\"false\" autocomplete=\"off\" placeholder=\"Any IP, or one CIDR per line: 203.0.113.0/24\" aria-describedby=\"project-allowed-cidrs-error\" aria-invalid=\"true\">" + invalid);
+                    await Assert.That(html).Contains("id=\"project-allowed-cidrs-error\"");
+                }
+
+                await Assert.That(html).Contains(">203.0.113.0/24</code>");
+                if (target == "key")
+                {
+                    await Assert.That(html).Contains("not-an-ip</textarea>");
+                }
+            }
+
+            using (var page = await client.GetAsync("/api-keys"))
+            {
+                var html = await page.Content.ReadAsStringAsync();
+                await Assert.That(html).Contains(">203.0.113.0/24</code>");
+                await Assert.That(html.Contains("not-an-ip")).IsFalse();
+            }
+        }
+
+        [Test]
+        public async Task ValidNetworkEditRetryReplacesDraftAndReadsBackSavedPolicy()
+        {
+            var environment = new DemoEnvironment();
+            await environment.InitializeAsync();
+            await using var app = await StartAsync(environment, fixture.Root);
+            using var client = new HttpClient(new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = TestHttps.Validate,
+                AllowAutoRedirect = false,
+                CookieContainer = new CookieContainer()
+            })
+            { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(30) };
+            using var login = await HttpJourney.LoginAsync(client);
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            var csrf = await HttpJourney.CsrfAsync(client, "/api-keys");
+            string keyId;
+            using (var created = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+            { ["_csrf"] = csrf, ["name"] = "Retry " + Guid.NewGuid().ToString("N")[..8], ["scopes"] = "sql:read" }))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+                keyId = json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
+            }
+
+            using (var failed = await PostHtmlAsync(client, "/api/v1/dashboard/credentials/allowed-cidrs", new()
+            { ["_csrf"] = csrf, ["keyId"] = keyId, ["allowedCidrs"] = "not-an-ip" }))
+            {
+                await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+                await Assert.That(await failed.Content.ReadAsStringAsync()).Contains("cidrs-" + keyId + "-cidrs\">not-an-ip</textarea>");
+            }
+
+            using (var saved = await PostHtmlAsync(client, "/api/v1/dashboard/credentials/allowed-cidrs", new()
+            { ["_csrf"] = csrf, ["keyId"] = keyId, ["allowedCidrs"] = "198.51.100.0/24" }))
+            {
+                await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            using (var page = await client.GetAsync("/api-keys"))
+            {
+                var html = await page.Content.ReadAsStringAsync();
+                await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(html).Contains(">198.51.100.0/24</code>");
+                await Assert.That(html.Contains("not-an-ip")).IsFalse();
+            }
+        }
+
+        private static async Task<HttpResponseMessage> PostHtmlAsync(HttpClient client, string path, Dictionary<string, string> body)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(body) };
+            request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+            request.Headers.Accept.ParseAdd("text/html");
+            return await client.SendAsync(request);
+        }
+
         private static async Task<WebApplication> StartAsync(DemoEnvironment environment, string root)
         {
             var app = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1");

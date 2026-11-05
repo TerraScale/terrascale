@@ -106,6 +106,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     }
 
                     var cidrs = ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString());
+                    var draft = form["allowedCidrs"].ToString();
+                    var draftKey = project ? "project" : form["keyId"].ToString();
                     try
                     {
                         if (project)
@@ -122,7 +124,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                         }
                     }
                     catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException)
-                    { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
+                    { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error), draftCidrs: draft, draftCidrsKey: draftKey) : DatabaseEndpoints.Failure(error); }
                     return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
                 });
             }
@@ -221,7 +223,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
         }
 
-        private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ApiKeyService service, DatabaseService databases, string error = "", string create = "", string name = "", CreatedProjectCredential? revealed = null, int status = 200, string draftScopes = "", string draftDatabaseId = "", string draftExpiresInDays = "", string draftAllowedCidrs = "")
+        private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ApiKeyService service, DatabaseService databases, string error = "", string create = "", string name = "", CreatedProjectCredential? revealed = null, int status = 200, string draftScopes = "", string draftDatabaseId = "", string draftExpiresInDays = "", string draftAllowedCidrs = "", string draftCidrs = "", string draftCidrsKey = "")
         {
             var warning = "";
             IReadOnlyList<ProjectCredential> keys = [];
@@ -255,7 +257,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             try { await ApiKeyExpiryNotifications.AddAsync(http.RequestServices.GetRequiredService<AccountService>(), context, keys, now, http.RequestAborted); }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && revealed is not null && ApiKeyService.FollowUpFailure(failure))
             { warning = (warning + " Expiry reminders could not be updated; the key change succeeded.").Trim(); }
-            var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, ProjectCidrs: projectCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning });
+            var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, DraftCidrs: draftCidrs, DraftCidrsKey: draftCidrsKey, ProjectCidrs: projectCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning });
             result.StatusCode = status;
             return result;
         }

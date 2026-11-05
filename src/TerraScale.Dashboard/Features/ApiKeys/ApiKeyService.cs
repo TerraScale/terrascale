@@ -475,7 +475,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public bool HasMore => NextCursor is not null;
     }
 
-    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
+    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", string DraftCidrs = "", string DraftCidrsKey = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
     {
         private static readonly string[] FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
         public string Warning { get; init; } = "";
