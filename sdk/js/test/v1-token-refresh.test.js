@@ -8,10 +8,10 @@ test("valid key tokens do not wait for a shared background exchange", async () =
   let now = 0;
   const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
   let calls = 0;
-  let release;
-  let entered;
-  const held = new Promise(resolve => { release = resolve; });
-  const started = new Promise(resolve => { entered = resolve; });
+  let release = () => {};
+  let entered = () => {};
+  const held = new Promise(resolve => { release = () => resolve(undefined); });
+  const started = new Promise(resolve => { entered = () => resolve(undefined); });
   const fetch = vi.fn(async input => {
     if (String(input).endsWith("/oauth/token")) {
       calls++;
