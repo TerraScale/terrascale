@@ -72,9 +72,10 @@ Each home region has one durable pull consumer `home-<home>` on every other regi
 
 ## Resuming from an applied position
 
-A home consumer's position is its ack floor: every message at or below it is applied (or answered as already applied)
-and acknowledged. A node that starts consuming, including a new home after a failover (R8), resets the durable
-consumer to the ack floor + 1, so no message is skipped and none overtakes an earlier one.
+A consumer's ack floor records consumption, including messages skipped while its region was not home. It does not
+prove application. A node that starts consuming revisits retained messages from sequence 1, and `_ts_applied`
+deduplicates transactions already held by the home. Promotion separately drains retained origin pushes before
+answering success; see [origin writes across a home move](home-move-origin-replay.md).
 
 To replay from a known applied transaction, `HomePush.ReplayFromAsync(origin, database, transactionId)` finds that
 transaction's stream sequence by its `Nats-Msg-Id` on the database's subject and resets the consumer to the message
