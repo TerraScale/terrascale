@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.Authentication.Contracts;
 
-/// <summary>A user account (collection <c>users</c>). One account owns each normalized email per instance.</summary>
+/// <summary>A user account (table <c>users</c>). One account owns each normalized email per instance.</summary>
 /// <param name="Id">Canonical ULID.</param>
 /// <param name="InstanceId">The owning instance.</param>
 /// <param name="Email">Trimmed, lowercased email.</param>
@@ -11,7 +11,7 @@ namespace TerraScale.Authentication.Contracts;
 /// <param name="PasswordHash">Argon2id PHC string, or <see langword="null"/> when the account has no password.</param>
 /// <param name="PlatformRole">
 /// <c>admin</c> for a TerraScale platform admin of the <c>terrascale</c> instance, who may explore the platform databases
-/// in TerraBase; <see langword="null"/> otherwise. No API sets it: an operator writes it to the user's document through
+/// in TerraBase; <see langword="null"/> otherwise. No API sets it: an operator writes it to the user's record through
 /// TerraBase's internal listener. The platform owner is an admin without it (ts-auth's PlatformBootstrap.OwnerEmail).
 /// </param>
 public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null, string? PlatformRole = null)
@@ -38,10 +38,10 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     public bool MultiFactor { get; init; }
 }
 
-/// <summary>A browser session (collection <c>sessions</c>). Only the SHA-256 of its bearer token is stored.</summary>
+/// <summary>A browser session (table <c>sessions</c>). Only the SHA-256 of its bearer token is stored.</summary>
 /// <param name="InstanceId">The owning instance.</param>
 /// <param name="UserId">The signed-in user.</param>
-/// <param name="TokenHash">Lowercase hex SHA-256 of the bearer token; also the document address.</param>
+/// <param name="TokenHash">Lowercase hex SHA-256 of the bearer token; also the record address.</param>
 /// <param name="AuthEpoch">The user's epoch at authentication; the session dies when it advances.</param>
 /// <param name="CreatedAt">Issue time.</param>
 /// <param name="ExpiresAt">Absolute expiry, set at authentication; rotation keeps it.</param>
@@ -59,7 +59,7 @@ public sealed record SessionRecord(string InstanceId, string UserId, string Toke
 }
 
 /// <summary>
-/// A user's current email passcode (collection <c>passcodes</c>, one per user), or a pending sign-up's code (one per
+/// A user's current email passcode (table <c>passcodes</c>, one per user), or a pending sign-up's code (one per
 /// email, before the account exists).
 /// </summary>
 /// <param name="InstanceId">The owning instance.</param>

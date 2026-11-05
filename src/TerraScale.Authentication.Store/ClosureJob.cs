@@ -68,7 +68,7 @@ public sealed record ClosureJob(
         var now = clock.GetUtcNow();
         var job = new ClosureJob(closureId ?? AuthStore.NewId(), instanceId, scope, subjectId, organizationId, requestedBy, now, now, accountId,
             Generation: AuthStore.NewId(), ProjectClosureVersion: scope == "project" && accountId is not null ? 2 : 1);
-        return (job, AuthStore.Create(AuthStore.ClosureJobCollection, instanceId, Key(scope, subjectId), JsonSerializer.SerializeToElement(job, ClosureJson.Default.ClosureJob)));
+        return (job, AuthStore.Create(AuthStore.ClosureJobTable, instanceId, Key(scope, subjectId), JsonSerializer.SerializeToElement(job, ClosureJson.Default.ClosureJob)));
     }
 }
 

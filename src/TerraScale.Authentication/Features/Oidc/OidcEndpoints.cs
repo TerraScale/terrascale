@@ -138,9 +138,9 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
     /// <summary>The resumed request's parameter: only a session created after these Unix milliseconds satisfies it.</summary>
     public const string LoginAfter = "ts_login_after";
 
-    /// <summary>Documents the OpenID Connect form binding of a POST variant.</summary>
+    /// <summary>Databases the OpenID Connect form binding of a POST variant.</summary>
     protected void AcceptsForm() =>
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
 
     /// <summary>The documentation both bindings share.</summary>
@@ -253,7 +253,7 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
             + " Project refresh tokens initially expire at the original auth_time plus the project's configured session lifetime (5 minutes to 30 days). Rotation never extends an observed expiry, and reducing policy immediately limits code and refresh redemption. Observing policy expiry revokes the whole sign-in, so later policy increases cannot revive its grants. Authorization-code redirect_uri must still satisfy the project's current nonempty allowlist as well as the client registration."
             + " Active MFA users' authorization-code, refresh and exchange grants need the ts_auth_mfa claim of a second-factor sign-in; primary-only ones answer invalid_grant. Pending and disabled factors permit primary authentication; corrupt or unavailable factor state answers 503 temporarily_unavailable. Machine client credentials and API keys are independent of user MFA. User sign-in access and identity tokens carry the server-issued numeric auth_time as Unix seconds; refresh and organization/project exchange preserve its original value. Submitted auth_time parameters are ignored. Exchange requires a nonnegative integer no more than 30 seconds ahead of the exchanging replica; missing, malformed, negative or further-ahead values answer invalid_grant. Machine tokens carry no auth_time. Authentication time alone does not establish MFA completion.");
         Tags("OAuth");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<TokenBody>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
@@ -392,9 +392,9 @@ public abstract class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutReq
     /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/userinfo";
 
-    /// <summary>Documents the OpenID Connect form binding of a POST variant.</summary>
+    /// <summary>Databases the OpenID Connect form binding of a POST variant.</summary>
     protected void AcceptsForm() =>
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
 
     /// <summary>The documentation both bindings share.</summary>
@@ -452,7 +452,7 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
         Summary("Revocation endpoint");
         Description("RFC 7009, application/x-www-form-urlencoded token (and optionally token_type_hint); the client authenticates as at the token endpoint and may revoke only its own tokens. Revoking a refresh or access token ends its whole sign-in: every refresh token of it is refused and ts-auth stops accepting its access tokens, while access tokens validated offline (TerraBase) stay valid until they expire, at most 5 minutes. An unknown, expired or already revoked token also answers 200.");
         Tags("OAuth");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
@@ -506,9 +506,9 @@ public abstract class LogoutEndpoint(Sessions sessions, ProjectAuthSettings sett
     /// <summary>The request parameters the confirmation carries back, so the confirmed request is validated as the first.</summary>
     private static readonly string[] Carried = [Parameters.IdTokenHint, Parameters.ClientId, Parameters.PostLogoutRedirectUri, Parameters.State, Parameters.UiLocales, "logout_hint"];
 
-    /// <summary>Documents the OpenID Connect form binding of a POST variant.</summary>
+    /// <summary>Databases the OpenID Connect form binding of a POST variant.</summary>
     protected void AcceptsForm() =>
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
 
     /// <summary>The documentation both bindings share.</summary>

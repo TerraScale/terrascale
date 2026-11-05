@@ -68,7 +68,7 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         Summary("Email a sign-in code");
         Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: an IP call bucket of 120 refilling 30 per minute, an IP mail bucket of 30 refilling 60 per hour, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After; a spent hourly code budget is told plainly - no new code was sent, when it resets, the resend control disabled for the same wait - identically for every address, whether or not it has an account, so nothing becomes enumerable. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
@@ -128,7 +128,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Description("Same-origin form post. A code works once, for 30 minutes, until a newer code replaces it, and dies after 5 wrong guesses. Hosted sign-in pages share the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
             + " An account with an active authenticator app gets the second-factor step (no session cookie yet); corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
@@ -192,7 +192,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
         Summary("Sign in with a password");
         Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: the IP call bucket of 120 refilling 30 per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
@@ -298,7 +298,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
         Summary("Start a sign-up");
         Description("Same-origin form post with email and password (15 to 256 Unicode characters, not a common, repetitive or own-email password). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded. An address whose account or pending sign-up already spent the hour's code budget is told that plainly (429, Retry-After, resend disabled) - identically for every refused address, whether or not it has an account, so nothing becomes enumerable. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status400BadRequest, "text/html");
@@ -362,7 +362,7 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
         Summary("Resend the sign-up code");
         Description("Same-origin form post with the email and pending token of the pending sign-up. A fresh code is mailed to the same pending sign-up, replacing the previous code; an address that got an account meanwhile is mailed a sign-in code instead. The page is the same either way. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After, and a spent hourly code budget is told plainly with its resend control disabled - identically for every refused address, whether or not it has an account, so nothing becomes enumerable. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
@@ -414,7 +414,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         Summary("Verify a sign-up");
         Description("Same-origin form post with email, code and pending_token. Shares the sign-in code budgets: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes; exhaustion answers 429 with Retry-After. A wrong, expired or used code, or another requester's token, answers 401. Success creates the account (or signs the existing one in), sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
@@ -500,7 +500,7 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
         Summary("Email a password reset code");
         Description("Same-origin form post with email. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account; a spent hourly code budget is told plainly (429, Retry-After, resend disabled), identically for every refused address, so nothing becomes enumerable. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
@@ -542,7 +542,7 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         Summary("Set a new password with a reset code");
         Description("Same-origin form post with email, code and password; the password follows the sign-up policy (400 outside it, the code stays live). Limits: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status400BadRequest, "text/html");

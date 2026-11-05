@@ -15,7 +15,7 @@ public sealed class SocialFormCallbackEndpoint(SocialFlow flow) : EndpointWithou
         Summary("Finish a social sign-in (form post)");
         Description(SocialFlow.CallbackDescription);
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
