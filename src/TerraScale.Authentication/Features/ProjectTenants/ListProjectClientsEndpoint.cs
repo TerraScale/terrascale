@@ -10,7 +10,7 @@ public sealed class ListProjectClientsEndpoint(TenantDirectory tenants, Platform
     public override void Configure()
     {
         Get(Root + "/clients");
-        this.Document("list_project_clients", "List OAuth clients", "Every client of the tenant in one page, without secrets. Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ClientPageBody));
+        this.Describe("list_project_clients", "List OAuth clients", "Every client of the tenant in one page, without secrets. Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ClientPageBody));
     }
 
     /// <inheritdoc />

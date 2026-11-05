@@ -106,8 +106,8 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
     }
 
     private static async Task<JsonElement> CurrentTokenAsync(OidcHarness oidc, string type) =>
-        (await oidc.Database.RowsAsync(AuthStore.OidcTokenCollection)).Single(document =>
-            document.Document.GetProperty("type").GetString() == type && document.Document.GetProperty("status").GetString() == "valid").Document;
+        (await oidc.Database.RowsAsync(AuthStore.OidcTokenTable)).Single(rowData =>
+            rowData.Body.GetProperty("type").GetString() == type && rowData.Body.GetProperty("status").GetString() == "valid").Body;
 
     private static async Task AssertLineageAsync(OidcHarness oidc, JsonElement parent, JsonElement child)
     {
