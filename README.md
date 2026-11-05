@@ -1,6 +1,6 @@
 # TerraScale
 
-TerraScale is one monorepo for the platform's core code: **TerraBase** (the database; it is moving to SQL only on Turso, and each database serves from one region until region replicas ship, see [docs/terrabase/decisions/2026-10-29-single-region-until-sync.md](docs/terrabase/decisions/2026-10-29-single-region-until-sync.md)), **ts-auth** (hosted identity provider), the dashboard, the shared .NET libraries (endpoints, logging), the SDKs in `sdk/` (dotnet, go, js, python, rust), the docs site, the landing site and the benchmarks.
+TerraScale is one monorepo for the platform's core code: **TerraBase** (the multi-region SQL database), **ts-auth** (hosted identity provider), the dashboard, the shared .NET libraries (endpoints, logging), the SDKs in `sdk/` (dotnet, go, js, python, rust), the docs site, the landing site and the benchmarks.
 
 Agent and contributor rules: [`AGENTS.md`](AGENTS.md). Shipping from a dev host: [`ts-ship`](docs/dev/shipping.md).
 

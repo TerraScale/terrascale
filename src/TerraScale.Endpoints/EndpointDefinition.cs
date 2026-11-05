@@ -134,15 +134,15 @@ public sealed class EndpointDefinition
         return this;
     }
 
-    /// <summary>Documents a response in OpenAPI.</summary>
+    /// <summary>Describes a response in OpenAPI.</summary>
     public EndpointDefinition Produces<TResponse>(int statusCode = StatusCodes.Status200OK, string contentType = "application/json") =>
         this.Produces(typeof(TResponse), statusCode, contentType);
 
-    /// <summary>Documents a <c>text/event-stream</c> response in OpenAPI.</summary>
+    /// <summary>Describes a <c>text/event-stream</c> response in OpenAPI.</summary>
     public EndpointDefinition ProducesSse(int statusCode = StatusCodes.Status200OK) =>
         this.Produces<string>(statusCode, "text/event-stream");
 
-    /// <summary>Documents a response type in OpenAPI.</summary>
+    /// <summary>Describes a response type in OpenAPI.</summary>
     public EndpointDefinition Produces(Type responseType, int statusCode = StatusCodes.Status200OK, string contentType = "application/json")
     {
         ArgumentNullException.ThrowIfNull(responseType);
@@ -155,7 +155,7 @@ public sealed class EndpointDefinition
         return this;
     }
 
-    /// <summary>Documents a response without a body, such as 404, in OpenAPI.</summary>
+    /// <summary>Describes a response without a body, such as 404, in OpenAPI.</summary>
     public EndpointDefinition Produces(int statusCode)
     {
         if (statusCode is < 100 or > 599)
@@ -167,11 +167,11 @@ public sealed class EndpointDefinition
         return this;
     }
 
-    /// <summary>Documents accepted request content in OpenAPI.</summary>
+    /// <summary>Describes accepted request content in OpenAPI.</summary>
     public EndpointDefinition Accepts<TRequest>(params string[] contentTypes) =>
         this.Accepts(typeof(TRequest), contentTypes);
 
-    /// <summary>Documents accepted request content in OpenAPI.</summary>
+    /// <summary>Describes accepted request content in OpenAPI.</summary>
     public EndpointDefinition Accepts(Type requestType, params string[] contentTypes)
     {
         ArgumentNullException.ThrowIfNull(requestType);

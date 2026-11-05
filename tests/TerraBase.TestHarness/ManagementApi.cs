@@ -80,19 +80,19 @@ public sealed class ManagementApi : IAsyncDisposable
             {
                 TestIssuer.Configure(settings);
                 configure?.Invoke(settings);
-            }, collection =>
+            }, registrations =>
             {
-                issuer.Route(collection);
+                issuer.Route(registrations);
                 if (time is not null)
                 {
-                    collection.AddSingleton(time);
+                    registrations.AddSingleton(time);
                 }
 
-                services?.Invoke(collection);
+                services?.Invoke(registrations);
                 // A test about query deadlines installs its own clock. Every other test gets one that stands still, so a
                 // runtime pause (another parallel test's GC) can't spend a plan's wall-clock deadline (Hobby: 1 s) on a
                 // query that does almost no work; work, scan and byte budgets still apply.
-                collection.TryAddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
+                registrations.TryAddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             }, cancellationToken: cancellationToken, failedStartCleanup: task => failedCleanup = task, lifetimeCancellationToken: lifetimeCancellationToken);
             // Startup waited for the issuer's keys, so tokens work from the first request.
             return new ManagementApi(server, tls, issuer, userId ?? EntityIds.New().ToString(), sharedIssuer is null);

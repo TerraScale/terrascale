@@ -335,7 +335,7 @@ public sealed class BindingEdgeTests
         var mixed = paths.GetProperty("/tenants/{tenantId}/mixed");
         await Assert.That(Parameters(mixed.GetProperty("get"))).IsEquivalentTo(["path:tenantId", "query:page"]);
         await Assert.That(mixed.GetProperty("get").TryGetProperty("requestBody", out _)).IsFalse();
-        // POST keeps the body and documents query values as optional, since the binder merges them too.
+        // POST keeps the body and describes query values as optional, since the binder merges them too.
         await Assert.That(Parameters(mixed.GetProperty("post"))).IsEquivalentTo(["path:tenantId", "query:page"]);
         await Assert.That(mixed.GetProperty("post").TryGetProperty("requestBody", out _)).IsTrue();
 
@@ -735,7 +735,7 @@ public sealed class CaseEndpoint : Endpoint<CaseQuery, CaseQuery>
 public sealed class FourthPassBindingTests
 {
     [Test]
-    public async Task BodyMethodsDocumentOptionalQueryParameters()
+    public async Task BodyMethodsDescribeOptionalQueryParameters()
     {
         await using var app = await StartAsync(_ => { });
         using var client = Client(app);
@@ -1341,7 +1341,7 @@ public sealed class SetsEndpoint : Endpoint<SetsQuery, string>
 public sealed class FourteenthPassBindingTests
 {
     // Mirrors what System.Text.Json actually populates for a getter-only member under Populate
-    // (probed directly): these collections are inputs, the others are not.
+    // (probed directly): these sequences are inputs, the others are not.
     private static async Task<WebApplication> StartAsync(Action<WebApplicationBuilder> configure, params EndpointRegistration[] endpoints)
     {
         var builder = WebApplication.CreateBuilder();

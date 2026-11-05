@@ -13,18 +13,18 @@ ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / "test-results/slow-failure.json"
 
 
-def failures(document):
+def failures(report):
     # Source method names identify failures; parameterized test names and raw output may hold secrets.
     namespace = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
     methods = {}
-    for test in document.findall(".//t:UnitTest", namespace):
+    for test in report.findall(".//t:UnitTest", namespace):
         method = test.find("t:TestMethod", namespace)
         if method is not None:
             identity = method.get("className", "").split(",")[0] + "." + method.get("name", "")
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.+`]*", identity):
                 methods[test.get("id")] = identity
     return sorted({methods.get(result.get("testId"), "UnidentifiedSlowTest")
-                   for result in document.findall(".//t:UnitTestResult", namespace)
+                   for result in report.findall(".//t:UnitTestResult", namespace)
                    if result.get("outcome") == "Failed"})
 
 
