@@ -12,9 +12,7 @@ pub mod serde_base64;
 pub mod transport;
 pub mod v1;
 
-pub use auth_idp::{
-    verify_auth_idp_webhook, verify_auth_idp_webhook_with_tolerance, AuthIdpClient,
-};
+pub use auth_idp::AuthIdpClient;
 pub use client::TerraScaleClient;
 pub use config::{ClientConfig, ClientConfigBuilder};
 pub use error::{Error, ErrorKind, Result};
