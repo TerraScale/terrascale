@@ -29,6 +29,8 @@ internal sealed partial class TursoShapeReader(
     private const int ShapeCommitBytes = 8 * 1024 * 1024;
     private const string SchemaTable = "sqlite_schema";
     private const string ShapeTablePrefix = "~table:";
+    private const string AppliedTable = "_ts_applied";
+    private const int ProvisionalTransactions = 256;
 
     internal ShapeFilterResult ReadFilter(string table, string generation, ShapeQuery query)
     {
@@ -270,6 +272,7 @@ internal sealed partial class TursoShapeReader(
         admission.Reserve(256 * 1024);
         var changes = new ArrayBufferWriter<byte>();
         var commit = new ArrayBufferWriter<byte>();
+        var settled = new ShapeSettled();
         var covered = offset;
         var rows = 0;
         var commitRows = 0;
@@ -282,7 +285,7 @@ internal sealed partial class TursoShapeReader(
         {
             var batch = Command("""
                 SELECT change_id, change_type, table_name, id, before, after, coalesce(octet_length(before), 0) + coalesce(octet_length(after), 0) FROM turso_cdc
-                WHERE change_id > $after AND change_id <= $end AND (change_type = 2 OR table_name = $table OR table_name = 'sqlite_schema')
+                WHERE change_id > $after AND change_id <= $end AND (change_type = 2 OR table_name = $table OR table_name = 'sqlite_schema' OR table_name = '_ts_applied')
                 ORDER BY change_id LIMIT $limit;
                 """);
             batch.Parameters.AddWithValue("$table", shape.Table);
@@ -317,20 +320,21 @@ internal sealed partial class TursoShapeReader(
                 var type = (long)row[1]!;
                 if (type == 2)
                 {
-                    if (commitRows > 0)
+                    if (commitRows > 0 || settled.Any)
                     {
-                        var size = envelopeBytes + changes.WrittenCount + commit.WrittenCount + 32;
+                        var size = envelopeBytes + changes.WrittenCount + commit.WrittenCount + settled.Bytes + 32;
                         if (rows > 0 && (rows + commitRows > ShapeRows || size > ShapeBodyBytes))
                         {
                             stop = true;
                             break;
                         }
 
-                        AppendShapeCommit(changes, commit, after);
+                        AppendShapeCommit(changes, commit, after, settled);
                         rows += commitRows;
                     }
 
                     commit.ResetWrittenCount();
+                    settled.Clear();
                     commitRows = 0;
                     covered = after;
                     if (rows >= ShapeRows || envelopeBytes + changes.WrittenCount >= ShapeBodyBytes || scanned >= ShapeScanRows)
@@ -348,6 +352,16 @@ internal sealed partial class TursoShapeReader(
                     retired = covered == offset;
                     stop = true;
                     break;
+                }
+
+                if (table == AppliedTable)
+                {
+                    if (type == 1 && row[5] is byte[] applied && SqliteRecord.Decode(applied, columns: 5) is [string id, _, string state, ..])
+                    {
+                        settled.Add(id, state);
+                    }
+
+                    continue;
                 }
 
                 if (table != shape.Table)
@@ -394,7 +408,147 @@ internal sealed partial class TursoShapeReader(
         return new ShapeBody(body, ShapeNumber(covered), fresh && covered == head, retained);
     }
 
-    private static void AppendShapeCommit(ArrayBufferWriter<byte> changes, ArrayBufferWriter<byte> commit, long offset)
+    /// <summary>
+    /// Projects the region's pending local transactions through the shape (PIVOT F7). Transactions the pages already settle
+    /// (a <c>_ts_applied</c> row, or for a forwarded write a head past its commit) are returned as held. A row a pending local transaction inserted is keyed
+    /// <c>~&lt;transaction&gt;.&lt;row id&gt;</c> until the home confirms it, so it never collides with a home row id.
+    /// </summary>
+    internal ShapeProvisional ReadProvisional(ShapeSealDefinition shape, IReadOnlyList<ProvisionalTransaction> pending, IMemoryBudget memory, CancellationToken cancellationToken)
+    {
+        var held = new HashSet<string>(StringComparer.Ordinal);
+        if (pending.Count == 0)
+        {
+            return new ShapeProvisional("[]"u8.ToArray(), ShapeProvisional.Empty, held);
+        }
+
+        var exists = Command("SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = '_ts_applied';");
+        if (exists.ExecuteScalar() is long and > 0)
+        {
+            foreach (var chunk in pending.Chunk(256))
+            {
+                var found = Command($"SELECT id FROM _ts_applied WHERE id IN ({string.Join(", ", chunk.Select((_, index) => "$p" + index.ToString(CultureInfo.InvariantCulture)))});");
+                for (var index = 0; index < chunk.Length; index++)
+                {
+                    found.Parameters.AddWithValue("$p" + index.ToString(CultureInfo.InvariantCulture), chunk[index].Id);
+                }
+
+                using var reader = found.ExecuteReader();
+                while (reader.Read())
+                {
+                    _ = held.Add(reader.GetString(0));
+                }
+            }
+        }
+
+        if (pending.Any(transaction => transaction.HomeAfter > 0))
+        {
+            var head = ShapeHead();
+            foreach (var transaction in pending)
+            {
+                if (transaction.HomeAfter > 0 && head > transaction.HomeAfter)
+                {
+                    _ = held.Add(transaction.Id);
+                }
+            }
+        }
+
+        var (columns, _) = CurrentShapeColumns(shape.Table, shape.Generation) ?? throw new ShapeSealOffsetException();
+        var output = new ShapeOutput(columns, shape.Filter, shape.Filter?.Where is { } where ? ShapeMatcher(columns, where) : null);
+        var keyColumns = new List<int>();
+        using (var info = Command($"PRAGMA table_info({Quote(shape.Table)});").ExecuteReader())
+        {
+            while (info.Read())
+            {
+                if (info.GetInt64(5) > 0 && Array.IndexOf(columns, info.GetString(1)) is >= 0 and var at)
+                {
+                    keyColumns.Add(at);
+                }
+            }
+        }
+
+        using var admission = new ShapeMemory(memory, tenant);
+        admission.Reserve(64 * 1024);
+        var body = new ArrayBufferWriter<byte>();
+        var ops = new ArrayBufferWriter<byte>();
+        var local = new Dictionary<string, string>(StringComparer.Ordinal);
+        var shown = new List<string>();
+        body.Write("["u8);
+        foreach (var transaction in pending)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (held.Contains(transaction.Id) || shown.Count >= ProvisionalTransactions)
+            {
+                continue;
+            }
+
+            ops.ResetWrittenCount();
+            foreach (var change in transaction.Rows)
+            {
+                if (!string.Equals(change.Table, shape.Table, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                admission.Reserve(((change.Before?.Length ?? 0) + (change.After?.Length ?? 0)) * 6L + 256);
+                var image = change.After ?? change.Before;
+                var values = image is null || keyColumns.Count == 0 ? null : ShapeImage(image, columns.Length);
+                var rowKey = values is null ? null : string.Join("\u001f", keyColumns.Select(index => values[index] switch
+                {
+                    null => "n",
+                    byte[] bytes => "b" + Convert.ToHexString(bytes),
+                    string text => "s" + text,
+                    IFormattable number => "v" + number.ToString(null, CultureInfo.InvariantCulture),
+                    var other => "o" + other,
+                }));
+                string key;
+                if (change.Type == 1 && transaction.HomeAfter == 0)
+                {
+                    key = "~" + transaction.Id + "." + ShapeNumber(change.RowId);
+                    if (rowKey is not null)
+                    {
+                        local[rowKey] = key;
+                    }
+                }
+                else
+                {
+                    key = rowKey is not null && local.TryGetValue(rowKey, out var inserted) ? inserted : ShapeNumber(change.RowId);
+                    if (change.Type == -1 && rowKey is not null)
+                    {
+                        _ = local.Remove(rowKey);
+                    }
+                }
+
+                if (change.Type == 1 ? change.After is null : change.Type == 0 && (change.After is null || change.Before is null))
+                {
+                    continue;
+                }
+
+                _ = WriteShapeOperation(ops, [0L, (long)change.Type, change.Table, change.RowId, change.Before, change.After], change.Type, shape.Table, output, admission, key);
+            }
+
+            if (ops.WrittenCount == 0)
+            {
+                continue;
+            }
+
+            if (body.WrittenCount + ops.WrittenCount > ShapeBodyBytes && shown.Count > 0)
+            {
+                break;
+            }
+
+            body.Write(shown.Count == 0 ? "{\"id\":\""u8 : ",{\"id\":\""u8);
+            body.Write(JsonEncodedText.Encode(transaction.Id).EncodedUtf8Bytes);
+            body.Write("\",\"ops\":["u8);
+            body.Write(ops.WrittenSpan);
+            body.Write("]}"u8);
+            shown.Add(transaction.Id);
+        }
+
+        body.Write("]"u8);
+        return new ShapeProvisional(body.WrittenSpan.ToArray(), ShapeProvisional.DigestOf(shown), held);
+    }
+
+    private static void AppendShapeCommit(ArrayBufferWriter<byte> changes, ArrayBufferWriter<byte> commit, long offset, ShapeSettled settled)
     {
         if (changes.WrittenCount > 0)
         {
@@ -405,7 +559,52 @@ internal sealed partial class TursoShapeReader(
         changes.Write(System.Text.Encoding.ASCII.GetBytes(ShapeNumber(offset)));
         changes.Write("\",\"ops\":["u8);
         changes.Write(commit.WrittenSpan);
-        changes.Write("]}"u8);
+        changes.Write("]"u8);
+        settled.WriteTo(changes);
+        changes.Write("}"u8);
+    }
+
+    /// <summary>The region transactions one home commit settles: its <c>_ts_applied</c> inserts (PIVOT F7).</summary>
+    private sealed class ShapeSettled
+    {
+        private readonly List<string> _confirmed = [];
+        private readonly List<string> _reverted = [];
+
+        public bool Any => _confirmed.Count + _reverted.Count > 0;
+
+        public int Bytes => (_confirmed.Count + _reverted.Count) * 32 + 32;
+
+        public void Add(string id, string state) => (state == "reverted" ? _reverted : _confirmed).Add(id);
+
+        public void Clear()
+        {
+            _confirmed.Clear();
+            _reverted.Clear();
+        }
+
+        public void WriteTo(ArrayBufferWriter<byte> changes)
+        {
+            Write(changes, ",\"confirmed\":["u8, _confirmed);
+            Write(changes, ",\"revert\":["u8, _reverted);
+        }
+
+        private static void Write(ArrayBufferWriter<byte> changes, ReadOnlySpan<byte> name, List<string> ids)
+        {
+            if (ids.Count == 0)
+            {
+                return;
+            }
+
+            changes.Write(name);
+            for (var i = 0; i < ids.Count; i++)
+            {
+                changes.Write(i == 0 ? "\""u8 : ",\""u8);
+                changes.Write(JsonEncodedText.Encode(ids[i]).EncodedUtf8Bytes);
+                changes.Write("\""u8);
+            }
+
+            changes.Write("]"u8);
+        }
     }
 
     private static bool SchemaChangeNames(SqliteDataReader reader, int first, string table) =>
@@ -432,7 +631,7 @@ internal sealed partial class TursoShapeReader(
             : [.. Filter.Columns.Select(column => Array.IndexOf(Columns, column))];
     }
 
-    private bool? WriteShapeOperation(ArrayBufferWriter<byte> commit, object?[] row, long type, string table, ShapeOutput output, ShapeMemory admission)
+    private bool? WriteShapeOperation(ArrayBufferWriter<byte> commit, object?[] row, long type, string table, ShapeOutput output, ShapeMemory admission, string? keyText = null)
     {
         if (row[3] is not long key)
         {
@@ -504,7 +703,7 @@ internal sealed partial class TursoShapeReader(
         using var writer = new Utf8JsonWriter(commit);
         writer.WriteStartObject();
         writer.WriteString("op", type switch { 1 => "insert", 0 => "update", _ => "delete" });
-        writer.WriteString("key", ShapeNumber(key));
+        writer.WriteString("key", keyText ?? ShapeNumber(key));
         if (after is not null)
         {
             writer.WriteStartObject("row");

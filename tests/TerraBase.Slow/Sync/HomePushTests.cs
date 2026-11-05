@@ -16,6 +16,7 @@ using TerraBase.Features.HomePush;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Shapes;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -102,7 +103,7 @@ public sealed class HomePushTests
         await Assert.That(world.Region.Overlay.Count).IsEqualTo(0);
     }
 
-    private sealed class World : IAsyncDisposable
+    internal sealed class World : IAsyncDisposable
     {
         private readonly ManagementApi _api;
         private readonly HttpClient _writer;
@@ -127,6 +128,12 @@ public sealed class HomePushTests
             Client = client;
         }
 
+        public ManagementApi Api => _api;
+
+        public HttpClient Writer => _writer;
+
+        public ShapeOverlay Overlay => _services.GetRequiredService<ShapeOverlay>();
+
         public ManagedDatabaseRef Reference { get; }
 
         public TenantContext Database { get; }
@@ -148,7 +155,11 @@ public sealed class HomePushTests
                     services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new NoReplicas()));
                 });
             var directory = Directory.CreateTempSubdirectory("terrabase-home-push-").FullName;
-            var services = new ServiceCollection().AddMetrics().AddSingleton<ILocalWriteClock>(new Admitted()).BuildServiceProvider();
+            var services = new ServiceCollection().AddMetrics().AddSingleton<ILocalWriteClock>(new Admitted())
+                .AddSingleton(provider => new ShapeOverlay(api.Server.Services.GetRequiredService<TerraBaseOptions>() with { NatsUrl = null }, TimeProvider.System,
+                    NullLogger<ShapeOverlay>.Instance))
+                .AddSingleton<ILocalCommitFeed>(provider => provider.GetRequiredService<ShapeOverlay>())
+                .BuildServiceProvider();
             try
             {
                 var organization = await api.CreateOrganizationAsync("Org " + EntityIds.New());
@@ -245,7 +256,7 @@ public sealed class HomePushTests
             };
     }
 
-    private sealed class Node(HomePush push) : IAsyncDisposable
+    internal sealed class Node(HomePush push) : IAsyncDisposable
     {
         public HomePush Push => push;
 

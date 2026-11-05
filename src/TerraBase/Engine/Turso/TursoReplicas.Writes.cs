@@ -194,14 +194,15 @@ internal sealed partial class TursoReplicas
 
             private IReadOnlyList<CapturedRowChange> Capture()
             {
-                var rows = new List<(int Type, string Table, byte[]? Before, byte[]? After, byte[]? Updates)>();
+                var rows = new List<(int Type, string Table, long RowId, byte[]? Before, byte[]? After, byte[]? Updates)>();
                 var read = TursoBindings.PrepareStatement(native,
-                    $"SELECT change_type, table_name, before, after, updates FROM {CaptureTable} WHERE change_type IN (-1, 0, 1) ORDER BY change_id;");
+                    $"SELECT change_type, table_name, before, after, updates, id FROM {CaptureTable} WHERE change_type IN (-1, 0, 1) ORDER BY change_id;");
                 try
                 {
                     while (TursoBindings.Read(read))
                     {
-                        rows.Add(((int)TursoBindings.GetValue(read, 0).IntValue, TursoBindings.GetValue(read, 1).StringValue, Blob(read, 2), Blob(read, 3), Blob(read, 4)));
+                        rows.Add(((int)TursoBindings.GetValue(read, 0).IntValue, TursoBindings.GetValue(read, 1).StringValue, TursoBindings.GetValue(read, 5).IntValue,
+                            Blob(read, 2), Blob(read, 3), Blob(read, 4)));
                     }
                 }
                 finally
@@ -212,7 +213,7 @@ internal sealed partial class TursoReplicas
                 Run(native, $"DELETE FROM {CaptureTable};");
                 var columns = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
                 var changes = new List<CapturedRowChange>(rows.Count);
-                foreach (var (type, table, before, after, updates) in rows)
+                foreach (var (type, table, rowId, before, after, updates) in rows)
                 {
                     if (TerraBaseSqlNames.IsInternalTable(table))
                     {
@@ -226,7 +227,8 @@ internal sealed partial class TursoReplicas
 
                     bool[]? updated = updates is null ? null : [.. SqliteRecord.Decode(updates, names.Length).Select(flag => flag is long set && set != 0)];
                     changes.Add(new CapturedRowChange(table, type, names,
-                        before is null ? null : SqliteRecord.Decode(before, names.Length), after is null ? null : SqliteRecord.Decode(after, names.Length), updated));
+                        before is null ? null : SqliteRecord.Decode(before, names.Length), after is null ? null : SqliteRecord.Decode(after, names.Length), updated,
+                        new CapturedImages(rowId, before, after)));
                 }
 
                 return changes;

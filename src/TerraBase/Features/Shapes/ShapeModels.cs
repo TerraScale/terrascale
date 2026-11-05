@@ -14,7 +14,21 @@ internal sealed record ShapeLineage(string ShapeId, string Handle);
 
 internal sealed record ResolvedShape(ShapeScope Scope, ShapeLineage Lineage);
 
-internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, bool UpToDate, IDisposable? Lease = null, ShapeMirrorManifest? Manifest = null);
+internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, bool UpToDate, IDisposable? Lease = null, ShapeMirrorManifest? Manifest = null,
+    string? Local = null);
+
+/// <summary>A shape's pending local transactions (PIVOT F7): the JSON array, its digest, and the ids the pages already settle.</summary>
+internal sealed record ShapeProvisional(byte[] Json, string Digest, IReadOnlyCollection<string> Held)
+{
+    /// <summary>The digest of no pending transactions.</summary>
+    public const string Empty = "0";
+
+    public static string DigestOf(IReadOnlyList<string> ids) => ids.Count == 0
+        ? Empty
+        : Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join("\n", ids))).AsSpan(0, 8));
+
+    public static bool IsDigest(string text) => text == Empty || (text.Length == 16 && text.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f')));
+}
 
 internal sealed record MustRefetch(string Message, ShapeLineage? Lineage = null);
 
@@ -45,7 +59,9 @@ internal interface IShapeChunks
 
 internal interface IShapeLiveTail
 {
-    ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken);
+    /// <summary>Waits for a change after <paramref name="offset"/>. With <paramref name="local"/> (the digest of the client's
+    /// provisional transactions), a replica tail also answers when the region's pending local transactions change.</summary>
+    ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, string? local, CancellationToken cancellationToken);
 }
 
 /// <summary>A shape response body; served bodies are the sealed bytes, never re-serialized.</summary>

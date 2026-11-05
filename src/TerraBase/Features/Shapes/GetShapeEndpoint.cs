@@ -42,6 +42,7 @@ internal sealed class GetShapeEndpoint(
             Query("handle", "The handle of the previous response; required unless offset is -1."),
             Query("live", "true to long-poll at a decimal offset."),
             Query("cursor", "With live=true: the TB-Shape-Cursor bucket."),
+            Query("local", "With live=true: the local digest of the previous live response, or 0. A replica region then also answers with its pending local writes as provisional transactions."),
             Query("where", "Optional SQL condition on this table's columns: literals, operators, CASE, CAST, COLLATE and deterministic functions; no subqueries or parameters."),
             Query("columns", "Optional comma-separated column names; rows carry only these columns."));
         RequireAuthorization(ApiKeyScopes.SqlRead);
@@ -107,7 +108,7 @@ internal sealed class GetShapeEndpoint(
                 Unavailable error => ErrorResponse.From(error),
             },
             SnapshotOffset page => Answer(scope, request, lineage, await snapshots.PageAsync(scope, lineage, page.Snapshot, page.Page, cancellationToken)),
-            DecimalOffset at when request.Live => Answer(scope, request, lineage, await live.WaitAsync(scope, lineage, at.Value, cancellationToken)),
+            DecimalOffset at when request.Live => Answer(scope, request, lineage, await live.WaitAsync(scope, lineage, at.Value, request.Local, cancellationToken)),
             DecimalOffset at => Answer(scope, request, lineage, await chunks.ReadAsync(scope, lineage, at.Value, cancellationToken)),
             _ => throw new System.Diagnostics.UnreachableException(),
         };
@@ -148,6 +149,11 @@ internal sealed class GetShapeEndpoint(
         if (request.Live)
         {
             headers["TB-Shape-Cursor"] = DatabaseRoute.Decimal(flights.NextCursor(request.Cursor));
+        }
+
+        if (body.Local is { } local)
+        {
+            headers["TB-Shape-Local"] = local;
         }
 
         metrics.RecordRead();
@@ -191,7 +197,7 @@ internal sealed class GetShapeEndpoint(
 
     private object CheckRequest()
     {
-        if (DatabaseRoute.CheckParameters(HttpContext, "handle", "offset", "live", "cursor", "where", "columns") is Validation invalid)
+        if (DatabaseRoute.CheckParameters(HttpContext, "handle", "offset", "live", "cursor", "local", "where", "columns") is Validation invalid)
         {
             return invalid;
         }
@@ -240,10 +246,16 @@ internal sealed class GetShapeEndpoint(
             cursor = bucket;
         }
 
-        return new ShapeRequest(offset, offsetText, handle, isLive, cursor);
+        var local = Parameter("local");
+        if (local is not null && (!isLive || !ShapeProvisional.IsDigest(local)))
+        {
+            return new Validation("local requires live=true and must be 0 or 16 lowercase hex characters");
+        }
+
+        return new ShapeRequest(offset, offsetText, handle, isLive, cursor, local);
     }
 
-    private sealed record ShapeRequest(Offset Offset, string OffsetText, string? Handle, bool Live, long? Cursor);
+    private sealed record ShapeRequest(Offset Offset, string OffsetText, string? Handle, bool Live, long? Cursor, string? Local);
 
     private sealed class ShapeBytes(ReadOnlyMemory<byte> json, IDisposable? lease) : IResult
     {

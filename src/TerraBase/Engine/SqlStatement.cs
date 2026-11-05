@@ -10,7 +10,7 @@ internal sealed record SqlStatementResult(
     bool Truncated, int Consumed);
 
 internal sealed record CapturedRowChange(
-    string Table, int Type, IReadOnlyList<string> Columns, object?[]? Before, object?[]? After, bool[]? Updated)
+    string Table, int Type, IReadOnlyList<string> Columns, object?[]? Before, object?[]? After, bool[]? Updated, CapturedImages? Images = null)
 {
     public const int Insert = 1;
 
@@ -18,6 +18,9 @@ internal sealed record CapturedRowChange(
 
     public const int Delete = -1;
 }
+
+/// <summary>The capture's row id and undecoded before and after records, in the turso_cdc image format.</summary>
+internal sealed record CapturedImages(long RowId, byte[]? Before, byte[]? After, long ChangeId = 0);
 
 internal sealed record SqlStatementShape(IReadOnlyList<string?> Parameters, IReadOnlyList<SqlStatementColumn> Columns);
 

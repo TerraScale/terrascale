@@ -166,6 +166,7 @@ Transaction change-group budget, rollback and the deterministic `503 capacity` r
 End-user shape reads from the browser under table read grants: [shape read grants](shape-read-grants.md).
 
 Live coalescing, per-tenant admission, hint sockets and cache boundaries: [live shape reads](free-reads-live.md).
+Provisional, confirmed and revert on live shape tails for a region's own writes (PIVOT F7): [shape overlay](shape-overlay.md).
 
 JavaScript snapshot, catch-up and tail transport: [JS shape CDN reads](pivot/js-shape-cdn.md).
 

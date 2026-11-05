@@ -17,6 +17,7 @@ import { OpaqueRedirectError } from "./transport.js";
  * @property {ReadonlyMap<string, T>} rows Every row of the table, keyed by row id as a decimal string; a live view that later changes update.
  * @property {boolean} upToDate True once the shape reached the table's head.
  * @property {string} offset The commit boundary the rows are at.
+ * @property {ReadonlySet<string>} provisional Keys whose row shows a write made in this region that the database's home has not confirmed yet; a rejected write disappears.
  */
 /**
  * @typedef {object} V1TableShapeRequest
@@ -95,6 +96,10 @@ export class V1TableShape {
   async #run(listener, signal) {
     /** @type {Map<string, V1TableRow>} */
     let rows = new Map();
+    /** @type {{ id: string; ops: import("./json.js").JsonValue[] }[]} */
+    let pending = [];
+    let local = "0";
+    let skipHint = false;
     let handle = "";
     let offset = "-1";
     let upToDate = false;
@@ -108,21 +113,24 @@ export class V1TableShape {
     let hints;
     try {
     for (let attempt = 0; !signal.aborted;) {
-      if (upToDate && hintProtocol === "terrascale.shape.v1" && Date.now() >= hintRetryAt) {
+      if (upToDate && !skipHint && hintProtocol === "terrascale.shape.v1" && Date.now() >= hintRetryAt) {
         try {
           hints ??= await this.#transport.openShapeHints(this.#params, new URLSearchParams({ ...this.#filter, handle, offset }), signal);
           if (hints !== undefined) {
-            const hint = await hints.wait(handle, offset, signal);
-            cdn.offer(handle, hint.manifest);
-            hintedOffset = hint.next_offset;
-            upToDate = false;
+            const hint = await hints.wait(handle, offset, local, signal);
+            if (hint.local !== undefined) skipHint = true;
+            else {
+              cdn.offer(handle, hint.manifest);
+              hintedOffset = hint.next_offset;
+              upToDate = false;
+            }
           }
         } catch (error) {
           hints?.close();
           hints = undefined;
           if (signal.aborted) return;
           if (isTerraBaseV1Error(error) && error.code === "must_refetch") {
-            rows = new Map(); handle = ""; offset = "-1"; upToDate = false; cursor = undefined;
+            rows = new Map(); pending = []; local = "0"; handle = ""; offset = "-1"; upToDate = false; cursor = undefined;
             cdn = new ShapeCdn(this.#transport, this.#params, this.#filter);
             continue;
           }
@@ -136,7 +144,9 @@ export class V1TableShape {
       if (upToDate && !offset.startsWith("snap.")) {
         query.set("live", "true");
         if (cursor !== undefined) query.set("cursor", cursor);
+        query.set("local", local);
       }
+      skipHint = false;
       /** @type {import("./transport.js").V1CallResult} */
       let response;
       try {
@@ -164,6 +174,8 @@ export class V1TableShape {
         if (signal.aborted) return;
         if (isTerraBaseV1Error(error, "must_refetch")) {
           rows = new Map();
+          pending = [];
+          local = "0";
           handle = "";
           offset = "-1";
           upToDate = false;
@@ -182,24 +194,57 @@ export class V1TableShape {
       if (handle !== "" && pageHandle !== handle) malformed("shape handle");
       handle = pageHandle;
       for (const change of array(page.changes, "shape changes")) {
-        for (const entry of array(object(change, "shape change").ops, "shape ops")) {
-          const op = object(entry, "shape op");
-          const key = string(op.key, "shape key");
-          if (op.move !== undefined && op.move !== "in" && op.move !== "out") malformed("shape move");
-          if (op.move === "out" || (op.move === undefined && op.op === "delete")) rows.delete(key);
-          else if (op.move === "in" || op.op === "insert" || op.op === "update") rows.set(key, decodeRow(object(op.row, "shape row")));
-          else malformed("shape op");
+        const commit = object(change, "shape change");
+        applyOps(rows, array(commit.ops, "shape ops"));
+        for (const name of ["confirmed", "revert"]) {
+          if (commit[name] === undefined) continue;
+          const settled = new Set(array(commit[name], `shape ${name}`).map(id => string(id, `shape ${name} id`)));
+          pending = pending.filter(transaction => !settled.has(transaction.id));
         }
+      }
+      const previousLocal = local;
+      if (page.provisional !== undefined) {
+        pending = array(page.provisional, "shape provisional").map(entry => {
+          const transaction = object(entry, "shape provisional transaction");
+          return { id: string(transaction.id, "shape provisional id"), ops: array(transaction.ops, "shape provisional ops") };
+        });
+        local = string(page.local, "shape local");
+        if (!/^(?:0|[a-f0-9]{16})$/u.test(local)) malformed("shape local");
       }
       const previousOffset = offset;
       offset = string(page.next_offset, "shape next_offset");
       upToDate = boolean(page.up_to_date, "shape up_to_date") || offset === hintedOffset;
       cursor = response.headers.get("tb-shape-cursor") ?? cursor;
-      if (!offset.startsWith("snap.")) listener(Object.freeze({ rows, upToDate, offset }));
-      if (query.has("live") && offset === previousOffset) await sleep(1000 + Math.random() * 250, signal);
+      if (!offset.startsWith("snap.")) listener(Object.freeze({ ...view(rows, pending), upToDate, offset }));
+      if (query.has("live") && offset === previousOffset && local === previousLocal) await sleep(1000 + Math.random() * 250, signal);
     }
     } finally { hints?.close(); }
   }
+}
+
+/** @param {Map<string, V1TableRow>} rows @param {import("./json.js").JsonValue[]} ops @param {Set<string>} [touched] */
+function applyOps(rows, ops, touched) {
+  for (const entry of ops) {
+    const op = object(entry, "shape op");
+    const key = string(op.key, "shape key");
+    if (op.move !== undefined && op.move !== "in" && op.move !== "out") malformed("shape move");
+    if (op.move === "out" || (op.move === undefined && op.op === "delete")) { rows.delete(key); touched?.delete(key); }
+    else if (op.move === "in" || op.op === "insert" || op.op === "update") { rows.set(key, decodeRow(object(op.row, "shape row"))); touched?.add(key); }
+    else malformed("shape op");
+  }
+}
+
+/**
+ * The confirmed rows with the region's pending local writes applied on top, in commit order.
+ * @param {Map<string, V1TableRow>} rows @param {{ id: string; ops: import("./json.js").JsonValue[] }[]} pending
+ */
+function view(rows, pending) {
+  if (pending.length === 0) return { rows, provisional: Object.freeze(new Set()) };
+  const merged = new Map(rows);
+  /** @type {Set<string>} */
+  const touched = new Set();
+  for (const transaction of pending) applyOps(merged, transaction.ops, touched);
+  return { rows: merged, provisional: Object.freeze(touched) };
 }
 
 /** @param {JsonObject} row @returns {V1TableRow} */
