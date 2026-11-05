@@ -16,6 +16,7 @@ namespace TerraBase.Slow.Sync;
 
 public sealed class RegionalHandoffTests
 {
+    private static readonly string[] ReplicaRegions = ["sjc"];
     [Test]
     public async Task A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back()
     {
@@ -46,7 +47,7 @@ public sealed class RegionalHandoffTests
             using var viaFirst = first.WithToken(bearer);
             using var viaSecond = second.WithToken(bearer);
             var basePath = $"/v1/projects/{project}/databases";
-            using var created = await viaFirst.PostAsJsonAsync(ManagementApi.Uri(basePath), new { name = "rollout", replicaRegions = new[] { "sjc" } }, token);
+            using var created = await viaFirst.PostAsJsonAsync(ManagementApi.Uri(basePath), new { name = "rollout", replicaRegions = ReplicaRegions }, token);
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync(token));
             var database = (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
             var sql = ManagementApi.Uri(basePath + "/" + database + "/sql/execute");
