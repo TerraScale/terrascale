@@ -9,6 +9,7 @@ Production runs on OCI gru under ts-orch; see the
 [OCI deployment contract](oci-deployment.md).
 
 [Agent databases](agent-databases.md) describes TTL, forks and the database MCP lifecycle.
+[Database placement](database-placement.md) describes home moves and replica controls.
 
 Connect an assistant with the [MCP guide](https://docs.terrascale.tech/guides/mcp).
 The [dashboard integration API](platform-api.md) describes the serving
