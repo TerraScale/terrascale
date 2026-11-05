@@ -1,5 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -79,7 +80,9 @@ internal sealed partial class EngineManagementService
             var purge = await GetAsync(transaction, DatabasePurge.Kind, stored.Id, TerraBaseJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false);
             var storage = EntityPayload.Read(stored, TerraBaseJsonContext.Default.TenantContext);
             if (purge is null || storage is null || storage.ProjectId != project || !DatabasePurge.SameDatabase(purge.Database, storage)
-                || !await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, purge, token).ConfigureAwait(false))
+                || !await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, purge, token).ConfigureAwait(false)
+                || options.Backup is not null && (await GetAsync(transaction, DatabaseBackupPurge.ProgressKind, stored.Id,
+                    BackupPurgeJsonContext.Default.BackupPurgeProgress, token).ConfigureAwait(false))?.KeysShreddedAt is null)
             {
                 absent = false;
                 continue;
