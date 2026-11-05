@@ -70,6 +70,7 @@ public sealed class HomeFailoverTests
             while (!stop.IsCancellationRequested)
             {
                 var row = EntityIds.New().ToString();
+                var sentAfterCut = Volatile.Read(ref cut) == 1;
                 using var response = await viaGru.PostAsJsonAsync(database.Sql, new
                 {
                     statements = new[] { new { sql = "INSERT INTO acked (id) VALUES (?)", args = new[] { row } } },
@@ -78,7 +79,7 @@ public sealed class HomeFailoverTests
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
                     rows.Enqueue(row);
-                    if (Volatile.Read(ref cut) == 1 && durability == "all")
+                    if (sentAfterCut && durability == "all")
                     {
                         Interlocked.Increment(ref ackedAfterCut);
                     }
