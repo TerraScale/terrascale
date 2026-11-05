@@ -68,6 +68,20 @@ internal sealed partial class EngineManagementService
             return true;
         }, static _ => false, token).ConfigureAwait(false);
 
+    internal async Task<bool> EraseShreddedAsync(TenantContext database, CancellationToken token)
+    {
+        var certified = await ReadAsync<bool>(async transaction =>
+            await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false) is { } purge
+            && await GetAsync(transaction, DatabasePurge.Receipts(database.DatabaseId!), options.MachineId,
+                TerraBaseJsonContext.Default.DatabasePurgeReceipt, token).ConfigureAwait(false) is { } receipt
+            && receipt.Binds(purge, options.MachineId), static _ => false, token).ConfigureAwait(false);
+        if (!certified)
+        {
+            await DropLocalAsync(database, token).ConfigureAwait(false);
+        }
+        return await engine.VerifyDatabaseErasureAsync(database, token).ConfigureAwait(false);
+    }
+
     private async ValueTask ConvergePurgesAsync(CancellationToken cancellationToken)
     {
         var page = await ReadAsync<RecordPage?>(async transaction => await transaction.ListAsync(DatabasePurge.Kind, _purgeAfter,

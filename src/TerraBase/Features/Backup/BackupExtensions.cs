@@ -47,6 +47,7 @@ public static class BackupExtensions
             .AddSingleton<IObjectStore>(provider => provider.GetRequiredService<S3ObjectStore>())
             .AddSingleton<IMasterKey>(master)
             .AddSingleton<KeyCustody>()
+            .AddSingleton<KeyRevocationLocal>()
             .AddSingleton<KeyRevocationPeers>()
             .AddSingleton(provider => new Lazy<Management.EngineManagementService>(provider.GetRequiredService<Management.EngineManagementService>))
             .AddSingleton<ShreddedDatabaseSweep>()

@@ -44,6 +44,7 @@ internal sealed class RegionReplication(
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), bool> _suspended = new();
     private readonly Channel<bool> _publish = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Channel<string> _catalogWakes = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropWrite });
+    private readonly SemaphoreSlim[] _lifecycle = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
     private readonly SemaphoreSlim _pulls = new(MaxConcurrentPulls, MaxConcurrentPulls);
     private readonly SemaphoreSlim _verifying = new(1, 1);
     private readonly HttpClient _http = PeerHttp.Create(credential);
@@ -132,6 +133,10 @@ internal sealed class RegionReplication(
 
     public override void Dispose()
     {
+        foreach (var gate in _lifecycle)
+        {
+            gate.Dispose();
+        }
         _pulls.Dispose();
         _verifying.Dispose();
         _meter.Dispose();
@@ -451,7 +456,43 @@ internal sealed class RegionReplication(
         while (after is not null);
     }
 
+    // Catalog removal must also retire native replicas, which no longer appear in the catalog sweep.
+    // Serialize admission with teardown; stale catalog listings cannot restart a shredded follower.
+    internal async Task DeleteShreddedAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        var key = Key(database);
+        var gate = Lifecycle(key);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private SemaphoreSlim Lifecycle((string, string, string) key) => _lifecycle[(int)((uint)key.GetHashCode() % (uint)_lifecycle.Length)];
+
     private async Task FollowAsync((string, string, string) key, TenantContext database, ReplicaPeer home, CancellationToken cancellationToken)
+    {
+        var gate = Lifecycle(key);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord)
+            {
+                await FollowRegisteredAsync(key, database, home, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task FollowRegisteredAsync((string, string, string) key, TenantContext database, ReplicaPeer home, CancellationToken cancellationToken)
     {
         Follower? stale = null;
         lock (_gate)
