@@ -56,3 +56,9 @@ site input; no protected instruction file or Git history is rewritten.
 The audit is a regression guard plus manual source review, not proof that a
 pattern scanner can detect every possible secret. A found credential must be
 reported by location/type and rotated without reproducing its value.
+
+## SDK language tabs
+
+Use the canonical flat tabs, local language marks and keyboard handler shared
+with dashboard and landing. Implementation and screenshot checks:
+[SDK language tabs](../../../../docs/dashboard/sdk-language-tabs.md).
