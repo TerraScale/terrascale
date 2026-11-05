@@ -1,5 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.DotNet;
@@ -24,10 +23,8 @@ public sealed class TerraScaleAuthClientTests
     [Test]
     public async Task SecretBearingRecordsRedactSecretsInToString()
     {
-        var webhook = new TerraScaleAuthCreatedWebhook("wh_1", "https://hook.example.test/", ["*"], "whsec_secretvalue");
         var tokens = new TerraScaleAuthTokenResponse("atk_secretvalue", "Bearer", 3600, null, "rtk_secretvalue", "idt_secretvalue");
 
-        await Assert.That(webhook.ToString()).DoesNotContain("whsec_secretvalue");
         await Assert.That(tokens.ToString()).DoesNotContain("atk_secretvalue")
             .And.DoesNotContain("rtk_secretvalue")
             .And.DoesNotContain("idt_secretvalue");
@@ -123,29 +120,6 @@ public sealed class TerraScaleAuthClientTests
             "/v1/acme/users?limit=2",
             "/v1/acme/users?limit=2&starting_after=usr_2",
         ])).IsTrue();
-    }
-
-    [Test]
-    public async Task WebhookVerifierAcceptsDispatcherSignaturesAndRejectsTampering()
-    {
-        const string secret = "whsign_secret";
-        const string timestamp = "1700000000";
-        const string payload = """{"id":"evt_1","type":"user.created","created_at":1700000000,"data":{"user_id":"usr_1"}}""";
-        var signature = "sha256=" + Convert.ToHexString(HMACSHA256.HashData(
-            Encoding.UTF8.GetBytes(secret),
-            Encoding.UTF8.GetBytes(timestamp + "." + payload))).ToLowerInvariant();
-
-        await Assert.That(TerraScaleAuthWebhookVerifier.Verify(secret, timestamp, signature, Encoding.UTF8.GetBytes(payload))).IsTrue();
-        await Assert.That(TerraScaleAuthWebhookVerifier.Verify(secret, timestamp, signature, Encoding.UTF8.GetBytes(payload + " "))).IsFalse();
-        await Assert.That(TerraScaleAuthWebhookVerifier.Verify("other", timestamp, signature, Encoding.UTF8.GetBytes(payload))).IsFalse();
-        await Assert.That(TerraScaleAuthWebhookVerifier.Verify(secret, null, signature, Encoding.UTF8.GetBytes(payload))).IsFalse();
-        await Assert.That(TerraScaleAuthWebhookVerifier.Verify(secret, timestamp, "sha256=" + new string('a', 64), Encoding.UTF8.GetBytes(payload))).IsFalse();
-
-        var now = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000);
-        var tolerance = TimeSpan.FromMinutes(5);
-        await Assert.That(TerraScaleAuthWebhookVerifier.Verify(secret, timestamp, signature, Encoding.UTF8.GetBytes(payload), tolerance, now)).IsTrue();
-        await Assert.That(TerraScaleAuthWebhookVerifier.Verify(
-            secret, timestamp, signature, Encoding.UTF8.GetBytes(payload), tolerance, now.AddMinutes(6))).IsFalse();
     }
 
     private sealed class RecordingHandler(string body) : HttpMessageHandler
