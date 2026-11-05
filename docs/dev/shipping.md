@@ -5,6 +5,8 @@ its repository worktree. The command fetches and rebases onto `origin/main`,
 runs only the affected Fast suites on the least-loaded dev host, and pushes
 main. If main advances, it rebases and validates the new candidate again.
 
+During live proofs, the COS can run `ts-ship freeze terrascale 5 "live proof"`; validation continues, but main pushes wait until expiry or `ts-ship unfreeze terrascale`.
+
 Candidates travel through temporary `refs/ts-ship/` refs, which the command
 removes after validation. No temporary branch needs to be published or deleted.
 The monorepo maps library, authentication, TerraBase and benchmark changes to
