@@ -58,7 +58,7 @@ discovered peer, including hold partners, cannot acknowledge the tombstone and s
 node starts cold and refuses the permanent tombstone. Revocation records local catalog deletion authority, stops native followers, deletes their page-key sidecars and files, and verifies local engine erasure before acknowledging. Follower admission is serialized with teardown and rechecks the local catalog, so a stale catalog listing cannot recreate a deleted replica; cached decodes after successful DELETE cannot bypass it. Home consumption and partner takeover decrypt before applying; a shredded payload is discarded.
 No read-pull behavior or quorum/durability policy changes.
 
-Revocation also retires the database's continuous-backup work synchronously. It cancels an active upload,
+After fencing and unlinking the engine copy, revocation retires the database's continuous-backup work synchronously. It cancels an active upload,
 joins it, cancels and joins snapshot side work, then disposes the retained native WAL reader and scratch buffers.
 The engine must still verify that every database handle is closed before acknowledging erasure. Deletion does
 not wait for the ten-second backup discovery interval to release a reader retained between shipping passes.
@@ -89,5 +89,9 @@ Purge is storage reclamation; key destruction is the confidentiality boundary.
 
 The Fast integration coverage retains one happy path (a real partner hold, an independent warm region cache and
 zero-GET warm decode and immediate post-delete decrypt rejection through an authenticated peer eviction) and one critical failure (custody failure returns 503 and durable deletion retries).
-The deployment SHA, live gru/sjc/fra reads, backup probes, CDN requests, synchronous custody 404s and synthetic-account
-cleanup belong in `benchmark/bench/2026-11-05-f11-crypto-shredding.md` once measured.
+The [live evidence](../../benchmark/bench/2026-11-05-f11-crypto-shredding.md) records the green deployment
+`91b84926d`, all six nodes ready, and a gru database with sjc/fra replicas, a managed snapshot and a shape.
+DELETE returned 204 in 6.081s; subsequent regional reads, restore and key-release requests returned 404, both custody
+scopes returned 404 and native files were absent. The previously cached CDN URL returned 404 in all three regions
+by 72.153s after the response. This is an observed sampling upper bound for that inventory, not a fixed provider-outage
+completion guarantee. The proof account closed in 2.654s and its private files were removed.

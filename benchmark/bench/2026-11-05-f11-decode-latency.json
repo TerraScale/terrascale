@@ -1,0 +1,996 @@
+{
+  "before": [
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:12.613662+00:00",
+      "repeat": 1,
+      "sample": 0,
+      "status": 200,
+      "clientMs": 2179.413,
+      "serverTiming": "app;dur=1371.49;desc=\"sjc\"",
+      "stages": {
+        "app": 1371.49
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:13.443918+00:00",
+      "repeat": 1,
+      "sample": 1,
+      "status": 200,
+      "clientMs": 830.134,
+      "serverTiming": "app;dur=423.77;desc=\"sjc\"",
+      "stages": {
+        "app": 423.77
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:14.682201+00:00",
+      "repeat": 1,
+      "sample": 2,
+      "status": 200,
+      "clientMs": 1238.191,
+      "serverTiming": "app;dur=827.13;desc=\"sjc\"",
+      "stages": {
+        "app": 827.13
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:15.705530+00:00",
+      "repeat": 1,
+      "sample": 3,
+      "status": 200,
+      "clientMs": 1023.223,
+      "serverTiming": "app;dur=620.19;desc=\"sjc\"",
+      "stages": {
+        "app": 620.19
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:16.719962+00:00",
+      "repeat": 1,
+      "sample": 4,
+      "status": 200,
+      "clientMs": 1014.305,
+      "serverTiming": "app;dur=605.87;desc=\"sjc\"",
+      "stages": {
+        "app": 605.87
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:17.753974+00:00",
+      "repeat": 1,
+      "sample": 5,
+      "status": 200,
+      "clientMs": 1033.902,
+      "serverTiming": "app;dur=618.54;desc=\"sjc\"",
+      "stages": {
+        "app": 618.54
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:19.812868+00:00",
+      "repeat": 1,
+      "sample": 6,
+      "status": 200,
+      "clientMs": 2058.8,
+      "serverTiming": "app;dur=1654.35;desc=\"sjc\"",
+      "stages": {
+        "app": 1654.35
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:20.636452+00:00",
+      "repeat": 1,
+      "sample": 7,
+      "status": 200,
+      "clientMs": 823.512,
+      "serverTiming": "app;dur=421.36;desc=\"sjc\"",
+      "stages": {
+        "app": 421.36
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:21.465448+00:00",
+      "repeat": 1,
+      "sample": 8,
+      "status": 200,
+      "clientMs": 828.918,
+      "serverTiming": "app;dur=426.83;desc=\"sjc\"",
+      "stages": {
+        "app": 426.83
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:22.276848+00:00",
+      "repeat": 1,
+      "sample": 9,
+      "status": 200,
+      "clientMs": 811.319,
+      "serverTiming": "app;dur=409.23;desc=\"sjc\"",
+      "stages": {
+        "app": 409.23
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:23.089939+00:00",
+      "repeat": 1,
+      "sample": 10,
+      "status": 200,
+      "clientMs": 813.015,
+      "serverTiming": "app;dur=410.58;desc=\"sjc\"",
+      "stages": {
+        "app": 410.58
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:23.923348+00:00",
+      "repeat": 2,
+      "sample": 0,
+      "status": 200,
+      "clientMs": 833.229,
+      "serverTiming": "app;dur=431.90;desc=\"sjc\"",
+      "stages": {
+        "app": 431.9
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:24.751624+00:00",
+      "repeat": 2,
+      "sample": 1,
+      "status": 200,
+      "clientMs": 828.188,
+      "serverTiming": "app;dur=426.21;desc=\"sjc\"",
+      "stages": {
+        "app": 426.21
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:25.651655+00:00",
+      "repeat": 2,
+      "sample": 2,
+      "status": 200,
+      "clientMs": 899.942,
+      "serverTiming": "app;dur=496.44;desc=\"sjc\"",
+      "stages": {
+        "app": 496.44
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:26.502451+00:00",
+      "repeat": 2,
+      "sample": 3,
+      "status": 200,
+      "clientMs": 850.687,
+      "serverTiming": "app;dur=448.72;desc=\"sjc\"",
+      "stages": {
+        "app": 448.72
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:27.325087+00:00",
+      "repeat": 2,
+      "sample": 4,
+      "status": 200,
+      "clientMs": 822.547,
+      "serverTiming": "app;dur=419.74;desc=\"sjc\"",
+      "stages": {
+        "app": 419.74
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:28.142399+00:00",
+      "repeat": 2,
+      "sample": 5,
+      "status": 200,
+      "clientMs": 817.223,
+      "serverTiming": "app;dur=399.32;desc=\"sjc\"",
+      "stages": {
+        "app": 399.32
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:28.996136+00:00",
+      "repeat": 2,
+      "sample": 6,
+      "status": 200,
+      "clientMs": 853.645,
+      "serverTiming": "app;dur=452.03;desc=\"sjc\"",
+      "stages": {
+        "app": 452.03
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:29.799972+00:00",
+      "repeat": 2,
+      "sample": 7,
+      "status": 200,
+      "clientMs": 803.755,
+      "serverTiming": "app;dur=396.27;desc=\"sjc\"",
+      "stages": {
+        "app": 396.27
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:30.793412+00:00",
+      "repeat": 2,
+      "sample": 8,
+      "status": 200,
+      "clientMs": 993.348,
+      "serverTiming": "app;dur=588.57;desc=\"sjc\"",
+      "stages": {
+        "app": 588.57
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:31.638795+00:00",
+      "repeat": 2,
+      "sample": 9,
+      "status": 200,
+      "clientMs": 845.29,
+      "serverTiming": "app;dur=443.67;desc=\"sjc\"",
+      "stages": {
+        "app": 443.67
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:32.489426+00:00",
+      "repeat": 2,
+      "sample": 10,
+      "status": 200,
+      "clientMs": 850.523,
+      "serverTiming": "app;dur=447.79;desc=\"sjc\"",
+      "stages": {
+        "app": 447.79
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:33.300818+00:00",
+      "repeat": 3,
+      "sample": 0,
+      "status": 200,
+      "clientMs": 811.194,
+      "serverTiming": "app;dur=399.54;desc=\"sjc\"",
+      "stages": {
+        "app": 399.54
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:34.123361+00:00",
+      "repeat": 3,
+      "sample": 1,
+      "status": 200,
+      "clientMs": 822.454,
+      "serverTiming": "app;dur=420.68;desc=\"sjc\"",
+      "stages": {
+        "app": 420.68
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:34.996845+00:00",
+      "repeat": 3,
+      "sample": 2,
+      "status": 200,
+      "clientMs": 873.379,
+      "serverTiming": "app;dur=471.65;desc=\"sjc\"",
+      "stages": {
+        "app": 471.65
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:35.830244+00:00",
+      "repeat": 3,
+      "sample": 3,
+      "status": 200,
+      "clientMs": 833.314,
+      "serverTiming": "app;dur=428.26;desc=\"sjc\"",
+      "stages": {
+        "app": 428.26
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:36.661928+00:00",
+      "repeat": 3,
+      "sample": 4,
+      "status": 200,
+      "clientMs": 831.598,
+      "serverTiming": "app;dur=428.62;desc=\"sjc\"",
+      "stages": {
+        "app": 428.62
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:37.510378+00:00",
+      "repeat": 3,
+      "sample": 5,
+      "status": 200,
+      "clientMs": 848.354,
+      "serverTiming": "app;dur=442.89;desc=\"sjc\"",
+      "stages": {
+        "app": 442.89
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:38.558384+00:00",
+      "repeat": 3,
+      "sample": 6,
+      "status": 200,
+      "clientMs": 1047.908,
+      "serverTiming": "app;dur=645.21;desc=\"sjc\"",
+      "stages": {
+        "app": 645.21
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:39.582811+00:00",
+      "repeat": 3,
+      "sample": 7,
+      "status": 200,
+      "clientMs": 1024.333,
+      "serverTiming": "app;dur=621.90;desc=\"sjc\"",
+      "stages": {
+        "app": 621.9
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:40.597388+00:00",
+      "repeat": 3,
+      "sample": 8,
+      "status": 200,
+      "clientMs": 1014.484,
+      "serverTiming": "app;dur=606.32;desc=\"sjc\"",
+      "stages": {
+        "app": 606.32
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:41.615709+00:00",
+      "repeat": 3,
+      "sample": 9,
+      "status": 200,
+      "clientMs": 1018.233,
+      "serverTiming": "app;dur=613.59;desc=\"sjc\"",
+      "stages": {
+        "app": 613.59
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "before",
+      "at": "2026-11-05T15:44:42.625244+00:00",
+      "repeat": 3,
+      "sample": 10,
+      "status": 200,
+      "clientMs": 1009.428,
+      "serverTiming": "app;dur=607.72;desc=\"sjc\"",
+      "stages": {
+        "app": 607.72
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    }
+  ],
+  "after": [
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:18.714281+00:00",
+      "repeat": 1,
+      "sample": 0,
+      "status": 200,
+      "clientMs": 2046.465,
+      "serverTiming": "app;dur=1237.80;desc=\"sjc\"",
+      "stages": {
+        "app": 1237.8
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:19.358104+00:00",
+      "repeat": 1,
+      "sample": 1,
+      "status": 200,
+      "clientMs": 643.683,
+      "serverTiming": "app;dur=240.55;desc=\"sjc\"",
+      "stages": {
+        "app": 240.55
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:20.176661+00:00",
+      "repeat": 1,
+      "sample": 2,
+      "status": 200,
+      "clientMs": 818.459,
+      "serverTiming": "app;dur=415.64;desc=\"sjc\"",
+      "stages": {
+        "app": 415.64
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:20.789464+00:00",
+      "repeat": 1,
+      "sample": 3,
+      "status": 200,
+      "clientMs": 612.689,
+      "serverTiming": "app;dur=210.33;desc=\"sjc\"",
+      "stages": {
+        "app": 210.33
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:21.417217+00:00",
+      "repeat": 1,
+      "sample": 4,
+      "status": 200,
+      "clientMs": 627.663,
+      "serverTiming": "app;dur=224.80;desc=\"sjc\"",
+      "stages": {
+        "app": 224.8
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:22.031626+00:00",
+      "repeat": 1,
+      "sample": 5,
+      "status": 200,
+      "clientMs": 614.326,
+      "serverTiming": "app;dur=211.61;desc=\"sjc\"",
+      "stages": {
+        "app": 211.61
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:22.697650+00:00",
+      "repeat": 1,
+      "sample": 6,
+      "status": 200,
+      "clientMs": 665.937,
+      "serverTiming": "app;dur=212.18;desc=\"sjc\"",
+      "stages": {
+        "app": 212.18
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:23.318287+00:00",
+      "repeat": 1,
+      "sample": 7,
+      "status": 200,
+      "clientMs": 620.545,
+      "serverTiming": "app;dur=219.15;desc=\"sjc\"",
+      "stages": {
+        "app": 219.15
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:23.954447+00:00",
+      "repeat": 1,
+      "sample": 8,
+      "status": 200,
+      "clientMs": 636.078,
+      "serverTiming": "app;dur=234.43;desc=\"sjc\"",
+      "stages": {
+        "app": 234.43
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:24.580153+00:00",
+      "repeat": 1,
+      "sample": 9,
+      "status": 200,
+      "clientMs": 625.613,
+      "serverTiming": "app;dur=223.87;desc=\"sjc\"",
+      "stages": {
+        "app": 223.87
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:25.192555+00:00",
+      "repeat": 1,
+      "sample": 10,
+      "status": 200,
+      "clientMs": 612.306,
+      "serverTiming": "app;dur=210.36;desc=\"sjc\"",
+      "stages": {
+        "app": 210.36
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:25.807875+00:00",
+      "repeat": 2,
+      "sample": 0,
+      "status": 200,
+      "clientMs": 615.142,
+      "serverTiming": "app;dur=213.13;desc=\"sjc\"",
+      "stages": {
+        "app": 213.13
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:26.430443+00:00",
+      "repeat": 2,
+      "sample": 1,
+      "status": 200,
+      "clientMs": 622.483,
+      "serverTiming": "app;dur=219.82;desc=\"sjc\"",
+      "stages": {
+        "app": 219.82
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:27.044311+00:00",
+      "repeat": 2,
+      "sample": 2,
+      "status": 200,
+      "clientMs": 613.78,
+      "serverTiming": "app;dur=211.31;desc=\"sjc\"",
+      "stages": {
+        "app": 211.31
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:27.659929+00:00",
+      "repeat": 2,
+      "sample": 3,
+      "status": 200,
+      "clientMs": 615.512,
+      "serverTiming": "app;dur=211.19;desc=\"sjc\"",
+      "stages": {
+        "app": 211.19
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:28.288418+00:00",
+      "repeat": 2,
+      "sample": 4,
+      "status": 200,
+      "clientMs": 628.388,
+      "serverTiming": "app;dur=223.80;desc=\"sjc\"",
+      "stages": {
+        "app": 223.8
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:28.911706+00:00",
+      "repeat": 2,
+      "sample": 5,
+      "status": 200,
+      "clientMs": 623.192,
+      "serverTiming": "app;dur=219.35;desc=\"sjc\"",
+      "stages": {
+        "app": 219.35
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:29.666321+00:00",
+      "repeat": 2,
+      "sample": 6,
+      "status": 200,
+      "clientMs": 754.5,
+      "serverTiming": "app;dur=232.83;desc=\"sjc\"",
+      "stages": {
+        "app": 232.83
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:30.299581+00:00",
+      "repeat": 2,
+      "sample": 7,
+      "status": 200,
+      "clientMs": 633.164,
+      "serverTiming": "app;dur=213.95;desc=\"sjc\"",
+      "stages": {
+        "app": 213.95
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:30.919798+00:00",
+      "repeat": 2,
+      "sample": 8,
+      "status": 200,
+      "clientMs": 620.122,
+      "serverTiming": "app;dur=217.02;desc=\"sjc\"",
+      "stages": {
+        "app": 217.02
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:31.589921+00:00",
+      "repeat": 2,
+      "sample": 9,
+      "status": 200,
+      "clientMs": 670.031,
+      "serverTiming": "app;dur=212.43;desc=\"sjc\"",
+      "stages": {
+        "app": 212.43
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:32.211006+00:00",
+      "repeat": 2,
+      "sample": 10,
+      "status": 200,
+      "clientMs": 620.992,
+      "serverTiming": "app;dur=209.28;desc=\"sjc\"",
+      "stages": {
+        "app": 209.28
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:32.828798+00:00",
+      "repeat": 3,
+      "sample": 0,
+      "status": 200,
+      "clientMs": 617.619,
+      "serverTiming": "app;dur=215.80;desc=\"sjc\"",
+      "stages": {
+        "app": 215.8
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:33.444857+00:00",
+      "repeat": 3,
+      "sample": 1,
+      "status": 200,
+      "clientMs": 615.961,
+      "serverTiming": "app;dur=213.69;desc=\"sjc\"",
+      "stages": {
+        "app": 213.69
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:34.062110+00:00",
+      "repeat": 3,
+      "sample": 2,
+      "status": 200,
+      "clientMs": 617.156,
+      "serverTiming": "app;dur=215.26;desc=\"sjc\"",
+      "stages": {
+        "app": 215.26
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:34.701882+00:00",
+      "repeat": 3,
+      "sample": 3,
+      "status": 200,
+      "clientMs": 639.684,
+      "serverTiming": "app;dur=230.06;desc=\"sjc\"",
+      "stages": {
+        "app": 230.06
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:35.314323+00:00",
+      "repeat": 3,
+      "sample": 4,
+      "status": 200,
+      "clientMs": 612.357,
+      "serverTiming": "app;dur=210.10;desc=\"sjc\"",
+      "stages": {
+        "app": 210.1
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:35.932182+00:00",
+      "repeat": 3,
+      "sample": 5,
+      "status": 200,
+      "clientMs": 617.774,
+      "serverTiming": "app;dur=211.16;desc=\"sjc\"",
+      "stages": {
+        "app": 211.16
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:36.545554+00:00",
+      "repeat": 3,
+      "sample": 6,
+      "status": 200,
+      "clientMs": 613.28,
+      "serverTiming": "app;dur=209.89;desc=\"sjc\"",
+      "stages": {
+        "app": 209.89
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:37.162678+00:00",
+      "repeat": 3,
+      "sample": 7,
+      "status": 200,
+      "clientMs": 617.034,
+      "serverTiming": "app;dur=213.44;desc=\"sjc\"",
+      "stages": {
+        "app": 213.44
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:37.799696+00:00",
+      "repeat": 3,
+      "sample": 8,
+      "status": 200,
+      "clientMs": 636.942,
+      "serverTiming": "app;dur=214.24;desc=\"sjc\"",
+      "stages": {
+        "app": 214.24
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:38.434751+00:00",
+      "repeat": 3,
+      "sample": 9,
+      "status": 200,
+      "clientMs": 634.94,
+      "serverTiming": "app;dur=228.78;desc=\"sjc\"",
+      "stages": {
+        "app": 228.78
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    },
+    {
+      "phase": "after",
+      "at": "2026-11-05T16:21:39.050430+00:00",
+      "repeat": 3,
+      "sample": 10,
+      "status": 200,
+      "clientMs": 615.591,
+      "serverTiming": "app;dur=211.15;desc=\"sjc\"",
+      "stages": {
+        "app": 211.15
+      },
+      "route": "route=local; reason=override; commit=local",
+      "region": "sjc",
+      "machine": "ts-sjc-1"
+    }
+  ]
+}
