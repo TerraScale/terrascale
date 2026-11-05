@@ -221,7 +221,11 @@ internal sealed partial class TursoDatabaseStore(
 
     private string? LeasedId => !IsSystem && Leases is not null ? Tenant?.DatabaseId : null;
 
-    internal void ThrowIfUnleased(string database) => Leases?.ThrowIfUnleased(database);
+    internal void ThrowIfUnleased(string database)
+    {
+        Fences?.ThrowIfFenced(database);
+        Leases?.ThrowIfUnleased(database);
+    }
 
     private void ThrowIfUnleased(bool maintenance)
     {
