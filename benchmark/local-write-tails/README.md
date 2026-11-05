@@ -25,8 +25,8 @@ A failed write or missing row remains in the evidence; it is not retried by the
 harness. The SDK's existing protocol-level resend behavior remains unchanged.
 
 Use the existing peer snapshot collector before and after to verify source
-stability and collect background key-refresh metrics. Snapshot collection is
-read-only; load runs only on beta. Remove the database/account afterward using
+stability and collect background key-refresh metrics. Take snapshots through
+read-only calls; run load only on beta. Remove the database/account afterward using
 `ts-throwaway-account --delete TAG`, completing a pending deletion if required.
 The harness leaves resources present on failure so their IDs remain reviewable;
 the account owner must always finish cleanup. Credentials remain in private
