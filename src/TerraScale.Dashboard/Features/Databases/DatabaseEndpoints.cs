@@ -150,6 +150,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     });
             }
             endpoints.MapDatabaseSettings();
+            endpoints.MapDatabaseReplicas();
             endpoints.MapDatabaseGrants();
             endpoints.MapDataFeatures();
             endpoints.MapDatabaseLogs();
@@ -161,7 +162,7 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         // Keep the storage revision private; database responses retain their existing fields.
-        private static object DatabaseOutput(DatabaseRecord database, bool restricted = false)
+        internal static object DatabaseOutput(DatabaseRecord database, bool restricted = false)
         {
             return new
             {
@@ -268,6 +269,12 @@ namespace TerraScale.Dashboard.Features.Databases
                 catch (HttpRequestException) { }
             }
 
+            if (tab == "replication")
+            {
+                try { choices = await backend.RegionsAsync(http.RequestAborted); }
+                catch (HttpRequestException) { }
+            }
+
             DatabaseTables? tables = null;
             DatabaseSqlResult? preview = null;
             var shownTable = "";
@@ -302,6 +309,7 @@ namespace TerraScale.Dashboard.Features.Databases
             {
                 Conflicts = conflictsRead is null ? null : await conflictsRead,
                 Replication = replicationRead is null ? null : await replicationRead,
+                ReplicasSaved = http.Request.Query["saved"] == "1",
                 BranchName = branchName,
                 ShowFork = http.Request.Query["fork"] == "1",
                 TtlHours = ttlHours,

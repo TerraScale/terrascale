@@ -213,6 +213,22 @@
 /* Label/value tiles split by vertical hairlines. Like .ts-stats, the grid is
    shifted left and clipped so the first tile of each row hides its divider
    and lines up with the section edge. */
+.ts-db-replica-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: var(--ts-s2) var(--ts-s4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-db-replica-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  cursor: pointer;
+}
+
 .ts-db-facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));

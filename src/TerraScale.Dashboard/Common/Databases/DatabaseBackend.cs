@@ -83,6 +83,7 @@ namespace TerraScale.Dashboard.Common.Databases
         Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, CancellationToken cancellationToken, long? ttlSeconds = null);
         Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null, DateTimeOffset? pointInTime = null);
         Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
+        Task<ManagedDatabase> SetReplicaRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken);
         Task<ManagedDatabase> SetTtlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, long? ttlSeconds, CancellationToken cancellationToken);
         Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<DatabaseSqlCatalog> SqlTablesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
@@ -254,6 +255,13 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             var project = await ClientAsync(scope, home, "databases:write", cancellationToken);
             return Map(await RunAsync(() => project.SetDatabaseAsync(scope.ProjectId, databaseId, new(Name: name)).ResponseAsync));
+        }
+
+        public async Task<ManagedDatabase> SetReplicaRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken)
+        {
+            var name = await NameAsync(scope, home, databaseId, cancellationToken);
+            var project = await ClientAsync(scope, home, "databases:write", cancellationToken);
+            return Map(await RunAsync(() => project.SetDatabaseAsync(scope.ProjectId, name, new(ReplicaRegions: replicaRegions)).ResponseAsync));
         }
 
         // SQL execution and catalog batches share current-user authority, home-region routing and JSON bounds.

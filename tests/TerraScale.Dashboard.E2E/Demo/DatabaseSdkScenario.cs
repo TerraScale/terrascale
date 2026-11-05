@@ -987,6 +987,7 @@ namespace TerraScale.Dashboard.E2E
                     [_, _, _, _] or [_, _, _, _, _] when method == "GET" => "databases:read",
                     [_, _, _, _, _, "sql", "execute"] => "sql:read",
                     [_, _, _, _, _, "backups" or "backup-policy"] when method == "GET" => "databases:read",
+                    [_, _, _, _, _, "regions"] when method == "GET" => "databases:read",
                     _ => "databases:write"
                 };
                 if (Authorize(http, project, scope) is { } denied)
@@ -1118,6 +1119,29 @@ namespace TerraScale.Dashboard.E2E
                             databases[current.Id] = updated;
                             return Results.Json(Wire(updated, answering));
                         }
+                    case (6, "GET", "regions"):
+                        if (!atHome && current.ReplicaRegions?.Contains(answering, StringComparer.Ordinal) != true)
+                        {
+                            return WrongRegion(http, current);
+                        }
+
+                        lock (gate)
+                        {
+                            return Results.Json(new
+                            {
+                                databaseId = current.Id,
+                                homeRegion = current.HomeRegion,
+                                observedAt = DateTimeOffset.UtcNow,
+                                replicas = (current.ReplicaRegions ?? []).Select(region => new
+                                {
+                                    region,
+                                    lagMs = (double?)250.0,
+                                    lastPulledAt = DateTimeOffset.UtcNow.AddSeconds(-5),
+                                    lastVerified = (DateTimeOffset?)DateTimeOffset.UtcNow.AddSeconds(-20),
+                                    revision = (string?)"01REPLICA"
+                                }).ToArray()
+                            });
+                        }
                     case (5, "PATCH", _):
                         if (callerRole is not ("owner" or "admin"))
                         {
@@ -1150,7 +1174,24 @@ namespace TerraScale.Dashboard.E2E
                                 return Results.Json(Wire(renamed, answering));
                             }
                         }
-                        // As production TerraBase until replicas are available: placement updates are refused.
+                        if (body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "replicaRegions" }))
+                        {
+                            var requested = body.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()!).ToArray();
+                            var serving = Catalog ?? [answering];
+                            if (requested.Contains(current.HomeRegion, StringComparer.Ordinal) || requested.Length > 8 ||
+                                requested.Distinct(StringComparer.Ordinal).Count() != requested.Length ||
+                                requested.Any(region => !serving.Contains(region, StringComparer.Ordinal)))
+                            {
+                                return Error(400, "validation");
+                            }
+
+                            lock (gate)
+                            {
+                                var placed = current with { ReplicaRegions = [.. requested.Order(StringComparer.Ordinal)] };
+                                databases[current.Id] = placed;
+                                return Results.Json(Wire(placed, answering));
+                            }
+                        }
                         return Error(400, "replicas_unavailable");
                     case (5, "DELETE", _):
                         if (!atHome)
