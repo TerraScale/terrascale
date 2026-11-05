@@ -21,7 +21,7 @@ with the same code. This placement rule does not change deletion authorization o
   organization is recorded with no home, so a branch of a platform database is also in every region. The lock applies
   to the branch as well.
 - Whole-backup, point-in-time and selective restores of platform sources answer `409 recovery_erasure_fenced`
-  ([platform-restore-erasure-fence.md](platform-restore-erasure-fence.md)). No restore can produce a platform copy
+  ([copy placement](recovery-copy-placement.md)). No restore can produce a platform copy
   with another placement.
 
 This changes no storage format or replication protocol. It adds the 409 response.

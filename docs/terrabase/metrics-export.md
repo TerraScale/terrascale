@@ -16,7 +16,7 @@ labelled `database` (name), `database_id` (catalog ULID) and `region` (observing
 |---|---|
 | `terrascale_database_requests_per_second` | Client requests of every method in the last 5 complete minutes, divided by 300 |
 | `terrascale_database_errors_per_second` | Error responses in the same 5 minutes, divided by 300 |
-| `terrascale_database_operations_per_second{kind}` | Committed document operations per kind in the same 5 minutes, divided by 300 |
+| `terrascale_database_operations_per_second{kind}` | Committed record operations per kind in the same 5 minutes, divided by 300 |
 | `terrascale_database_latency_milliseconds{quantile="0.5"\|"0.95"\|"0.99"}` | Percentiles of the newest complete minute with requests; omitted without one |
 | `terrascale_database_storage_bytes` | Newest sampled on-disk bytes of the last hour; omitted before sampling |
 

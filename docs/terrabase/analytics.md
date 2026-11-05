@@ -16,7 +16,7 @@ project binding. Database path selectors are names, as on the existing project
 API. The project route's optional `database` filter is a catalog entity ID.
 Signed database narrowing applies to both forms; another project or database
 returns 404. API keys cannot read these routes. Responses use
-`Cache-Control: no-store`. OpenAPI documents the endpoints through Scalar.
+`Cache-Control: no-store`. OpenAPI describes the endpoints through Scalar.
 
 ## Ranges and regional reads
 
@@ -73,7 +73,7 @@ Each point contains:
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
   Endpoints that resolve their database themselves, such as SQL EXPLAIN, attribute
-  the request to it without counting a document operation.
+  the request to it without counting a record operation.
   Requests naming an unknown database record nothing.
   A PostgreSQL wire exchange (a simple query, or extended-protocol messages up to
   their Sync) counts as one `other` request once a statement in it resolved the
@@ -168,7 +168,7 @@ keys per node. `lagMs` is the observed backlog's age,
 not network round-trip latency. `divergence` denotes detected journal conflict
 (a verified prefix conflict, an origin's explicit ahead answer, or a group that
 conflicts with the applied journal prefix; malformed or oversized messages are
-failed pulls, not divergence), not a full comparison of document contents. WAN
+failed pulls, not divergence), not a full comparison of record contents. WAN
 health is kept per peer region, database and origin: the highest sequence an
 origin advertised stays its target until the verified applied prefix reaches
 it, so neither a round that does not reach it nor a stale lower advertisement

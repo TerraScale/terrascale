@@ -74,4 +74,4 @@ This is an explicit breaking authorization change. Clients that omit proof
 must obtain it through hosted verification. Existing account-deletion status
 receipts and completion evidence retain their status-reading semantics. No
 storage-format bump or application-data migration is required; the new proof
-and grant collections are auth-owned TerraBase entities.
+and grant tables are auth-owned TerraBase entities.

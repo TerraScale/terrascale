@@ -75,6 +75,6 @@ effort after the change.
 
 ## Storage
 
-No new collection and no format change: sessions gain an optional `mfa`
+No new table and no format change: sessions gain an optional `mfa`
 boolean and organizations an optional `requireMfa` boolean; missing values
 read as false.

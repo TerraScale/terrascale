@@ -1,11 +1,6 @@
 # Database regions
 
-Each database is served by one region, its **home region**. TerraBase does not copy a database to another region and
-does not replicate writes between regions. A write is acknowledged after the home region's local commit
-([single-region decision](decisions/2026-10-29-single-region-until-sync.md)).
-
-The heads/pull WAN protocol, its metrics, the partition suites and `scripts/terrabase/cross-region-check.py` were
-removed with the replication engine. The former design is in the [archive](archive/README.md).
+Each database has a home region and can have encrypted regional replicas. Ready replicas serve supported reads; writes follow the SQL router and either commit through the regional path or forward to home. Routing decisions, commit location and home confirmation are separate facts. See [write routing](sql/write-routing.md), [home apply](home-apply.md) and [region replicas](region-replicas.md).
 
 ## Placement
 

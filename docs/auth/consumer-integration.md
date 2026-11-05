@@ -1,8 +1,6 @@
 # Guest accounts, browser APIs and device sign-in
 
-> This document describes the integration contract that the C# port restores
-> (TS-432, TS-433, TS-437). Routes become available as each stream lands; see
-> `docs/auth/parity.md`.
+The served OpenAPI specification is the source for current routes and schemas.
 
 All endpoints below are included in `/openapi/v1.json` and `/scalar`.
 Authentication and account storage remain on the existing GRU authority.
@@ -139,7 +137,7 @@ decision and their own resource ownership rules; a storage error is not a grant.
 
 ## Storage retention
 
-New collections are `organization_roles`, `oauth_device_grants`,
+New tables are `organization_roles`, `oauth_device_grants`,
 `anonymous_upgrades` and `oauth_flow_limits`. Grant/challenge expiry is enforced
 at read time; this service does not yet automatically purge their rows or delete
 inactive guests. Establish retention/cleanup against the admitted TerraBase

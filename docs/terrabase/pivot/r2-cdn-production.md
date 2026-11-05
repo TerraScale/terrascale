@@ -1,7 +1,7 @@
 # Production R2 and CDN for free shape reads
 
 W0-7 design, 2026-10-29. F6 executes this design; **nothing is provisioned by
-this document**. G-R2 is approved for F6, including usage above the free tier.
+this guide**. G-R2 is approved for F6, including usage above the free tier.
 The authoritative pivot decisions are D8, D10, D19 and D24 in `PIVOT.md`
 on delta (`/home/mariogk/Projects/TerraScale/PIVOT.md`).
 
@@ -315,7 +315,7 @@ Q6 alerts on actual storage, Class A/B, cache hit ratio and purge backlog.
 
 1. Re-read live configuration with an identity allowed to inspect cache
    actions; record rule IDs, precedence and actual placement. Discover exact
-   mutation syntax with `cf cli search` and `cf schema`; this document is
+   mutation syntax with `cf cli search` and `cf schema`; this guide is
    not a copy/paste provisioning script.
 2. Separate shape storage from backup storage; create the dedicated bucket,
    lifecycle, CORS, scoped identities and Vault references. Attach domain;

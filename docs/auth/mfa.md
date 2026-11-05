@@ -10,10 +10,10 @@ the ts CLI happens on ts-auth's hosted pages (HA1).
 
 ## Credential state
 
-`mfa_credentials` holds one document per instance and user, addressed through
+`mfa_credentials` holds one record per instance and user, addressed through
 `AuthStore` and the pinned `ts-dotnet` SDK. Every operation checks the record's
 owner and the user's current authentication epoch. There is no cache or
-process-local coordination. Missing collections and storage failures fail
+process-local coordination. Missing tables and storage failures fail
 closed; they never select an in-memory store.
 
 TOTP uses Otp.NET with a random 160-bit secret, SHA-1, six digits, a 30-second
@@ -56,7 +56,7 @@ The storage authority's durability and failover limitations
 documented in the port guide also apply to these security-critical writes.
 
 Internal overloads let a trusted caller include a version-conditional change
-to a separate authorization document in the same transaction as enrollment,
+to a separate authorization record in the same transaction as enrollment,
 confirmation, verification, or disabling. A failed authorization precondition
 leaves the credential, factor proof, and user epoch untouched. The caller must
 validate its proof's tenant, user, client, purpose, secret, and expiry before
@@ -115,12 +115,12 @@ No authentication time is synthesized. Fast tests cover independent clocks
 at and beyond the allowance, as well as original-time continuity after refresh.
 
 Before deploying a release that requires `mfa_credentials`, explicitly
-provision that collection in the existing auth database through the pinned
+provision that table in the existing auth database through the pinned
 SDK. `AuthStore.ProvisionAsync` includes it, and `/readyz` requires it. Never
 re-found a serving cell. No existing MFA data or legacy formats are carried
 forward. TS-754 and TS-755 own the shared ID and uniqueness cutover; include
-this collection in their clean dataset bootstrap. MFA reuses the account ID
-and adds no uniqueness-claim documents.
+this table in their clean dataset bootstrap. MFA reuses the account ID
+and adds no uniqueness-claim records.
 
 The internal service assumes its caller has authenticated and performed the
 reauthentication required for enrollment and disabling. It is not a public
@@ -131,4 +131,4 @@ in `fast`. Organization
 policies and WebAuthn must enforce their decisions on the server.
 Persistent authentication challenges use the shared plain-ULID storage
 boundary after the TS-754 cutover; this composition slice adds no challenge
-entity, collection, or alternate addressing scheme.
+entity, table, or alternate addressing scheme.

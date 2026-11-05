@@ -20,9 +20,9 @@ listener on port 18080. The runner must be on the NetBird mesh (delta, mariogk-d
 The nodes trust the platform ts-auth issuer (`https://auth.terrascale.tech/terrascale`). The harness exchanges
 `TERRABASE_E2E_ORCH_KEY` at `POST /terrascale/oauth/token` (client credentials, docs/auth/platform-contract.md 6.1) for a
 15-minute project token and mints a new one two minutes before expiry, so a long outage run never sends an expired
-token. One token covers documents, `/sql` and backups. The project and organization come from the token's `project_id`
+token. One token covers records, `/sql` and backups. The project and organization come from the token's `project_id`
 and `org_id` claims. The harness creates the database `ci-e2e` (home gru, replicas sjc and fra) on first use, and each
-test owns one collection in it.
+test owns one table in it.
 
 A human creates the key once in the e2e project, as a project API key with the four scopes above. It is kept in the
 runner's secret store and exported only into the run's environment. The key never goes on a command line, into a file

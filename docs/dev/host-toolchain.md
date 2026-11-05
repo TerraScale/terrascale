@@ -100,7 +100,7 @@ b4c5fc17fd9bbb9ea5b81283bc22bcfcd0b67e3dbb855f9fac42c1596dec9750  /home/mariogk/
 1dd1c9555e5a7f49f02383003d9bdf6be3cb2428ad7d1216ff981e8b756d52c4  /home/mariogk/.local/bin/docker
 ```
 
-The urgent throwaway-account follow-up replaced the old document scopes with
+The urgent throwaway-account follow-up uses the SQL scopes
 `sql:read,sql:write`, preserving database scopes. All three hosts match SHA-256
 `d74d7489ebbd923fd52f281152b1e9eb364eccd515e0081fa93e4d9a7cf399c2`;
 `ts-throwaway-account.before-sql-scopes` preserves the old helper.

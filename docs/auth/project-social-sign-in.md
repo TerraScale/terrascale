@@ -29,7 +29,7 @@ invalid field 400 `invalid_request`.
 
 The client secret (or Apple's private key) is sealed with `SecretBox` (AES-256-GCM under the OCI Vault master key)
 with the project and provider as associated data, so a sealed secret copied to another project or provider does not
-open. It lives in the project's `project_auth_settings` document and is never answered, logged or rendered. Audit logs
+open. It lives in the project's `project_auth_settings` record and is never answered, logged or rendered. Audit logs
 name the user, project and provider only.
 
 ## Hosted sign-in
@@ -43,9 +43,9 @@ A project's sign-in and sign-up pages show "Continue with …" for each configur
 2. The provider returns to `/ui/{project}/social/{provider}/callback` (GET; Apple POSTs with `form_post`). The cookie
    must open, be unexpired and carry the returned `state`; it is deleted either way. ts-auth redeems the code with the
    project's secret:
-   - Google, Apple and OIDC: the ID token is validated against the issuer's discovery document and JWKS (issuer,
+   - Google, Apple and OIDC: the ID token is validated against the issuer's discovery metadata and JWKS (issuer,
      audience = client id, RS256/ES256 signature, expiry, nonce) and must carry `email_verified`. The discovery
-     document must name the expected issuer.
+     record must name the expected issuer.
    - GitHub: the account's primary email must be verified (`GET /user/emails`, scope `user:email`).
    - Apple: the client secret is a 5-minute ES256 JWT signed with the project's key (`iss` team id, `sub` client id,
      `kid` key id).

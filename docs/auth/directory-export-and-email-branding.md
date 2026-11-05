@@ -14,7 +14,7 @@ Persist the cursor only after saving its page; retrying a page is safe but may
 return updated profile fields. Store each page once and deduplicate by `id`.
 
 This is a creation-cutoff scan, **not a transaction snapshot**. Accounts created
-at or after the first page's cutoff are excluded. Immutable storage document IDs
+at or after the first page's cutoff are excluded. Immutable storage record IDs
 determine order, not user ULIDs. Deletions disappear and fields reflect each
 page's read. Replication lag and creator clock skew can omit accounts. For a
 reconciled directory, pause identity changes and allow replication to catch up

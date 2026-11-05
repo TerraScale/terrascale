@@ -16,6 +16,6 @@ The identity needs object read/write/delete access only to
 Signing uses region `auto`; bucket names come from the serving region. Tigris
 is accepted only in the Development environment for tests.
 
-Absent, partial, unreadable or malformed file credentials leave document and
+Absent, partial, unreadable or malformed file credentials leave record and
 backup service available. File transfers return 503 and release their storage
 reservation. Supplying Tigris backup credentials alone never enables transfers.

@@ -97,7 +97,7 @@ components:
     projectApiKey:
       type: http
       scheme: bearer
-      description: Whole project API key with both document scopes, no database restriction, for the exact route project. Backend only; cookies are not accepted.
+      description: Whole project API key with both SQL scopes, no database restriction, for the exact route project. Backend only; cookies are not accepted.
   schemas:
     Ulid:
       type: string

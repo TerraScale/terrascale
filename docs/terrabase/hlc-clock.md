@@ -6,7 +6,7 @@ capture and R6 home apply. `NextAsync(CancellationToken)` issues a timestamp;
 stamp. Both return `ValueTask<HlcTimestamp>`.
 
 `HlcTimestamp(long PhysicalMilliseconds, uint Logical, string NodeId)` orders by
-Unix milliseconds, logical counter, then ordinal node ID. R6 column LWW compares
+Unix milliseconds, logical counter, then ordinal node ID. R6 column conflict resolution compares
 this entire tuple, including the node ID when two clocks issue the same physical
 and logical values. Persist the entire tuple with each changed column. A replay
 retains the original timestamp; receipt order never replaces it.
@@ -33,7 +33,7 @@ contracts land separately so R6 and R4 can compile against the same source.
 
 `NodeHlcClock` is registered as the singleton `IHlcClock`. Each call reads and
 advances its versioned high-water mark in the system database's `node_clocks`
-collection, committing durably before returning. Durable write transactions
+table, committing durably before returning. Durable write transactions
 serialize concurrent issuers. Restarting with an earlier wall clock advances the
 logical counter beyond the persisted stamp. Observing a remote stamp also
 persists advancement before returning. Invalid persisted state fails closed.
@@ -81,8 +81,8 @@ replicas and a 15-second TTL. Admission continues to depend on local measurement
 if JetStream or the report bridge is unavailable.
 
 The Fast proof contains two integration tests over the real gRPC listener and
-real Turso storage. The happy path admits a healthy clock despite an unreachable
+real engine storage. The happy path admits a healthy clock despite an unreachable
 WAN peer and preserves stamp order across a backward-clock restart. The critical
 path refuses a local-write stamp at an injected 100 ms offset.
-R4 owns forwarding the entire refused transaction to home; R6 owns column LWW
+R4 owns forwarding the entire refused transaction to home; R6 owns column conflict resolution
 and must compare the original stamp rather than mint a new one on receipt.

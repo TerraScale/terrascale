@@ -1,13 +1,10 @@
 # Copy faults
 
-Each database has one copy, on its home region's node. There is no peer to rebuild or refill it from: certified
-rebuilds, source-pinned refill, bucket coverage and the operator rebuild-retry endpoint were removed with the
-replication engine ([archive](archive/README.md)). Replica regions on Turso sync (R3) are being built in another
-thread; until they ship, a faulted copy is recovered only from backup.
+A faulted database copy must stop serving until its integrity and recovery authority are established. Regional placement does not certify a replacement automatically. Backup recovery and replica publication preserve source identity and catalog fences; see [copy placement](recovery-copy-placement.md).
 
 ## The fault ledger
 
-`Engine/Turso/StorageFaultLedger.cs` keeps two tables:
+The storage fault ledger keeps two tables:
 
 - `_tb_write_intent`, in the intent store: a FULL row naming the database, file incarnation and process replica before
   a write or copy of that file starts, removed once it ends.
@@ -26,7 +23,7 @@ file incarnation. Failing to record a fault, or any fault of SYSTEM itself, fail
 A faulted copy refuses writes and refuses to be the source of a database copy. A writer checks the ledger
 before it starts and again after it takes the writer, and a commit batch that meets a fault fails every write in it.
 
-- Document writes answer `503 write_outcome_unknown`; a durability-timeout response can follow a committed write, so
+- SQL writes answer `503 write_outcome_unknown`; a durability-timeout response can follow a committed write, so
   clients treat it as uncertain and never replay it automatically.
 - Other endpoints answer `503 copy_faulted` ("Storage requires recovery.") without exposing the fault reason.
 
