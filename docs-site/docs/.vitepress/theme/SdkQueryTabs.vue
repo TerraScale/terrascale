@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, useId } from 'vue'
-import { CODE_SAMPLES, LANG_META } from '../../../../landing-site/src/lib/highlight'
+import { SDK_SAMPLES, SDK_LANGUAGES } from '../../../../src/TerraScale.Dashboard/web/assets/js/sdk-examples.js'
 
 const id = useId()
-const languages = LANG_META.filter(language => language.icon)
+const languages = SDK_LANGUAGES
 const selected = ref(languages[0].id)
 </script>
 
@@ -20,7 +20,7 @@ const selected = ref(languages[0].id)
     </div>
     <pre v-for="language in languages" :key="language.id" role="tabpanel" tabindex="0"
       :id="`${id}-panel-${language.id}`" :aria-labelledby="`${id}-tab-${language.id}`"
-      :hidden="selected !== language.id"><code>{{ CODE_SAMPLES[language.id] }}</code></pre>
+      :hidden="selected !== language.id"><code>{{ SDK_SAMPLES[language.id] }}</code></pre>
   </div>
 </template>
 
