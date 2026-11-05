@@ -1,10 +1,10 @@
 # Continuous backup
 
-TerraBase streams every Turso database file of a node (each database and `_system.db`) to Tigris,
+TerraBase streams every the engine database file of a node (each database and `_system.db`) to Tigris,
 about once a second, and restores a database as of a chosen second (TS-633).
 Tigris remains managed through the Fly organization; compute runs on OCI.
 The [Litestream](https://litestream.io/how-it-works/) design uses generations, snapshots and log segments.
-Shipping captures Turso changes on each file's writer connection (`turso_cdc`, mode `after`).
+Shipping captures the engine changes on each file's writer connection (the native capture table, mode `after`).
 See [Tigris access](../tigris.md) for the retained storage integration.
 
 The older scheduled backups (`…/backups`, local snapshot files next to the database) are unchanged. They are not off-node.
@@ -153,10 +153,10 @@ member ring, NATS membership or lease takeover. Every node taps every file and t
 
 ## How shipping works
 
-Each file has one writer connection (Turso aborts the process when two connections write one file), and it captures
-every change it commits in the table `turso_cdc`, mode `after`: one row per inserted, updated or deleted row with its
+Each file has one writer connection (the engine aborts the process when two connections write one file), and it captures
+every change it commits in the table the native capture table, mode `after`: one row per inserted, updated or deleted row with its
 after-image (SQLite's record format), a row for each schema change (`sqlite_schema`), and a COMMIT row ending each
-transaction. The backup's tap (`Engine/Sqlite/TursoChangeTap.cs`) reads that table:
+transaction. The backup's tap reads that table:
 
 1. Each second it reads, on a connection of its own, the rows after the last one it read (its anchor), in pages of at
    most 1024 rows or 4 MiB, and appends them to the log as records (`ChangeLog`, format 1): upsert (table, rowid,
@@ -168,8 +168,8 @@ transaction. The backup's tap (`Engine/Sqlite/TursoChangeTap.cs`) reads that tab
    newest COMMIT row that existed when it started (not a read stopped at 32 MiB), a read mark follows them with that
    start time: every transaction committed before it is in the log before the mark. Both records are additive: the
    object format, the bucket layout and older logs (plain commits only) stay readable.
-2. It then deletes, on the writer, the rows before its anchor, always keeping the newest: an empty `turso_cdc`
-   restarts its ids at 1 after a reopen. Turso does not capture changes to `turso_cdc` itself. A read that fails,
+2. It then deletes, on the writer, the rows before its anchor, always keeping the newest: an empty the native capture table
+   restarts its ids at 1 after a reopen. The engine does not capture changes to the capture table itself. A read that fails,
    including this delete, puts its anchor back: the shipper drops what that read appended, and the next read appends
    the same changes again (or finds a hole, if the delete ran). The change retention of peer streams follows the new
    anchor only once the delete has succeeded.
@@ -178,17 +178,17 @@ transaction. The backup's tap (`Engine/Sqlite/TursoChangeTap.cs`) reads that tab
    - the anchor row is gone: something else deleted changes the tap had not read;
    - a schema row the tap cannot place by name: an update (`ALTER`), or a delete of a rowid it does not know.
 
-   A delete in mode `after` carries only the rowid, and Turso does not capture every schema row (`ANALYZE` adds
+   A delete in mode `after` carries only the rowid, and the engine does not capture every schema row (`ANALYZE` adds
    `sqlite_stat1` uncaptured), so `sqlite_schema` rowids differ between a file and a restore of it. The tap keeps the
    live schema's rowid → name map, as of its anchor, and logs a dropped object by name.
 4. Nothing may write a file uncaptured, except state that a restore rebuilds itself (the change tailer's own bookkeeping,
    R3): a write transaction can turn capture off with `SuspendCaptureAsync`, and what it writes is in no backup. The
-   writer connection holds no TEMP table, because Turso captures a TEMP table's rows as if they were in the file.
+   writer connection holds no TEMP table, because the engine captures a TEMP table's rows as if they were in the file.
 
 A **generation** is one unbroken run of the log from one file on one member. It starts with a **snapshot**: holding
 the database's writer gate, so nothing commits, the tap reads what is left, moves its anchor to the newest change and
 opens a read transaction; then writers go on, and the database is copied row by row, every rowid kept, as of that
-transaction (`Engine/Sqlite/TursoCopy.cs`). The copy leaves out the engine's own tables (`turso_cdc`, `sqlite_stat1`).
+transaction. The copy leaves out the engine's own tables (the native capture table, `sqlite_stat1`).
 A generation starts when shipping starts (every process start), when another member's lease or a new customer
 destination takes over, after a hole, or after unstored log was dropped (below). Before a generation's snapshot holds
 writers, the tap reads any backlog to discard it, so the gate covers only what commits meanwhile. Within a generation a
@@ -215,10 +215,10 @@ segment only repeats its own bytes.
 
 After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. When the attempt
 is due, the failed segment is sent again before anything more is read. Between attempts reads and trimming go on, so
-`turso_cdc` stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
-stays in `turso_cdc`, where the backup's anchor keeps it, and a short outage costs nothing. Once failures reach the
+the native capture table stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
+stays in the native capture table, where the backup's anchor keeps it, and a short outage costs nothing. Once failures reach the
 longest backoff (about eight and a half minutes into an outage) while log still waits there, the outage counts as
-sustained: the log is **dropped**, the generation ends, reads trim `turso_cdc` again, and the file starts a new
+sustained: the log is **dropped**, the generation ends, reads trim the native capture table again, and the file starts a new
 generation with a snapshot once the bucket answers. A log is dropped only then, after a failed snapshot read, or after
 any failure on a customer destination (below). Every drop logs a warning and counts in
 `terrabase_backup_abandoned_total{reason}` (`outage`, `read`, `destination`); a hole counts in
@@ -406,11 +406,11 @@ database stays unrestorable.
 
 A restore at `pointInTime` (T, taken to the millisecond) returns `201` only with whole transactions: every transaction
 committed before T, so every write acknowledged before T, and none whose COMMIT row was written at or after T.
-Otherwise it answers `409` and creates nothing. T, segment and snapshot times, read marks and Turso's `change_time` are
+Otherwise it answers `409` and creates nothing. T, segment and snapshot times, read marks and the engine's `change_time` are
 all the node's wall clock, and "acknowledged before T" is measured on it.
 
-What Turso records (measured on the driver, `TursoChangeTimeTests`): every captured row, the COMMIT row included, holds
-`change_time`, the wall clock when Turso wrote that row, in whole Unix seconds rounded down; rows of one transaction
+What the engine records (measured on the driver, the capture timestamp tests): every captured row, the COMMIT row included, holds
+`change_time`, the wall clock when the engine wrote that row, in whole Unix seconds rounded down; rows of one transaction
 differ when its statements run in different seconds. The COMMIT row is written inside the transaction, before it is
 durable, so a transaction commits, and is acknowledged, after its COMMIT row's time; a statement's time is never taken as
 a commit time. One transaction may hold many client writes (a group commit or a transaction request); a restore never
@@ -474,13 +474,13 @@ Limits:
   and its query is not covered by that mark; no T at or before the mark needs it.
 - A log written before timed commits and read marks restores only at snapshot times and at times its generation's next
   snapshot closes.
-- A read mark rests on Turso showing a commit that returned on the writer's connection to the tap's next autocommit read
-  on its own connection (`TursoChangeTimeTests` checks it under concurrent commits); the tap's connection must not hold a
+- A read mark rests on the engine showing a commit that returned on the writer's connection to the tap's next autocommit read
+  on its own connection (the capture timestamp tests checks it under concurrent commits); the tap's connection must not hold a
   read transaction open across reads (only a snapshot opens one, and rolls it back).
 - `_system.db` restores only at its snapshot times. A catalog follower applies the leader's writes without capture, so
   neither its log nor a later snapshot at the same position shows what was written after a snapshot. No point-in-time
   restore of `_system` exists yet; the reader refuses any other time for it.
-- Integration tests run TerraBase on a test clock while Turso stamps rows with the machine's clock; tests that place T
+- Integration tests run TerraBase on a test clock while the engine stamps rows with the machine's clock; tests that place T
   between transactions set the recorded `change_time` themselves.
 
 ### Restore preview (TS-493)
@@ -592,7 +592,7 @@ A failed drill is logged as an error and counted in `terrabase_backup_drills_tot
 
 ## Records in TerraBase
 
-After each hourly retention pass and each drill, the shipper writes the file's record into `_system`: collection
+After each hourly retention pass and each drill, the shipper writes the file's record into `_system`: table
 `databases/<database id>/backup_status`, id `current` (`backup_status`/`_system` for `_system.db`). The record holds the
 shipping member, generation, last shipped time, lag, bucket size (measured daily), retention days and the last drill.
 The database's state is deleted with it. Each machine writes these records to its own catalog; they are not replicated
@@ -613,50 +613,6 @@ After a rollout, also check:
    counters do not rise. Lag approximates the recovery point only while holes and drops stay zero.
 2. Restore: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check that the first
    write is in the new database and the second is not; delete the restored database.
-
-## Tigris check (2026-10-11)
-
-Checked against the Tigris dev bucket `ts-terrabase-dev`:
-
-- A node shipped `v1/_system`: 1 snapshot, 2 log segments and 1 wrapped data key of 80 bytes (SQLite engine, before Turso).
-- A second run with the same master key and a fresh data directory reused that key.
-- A run with another master key failed closed: `wrapped data key is not authentic under the master key`.
-
-## Compared with Litestream
-
-Checked against Litestream 0.5.17 (August 2026): its design and its bug fixes from 0.3 to 0.5.17.
-
-| Litestream | TerraBase |
-| --- | --- |
-| Separate process; a long read transaction stops other connections from restarting the log, plus checks for "overwritten by another process". Its read lock has been lost by mistake before (#1552). | In-process, and not the write-ahead log at all: Turso checkpoints it by itself. The tap reads the changes Turso captured on the only writer connection, anchored on the last row it read; a missing anchor is the "overwritten" case. |
-| PASSIVE checkpoint at 1000 pages or each second; TRUNCATE above about 500 MB when long readers stop PASSIVE (RESTART removed). | Turso's own checkpoints. The tap trims `turso_cdc` after each read, keeping the newest row. |
-| Snapshot read from the database file while writes go on; a slow first snapshot gave restores that fail `integrity_check` (#1309). | A row-by-row copy inside a read transaction started under the writer gate, at an exact log position. Every restore runs `integrity_check`, and the daily drill compares every row. |
-| LTX files with TXIDs, compacted to 30 s, 5 min and 1 h levels for fast restores. | One segment per second per busy file, no compaction yet. Restore downloads 8 at a time; a busy file can need up to 86,400 segments a day. Compaction is a follow-up. |
-| Restore applies whole files whose range fits the target; checks for gaps (0.5.12). | Same rule per segment; gaps fail the restore; GCM tags and a last-chunk flag catch truncated objects (0.5.17 "truncated page index"), and a log cut inside a transaction fails the replay. |
-| Restores retry throttling and resume dropped S3 streams (0.5.8, 0.5.17). | Each object retried up to three times. |
-| aws-chunked off for S3-compatible stores (0.5.6); payload signed (0.5.5). | Same: `UseChunkEncoding = false`, signed payload hash, checksums only when required. |
-| Sync backoff up to 5 minutes. | Same. |
-| Resumes a generation across restarts. | A new generation, so a new snapshot, per member start. |
-| Retention keeps the snapshot before the window (0.5.14); a restore raced retention (#1450). | Same: the newest snapshot before the window is kept, plus one hour of grace. |
-| Leases: S3 conditional writes (0.5.8) or a single process. | NATS KV leases with self-fencing before expiry. |
-| Optional age encryption (0.3). | Always sealed: AES-256-GCM, per-database data keys wrapped with AES-256-GCM under the master key (`TERRABASE_MASTER_KEY`). |
-
-## Why the change log, not the write-ahead log
-
-Until the Turso engine (T1, 2026-10-12) the tap read SQLite's write-ahead log frames and checkpointed the log itself.
-On Turso 0.8.2 that cannot work, measured with the engine itself:
-
-- Turso checkpoints the log on its own and ignores `wal_autocheckpoint = 0`: 3000 commits restarted it 11 times, so
-  the tap would find a hole on almost every pass.
-- A checkpoint from a second connection is a second writer, which Turso does not survive ([historical engine spike](https://github.com/TerraScale/terrascale/blob/e7fa366ddb289f5612c93d316b316fb92c568151/docs/terrabase/turso-spike.md)).
-- There is no online backup API (`BackupDatabase` fails with "database is locked"), `VACUUM INTO` on any connection but
-  the writer copies an older view, and `wal_checkpoint(TRUNCATE)`, which would let the file be copied as is, waits for
-  every reader, so a stalled reader would stop snapshots.
-
-The backup reads Turso's change capture table. What it keeps: sealed `TBK1` objects, the bucket layout and keys,
-generations, daily snapshots, positions that prove contiguity, PITR to the second a pass read, daily drills, retention,
-customer buckets and leases. What it changes: a snapshot is a logical copy (every rowid kept, the schema recreated from
-its SQL), a segment is a change log, and replay applies rows instead of pages.
 
 ## Operations
 
@@ -679,6 +635,6 @@ its SQL), a segment is a change log, and replay applies rows instead of pages.
 
 ## Restore acceptance and catalog security
 
-See [the local restore drill](local-restore-drill.md) for Fast backup/wipe/restore coverage.
+See [recovery verification](restore-drill.md) for Fast backup/wipe/restore coverage.
 Production Tigris recovery needs separate acceptance evidence. The catalog security
 gate is held separately in [PR #213](https://github.com/TerraScale/terrascale/pull/213).

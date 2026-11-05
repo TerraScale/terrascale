@@ -1,104 +1,23 @@
 # Organization quality of service
 
-This implementation is node-local. Resource admission uses the organization ID, shared across its
-projects, databases and API keys. It reads the current catalog plan for each request instead of the
-plan held by a previously opened database handle. Replication and system metadata have no commercial
-plan ceiling, but retain process-wide safety limits.
+Resource admission belongs to the organization and is shared across its projects, databases and credentials. The runtime reads the catalog plan rather than trusting a client-selected plan. Replication and system maintenance retain process safety limits even when commercial quotas do not apply.
 
-## Plan policy
+## SQL work and memory
 
-| Resource | Hobby | Pro | Enterprise |
-| --- | --- | --- | --- |
-| Requests/second; burst | 50; 100 | 500; 1,000 | No plan ceiling |
-| Concurrent HTTP requests | 4 | 16 | No plan ceiling |
-| SQLite scheduling weight | 1 | 4 | 16 |
-| Per-organization memory/cache share | 1/16 | 1/4 | Process/cache ceiling |
-| Query SQLite execution time | 1 second | 5 seconds | No plan ceiling |
-| Query engine work (units scaled like SQLite VM instructions) | 1 million | 5 million | No plan ceiling |
-| Candidate document rows/JSON bytes | 10,000 / 16 MiB | 100,000 / 128 MiB | No plan ceiling |
-| Live document JSON storage | 1 GiB | 100 GiB | No plan ceiling |
+SQL statements share the request and transaction deadlines in `Features/Sql/SqlLimits.cs`. The native engine enforces query cancellation and value-length bounds. Statement, body, row, byte and transaction-growth limits are in the [SQL contract](sql/native-sql.md). Admission, authorization and the SQL sandbox run before customer work executes.
 
-These are enforcement defaults, not billing prices or a subscription authority. Rate/concurrency and
-memory refusals return HTTP 429 with `Retry-After`. Saturation of the global storage admission remains
-HTTP 503. Query refusals retain the existing query error contract. Enterprise still observes document,
-page, batch, cache and process safety bounds.
+Request/result buffers reserve process and organization memory before allocation. A reservation lasts until the owned buffer or response is released, including cancellation and error paths. Native allocations and physical I/O are not fully measured by managed reservation estimates. See [memory admission](memory.md) and [shared-process tenancy](shared-process-tenancy.md).
 
-The request holds a reservation of 16 KiB plus three times its content length before decoding.
-An unknown-length body uses the base reservation for one bounded 4 KiB scratch read, fills it across
-network fragments, and reserves three times the actual bytes before returning them to the decoder.
-EOF requires no additional reservation. Result buffers reserve estimated JSON and object bytes before
-materialization or cache-hit copies; their leases last through response serialization. These are managed
-buffer admission estimates, not accounting for every native SQLite or runtime allocation. Transient reservations and retained
-cache entries share the organization's memory ceiling: small process budgets can refuse a request with
-429 even if its document is within the document-size bound. Each cache partition uses CLOCK second-chance eviction for its own
-entries; admission to a full process cache cannot evict another organization's cached data. A plan downgrade
-trims excess retained cache entries before request memory admission so the organization can recover.
-Authenticated management routes without a resolved organization reserve process memory before decoding;
-multi-organization commits attribute their organization work after validating the envelope.
-Protected routes establish process admission before authentication and catalog credential/plan reads.
-Their result owner remains active through response serialization.
+Storage work retains tenant ownership through queues and callbacks. Scheduling is bounded and fair across organizations, but cannot promise hard latency isolation for an already-running native call or a stalled device. Cancellation drains the owned reader and operation gate before releasing resources.
 
-## Scheduling and query accounting
+## Storage
 
-SQLite read work uses weighted virtual finish order per organization. Hobby admission leaves capacity
-for paid/system work. With at least two storage threads, Hobby calls leave one worker available for
-paid/system calls. A single storage thread cannot isolate an already running SQLite call. Scheduling
-does not preempt native calls or reserve disk bandwidth; latency isolation requires load validation
-on the target hardware. Dedicated per-database write lanes retain their existing lifecycle.
-Queued calls borrow only the tenant, result owner and existing engine admission, rather than the caller's
-full execution context. Grouped writes retain their batch admission across asynchronous callbacks.
-Mutations and index builds observe cancellation between native statements, preserving other writes in
-the same group commit. Cancelling a request therefore waits for its current mutation statement to finish.
+SQL writes take the organization quota lease before the database writer. The transaction checks net used-page growth and persists SQL storage accounting atomically. Failed statements and rolled-back work cannot publish a larger unchecked database. Branch and restore publication retain the same quota and identity checks through registration or rollback.
 
-The scan guard counts candidate stored JSON sizes before evaluating residual document predicates.
-Indexes can reduce those candidates. This measures logical candidate rows and JSON bytes, not physical
-SQLite page reads, WAL traffic or operating-system I/O. The same per-row function stops a statement once its
-execution time or engine work is spent, or the request is cancelled. Turso has no progress handler and counts no VM
-instructions, so the function charges the work: 8 units per candidate row plus 4 per `json_type`/`json_extract` the
-statement evaluates per row, about what SQLite's VM ran for it, so the former instruction limits keep their scale.
-Existing sort/page bounds still apply. A stopped read rolls back its whole write transaction (Turso), so a group commit
-answers only the write that read, and the writes of its batch run again in the next one.
+Storage accounting, physical file bytes, replica copies and backup retention are distinct quantities. A node-local check is not proof of an atomic global physical-disk quota. Disk work also passes [bulk disk admission](disk-admission.md).
 
-Cancelling at a consumer boundary between streamed SQL rows resets the unfinished reader before native finalization.
-It executes no unread rows or later batch statements and preserves the surrounding transaction. Cleanup retains the
-operation gate until the native reader is released. Cancellation during native execution still follows Turso's rollback
-semantics; query budgets and failure detection remain active.
+## Responses and monthly caps
 
-## Storage scope
+Preserve the existing rate, concurrency, memory and storage refusal contract, including `Retry-After` where supplied. Never bypass validation to make a request fit. Enterprise plans still observe statement, transaction and process safety bounds.
 
-Client document writes serialize through a bounded organization gate. The quota checks net live JSON
-growth inside the write's private savepoint before commit, and a refusal rolls that savepoint back.
-Deletes and net reducing writes remain allowed when a downgrade puts the organization above quota.
-Usage is derived from real registered database contents, with a bounded cache invalidated by database
-incarnation and commit sequence. A restart reconstructs it from stored data.
-
-Branch and restore publication hold the same gates from before copying through registration or rollback.
-Management commits acquire distinct gate stripes in order and check aggregate staged net growth before
-taking the catalog writer. Exact staged contents count, including an older backup larger than its live source.
-Enterprise copies bypass commercial quota accounting. Cold accounting uses a trusted engine scalar byte
-total without request query deadlines or collection-statistics materialization; cancellation still interrupts
-the scan. Accounting-capacity refusals return 503 `storage_accounting_busy` rather than publishing unchecked
-growth. Net reducing document writes bypass these scans. Growing writes enumerate local databases;
-valid cached totals avoid rescanning stored document sizes.
-
-The ceiling covers registered live client document JSON on this node, including published branches/restores.
-SQLite files, indexes, WAL/history, backups and already accepted replica writes are not an atomic quota ledger.
-Internal catalog/dashboard document space is system data. Concurrent multi-region acceptance and
-replication do not share a distributed reservation, so this implementation cannot
-claim a global physical storage quota.
-
-## Metrics
-
-`terrabase.qos.rejected` records the fixed plan/reason labels and `tenant_bucket` from 0 through 63.
-`terrabase.qos.request.duration` records admitted HTTP duration by plan and the same bucket. Organization
-IDs never become labels. Buckets intentionally aggregate colliding organizations; use the existing
-per-organization usage API for exact attribution. Cache, memory and SQLite pool instruments continue
-to describe the process-wide ceilings.
-
-## Plan authority
-
-Only the authenticated platform operator can publish an organization resource plan,
-through the plan endpoint or a Management commit. The acting user must still be an organization
-owner. Public user tokens cannot grant Enterprise admission. The platform owns billing and decides
-which resource plan to publish through its SDK; TerraBase enforces that policy without implementing
-subscriptions or Stripe behavior.
+SQL reads are free with plan fair use; shape reads are free and unmetered. Committed writes count toward the monthly write allowance and cap. Replication does not add billable units. The published pricing catalog and [operation allowance contract](operation-allowance.md) define the current values; do not duplicate a stale plan table here.

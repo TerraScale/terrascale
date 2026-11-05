@@ -26,6 +26,6 @@ Database MCP results include `expiresAt`, explicitly null for permanent database
 
 The session and CSRF protected `POST /v1/databases/ttl` form accepts `databaseId`
 and `ttlHours`, or `databaseId` and `action=clear`. Its endpoint is included in
-TerraScale's generated OpenAPI document and Scalar reference. Dashboard calls
+TerraScale's generated OpenAPI specification and Scalar reference. Dashboard calls
 MagicOnion management and backups contracts; the RPC services call TerraBase's
 public `/v1/projects/{project}/databases` routes.

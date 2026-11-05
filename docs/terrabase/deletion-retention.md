@@ -6,7 +6,7 @@ This implementation adds durable component evidence. It does **not** establish c
 
 An explicit customer database deletion atomically records permanent SYSTEM authority, including the original request time, the 30-day active deadline, the backup deadline, and expected copy holders. The backup deadline captures the actual configured plan PITR days plus 30 days. Retry never moves either deadline. For example, configured nine-day retention produces a 39-day backup deadline. Production GRU configuration observed on 2026-10-23 used seven days for every plan; that observation establishes 37 days for that configuration only.
 
-Replica removal, name loss and abandoned creation do not create customer deletion authority. Permanent deleted-ID records survive ordinary catalog tombstone collection and fence routing, adoption, placement, creation, restore and rebuild publication. A new database may reuse the display name with a different ULID. Replication tombstone horizons and persisted GC floors are unchanged.
+Replica removal, name loss and abandoned creation do not create customer deletion authority. Permanent deleted-ID records survive catalog cleanup and fence routing, adoption, placement, creation, restore and rebuild publication. A new database may reuse the display name with a different ULID.
 
 Every node records its own receipt only after engine verification finds no scoped files, open pooled sessions, backup readers, salvage copies or salvage readers. A native-close failure prevents verification. Logical HTTP deletion can return 204 while readers finish; its durable cleanup intent remains reserved and convergence retries. Authority arriving during cleanup cannot generate a receipt unless that cleanup actually verified erasure.
 

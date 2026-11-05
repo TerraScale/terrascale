@@ -1,9 +1,9 @@
 # Region replicas (PIVOT R3)
 
 A database has one home region, which serves its writes, and up to eight replica regions. A replica region holds a
-read-only copy that it pulls from the home with Turso's official sync client in page mode, through the home's
+read-only copy that it pulls from the home with the engine's official sync client in page mode, through the home's
 [in-process page sync host](page-sync-host.md). The topology is a star: every replica follows its home, only the home's
-page answers move (never Turso's push), and a replica can always be deleted and pulled again.
+page answers move (never the engine's push), and a replica can always be deleted and pulled again.
 
 ## Placement
 
@@ -111,7 +111,7 @@ Replicas never silently diverge from their home.
    pulled
    revision does not contain yet ([local overlay](local-overlay.md)) differs from the home on purpose, so it skips the
    same way until a pull holds them. The schema hash leaves out each node's own objects: the sync client's
-   `turso_sync*`, the CDC logs `turso_cdc*` and the replica's local-write capture table `_ts_local_cdc`.
+   the native sync metadata, the CDC logs the native capture table and the replica's local-write capture table `_ts_local_cdc`.
 3. **Bounded cost.** One round runs at a time per replica node. On the home a round is bulk storage work attributed to
    the database's organization, so it shares that organization's I/O worker cap (E11) and never takes a customer's
    request or engine budget.
@@ -139,7 +139,7 @@ successful pull, an upper bound.
 Every replica file is encrypted at rest under the replica's own aegis256 data key, wrapped by the replica node's master key
 in `<replica>.db.key`; a replica never shares key material with its home. The sync client writes the main file, its WAL,
 the revert WAL and each staged pull answer (`<replica>.db-changes`) through that key (native patches
-`src/vendor/Turso.Native/patches/0007-sync-engine-local-encryption.patch` and `0008-upsert-cdc-before-image.patch`). A
+the local-encryption and capture-before-image patches). A
 replica whose key does not unwrap is deleted and pulled again. Page pulls travel over the private mesh to the internal
 listener, as for every peer request.
 
@@ -156,7 +156,7 @@ listener, as for every peer request.
 - **NATS in production.** ts-orch does not yet pass `TS_NATS_URL` and the token to TerraBase, so production replicas
   follow on the 30-second sweep until it does.
 - **One node per region.** A replica pulls from the first node the peers file lists for its home region.
-- **Reads only through relational SQL.** Document, query and shape reads of a replicated database are served by its home.
+- **Reads only through relational SQL.** Record, query and shape reads of a replicated database are served by its home.
 - **Replica status is in memory.** After a home restarts, replica status reads `unknown` until each replica's next report
   (at most 30 seconds).
 - **Buffered pulls.** The page sync host buffers each answer in memory (see [page sync host](page-sync-host.md)).

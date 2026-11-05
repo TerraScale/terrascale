@@ -29,7 +29,7 @@ allowance answers `409` with code `database_limit` and a message naming the plan
   `create_database` in management commits. Nothing is created when it is refused.
 - The check runs in the catalog transaction that registers the database and is strict across
   regions: each region spends units of the allowance it holds and asks other regions for one when
-  it has none ([decision 0016](decisions/0016-strict-database-allowance-escrow.md), which lists
+  it has none ([SQL catalog](sql-catalog.md), which lists
   the cases it does not cover). Concurrent creates in different regions do not pass it together.
   A region that holds no unit and cannot reach every region that may hold one answers
   `409 database_limit` with "the rest of the organization's database allowance is held in regions

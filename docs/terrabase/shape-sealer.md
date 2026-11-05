@@ -1,6 +1,6 @@
 # Shape chunk sealer
 
-`IShapeSealer` (`Features/Shapes/ShapeSealer.cs`, `Engine/Turso/TursoStorageTransaction.Shapes.cs`) seals a table's
+`IShapeSealer` (`Features/Shapes/ShapeSealer.cs`) seals a table's
 captured changes into immutable bodies in `_tb_shape_chunk`. The protocol is [shape-reads.md](shape-reads.md).
 
 The caller supplies a `ShapeSealDefinition`: shape id, handle, table, generation and incarnation. In its write
@@ -13,7 +13,7 @@ generation still match, so a stale handle never seals.
    `ShapeSealedChunk` owns its memory admission.
 3. `RunDatabaseAsync` runs one database's background worker for the tracked shapes; live flights seal on wake.
 
-A chunk covers `(offset, end_offset]` of `turso_cdc.change_id`. It reads changes in id order: a commit record
+A chunk covers `(offset, end_offset]` of the native capture table. It reads changes in id order: a commit record
 (`change_type = 2`) closes a commit; row changes of the table become `insert`, `update` or `delete` ops decoded from
 the captured after-image, with every stored column; changes of other tables only advance the range. Limits: 4096
 row operations, 1 MiB of body, 65536 scanned changes, or one commit of up to 8 MiB (`ShapeTooLargeException`,

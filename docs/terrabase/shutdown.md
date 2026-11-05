@@ -1,7 +1,7 @@
 # Graceful shutdown
 
 TerraBase targets a 20-second graceful shutdown. Host termination deadlines must be
-verified in the deployed runtime; this document does not establish a ts-orch deadline.
+verified in the deployed runtime; this guide does not establish a ts-orch deadline.
 
 1. `ApplicationStopping` makes readiness fail and rejects new work, including requests on existing connections.
    Health probes retain their normal JSON responses; rejected API work receives the standard 503 error body.
@@ -22,7 +22,7 @@ termination deadline. The shutdown logs identify unfinished stages. This change 
 survive SIGKILL; catalog anchoring and crash durability remain R10a's responsibility.
 
 Fast integration coverage keeps four changes streams and two peer streams open during shutdown, checks native session
-closure and data-directory release, and restarts on the same files to read an acknowledged document. A stalled final
+closure and data-directory release, and restarts on the same files to read an acknowledged record. A stalled final
 backup upload is cancelled without consuming the storage-close allowance. Another test opens a peer stream without
 sending hello, exercising the connection deadline rather than the streams' cooperative stopping tokens.
 

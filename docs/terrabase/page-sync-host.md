@@ -1,6 +1,6 @@
 # In-process page sync host
 
-TerraBase serves Turso Sync page pull for its own databases, inside the TerraBase process (PIVOT R2). Region replicas use it to copy a database from its home (D5). Only page pull is served. Turso's push and its server-side apply are never used (D14).
+TerraBase serves native page pull for its own databases, inside the TerraBase process (PIVOT R2). Region replicas use it to copy a database from its home (D5). Only page pull is served. The engine's push and its server-side apply are never used (D14).
 
 ## Endpoint
 
@@ -22,14 +22,8 @@ An answer streams in bounded batches. The pull plans against one read snapshot, 
 
 ## Status (work in progress, landed when the pivot halted)
 
-- **Client change log collision.** Turso's sync client keeps its own local change log in a table named `turso_cdc`. TerraBase captures changes in a table of the same name on every database, and page pull copies it to the replica. The client then replays the home's captured changes as its own local writes. The first incremental pull fails with "failed to replay local change after remote apply: Corrupt database". `src/vendor/Turso.Native/patches/0006-sync-client-own-cdc-table.patch` moves the client's log to `turso_sync_cdc`. It is in the pinned combined release `turso-native-v0.8.2-fts-contract1-aegis-wal1-interrupt-synccdc1-20261029` (maintenance run 40945318877).
+- **Client change log collision.** Native sync metadata must use a different capture table from TerraBase's replicated capture log. The pinned client isolates its local log so the next incremental pull cannot replay home changes as local writes.
 
 ## Client and native artifact
 
-Clients are Turso's official sync clients. The tests use the vendored upstream .NET client (`TursoSyncDatabase`). Its `HttpClient` must send HTTP/2 and the peer credential. The pinned native libraries for linux-x64 and linux-arm64 both export the sync client (`turso_sync_*`) and the WAL revision contract (`turso_terrascale_wal_*`).
-
-## Proof
-
-- Fast: `PageSyncTests`. The official client bootstraps, pulls inserts, an update and a delete, and pulls across a checkpoint. It then gets an empty pull. A bad peer credential, the public listener, a crossed or unknown database, and a partial pull are each refused. A copy fault after the header resets the stream, so the reader gets an I/O error instead of a clean end.
-- Slow: `BoundedPullMemoryTests`. In its own process, a 706 MiB database (180,774 pages) is fully pulled through a server with a 32 MiB memory budget. Peak RSS growth during the pull stays under 64 MiB (measured 23–30 MiB on beta, 2026-11-04).
-- Slow: `ThousandDatabaseSyncTests`. 1,000 databases are bootstrapped and pulled through the host by the official client, with zero wrong-tenant rows. A bad credential is refused.
+Clients use the pinned upstream sync implementation. The integration client sends HTTP/2 and the peer credential. Both supported native architectures must export the required sync and WAL revision APIs. Version and symbol qualification belongs to the native build boundary; a successful HTTP route alone does not prove client compatibility.

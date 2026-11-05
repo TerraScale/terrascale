@@ -35,7 +35,7 @@ nice -n 19 dotnet run --project src/TerraScale.Dashboard -- configure-internal-b
 The command checks the organization is active and named exactly `terrascale`,
 and refuses existing Stripe or checkout state. Repeating it updates the same
 hidden plan and organization. Plans, policy and notifications persist in the
-dashboard's TerraBase database. A persisted singleton document
+dashboard's TerraBase database. A persisted singleton record
 (`InternalBillingService.SingletonId`) binds one internal organization, and a
 persisted payment reservation fences it from Stripe checkout, even when
 operators run concurrent commands across hosts. Rejected changes leave the

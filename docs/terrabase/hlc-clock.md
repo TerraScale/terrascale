@@ -6,7 +6,7 @@ capture and R6 home apply. `NextAsync(CancellationToken)` issues a timestamp;
 stamp. Both return `ValueTask<HlcTimestamp>`.
 
 `HlcTimestamp(long PhysicalMilliseconds, uint Logical, string NodeId)` orders by
-Unix milliseconds, logical counter, then ordinal node ID. R6 column LWW compares
+Unix milliseconds, logical counter, then ordinal node ID. R6 column conflict resolution compares
 this entire tuple, including the node ID when two clocks issue the same physical
 and logical values. Persist the entire tuple with each changed column. A replay
 retains the original timestamp; receipt order never replaces it.
@@ -91,9 +91,9 @@ replicas and a 15-second TTL. Admission continues to depend on local measurement
 if JetStream or the report bridge is unavailable.
 
 The Slow proof contains two integration tests over the real gRPC listener and
-real Turso storage. The happy path admits a healthy clock despite an unreachable
+real native SQL storage. The happy path admits a healthy clock despite an unreachable
 WAN peer and proves concurrent issuance and remote observation use the durable reservation
 without rewriting it, then preserves stamp order across a backward-clock restart. The critical
 path refuses a local-write stamp at an injected 100 ms offset.
-R4 owns forwarding the entire refused transaction to home; R6 owns column LWW
+R4 owns forwarding the entire refused transaction to home; R6 owns column conflict resolution
 and must compare the original stamp rather than mint a new one on receipt.

@@ -1,7 +1,7 @@
 # Platform signing keys: startup provisioning
 
 Every ts-auth replica uses the pre-created TerraBase database `ts-auth` through ts-dotnet. Startup creates the
-collections, seeds the TerraScale owner and projects, registers OIDC clients, then provisions the platform issuer's
+tables, seeds the TerraScale owner and projects, registers OIDC clients, then provisions the platform issuer's
 first signing key only when the ring is empty. The generated ES256 private key is encrypted with `TS_AUTH_MASTER_KEY`,
 which is supplied by OCI Vault. Private key material and the master key never appear in responses or logs.
 

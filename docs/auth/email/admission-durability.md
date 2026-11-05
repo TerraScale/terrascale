@@ -20,8 +20,8 @@ end-to-end measurement that polls an inbox every few seconds adds its poll inter
 
 ## Change
 
-The admission budget (`email_admission`, one shared document) is written `local_durable`, like rate-limit buckets
-([rate-limit durability](../rate-limit-durability.md)). Each emailed code no longer waits for another region's
+The admission budget (`email_admission`, one shared record) is written `local_durable`, like rate-limit buckets
+([SQL storage](../pivot/p1-sql-storage.md)). Each emailed code no longer waits for another region's
 acknowledgement of that write: about 0.7 s per write measured on 2026-10-26, more when concurrent sends conflict and retry.
 The code itself is still written `remote_durable`.
 

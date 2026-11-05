@@ -14,7 +14,7 @@ or its `/{key}` child. There is no compatibility route. No known clients require
 these routes: the dashboard, SDKs and customer documentation use ts-auth's API.
 
 The internal [operator key API](operator-api-keys.md), `tb_` authentication and
-shape access remain. Operator keys can hold only the two document scopes;
+shape access remain. Operator keys can hold only the two SQL scopes;
 database management scopes remain exclusive to ts-auth access tokens.
 Project closure still revokes operator keys and project deletion still refuses
 projects containing them. Their internal project index stores only key hashes;

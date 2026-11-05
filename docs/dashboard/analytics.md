@@ -7,7 +7,7 @@ types remain separate series. The current bucket is partial, so Storage sums the
 database-region gauges in the latest bucket where every database region was
 sampled, and the p95 cards report the worst measured p95 in the latest bucket
 with requests; percentiles are never summed or averaged. Items for a region no
-longer in the database placement are kept as history, as TerraBase documents.
+longer in the database placement are kept as history, as TerraBase records.
 Read operations are Usage's reads; put, patch and delete are its writes. Latency lines stay separate per database and region, with gaps for
 missing observations. Latency chart values are microseconds; headline latency is displayed in milliseconds.
 
@@ -58,7 +58,7 @@ hour/day reads-and-writes usage response.
 therefore calls the producer's `/v1/projects/{projectId}/analytics` route over
 HTTP with a fresh, explicitly requested `databases:read` project token from
 the five-argument RFC 8693 exchange on every read; see
-[runtime integration gates](csharp-migration.md#runtime-integration-gates).
+[state storage](state-storage.md).
 It keeps provider IDs unchanged. When the SDK publishes typed methods, move
 this adapter to them. Live verification is required before calling this slice
 complete.

@@ -10,8 +10,7 @@ entitlements from their payloads.
 The shared canonical public origin is `https://dash.terrascale.tech`. Checkout
 return/cancel URLs, the billing portal return URL and the webhook audit all use
 this same origin. The webhook endpoint is
-`https://dash.terrascale.tech/api/v1/billing/stripe/webhook`; the older
-`/api/auth/stripe/webhook` path is also recognized for compatibility. Configure
+`https://dash.terrascale.tech/api/v1/billing/stripe/webhook`. Configure
 one matching enabled endpoint per Stripe account.
 
 ## Read-only Stripe audit
@@ -27,7 +26,7 @@ The secret names and formats are in [`identity-descriptor.md`](identity-descript
 Production runtime secrets come from OCI Vault via instance principal; CI secrets are
 GitHub Actions secrets. The complete inventory lives in the terrascale repository under
 `ops/secrets/`. This command consumes secrets; it does not provision them.
-See [`csharp-migration.md`](csharp-migration.md) for the open runtime gates.
+See [state storage](state-storage.md) for the open runtime gates.
 
 ## Test account setup
 
@@ -102,7 +101,7 @@ allowance at the published rate (`metering.overageRates.operationUnitsPerMillion
 in `pricing.json`, $5 per million). Free stops at its allowance and is never
 charged. `UsageOverageReporter` runs at startup and then hourly. It reads every
 organization's operation units for the current UTC month from TerraBase's
-`/v1/usage/allowances` feed and, for each organization with an active, trialing
+`/v1/usage/allowances` page and, for each organization with an active, trialing
 or past-due Stripe subscription, makes its invoice items for that month add up to
 `max(0, units - allowance)`.
 

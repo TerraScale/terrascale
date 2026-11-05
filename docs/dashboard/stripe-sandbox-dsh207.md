@@ -18,7 +18,7 @@ nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 Production runtime secrets come from OCI Vault via instance principal; CI secrets are
 GitHub Actions secrets. The complete inventory lives in the terrascale repository
 under `ops/secrets/`. This command consumes the identity; it does not provision
-it. See [`csharp-migration.md`](csharp-migration.md).
+it. See [state storage](state-storage.md).
 
 The audit uses the fixed canonical origin `https://dash.terrascale.tech`,
 shared by checkout return/cancel URLs, the billing portal return URL and
@@ -30,7 +30,7 @@ Pro monthly and Team monthly, or three unique paid plan prices total. The invent
 which dashboard organization owns a Stripe customer. Per-endpoint delivery
 success must be checked in Stripe Workbench.
 
-The command reports observations from the account it reads. This document does
+The command reports observations from the account it reads. This guide does
 not claim that a current sandbox or live audit has passed. A read-only audit
 does not exercise signed webhook delivery, checkout completion, card failure,
 upgrades, downgrades, renewal or trial expiry; those require separate verified

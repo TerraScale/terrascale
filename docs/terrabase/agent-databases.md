@@ -24,7 +24,7 @@ region (421 `wrong_region` elsewhere).
 - `PUT …/databases/{database}/ttl` `{"ttlSeconds":600}` sets `expiresAt` to now plus `ttlSeconds`.
 - `DELETE …/databases/{database}/ttl` clears it.
 
-Storage: one document per database in the system catalog collection `database_expiry`, written in the same
+Storage: one record per database in the system catalog table `database_expiry`, written in the same
 transaction as the catalog row and removed with it; no catalog format change. The home region's catalog convergence
 pass (every 2 seconds) checks for due databases at most every 5 seconds, up to 64 per pass, and deletes each through the
 customer delete path: the catalog row is retired, local files are cleaned up, backups are swept and the database's

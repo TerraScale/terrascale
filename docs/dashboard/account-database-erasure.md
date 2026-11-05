@@ -18,7 +18,7 @@ deletion proof, as described in [Account deletion completion](account-deletion-c
 No API, storage format, dependency or configuration changes are required here.
 Deploy the corresponding ts-auth and TerraBase erasure support before this change.
 
-`AccountDeletionJourneyTests` creates a database, collection and document through
+`AccountDeletionJourneyTests` creates a database, table and record through
 HTTP before confirming deletion, then checks ts-auth's sole-organization removal,
 retained shared organizations and dashboard account/token/session cleanup. Its
 test-only providers verify delegation, not physical erasure across live replicas

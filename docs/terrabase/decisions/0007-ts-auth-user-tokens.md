@@ -64,9 +64,9 @@ unchanged.
   answers `403`; an email that differs from the invitation answers `403`. The body is never trusted
   for the email, because the caller may be the user itself.
 - **Keys.** TerraBase reads `{auth-issuer without a trailing /}/.well-known/openid-configuration`,
-  then its `jwks_uri`; both must be `https`, redirects are not followed, and each must answer `2xx`. A discovery document whose `issuer` is not exactly
+  then its `jwks_uri`; both must be `https`, redirects are not followed, and each must answer `2xx`. A discovery metadata whose `issuer` is not exactly
   `auth-issuer` is not used (OIDC Discovery 1.0 §4.3), and its `jwks_uri` is never requested. Only RSA and EC keys are kept; symmetric
-  (`oct`) keys are ignored. A document over 1 MiB fails. One 10-second deadline covers discovery and JWKS
+  (`oct`) keys are ignored. A record over 1 MiB fails. One 10-second deadline covers discovery and JWKS
   together, and shutdown cancels a fetch in progress.
 - **Cache, refresh and readiness.** Keys are cached in memory.
   - Startup waits up to 10 seconds for the first fetch.

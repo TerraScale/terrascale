@@ -11,7 +11,7 @@ A cut direct link leaves the home push and confirmed page path intact; late imag
 ## Why the replica cannot hold local writes
 
 A region's copy of a database is a page-pull replica ([region replicas](region-replicas.md)). Measured on
-2026-11-04 against the pinned Turso (5c168be): a transaction committed on the replica survives the next pull once,
+2026-11-04 against the pinned engine (5c168be): a transaction committed on the replica survives the next pull once,
 because the sync client replays it, and **is reverted by the pull after that** whether or not the home changed the
 same table. A row the replica inserted disappears and an updated row returns to the home's value. Anything stored
 inside the replica file goes with it. So the replica is only a cache of local writes. The durable copy of every

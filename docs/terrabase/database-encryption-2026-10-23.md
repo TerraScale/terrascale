@@ -1,6 +1,6 @@
 # Database encryption at rest
 
-Every database, including `_system.db`, uses Turso's `aegis256` page cipher with
+Every database, including `_system.db`, uses the engine's `aegis256` page cipher with
 a randomly generated 256-bit data key. Database readers, writers and copy
 targets must all open with the same cipher and the correct file's key. This
 also encrypts WAL pages. Encryption has no activation setting or plaintext
@@ -78,12 +78,12 @@ and that operational procedure require their own authorization.
 PR #469 merged at format 16. The authorized batch 5 encryption cutover is
 rebased onto it and uses `StorageFormat.Version` 17 (main + 1). Fresh CI
 and another check of main's actual format are required before queueing;
-see [the access-rule rebase record](encryption-access-rebase-2026-10-24.md).
+see [transport security](transport-security.md).
 The deployment owner wipes and re-bootstraps the serving data after merge; this PR does not perform
 that reset. Existing plaintext data cannot be opened by the new binary.
 There is no migration or compatibility shim.
 
-Fast integration coverage writes a recognizable document, checks database
+Fast integration coverage writes a recognizable record, checks database
 and WAL bytes for that marker, restarts with the same fake master, and
 checks rejection of damaged key material. The overhead report is
 `benchmark/bench/2026-10-23-encryption.md`; distinguish its driver workload

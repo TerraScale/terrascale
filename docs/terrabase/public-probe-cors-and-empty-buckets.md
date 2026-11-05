@@ -6,9 +6,9 @@ exposes region/request-ID/retry headers, and does not allow credentials. Probe
 bodies retain only public status, version and region. Internal listeners and
 protected management routes do not gain browser access.
 
-Deleting an empty file bucket must work whether its empty file collection is
-registered or absent. System-catalog collection removal does not read client
-unique-constraint declarations: the system catalog has no `_unique` collection.
+Deleting an empty file bucket must work whether its empty file table is
+registered or absent. System-catalog table removal does not read client
+unique-constraint declarations: the system catalog has no `_unique` table.
 Nonempty buckets continue to refuse deletion until file cleanup finishes.
 Client database uniqueness behavior and storage format are unchanged.
 

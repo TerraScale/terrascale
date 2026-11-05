@@ -165,7 +165,7 @@ the Create database dialog covers its fields with a progress panel from the
 moment the form is submitted, announces it through a `role="status"` line,
 and the new database opens on a ready notice (`?created=1`). Motion uses
 `--ts-fast` and `--ts-base` for transitions and `--ts-loop` for one cycle of
-an ongoing wait. Both shell documents preload the Geist sans and mono faces,
+an ongoing wait. Both HTML shells preload the Geist sans and mono faces,
 which use `font-display: swap`, so text renders at once in the fallback face
 and swaps when the font arrives.
 `prefers-reduced-motion` disables animation.

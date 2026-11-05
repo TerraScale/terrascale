@@ -17,7 +17,7 @@ explicit-profile/checker dependencies do not establish automatic region admissio
    that concurrent writes converge. Missing membership, lag, malformed responses
    or unverified credentials fail the observation.
 4. Retain artifact-integrity, signer-trust and rollback checks. Delete artifacts
-   only after proving no member or rollback reference needs them; this document
+   only after proving no member or rollback reference needs them; this guide
    authorizes no deletion or live operation.
 
 The legacy checker emits one JSON observation and distinguishes verification
