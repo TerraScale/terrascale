@@ -245,3 +245,28 @@ acknowledgement substeps separate capture, HLC, sealing, durable publish,
 regional hold, local commit and home wait. Home apply also records attempt
 time and bounded retry reasons. The final proof must distinguish that evidence
 from this preliminary attribution.
+
+## HLC shipment and safety validation
+
+The HLC reservation and diagnostics shipped through `ts-ship` as
+`a2de2bdeb8f3493e2c58952cfe8af144c786f506`, rebased onto the format-23 bump
+`40b1dd36b`. The clock implementation is `358b76ae9`; acknowledgement timing
+and home-apply diagnostics are `e01aa8805`; reservation-boundary coverage is
+`277b9ba39`; peer push/cache snapshots are `a2de2bdeb`.
+
+TerraBase Fast passed 62 service tests in 9.412 s (9.670 s including runner
+completion), alongside four driver tests. Auth Fast passed 30 tests in
+9.739 s (9.983 s including runner completion). Benchmark Fast passed in
+0.254 s. The focused real-listener ClockSafetyTests ran on beta through
+`ts-heavy-any`: two passed in 6.436 s. They cover concurrent unique issuance,
+remote observation inside a reservation without rewriting its durable record,
+renewal beyond the reserved bound, immediate admission closure on observing a
+future stamp, and monotonic recovery plus skew refusal after a backward-clock
+restart. The existing admission checks and assertions were retained.
+
+[CI run 42049651489](https://github.com/TerraScale/terrascale/actions/runs/42049651489)
+completed successfully, including the automatic all-region deployment.
+Authenticated health on GRU/SJC/FRA confirmed `a2de2bdeb` serving format
+`23-41a88901325a` ([deployment snapshot](2026-11-05-regional-write-hlc-deployed.json)).
+This snapshot records one discovered SJC node, local writes available and no
+regional partner. It is deployment evidence, not the final latency proof.

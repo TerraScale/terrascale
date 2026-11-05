@@ -53,7 +53,7 @@ if args.health_samples:
         peer_health_ms[node] = {"region": region, "health": json.loads(get("healthz", peer_address)), "samples_ms": [round(float(line) * 1000, 3) for line in elapsed.decode().splitlines()]}
         metrics = get("metrics", peer_address).decode().splitlines()
         peer_write_metrics[node] = [line for line in metrics if line.startswith(("terrabase_push_", "terrabase_catalog_cache_lookups_"))]
-        if region == "sjc":
+        if region == environment[b"TS_REGION"].decode():
             peer_local_ack_metrics[node] = [line for line in metrics
                                             if line.startswith(("terrabase_localack_partner", "terrabase_localwrites_available"))]
 lines = [line for line in get("metrics").decode().splitlines() if line.startswith("terrabase_push_")]
