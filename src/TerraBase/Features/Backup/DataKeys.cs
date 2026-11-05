@@ -116,6 +116,14 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
                 }
             }
 
+            // A deletion may race key generation. Remove our late publication before refusing it.
+            if (await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
+            {
+                _ = await store.DeleteAsync(BackupLayout.Key(scope, id), cancellationToken).ConfigureAwait(false);
+                CryptographicOperations.ZeroMemory(key);
+                throw new DatabaseShreddedException(shredded.ShreddedAt);
+            }
+
             // Never select a key until its wrapped copy is durable; old objects keep naming old keys.
             Cache(_keys, (scope, id), key);
             Cache(_current, scope, new CurrentKey(id, key, time.GetUtcNow()));
@@ -129,8 +137,19 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
 
     /// <summary>The data key <paramref name="id"/> of <paramref name="scope"/>.</summary>
     /// <exception cref="InvalidDataException">The bucket holds no such key.</exception>
-    public Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken) =>
-        ReadKeyAsync(scope, id, cancellationToken);
+    public async Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken)
+    {
+        // Historical consumers must not return a cached key after another region destroyed its custody object.
+        if (await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
+        {
+            Forget(scope);
+            throw new DatabaseShreddedException(shredded.ShreddedAt);
+        }
+        return await ReadKeyAsync(scope, id, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<ShredRecord?> ShreddedAsync(string scope, CancellationToken cancellationToken) =>
+        ShredRecords.ReadAsync(store, scope, cancellationToken);
 
     private async Task<byte[]> ReadKeyAsync(string scope, string id, CancellationToken cancellationToken)
     {

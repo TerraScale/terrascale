@@ -12,7 +12,7 @@ using ZLogger;
 namespace TerraBase.Features.Backup;
 
 internal sealed record BackupPurgeProgress(DateTimeOffset RequestedAt, string? DestinationAfter, DateTimeOffset? ObjectsAbsentAt,
-    DateTimeOffset? LastAttemptAt, string? Failure, bool InventoryFailed = false, DateTimeOffset? KeysShreddedAt = null);
+    DateTimeOffset? LastAttemptAt, string? Failure, bool InventoryFailed = false, DateTimeOffset? KeysShreddedAt = null, string? ShapeAfter = null, bool CopiesAbsent = false);
 
 [JsonSerializable(typeof(BackupPurgeProgress))]
 [JsonSerializable(typeof(PrefixPurgeProgress))]
@@ -25,6 +25,8 @@ public interface IBackupKeyShredding
 {
     /// <summary>Starts shredding <paramref name="database"/>'s keys in the background; the erasure pass retries failures.</summary>
     void Shred(TenantContext database);
+
+    Task<bool> DestroyAsync(TenantContext database, CancellationToken cancellationToken);
 }
 
 // Purge authority and credentials outlive the deleted database and project authorization.
@@ -32,7 +34,7 @@ public interface IBackupKeyShredding
 // All holders must acknowledge closure before objects are deleted: otherwise a late upload could recreate an erased prefix.
 internal sealed class DatabaseBackupPurge(
     SystemCatalog catalog, S3ObjectStore platform, DataKeys platformKeys, BackupTargets targets, TimeProvider time,
-    IMeterFactory meters, ILogger<DatabaseBackupPurge> logger) : BackgroundService, IBackupKeyShredding
+    IMeterFactory meters, ILogger<DatabaseBackupPurge> logger, KeyCustody custody, IServiceProvider services) : BackgroundService, IBackupKeyShredding
 {
     private readonly CancellationTokenSource _stopping = new();
     internal const string ProgressKind = "backup_purge_progress";
@@ -130,6 +132,19 @@ internal sealed class DatabaseBackupPurge(
         }
     }
 
+    public async Task<bool> DestroyAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ShredAsync(database, cancellationToken).ConfigureAwait(false) is not null;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            _failures.Add(1, new KeyValuePair<string, object?>("reason", "key_shred_unavailable"));
+            return false;
+        }
+    }
+
     public void Shred(TenantContext database) => _ = ShredNowAsync(database);
 
     private async Task ShredNowAsync(TenantContext database)
@@ -163,39 +178,10 @@ internal sealed class DatabaseBackupPurge(
     {
         var scope = BackupLayout.KeyScope(database);
         platformKeys.Forget(scope);
-        var (record, complete) = await platform.ShredKeysAsync(database, time.GetUtcNow(), token).ConfigureAwait(false);
-        string? after = null;
-        for (var page = 0; page < 64; page++)
-        {
-            var destinations = await catalog.ReadUncheckedAsync(transaction =>
-                SystemCatalog.ListAsync(transaction, BackupDestinationHistory.Kind(database.ProjectId!), after,
-                    16, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, item => item.Revision, token), token).ConfigureAwait(false);
-            foreach (var destination in destinations.Items)
-            {
-                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), time);
-                using var stop = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
-                try
-                {
-                    using var store = await targets.PurgeStoreAsync(destination, stop.Token).ConfigureAwait(false);
-                    complete &= (await store.ShredKeysAsync(database, record.ShreddedAt, stop.Token).ConfigureAwait(false)).Absent;
-                }
-                catch (Exception) when (!token.IsCancellationRequested)
-                {
-                    // Provider messages can hold credentials: count only.
-                    complete = false;
-                    _failures.Add(1, new KeyValuePair<string, object?>("reason", "key_shred_unavailable"));
-                }
-            }
-
-            if ((after = destinations.Next) is null)
-            {
-                break;
-            }
-        }
-
+        var (record, complete) = await custody.ShredAsync(database, time.GetUtcNow(), token).ConfigureAwait(false);
         // A selection racing the shred may have cached a key again; it cannot create one any more.
         platformKeys.Forget(scope);
-        if (!complete || after is not null)
+        if (!complete)
         {
             return null;
         }
@@ -209,6 +195,18 @@ internal sealed class DatabaseBackupPurge(
         if (progress.KeysShreddedAt is null && await ShredAsync(job.Database, token).ConfigureAwait(false) is { } shredded)
         {
             progress = progress with { KeysShreddedAt = shredded };
+        }
+
+        if (!progress.CopiesAbsent)
+        {
+            await services.GetRequiredService<HomePush.HomePush>().PurgeDeletedAsync(job.Database, token).ConfigureAwait(false);
+            await services.GetRequiredService<LocalAck.HoldStore>().DeleteDatabaseAsync(job.Database, token).ConfigureAwait(false);
+            var shape = await services.GetRequiredService<Shapes.ShapeMirror>().DeleteDatabaseAsync(job.Database, progress.ShapeAfter, token).ConfigureAwait(false);
+            progress = progress with { ShapeAfter = shape.After, CopiesAbsent = shape.Complete };
+            if (!shape.Complete)
+            {
+                return progress with { Failure = "shape_copies_pending" };
+            }
         }
 
         if (!await catalog.AreActiveCopiesAbsentAsync(job.Database, token).ConfigureAwait(false))

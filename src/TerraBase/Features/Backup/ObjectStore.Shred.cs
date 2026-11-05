@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Amazon.S3.Model;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
@@ -48,90 +47,5 @@ internal static class ShredRecords
     {
         using var content = new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(record, BackupPurgeJsonContext.Default.ShredRecord));
         await store.PutAsync(BackupLayout.Shredded(scope), content, cancellationToken).ConfigureAwait(false);
-    }
-}
-
-internal sealed partial class S3ObjectStore
-{
-    private const int ShredPages = 64;
-
-    /// <summary>
-    /// Crypto-shreds <paramref name="database"/> in this bucket: writes its deletion record first, so no member selects or
-    /// generates a key for it again, then deletes every version of its wrapped data keys and of the project-wide keys that
-    /// preceded per-database scopes. Old snapshots and segments stay as they are; without their keys they cannot be read.
-    /// </summary>
-    /// <returns>The deletion record kept, and whether no key version remains.</returns>
-    public async Task<(ShredRecord Record, bool Absent)> ShredKeysAsync(TenantContext database, DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(database.ProjectId);
-        ArgumentException.ThrowIfNullOrEmpty(database.DatabaseId);
-        var scope = BackupLayout.KeyScope(database);
-        var record = await ShredRecords.ReadAsync(this, scope, cancellationToken).ConfigureAwait(false);
-        if (record is null)
-        {
-            record = new ShredRecord(database.DatabaseId, now);
-            await ShredRecords.WriteAsync(this, scope, record, cancellationToken).ConfigureAwait(false);
-        }
-
-        var marker = BackupLayout.Shredded(scope);
-        var keys = BackupLayout.Keys(scope);
-        var project = BackupLayout.ProjectKeys(database);
-        var absent = await DeleteKeyVersionsAsync(keys, key => key != marker, cancellationToken).ConfigureAwait(false);
-        absent &= await DeleteKeyVersionsAsync(project, key => key.IndexOf('/', project.Length) < 0
-            && Ulid.TryParse(key[project.Length..], out _), cancellationToken).ConfigureAwait(false);
-        return (record, absent);
-    }
-
-    private async Task<bool> DeleteKeyVersionsAsync(string prefix, Func<string, bool> selected, CancellationToken cancellationToken)
-    {
-        string? keyMarker = null;
-        string? versionMarker = null;
-        var refused = false;
-        for (var page = 0; page < ShredPages; page++)
-        {
-            var versions = await RetriedAsync(() => _s3.ListVersionsAsync(new ListVersionsRequest
-            {
-                BucketName = _bucket,
-                Prefix = prefix,
-                MaxKeys = 128,
-                KeyMarker = keyMarker,
-                VersionIdMarker = versionMarker,
-            }, cancellationToken), cancellationToken).ConfigureAwait(false);
-            var items = (versions.Versions ?? []).Where(item => ValidKey(item.Key, prefix) && selected(item.Key)
-                && !string.IsNullOrEmpty(item.VersionId) && item.VersionId.Length <= 1024).ToList();
-            refused |= await MutateAsync(items, (item, token) => RetriedAsync(() => _s3.DeleteObjectAsync(new DeleteObjectRequest
-            {
-                BucketName = _bucket,
-                Key = item.Key,
-                VersionId = item.VersionId,
-            }, token), token), cancellationToken).ConfigureAwait(false);
-            if (versions.IsTruncated != true)
-            {
-                break;
-            }
-
-            if (!ValidKey(versions.NextKeyMarker, prefix) || (versions.NextKeyMarker == keyMarker && versions.NextVersionIdMarker == versionMarker))
-            {
-                throw new InvalidDataException("backup key version continuation is invalid");
-            }
-
-            (keyMarker, versionMarker) = (versions.NextKeyMarker, string.IsNullOrEmpty(versions.NextVersionIdMarker) ? null : versions.NextVersionIdMarker);
-        }
-
-        if (refused)
-        {
-            return false;
-        }
-
-        // A fresh listing is the proof; delete acknowledgements alone are not.
-        await foreach (var item in ListAsync(prefix, null, cancellationToken).ConfigureAwait(false))
-        {
-            if (item.Key.Length > 0 && selected(item.Key))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 }
