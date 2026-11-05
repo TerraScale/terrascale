@@ -57,5 +57,7 @@ internal sealed partial class TursoStorageTransaction : ICdcRetentionTransaction
             remove.Parameters.AddWithValue("$key", key);
             _ = remove.ExecuteNonQuery();
         }
+
+        TrimCdc();
     }
 }
