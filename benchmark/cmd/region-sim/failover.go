@@ -11,7 +11,6 @@ import (
 	natsclient "github.com/nats-io/nats.go"
 )
 
-// homeFailover is last because it changes the database's home for the rest of the run.
 func (s *sim) homeFailover() (string, string, error) {
 	if err := s.api.mustExec(s.ctx, s.c.a, stmt{SQL: "CREATE TABLE failover (id INTEGER PRIMARY KEY)"}); err != nil {
 		return "", "", err
@@ -49,7 +48,6 @@ func (s *sim) homeFailover() (string, string, error) {
 		}
 	}
 
-	// A request may have an unknown outcome when the process dies; count it only if acknowledged.
 	started := make(chan error, 1)
 	inflight := make(chan bool, 1)
 	requestContext := httptrace.WithClientTrace(s.ctx, &httptrace.ClientTrace{

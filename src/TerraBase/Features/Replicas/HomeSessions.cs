@@ -13,10 +13,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replicas;
 
-/// <summary>
-/// The first frame of a home session: the database, the replica region asking, whether the session may write, how far the
-/// region's pushes reached, and the placement epoch the replica region holds; the home refuses a session at any other epoch.
-/// </summary>
 internal sealed record HomeSessionOpen(string Organization, string Project, string Database, string Region, bool CanWrite, ulong? PushThrough, long Epoch);
 
 /// <summary>One call on a home session: <c>execute</c> or <c>describe</c> one statement.</summary>

@@ -27,7 +27,6 @@ internal interface IHomeMoveCatalog
 
     ValueTask AbortHomeMoveAsync(HomeMoveMarker marker, CancellationToken cancellationToken);
 
-    /// <summary>Records the newer home established by the shared lease after this region lost its lease.</summary>
     ValueTask<UpdatePlacementResult> FollowHomeLeaseAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken);
 
     ValueTask<IReadOnlyList<HomeMoveMarker>> PendingHomeMovesAsync(CancellationToken cancellationToken);
