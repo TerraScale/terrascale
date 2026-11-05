@@ -29,10 +29,34 @@ manifest = {"revision": sys.argv[2], "sourceDirectory": "docs-site", "sha256": h
 (output / "site-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 PY
 tag="docs/qualified-$revision"
-gh release create "$tag" "$output/site.tar.gz" "$output/site-manifest.json" \
+if ! gh release create "$tag" "$output/site.tar.gz" "$output/site-manifest.json" \
   --repo TerraScale/terrascale --target "$revision" --prerelease \
   --title "Documentation qualified $revision" \
-  --notes "Dev-host audit, build, example/starter tests and prebuilt dry-run passed for $revision."
+  --notes "Dev-host audit, build, example/starter tests and prebuilt dry-run passed for $revision."; then
+  mkdir "$output/existing"
+  gh release download "$tag" --repo TerraScale/terrascale --dir "$output/existing" \
+    --pattern site.tar.gz --pattern site-manifest.json
+  python3 - "$output" "$revision" <<'PY'
+import hashlib, json, pathlib, sys, tarfile
+output = pathlib.Path(sys.argv[1])
+existing = output / 'existing'
+manifest = json.loads((existing / 'site-manifest.json').read_text())
+assert manifest['revision'] == sys.argv[2] and manifest['sourceDirectory'] == 'docs-site'
+assert hashlib.sha256((existing / 'site.tar.gz').read_bytes()).hexdigest() == manifest['sha256']
+def files(archive):
+    with tarfile.open(archive) as package:
+        result = {}
+        for member in package.getmembers():
+            assert member.isdir() or member.isfile(), 'Only regular site files are permitted'
+            if member.isfile():
+                assert member.name not in result, 'Duplicate site file'
+                result[member.name] = hashlib.sha256(package.extractfile(member).read()).hexdigest()
+        assert result, 'Empty site artifact'
+        return result
+assert files(existing / 'site.tar.gz') == files(output / 'site.tar.gz'), 'Existing site bytes differ'
+print('Verified existing qualified site matches the freshly checked site')
+PY
+fi
 gh api "repos/TerraScale/terrascale/statuses/$revision" -f state=success \
   -f context=docs-release/docs -f description='Dev-host site, examples and locked dependency audits qualified' \
   -f "target_url=https://github.com/TerraScale/terrascale/releases/tag/$tag" >/dev/null
