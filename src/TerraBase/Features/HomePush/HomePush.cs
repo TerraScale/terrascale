@@ -40,8 +40,7 @@ internal interface ILocalTransaction : IAsyncDisposable
 
 internal sealed record LocalCommit(string? Id, HomeApplyResult? Home);
 
-internal sealed class LocalOutcomeUnknownException(Exception inner)
-    : Exception("the transaction reached the push stream but its local commit failed; the home applies it", inner);
+internal sealed class LocalOutcomeUnknownException(string message, Exception inner) : Exception(message, inner);
 
 internal sealed class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
@@ -52,6 +51,7 @@ internal sealed class HomePush(
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(5);
 
     private static readonly TimeSpan SettleBound = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan HomeWait = TimeSpan.FromSeconds(30);
 
     private readonly LocalOverlay _overlay = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), ulong> _pushed = new();
@@ -76,6 +76,8 @@ internal sealed class HomePush(
     internal LocalOverlay Overlay => _overlay;
 
     private IHlcClock Clock => clock;
+
+    private TimeProvider Time => time;
 
     private string Region => options.Region;
 
@@ -630,6 +632,7 @@ internal sealed class HomePush(
                 throw new LocalWriteRefusedException("a transaction larger than 8 MiB commits at the database's home");
             }
 
+            var homeApplied = push._overlay.Add(database, 0, transaction);
             PubAckResponse acknowledged;
             try
             {
@@ -639,10 +642,16 @@ internal sealed class HomePush(
             }
             catch (Exception error) when (error is NatsException or TimeoutException)
             {
+                push._overlay.Drop(database, transaction.Id!);
                 throw new LocalWriteRefusedException("the push stream did not store the transaction; it commits at the database's home");
             }
+            catch
+            {
+                push._overlay.Drop(database, transaction.Id!);
+                throw;
+            }
 
-            var homeApplied = push._overlay.Add(database, acknowledged.Seq, transaction);
+            push._overlay.Published(database, transaction.Id!, acknowledged.Seq);
             _ = push._pushed.AddOrUpdate(Key(database), acknowledged.Seq, (_, known) => Math.Max(known, acknowledged.Seq));
             try
             {
@@ -650,13 +659,23 @@ internal sealed class HomePush(
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                throw new LocalOutcomeUnknownException(error);
+                throw new LocalOutcomeUnknownException("the transaction reached the push stream but its local commit failed; the home applies it", error);
             }
 
             await writer.DisposeAsync().ConfigureAwait(false);
-            return homeDurable
-                ? new LocalCommit(transaction.Id, await homeApplied.WaitAsync(cancellationToken).ConfigureAwait(false))
-                : new LocalCommit(transaction.Id, null);
+            if (!homeDurable)
+            {
+                return new LocalCommit(transaction.Id, null);
+            }
+
+            try
+            {
+                return new LocalCommit(transaction.Id, await homeApplied.WaitAsync(HomeWait, push.Time, cancellationToken).ConfigureAwait(false));
+            }
+            catch (TimeoutException error)
+            {
+                throw new LocalOutcomeUnknownException("the home has not answered the transaction yet; it stays in the push stream and applies there", error);
+            }
         }
 
         public ValueTask DisposeAsync() => writer.DisposeAsync();
