@@ -70,10 +70,36 @@ manifest={'schema':'terrascale.dashboard-qualification/v1','revision':sys.argv[2
           'qualificationLogSha256':hashlib.sha256((root/'dashboard-qualification.log').read_bytes()).hexdigest()}
 (root/'dashboard-qualification.json').write_text(json.dumps(manifest,indent=2)+'\n')
 PY
-gh release create "dashboard/qualified-$revision" --repo TerraScale/terrascale --target "$revision" \
+if ! gh release create "dashboard/qualified-$revision" --repo TerraScale/terrascale --target "$revision" \
   --prerelease --title "Dashboard qualified $revision" \
   --notes "Dev-host validation and source-bound portable application for $revision." \
-  "$workspace/dashboard-publish.tar.gz" "$workspace/dashboard-qualification.json" "$workspace/dashboard-qualification.log"
+  "$workspace/dashboard-publish.tar.gz" "$workspace/dashboard-qualification.json" "$workspace/dashboard-qualification.log"; then
+    mkdir "$workspace/existing"
+    gh release download "dashboard/qualified-$revision" --repo TerraScale/terrascale --dir "$workspace/existing" \
+      --pattern dashboard-publish.tar.gz --pattern dashboard-qualification.json --pattern dashboard-qualification.log
+    python3 - "$workspace" "$revision" <<'PY'
+import hashlib, json, pathlib, sys, tarfile
+root = pathlib.Path(sys.argv[1])
+existing = root / 'existing'
+manifest = json.loads((existing / 'dashboard-qualification.json').read_text())
+current = json.loads((root / 'dashboard-qualification.json').read_text())
+assert manifest['schema'] == 'terrascale.dashboard-qualification/v1'
+assert manifest['revision'] == sys.argv[2] and manifest['archive'] == 'dashboard-publish.tar.gz'
+archive = existing / 'dashboard-publish.tar.gz'
+assert hashlib.sha256(archive.read_bytes()).hexdigest() == manifest['sha256']
+assert hashlib.sha256((existing / 'dashboard-qualification.log').read_bytes()).hexdigest() == manifest['qualificationLogSha256']
+with tarfile.open(archive) as package:
+    files = {}
+    for member in package.getmembers():
+        assert member.isdir() or member.isfile(), 'Only regular application files are permitted'
+        if member.isfile():
+            assert member.name not in files, 'Duplicate application file'
+            files[member.name] = hashlib.sha256(package.extractfile(member).read()).hexdigest()
+assert 'TerraScale.Dashboard.dll' in files
+assert files == manifest['files'] == current['files'], 'Existing application bytes differ'
+print('Verified existing qualified application matches the freshly checked application')
+PY
+fi
 gh api --method POST "repos/TerraScale/terrascale/statuses/$revision" \
   -f state=success -f context=dashboard-release/dashboard \
   -f description='Dashboard release checks and exact application bytes passed on a dev host' \
