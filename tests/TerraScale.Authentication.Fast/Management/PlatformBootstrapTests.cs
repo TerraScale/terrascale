@@ -20,7 +20,7 @@ public sealed class PlatformBootstrapTests(TerraBaseFixture fixture)
     [Test]
     public async Task Seeded_owner_signs_in_by_email_code_and_reads_both_projects()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
         var session = await oidc.SignInAsync(AuthTestServer.BootstrapOwnerEmail);
         var (verifier, challenge) = OidcHarness.Pkce();
         using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge), verifier);
