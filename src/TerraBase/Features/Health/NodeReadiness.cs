@@ -10,12 +10,14 @@ public interface INodeReadiness
 
 internal sealed class NodeReadiness(
     IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate,
-    Replicas.RegionalOwners owners, Configuration.TerraBaseOptions options) : INodeReadiness
+    Replicas.RegionalOwners owners, Configuration.TerraBaseOptions options,
+    HomePush.HomePush push, Replicas.HomeLeases leases) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
         if (!gate.IsOpen || lifetime.ApplicationStopping.IsCancellationRequested
-            || options is { NatsUrl: not null, PeersFile: not null } && owners.Find(options.Region) is null)
+            || options is { NatsUrl: not null, PeersFile: not null }
+                && (owners.Find(options.Region) is null || !push.Started || !leases.Ready))
         {
             return false;
         }
