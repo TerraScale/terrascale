@@ -58,7 +58,7 @@ driver, retaining a two-second idle tail before each measured update.
 
 ## Cloud benchmark boundary
 
-Production is moving to OCI under `ts-orch`, starting with host `ts-gru-1`. Region codes map to OCI regions: `gru` → `sa-saopaulo-1`, `sjc` → `us-sanjose-1`, `fra` → `eu-frankfurt-1`. CI uses GitHub-hosted runners and GHCR.
+Production runs on OCI under `ts-orch`. Region codes map to OCI regions: `gru` → `sa-saopaulo-1`, `sjc` → `us-sanjose-1`, `fra` → `eu-frankfurt-1`. CI uses GitHub-hosted runners and GHCR.
 
 Production secrets belong in OCI Vault; authorized hosts read narrowly granted secrets with instance principals. Do not copy production credentials into benchmark reports or target files. See the orchestrator's [secrets contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/secrets.md).
 
