@@ -358,10 +358,15 @@ internal sealed class HomePush(
                 await foreach (var message in scan.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
                 {
                     read++;
-                    if (Epoch(message.Headers) >= fence || message.Data is not { } data
-                        || await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
+                    if (Epoch(message.Headers) >= fence)
                     {
                         continue;
+                    }
+
+                    if (message.Data is not { } data
+                        || await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
+                    {
+                        throw new IOException("a retained origin push could not be decoded during promotion");
                     }
 
                     var result = await apply.ApplyAsync(database, transaction, cancellationToken).ConfigureAwait(false)
