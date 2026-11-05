@@ -1,0 +1,127 @@
+{
+  "gates": {
+    "gru": {
+      "first_insert_pass": true,
+      "client_limit_ms": 122.298,
+      "repeats": {
+        "1": {
+          "count_pass": true,
+          "server_pass": true,
+          "client_pass": true
+        },
+        "2": {
+          "count_pass": true,
+          "server_pass": true,
+          "client_pass": true
+        },
+        "3": {
+          "count_pass": true,
+          "server_pass": true,
+          "client_pass": true
+        }
+      }
+    },
+    "sjc": {
+      "first_insert_pass": true,
+      "client_limit_ms": 292.531,
+      "repeats": {
+        "1": {
+          "count_pass": true,
+          "server_pass": true,
+          "client_pass": true
+        },
+        "2": {
+          "count_pass": true,
+          "server_pass": true,
+          "client_pass": true
+        },
+        "3": {
+          "count_pass": true,
+          "server_pass": true,
+          "client_pass": true
+        }
+      }
+    },
+    "fra": {
+      "first_insert_pass": true,
+      "client_limit_ms": 312.368,
+      "repeats": {
+        "1": {
+          "count_pass": true,
+          "server_pass": true,
+          "client_pass": true
+        },
+        "2": {
+          "count_pass": true,
+          "server_pass": true,
+          "client_pass": true
+        },
+        "3": {
+          "count_pass": true,
+          "server_pass": true,
+          "client_pass": true
+        }
+      }
+    }
+  },
+  "default_writes": 900,
+  "cross_reads": {
+    "count": 1800,
+    "failures": 0,
+    "empty": 23
+  },
+  "operation_failures": 0,
+  "exact_comparisons": [
+    {
+      "kind": "exact_comparison",
+      "region": "gru",
+      "ok": true,
+      "expected": 960,
+      "actual": 960,
+      "missing": [],
+      "unexpected": [],
+      "changed": []
+    },
+    {
+      "kind": "exact_comparison",
+      "region": "sjc",
+      "ok": true,
+      "expected": 960,
+      "actual": 960,
+      "missing": [],
+      "unexpected": [],
+      "changed": []
+    },
+    {
+      "kind": "exact_comparison",
+      "region": "fra",
+      "ok": true,
+      "expected": 960,
+      "actual": 960,
+      "missing": [],
+      "unexpected": [],
+      "changed": []
+    }
+  ],
+  "baseline_before_all_writes": true,
+  "sdk_source_matches_ddbc3a87d": true,
+  "cleanup": "pending account deletion; proof execution succeeded, wrapper exit1 reports cleanup pending",
+  "start_at": "2026-11-05T20:58:49.203616+00:00",
+  "start_revisions": {
+    "ts-fra-1": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-fra-2": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-gru-1": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-gru-2": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-sjc-1": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-sjc-2": "006bc37f24d99d9984b876ca9d432e580a4f8155"
+  },
+  "end_at": "2026-11-05T21:02:50.009400+00:00",
+  "end_revisions": {
+    "ts-fra-1": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-fra-2": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-gru-1": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-gru-2": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-sjc-1": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "ts-sjc-2": "006bc37f24d99d9984b876ca9d432e580a4f8155"
+  }
+}

@@ -16,7 +16,8 @@ Every sample, response ID, route and server timing is retained. Read-only
 warmup waits for local replica reads. No insert warms the measured writer.
 One hundred reused-connection SELECT-1 requests measure each endpoint's client baseline before writes;
 the initial connection sample is retained separately. Read-only warmup follows
-baseline measurement. The source then starts writes after the original cross-region
+baseline measurement. A regional barrier keeps every measured write after all three
+workers finish their baseline and readiness requests. The source starts writes after the original cross-region
 read warmup; no extra source request refreshes authority immediately before its first insert.
 
 The harness also retains ten home-durable and ten forced-home samples per

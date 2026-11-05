@@ -1,0 +1,1150 @@
+{
+  "input": "/tmp/1105-drain-live.jsonl.gz",
+  "percentile": "p99=sorted[ceil(q*n)-1]; older sorted[ceil(q*(n-1))] also retained; all samples retained",
+  "environment": [
+    {
+      "kind": "environment",
+      "host": "mariogk-dev",
+      "sdk_revision": "527653f2740d28a657543643a0c3d5b7636c286a",
+      "at": "2026-11-05T20:59:05Z"
+    }
+  ],
+  "regions": {
+    "gru": {
+      "baseline": {
+        "count": 100,
+        "p50_ms": 24.1,
+        "p99_ms": 27.4,
+        "p99_conservative_ms": 27.439,
+        "max_ms": 27.439
+      },
+      "baseline_path": {
+        "count": 100,
+        "p50_ms": 22.298,
+        "p99_ms": 23.932,
+        "p99_conservative_ms": 25.669,
+        "max_ms": 25.669
+      },
+      "failed_writes": 0,
+      "client": {
+        "count": 300,
+        "p50_ms": 36.133,
+        "p99_ms": 75.273,
+        "p99_conservative_ms": 76.195,
+        "max_ms": 100.515
+      },
+      "server": {
+        "count": 300,
+        "p50_ms": 12.89,
+        "p99_ms": 46.09,
+        "p99_conservative_ms": 51.74,
+        "max_ms": 54.31
+      },
+      "first_insert": {
+        "started_at": "2026-11-05T20:59:34.082332+00:00",
+        "receipt_utc": "2026-11-05T20:59:34.182862+00:00",
+        "kind": "write",
+        "region": "gru",
+        "ok": true,
+        "ms": 100.515,
+        "completed_at": 1793912374.1828752,
+        "http": [
+          {
+            "kind": "api",
+            "ms": 99.75,
+            "status": 200
+          }
+        ],
+        "response_received_at": "2026-11-05T20:59:34.182341+00:00",
+        "status": 200,
+        "headers": {
+          "server-timing": "admission;dur=0.12, auth;dur=0.50, home_lookup;dur=0.84, qos;dur=0.04, project;dur=0.04, placement;dur=0.01, tenant;dur=0.11, execute;dur=27.32, app;dur=28.99;desc=\"gru\"",
+          "x-request-id": "01M6PR50VWD99FVCSAFP6M5EKF",
+          "x-terrabase-machine": "ts-gru-1",
+          "x-terrabase-region": "gru"
+        },
+        "repeat": 1,
+        "n": 0,
+        "id": "01M6PR50T2EQ50P4YCRXD4YNM2"
+      },
+      "repeats": {
+        "1": {
+          "client": {
+            "count": 100,
+            "p50_ms": 36.569,
+            "p99_ms": 63.68,
+            "p99_conservative_ms": 100.515,
+            "max_ms": 100.515
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 13.325,
+            "p99_ms": 34.25,
+            "p99_conservative_ms": 37.08,
+            "max_ms": 37.08
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.76,
+              "p99_conservative_ms": 3.83,
+              "max_ms": 3.83
+            },
+            "local_allowance": null,
+            "local_native": null,
+            "local_execute": null,
+            "local_begin": null,
+            "local_seal": null,
+            "local_hlc": null,
+            "push_publish": null,
+            "push_hold": null,
+            "local_commit": null
+          },
+          "routes": [
+            ""
+          ]
+        },
+        "2": {
+          "client": {
+            "count": 100,
+            "p50_ms": 36.114,
+            "p99_ms": 58.641,
+            "p99_conservative_ms": 76.195,
+            "max_ms": 76.195
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 12.97,
+            "p99_ms": 35.73,
+            "p99_conservative_ms": 52.16,
+            "max_ms": 52.16
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.39,
+              "p99_conservative_ms": 0.44,
+              "max_ms": 0.44
+            },
+            "local_allowance": null,
+            "local_native": null,
+            "local_execute": null,
+            "local_begin": null,
+            "local_seal": null,
+            "local_hlc": null,
+            "push_publish": null,
+            "push_hold": null,
+            "local_commit": null
+          },
+          "routes": [
+            ""
+          ]
+        },
+        "3": {
+          "client": {
+            "count": 100,
+            "p50_ms": 35.873,
+            "p99_ms": 75.273,
+            "p99_conservative_ms": 79.454,
+            "max_ms": 79.454
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 11.925,
+            "p99_ms": 51.74,
+            "p99_conservative_ms": 54.31,
+            "max_ms": 54.31
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.11,
+              "p99_ms": 2.09,
+              "p99_conservative_ms": 2.14,
+              "max_ms": 2.14
+            },
+            "local_allowance": null,
+            "local_native": null,
+            "local_execute": null,
+            "local_begin": null,
+            "local_seal": null,
+            "local_hlc": null,
+            "push_publish": null,
+            "push_hold": null,
+            "local_commit": null
+          },
+          "routes": [
+            ""
+          ]
+        }
+      },
+      "client_budget_ms": 122.298
+    },
+    "sjc": {
+      "baseline": {
+        "count": 100,
+        "p50_ms": 194.185,
+        "p99_ms": 222.153,
+        "p99_conservative_ms": 222.524,
+        "max_ms": 222.524
+      },
+      "baseline_path": {
+        "count": 100,
+        "p50_ms": 192.531,
+        "p99_ms": 196.832,
+        "p99_conservative_ms": 208.925,
+        "max_ms": 208.925
+      },
+      "failed_writes": 0,
+      "client": {
+        "count": 300,
+        "p50_ms": 215.339,
+        "p99_ms": 240.54,
+        "p99_conservative_ms": 241.392,
+        "max_ms": 260.583
+      },
+      "server": {
+        "count": 300,
+        "p50_ms": 21.855,
+        "p99_ms": 45.9,
+        "p99_conservative_ms": 46.46,
+        "max_ms": 67.21
+      },
+      "first_insert": {
+        "started_at": "2026-11-05T20:59:34.082911+00:00",
+        "receipt_utc": "2026-11-05T20:59:34.343508+00:00",
+        "kind": "write",
+        "region": "sjc",
+        "ok": true,
+        "ms": 260.583,
+        "completed_at": 1793912374.3435209,
+        "http": [
+          {
+            "kind": "api",
+            "ms": 259.82,
+            "status": 200
+          }
+        ],
+        "response_received_at": "2026-11-05T20:59:34.342958+00:00",
+        "status": 200,
+        "headers": {
+          "server-timing": "admission;dur=0.12, auth;dur=0.12, home_lookup;dur=0.74, qos;dur=0.03, project;dur=0.02, placement;dur=0.01, tenant;dur=0.16, replica_open;dur=0.05, route;dur=10.88, local_begin;dur=11.35, local_allowance;dur=0.02, local_native;dur=0.31, local_execute;dur=0.46, ack;dur=42.60, local_capture;dur=5.41, local_hlc;dur=5.36, local_seal;dur=2.03, push_publish;dur=5.83, push_hold;dur=16.16, local_commit;dur=4.23, execute;dur=0.66, app;dur=67.21;desc=\"sjc\"",
+          "terrascale-write-route": "route=local; reason=ulid_insert; commit=local",
+          "x-request-id": "01M6PR50X7N95WQ6HJQ6KQR4F9",
+          "x-terrabase-machine": "ts-sjc-1",
+          "x-terrabase-region": "sjc"
+        },
+        "repeat": 1,
+        "n": 0,
+        "id": "01M6PR50T2EQ50P4YCRXD4YNM3"
+      },
+      "repeats": {
+        "1": {
+          "client": {
+            "count": 100,
+            "p50_ms": 215.701,
+            "p99_ms": 241.392,
+            "p99_conservative_ms": 260.583,
+            "max_ms": 260.583
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 22.435,
+            "p99_ms": 46.85,
+            "p99_conservative_ms": 67.21,
+            "max_ms": 67.21
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.61,
+              "p99_conservative_ms": 1.94,
+              "max_ms": 1.94
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.15,
+              "p99_conservative_ms": 1.18,
+              "max_ms": 1.18
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.2,
+              "p99_ms": 1.34,
+              "p99_conservative_ms": 2.02,
+              "max_ms": 2.02
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.235,
+              "p99_ms": 1.39,
+              "p99_conservative_ms": 2.07,
+              "max_ms": 2.07
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.595,
+              "p99_ms": 11.74,
+              "p99_conservative_ms": 29.77,
+              "max_ms": 29.77
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.11,
+              "p99_ms": 1.34,
+              "p99_conservative_ms": 2.03,
+              "max_ms": 2.03
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 5.36,
+              "p99_conservative_ms": 5.36,
+              "max_ms": 5.36
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 1.045,
+              "p99_ms": 5.83,
+              "p99_conservative_ms": 25.05,
+              "max_ms": 25.05
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.86,
+              "p99_ms": 11.79,
+              "p99_conservative_ms": 16.16,
+              "max_ms": 16.16
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.255,
+              "p99_ms": 4.62,
+              "p99_conservative_ms": 5.03,
+              "max_ms": 5.03
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        },
+        "2": {
+          "client": {
+            "count": 100,
+            "p50_ms": 215.425,
+            "p99_ms": 240.4,
+            "p99_conservative_ms": 241.611,
+            "max_ms": 241.611
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 21.85,
+            "p99_ms": 45.88,
+            "p99_conservative_ms": 46.46,
+            "max_ms": 46.46
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 3.32,
+              "p99_conservative_ms": 11.29,
+              "max_ms": 11.29
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.06,
+              "p99_conservative_ms": 2.23,
+              "max_ms": 2.23
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.2,
+              "p99_ms": 0.62,
+              "p99_conservative_ms": 0.72,
+              "max_ms": 0.72
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.23,
+              "p99_ms": 0.86,
+              "p99_conservative_ms": 2.44,
+              "max_ms": 2.44
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.9,
+              "p99_ms": 10.31,
+              "p99_conservative_ms": 14.43,
+              "max_ms": 14.43
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.1,
+              "p99_ms": 0.5,
+              "p99_conservative_ms": 1.59,
+              "max_ms": 1.59
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 4.67,
+              "p99_conservative_ms": 5.78,
+              "max_ms": 5.78
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 1.055,
+              "p99_ms": 3.01,
+              "p99_conservative_ms": 3.8,
+              "max_ms": 3.8
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.885,
+              "p99_ms": 13.28,
+              "p99_conservative_ms": 22.27,
+              "max_ms": 22.27
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.235,
+              "p99_ms": 4.78,
+              "p99_conservative_ms": 5.06,
+              "max_ms": 5.06
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        },
+        "3": {
+          "client": {
+            "count": 100,
+            "p50_ms": 214.797,
+            "p99_ms": 223.231,
+            "p99_conservative_ms": 234.181,
+            "max_ms": 234.181
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 21.45,
+            "p99_ms": 30.83,
+            "p99_conservative_ms": 40.75,
+            "max_ms": 40.75
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.69,
+              "p99_conservative_ms": 0.71,
+              "max_ms": 0.71
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.02,
+              "p99_conservative_ms": 0.06,
+              "max_ms": 0.06
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.2,
+              "p99_ms": 0.65,
+              "p99_conservative_ms": 0.72,
+              "max_ms": 0.72
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.24,
+              "p99_ms": 1.01,
+              "p99_conservative_ms": 2.12,
+              "max_ms": 2.12
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.545,
+              "p99_ms": 9.11,
+              "p99_conservative_ms": 9.15,
+              "max_ms": 9.15
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.1,
+              "p99_ms": 0.16,
+              "p99_conservative_ms": 0.18,
+              "max_ms": 0.18
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 4.0,
+              "p99_conservative_ms": 4.54,
+              "max_ms": 4.54
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 0.93,
+              "p99_ms": 2.32,
+              "p99_conservative_ms": 2.7,
+              "max_ms": 2.7
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.645,
+              "p99_ms": 9.68,
+              "p99_conservative_ms": 10.44,
+              "max_ms": 10.44
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.22,
+              "p99_ms": 4.64,
+              "p99_conservative_ms": 4.85,
+              "max_ms": 4.85
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        }
+      },
+      "client_budget_ms": 292.531
+    },
+    "fra": {
+      "baseline": {
+        "count": 100,
+        "p50_ms": 213.969,
+        "p99_ms": 225.242,
+        "p99_conservative_ms": 229.066,
+        "max_ms": 229.066
+      },
+      "baseline_path": {
+        "count": 100,
+        "p50_ms": 212.368,
+        "p99_ms": 214.28,
+        "p99_conservative_ms": 215.886,
+        "max_ms": 215.886
+      },
+      "failed_writes": 0,
+      "client": {
+        "count": 300,
+        "p50_ms": 234.432,
+        "p99_ms": 266.77,
+        "p99_conservative_ms": 269.663,
+        "max_ms": 275.101
+      },
+      "server": {
+        "count": 300,
+        "p50_ms": 21.075,
+        "p99_ms": 50.68,
+        "p99_conservative_ms": 53.76,
+        "max_ms": 62.46
+      },
+      "first_insert": {
+        "started_at": "2026-11-05T20:59:34.081009+00:00",
+        "receipt_utc": "2026-11-05T20:59:34.353554+00:00",
+        "kind": "write",
+        "region": "fra",
+        "ok": true,
+        "ms": 272.532,
+        "completed_at": 1793912374.3535664,
+        "http": [
+          {
+            "kind": "api",
+            "ms": 271.844,
+            "status": 200
+          }
+        ],
+        "response_received_at": "2026-11-05T20:59:34.353167+00:00",
+        "status": 200,
+        "headers": {
+          "server-timing": "admission;dur=0.12, auth;dur=0.13, home_lookup;dur=0.75, qos;dur=0.03, project;dur=0.01, placement;dur=0.01, tenant;dur=0.15, replica_open;dur=0.04, route;dur=9.95, local_begin;dur=8.69, local_allowance;dur=0.02, local_native;dur=0.27, local_execute;dur=0.41, ack;dur=37.58, local_capture;dur=5.59, local_hlc;dur=5.72, local_seal;dur=2.29, push_publish;dur=1.08, push_hold;dur=16.68, local_commit;dur=3.92, execute;dur=0.58, app;dur=58.47;desc=\"fra\"",
+          "terrascale-write-route": "route=local; reason=ulid_insert; commit=local",
+          "x-request-id": "01M6PR50XAKXSCD00HZ1731ZQH",
+          "x-terrabase-machine": "ts-fra-1",
+          "x-terrabase-region": "fra"
+        },
+        "repeat": 1,
+        "n": 0,
+        "id": "01M6PR50T0CB13KXRRR721FAHP"
+      },
+      "repeats": {
+        "1": {
+          "client": {
+            "count": 100,
+            "p50_ms": 235.782,
+            "p99_ms": 272.532,
+            "p99_conservative_ms": 275.101,
+            "max_ms": 275.101
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 21.67,
+            "p99_ms": 58.47,
+            "p99_conservative_ms": 62.46,
+            "max_ms": 62.46
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 0.62,
+              "p99_conservative_ms": 1.65,
+              "max_ms": 1.65
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.04,
+              "p99_conservative_ms": 0.11,
+              "max_ms": 0.11
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.17,
+              "p99_ms": 1.15,
+              "p99_conservative_ms": 2.24,
+              "max_ms": 2.24
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.2,
+              "p99_ms": 1.18,
+              "p99_conservative_ms": 2.3,
+              "max_ms": 2.3
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.86,
+              "p99_ms": 12.85,
+              "p99_conservative_ms": 25.24,
+              "max_ms": 25.24
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.09,
+              "p99_ms": 1.89,
+              "p99_conservative_ms": 2.29,
+              "max_ms": 2.29
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 5.72,
+              "p99_conservative_ms": 6.92,
+              "max_ms": 6.92
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 0.65,
+              "p99_ms": 4.23,
+              "p99_conservative_ms": 4.78,
+              "max_ms": 4.78
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.72,
+              "p99_ms": 13.1,
+              "p99_conservative_ms": 16.68,
+              "max_ms": 16.68
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.225,
+              "p99_ms": 5.31,
+              "p99_conservative_ms": 6.6,
+              "max_ms": 6.6
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        },
+        "2": {
+          "client": {
+            "count": 100,
+            "p50_ms": 233.582,
+            "p99_ms": 257.357,
+            "p99_conservative_ms": 266.77,
+            "max_ms": 266.77
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 20.645,
+            "p99_ms": 45.82,
+            "p99_conservative_ms": 53.76,
+            "max_ms": 53.76
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.11,
+              "p99_ms": 0.46,
+              "p99_conservative_ms": 0.7,
+              "max_ms": 0.7
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.01,
+              "p99_conservative_ms": 0.01,
+              "max_ms": 0.01
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.17,
+              "p99_ms": 0.51,
+              "p99_conservative_ms": 0.8,
+              "max_ms": 0.8
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.2,
+              "p99_ms": 0.53,
+              "p99_conservative_ms": 0.83,
+              "max_ms": 0.83
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 6.78,
+              "p99_ms": 9.64,
+              "p99_conservative_ms": 9.9,
+              "max_ms": 9.9
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.09,
+              "p99_ms": 0.24,
+              "p99_conservative_ms": 0.45,
+              "max_ms": 0.45
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 4.67,
+              "p99_conservative_ms": 4.88,
+              "max_ms": 4.88
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 0.635,
+              "p99_ms": 2.65,
+              "p99_conservative_ms": 2.87,
+              "max_ms": 2.87
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.375,
+              "p99_ms": 10.03,
+              "p99_conservative_ms": 14.87,
+              "max_ms": 14.87
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.095,
+              "p99_ms": 5.32,
+              "p99_conservative_ms": 27.88,
+              "max_ms": 27.88
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        },
+        "3": {
+          "client": {
+            "count": 100,
+            "p50_ms": 234.674,
+            "p99_ms": 248.772,
+            "p99_conservative_ms": 257.642,
+            "max_ms": 257.642
+          },
+          "server": {
+            "count": 100,
+            "p50_ms": 21.63,
+            "p99_ms": 35.85,
+            "p99_conservative_ms": 44.15,
+            "max_ms": 44.15
+          },
+          "stages": {
+            "auth": {
+              "count": 100,
+              "p50_ms": 0.12,
+              "p99_ms": 1.48,
+              "p99_conservative_ms": 1.92,
+              "max_ms": 1.92
+            },
+            "local_allowance": {
+              "count": 100,
+              "p50_ms": 0.01,
+              "p99_ms": 0.04,
+              "p99_conservative_ms": 0.4,
+              "max_ms": 0.4
+            },
+            "local_native": {
+              "count": 100,
+              "p50_ms": 0.18,
+              "p99_ms": 0.7,
+              "p99_conservative_ms": 0.8,
+              "max_ms": 0.8
+            },
+            "local_execute": {
+              "count": 100,
+              "p50_ms": 0.21,
+              "p99_ms": 0.73,
+              "p99_conservative_ms": 0.83,
+              "max_ms": 0.83
+            },
+            "local_begin": {
+              "count": 100,
+              "p50_ms": 7.21,
+              "p99_ms": 10.06,
+              "p99_conservative_ms": 10.75,
+              "max_ms": 10.75
+            },
+            "local_seal": {
+              "count": 100,
+              "p50_ms": 0.08,
+              "p99_ms": 0.28,
+              "p99_conservative_ms": 0.4,
+              "max_ms": 0.4
+            },
+            "local_hlc": {
+              "count": 100,
+              "p50_ms": 0.0,
+              "p99_ms": 4.82,
+              "p99_conservative_ms": 9.21,
+              "max_ms": 9.21
+            },
+            "push_publish": {
+              "count": 100,
+              "p50_ms": 0.68,
+              "p99_ms": 1.9,
+              "p99_conservative_ms": 1.91,
+              "max_ms": 1.91
+            },
+            "push_hold": {
+              "count": 100,
+              "p50_ms": 6.565,
+              "p99_ms": 9.63,
+              "p99_conservative_ms": 12.87,
+              "max_ms": 12.87
+            },
+            "local_commit": {
+              "count": 100,
+              "p50_ms": 3.12,
+              "p99_ms": 5.59,
+              "p99_conservative_ms": 6.6,
+              "max_ms": 6.6
+            }
+          },
+          "routes": [
+            "route=local; reason=ulid_insert; commit=local"
+          ]
+        }
+      },
+      "client_budget_ms": 312.368
+    }
+  },
+  "exact_comparisons": [
+    {
+      "kind": "exact_comparison",
+      "region": "gru",
+      "ok": true,
+      "expected": 960,
+      "actual": 960,
+      "missing": [],
+      "unexpected": [],
+      "changed": []
+    },
+    {
+      "kind": "exact_comparison",
+      "region": "sjc",
+      "ok": true,
+      "expected": 960,
+      "actual": 960,
+      "missing": [],
+      "unexpected": [],
+      "changed": []
+    },
+    {
+      "kind": "exact_comparison",
+      "region": "fra",
+      "ok": true,
+      "expected": 960,
+      "actual": 960,
+      "missing": [],
+      "unexpected": [],
+      "changed": []
+    }
+  ],
+  "inventories": [
+    {
+      "started_at": "2026-11-05T21:02:13.875412+00:00",
+      "receipt_utc": "2026-11-05T21:02:14.120268+00:00",
+      "kind": "inventory",
+      "region": "gru",
+      "ok": true,
+      "ms": 244.835,
+      "completed_at": 1793912534.1202815,
+      "http": [
+        {
+          "kind": "token",
+          "ms": 167.44,
+          "status": 200
+        },
+        {
+          "kind": "api",
+          "ms": 75.602,
+          "status": 200
+        }
+      ],
+      "response_received_at": "2026-11-05T21:02:14.119749+00:00",
+      "status": 200,
+      "headers": {
+        "server-timing": "admission;dur=0.10, auth;dur=0.42, home_lookup;dur=0.88, qos;dur=0.03, project;dur=0.01, placement;dur=0.01, tenant;dur=0.08, execute;dur=3.72, app;dur=5.26;desc=\"gru\"",
+        "x-request-id": "01M6PR9X2PXFJ3W0HWD5FXN39G",
+        "x-terrabase-machine": "ts-gru-1",
+        "x-terrabase-region": "gru"
+      },
+      "rows": [
+        {
+          "writer": "fra",
+          "body": "acceptance",
+          "count": 300,
+          "distinct_ids": 300
+        },
+        {
+          "writer": "fra",
+          "body": "forced-home",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "fra",
+          "body": "home-durable",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "gru",
+          "body": "acceptance",
+          "count": 300,
+          "distinct_ids": 300
+        },
+        {
+          "writer": "gru",
+          "body": "forced-home",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "gru",
+          "body": "home-durable",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "sjc",
+          "body": "acceptance",
+          "count": 300,
+          "distinct_ids": 300
+        },
+        {
+          "writer": "sjc",
+          "body": "forced-home",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "sjc",
+          "body": "home-durable",
+          "count": 10,
+          "distinct_ids": 10
+        }
+      ]
+    },
+    {
+      "started_at": "2026-11-05T21:02:14.230951+00:00",
+      "receipt_utc": "2026-11-05T21:02:14.993008+00:00",
+      "kind": "inventory",
+      "region": "sjc",
+      "ok": true,
+      "ms": 762.031,
+      "completed_at": 1793912534.9930215,
+      "http": [
+        {
+          "kind": "token",
+          "ms": 152.441,
+          "status": 200
+        },
+        {
+          "kind": "api",
+          "ms": 607.703,
+          "status": 200
+        }
+      ],
+      "response_received_at": "2026-11-05T21:02:14.992487+00:00",
+      "status": 200,
+      "headers": {
+        "server-timing": "admission;dur=0.13, auth;dur=0.51, home_lookup;dur=4.13, qos;dur=1.31, project;dur=0.03, placement;dur=0.01, tenant;dur=6.64, replica_open;dur=1.64, execute;dur=1.53, app;dur=15.93;desc=\"sjc\"",
+        "x-request-id": "01M6PR9XV0K2VNJHSBK4H1KBXR",
+        "x-terrabase-machine": "ts-sjc-1",
+        "x-terrabase-region": "sjc"
+      },
+      "rows": [
+        {
+          "writer": "fra",
+          "body": "acceptance",
+          "count": 300,
+          "distinct_ids": 300
+        },
+        {
+          "writer": "fra",
+          "body": "forced-home",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "fra",
+          "body": "home-durable",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "gru",
+          "body": "acceptance",
+          "count": 300,
+          "distinct_ids": 300
+        },
+        {
+          "writer": "gru",
+          "body": "forced-home",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "gru",
+          "body": "home-durable",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "sjc",
+          "body": "acceptance",
+          "count": 300,
+          "distinct_ids": 300
+        },
+        {
+          "writer": "sjc",
+          "body": "forced-home",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "sjc",
+          "body": "home-durable",
+          "count": 10,
+          "distinct_ids": 10
+        }
+      ]
+    },
+    {
+      "started_at": "2026-11-05T21:02:15.427408+00:00",
+      "receipt_utc": "2026-11-05T21:02:16.251678+00:00",
+      "kind": "inventory",
+      "region": "fra",
+      "ok": true,
+      "ms": 824.245,
+      "completed_at": 1793912536.2516913,
+      "http": [
+        {
+          "kind": "token",
+          "ms": 188.19,
+          "status": 200
+        },
+        {
+          "kind": "api",
+          "ms": 634.218,
+          "status": 200
+        }
+      ],
+      "response_received_at": "2026-11-05T21:02:16.251145+00:00",
+      "status": 200,
+      "headers": {
+        "server-timing": "admission;dur=0.15, auth;dur=0.53, home_lookup;dur=0.72, qos;dur=0.03, project;dur=0.01, placement;dur=0.01, tenant;dur=0.11, replica_open;dur=0.14, execute;dur=1.41, app;dur=3.12;desc=\"fra\"",
+        "x-request-id": "01M6PR9Z2GT1ZPZRJQSDT88K48",
+        "x-terrabase-machine": "ts-fra-1",
+        "x-terrabase-region": "fra"
+      },
+      "rows": [
+        {
+          "writer": "fra",
+          "body": "acceptance",
+          "count": 300,
+          "distinct_ids": 300
+        },
+        {
+          "writer": "fra",
+          "body": "forced-home",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "fra",
+          "body": "home-durable",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "gru",
+          "body": "acceptance",
+          "count": 300,
+          "distinct_ids": 300
+        },
+        {
+          "writer": "gru",
+          "body": "forced-home",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "gru",
+          "body": "home-durable",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "sjc",
+          "body": "acceptance",
+          "count": 300,
+          "distinct_ids": 300
+        },
+        {
+          "writer": "sjc",
+          "body": "forced-home",
+          "count": 10,
+          "distinct_ids": 10
+        },
+        {
+          "writer": "sjc",
+          "body": "home-durable",
+          "count": 10,
+          "distinct_ids": 10
+        }
+      ]
+    }
+  ],
+  "cross_reads": {
+    "count": 1800,
+    "failures": 0,
+    "empty": 23
+  }
+}

@@ -14,7 +14,7 @@ DECISION: The independent acceptance rerun may use mariogk-dev rather than wait 
 
 `benchmark/local-write-tails/run.py` preserves #1105's workload: three concurrent regional workers, each performing three measured repeats of 100 fresh ULID inserts. Each write is followed by SELECTs through the other two regions. There are 900 default writes and 1,800 cross-region reads per run. SDK retries are set to one attempt. Read-only warmup waits for a local replica (`replica_open`, no `home` span); no write primes the measured writer. The original comparable before/after runs used 30 health requests on a reused connection to measure each beta path; initial connection samples remain separately recorded. Ten home-durable and ten forced-home samples per region are separate diagnostics.
 
-All percentiles use the retained observed order statistic `sorted[ceil(q*(n-1))]`: with 100 samples, p99 is the observed maximum. We do not drop first inserts, auth renewal, overload, failed requests or tail samples. `app` is the producer's server application time; nested `local_allowance` and `local_native` must not be summed into their parent `local_execute` again.
+The original comparable before/after tables use the retained conservative order statistic `sorted[ceil(q*(n-1))]`: with 100 samples, this is the observed maximum. Follow-up acceptance tables use empirical p99 `sorted[ceil(.99*n)-1]`, with the conservative statistic and maxima retained separately. We do not drop first inserts, auth renewal, overload, failed requests or tail samples. `app` is the producer's server application time; nested `local_allowance` and `local_native` must not be summed into their parent `local_execute` again.
 
 Comparable before run: beta 18:36:47Z, SDK/harness `3b037d6a616ae14aea2a100d927b52688edff66d`, server all six nodes `559eddd5d12062af3c53befed0b7387772ef4a43`, storage format 23. The earlier delta reproduction remains supplementary evidence, not the comparable client baseline.
 
@@ -59,7 +59,7 @@ The pooled 300-write gates pass for both non-home regions: server p99 <100 ms; c
 | FRA |2|254.580|43.550|0.180|27.990|
 | FRA |3|297.859|88.430|0.680|65.370|
 
-SJC repeat 1 does **not** pass a per-repeat p99 <100 ms test under this conservative order statistic. The acceptance claim above is the specified pooled 300-write distribution; it is not a maximum-latency guarantee. The run retains one `commit=home` fallback (`01M6PHGMZY6BWATGKKWKBXFBSY`, app 223.13 ms), followed by a local commit (`01M6PHGNNJVP382N6KM1T5DK2C`, app 627.93 ms, `local_begin` 609.81 ms). Serving-node bounded stdout confirms `TursoNativeException` at writer open at 19:03:35.179209Z. `HomePush.BeginAsync` then synchronously pulls from home after forwarding, so the next local request includes that catch-up. These two samples are 0.67% of SJC's default writes. The fallback reason is distinct from custody refresh: its following local seal is 0.12 ms. This residual is disclosed for independent acceptance; it must not be misreported as an all-requests-under-100-ms result.
+SJC repeat 1 does **not** pass a per-repeat p99 <100 ms test under this conservative order statistic. The pooled completion claim from this run was subsequently withdrawn: acceptance requires every 100-write repeat to pass. The run retains one `commit=home` fallback (`01M6PHGMZY6BWATGKKWKBXFBSY`, app 223.13 ms), followed by a local commit (`01M6PHGNNJVP382N6KM1T5DK2C`, app 627.93 ms, `local_begin` 609.81 ms). Serving-node bounded stdout confirms `TursoNativeException` at writer open at 19:03:35.179209Z. `HomePush.BeginAsync` then synchronously pulls from home after forwarding, so the next local request includes that catch-up. These two samples are 0.67% of SJC's default writes. The fallback reason is distinct from custody refresh: its following local seal is 0.12 ms. This residual is disclosed for independent acceptance; it must not be misreported as an all-requests-under-100-ms result.
 
 All 900 writes and 1,800 cross reads succeeded. Seventy-nine immediate reads were empty before eventual replication; this run does not claim immediate cross-region read-after-write consistency. Each final regional inventory has 300 acceptance rows for each writer, plus ten rows per writer for each diagnostic mode, with count equal to distinct primary-key count in every group (960 total). The independent acceptance rerun also reconciles every expected ID and value.
 
@@ -103,7 +103,7 @@ Raw before/after JSONL, summaries, six-node health and bounded refresh counter s
 - [Earlier delta reproduction](local-write-tails-20261105/before-delta-summary.json), [raw gzip](local-write-tails-20261105/before-delta.jsonl.gz).
 - [Harness instructions](../local-write-tails/README.md): run through `TS_HEAVY_HOST=beta ts-heavy-any`, with a beta hostname guard, against the pinned SDK source. All credentials stay in the helper's private files. Run `summarize.py` over retained samples.
 
-Parked: rare native writer-open busy fallback plus synchronous post-forward home catch-up; #1103 forwarding-pool investigation remains independent. The specified pooled p99 and first-insert targets are met, with maxima and the failed SJC per-repeat distribution explicitly retained above.
+The native writer-open fallback and synchronous post-forward home catch-up remained unresolved in this original run; the reader-drain follow-up below addresses their admission boundary. No evidence implicated #1103 forwarding-pool contention. Pooled results alone do not satisfy acceptance.
 
 Acceptance handoff: server deployed readiness and shipped SDK pin were delivered with `mode:steer` to beta acceptance `aeb225be` (environment `e70ee7fd-aace-4435-8419-2c2182950c48`) to rerun item 2 on a fresh Pro database using its own account. The user subsequently authorized mariogk-dev client placement with that host’s own measured path baselines. Its stronger exact-ID/value reconciliation and 100 SELECT-1 path baselines are independent proof, not results claimed here.
 
@@ -143,3 +143,41 @@ The own workload passed every repeat. Its added post-cohort validator then hit `
 DECISION: use the last endpoint `app` when forwarding includes multiple entries, path baseline = SELECT-1 elapsed minus endpoint app, and empirical p99 = sorted[ceil(.99*n)-1], matching acceptance. Reason: the first home app understates endpoint time. Keep the older conservative statistic and maxima as separate fields. SJC repeat1 fails under either convention. Recomputing acceptance baselines from rounded SDK/body durations differs from its authoritative header-receipt baselines by less than0.05ms.
 
 Retained evidence: [own raw](local-write-tails-20261105/admission-own.jsonl.gz), [summary](local-write-tails-20261105/admission-own-summary.json), [validation](local-write-tails-20261105/admission-own-validation.json), [original runner log](local-write-tails-20261105/admission-own-runner.log.gz), [independent raw](local-write-tails-20261105/admission-independent-confirmation.jsonl.gz), [independent summary](local-write-tails-20261105/admission-independent-summary.json), [start snapshot](local-write-tails-20261105/admission-proof-start-peers.json), [end snapshot](local-write-tails-20261105/admission-proof-end-peers.json). One diagnostic JSON line split by runner stderr was rejoined without altering request fields; its original stream is retained. No measured write/read sample was lost.
+
+
+## Reader-drain qualification and deployment
+
+The reader-drain change shipped in `006bc37f24d99d9984b876ca9d432e580a4f8155` via ts-ship. Exact-revision qualification passed all 66 TerraBase service tests in 17.020 s, all four native driver tests in 7.296 s, auth's 29 tests in 7.412 s, and benchmark Fast in 0.300 s. The regression holds an actual replica reader, cancels writer admission, then releases the reader and verifies a new writer commits and the row is readable. All three replica regression tests passed five consecutive positive runs. Removing the reader drain makes the new regression fail because writer admission incorrectly succeeds while the reader is active; this negative control proves the missing exclusion contract, rather than recreating the exact native refusal from production. [Qualification evidence](local-write-tails-20261105/reader-drain-qualification.json).
+
+DECISION: retain the mandatory post-forward causal catch-up and partner acknowledgment holds; drain readers before native writer setup instead. Reason: eliminating the catch-up would hide the latency while weakening read/write ordering. The exclusive gate is released when the local writer is disposed, before any requested home-durable wait. No format bump, SDK change, or rollout change is part of this follow-up.
+
+CI [42106659778](https://github.com/TerraScale/terrascale/actions/runs/42106659778) passed, including production release; Auth release was skipped. All six nodes reported healthy on the shipped SHA at20:57:45Z. The bounded deployment follow-up was disabled after readiness. The parent then froze both repositories for25 minutes before the proofs below.
+
+
+## Frozen reader-drain worker proof: every repeat passes
+
+The own Free cohort ran on admitted **mariogk-dev**, through ts-heavy-any, starting20:59:05Z. Harness `527653f2740d28a657543643a0c3d5b7636c286a` uses Python SDK source byte-equivalent to `ddbc3a87d`. All300 SELECT-1 baseline requests finish before any measured write; no insert warms the measured writer. Six-node snapshots at20:58:49Z and21:02:50Z both show healthy `006bc37f2` throughout all regions.
+
+**900/900 default writes and1800/1800 cross reads completed with zero SQL/HTTP errors. Every100-write repeat passes both gates, and all three first inserts are under300ms. All960 acknowledged IDs/values reconcile exactly in every region.** All600 SJC/FRA default writes report `commit=local`; there is no home fallback. Twenty-three immediate cross reads were empty while replication caught up; final exact comparisons have no missing, unexpected, duplicate or changed rows.
+
+| Region | Path baseline median ms | Client limit ms | First insert client /app ms |
+|---|---:|---:|---:|
+|GRU|22.298|122.298|100.515 /28.99|
+|SJC|192.531|292.531|260.583 /67.21|
+|FRA|212.368|312.368|272.532 /58.47|
+
+| Region | Repeat | Server app p99 /max ms | Client p99 /max ms | Both gates |
+|---|---:|---:|---:|---|
+|GRU|1|34.250 /37.080|63.680 /100.515|PASS|
+|GRU|2|35.730 /52.160|58.641 /76.195|PASS|
+|GRU|3|51.740 /54.310|75.273 /79.454|PASS|
+|SJC|1|46.850 /67.210|241.392 /260.583|PASS|
+|SJC|2|45.880 /46.460|240.400 /241.611|PASS|
+|SJC|3|30.830 /40.750|223.231 /234.181|PASS|
+|FRA|1|58.470 /62.460|272.532 /275.101|PASS|
+|FRA|2|45.820 /53.760|257.357 /266.770|PASS|
+|FRA|3|35.850 /44.150|248.772 /257.642|PASS|
+
+The harness completed successfully, but the runner returned1 because synthetic account deletion remained pending after its cleanup submissions. That exit is retained; it is not a workload failure or a silently ignored check. Cleanup is being completed separately. Acceptance received `mode:steer` HANDOFF/GO for its independent fresh Pro item2 rerun at21:03Z, inside the same freeze. #1105 remains open until independent confirmation is checked.
+
+Evidence: [raw JSONL](local-write-tails-20261105/reader-drain-own.jsonl.gz), [summary with all stages and routes](local-write-tails-20261105/reader-drain-own-summary.json), [gate and exact-inventory validation](local-write-tails-20261105/reader-drain-own-validation.json), [runner log](local-write-tails-20261105/reader-drain-own-runner.log.gz), [deployed readiness](local-write-tails-20261105/reader-drain-deployed-peers.json), [proof start](local-write-tails-20261105/reader-drain-proof-start-peers.json), [proof end](local-write-tails-20261105/reader-drain-proof-end-peers.json).

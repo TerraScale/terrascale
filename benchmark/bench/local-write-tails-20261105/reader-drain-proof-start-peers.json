@@ -1,0 +1,172 @@
+{
+  "captured_at": "2026-11-05T20:58:49.203616+00:00",
+  "image": "ghcr.io/terrascale/terrabase@sha256:3333cf42792e66ff6f9e509e1f9736fb98bc711b1ae163c84fe2d8c8a862d947",
+  "health": {
+    "status": "ok",
+    "version": "0.1.0",
+    "region": "sjc",
+    "storageFormat": "23-41a88901325a",
+    "revision": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+    "machine": "ts-sjc-1"
+  },
+  "metrics": [
+    "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+  ],
+  "peer_internal_health_ms": {
+    "ts-fra-1": {
+      "region": "fra",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "fra",
+        "storageFormat": "23-41a88901325a",
+        "revision": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+        "machine": "ts-fra-1"
+      },
+      "samples_ms": [
+        277.338
+      ]
+    },
+    "ts-fra-2": {
+      "region": "fra",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "fra",
+        "storageFormat": "23-41a88901325a",
+        "revision": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+        "machine": "ts-fra-2"
+      },
+      "samples_ms": [
+        275.388
+      ]
+    },
+    "ts-gru-1": {
+      "region": "gru",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "gru",
+        "storageFormat": "23-41a88901325a",
+        "revision": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+        "machine": "ts-gru-1"
+      },
+      "samples_ms": [
+        336.96
+      ]
+    },
+    "ts-gru-2": {
+      "region": "gru",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "gru",
+        "storageFormat": "23-41a88901325a",
+        "revision": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+        "machine": "ts-gru-2"
+      },
+      "samples_ms": [
+        339.091
+      ]
+    },
+    "ts-sjc-1": {
+      "region": "sjc",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "sjc",
+        "storageFormat": "23-41a88901325a",
+        "revision": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+        "machine": "ts-sjc-1"
+      },
+      "samples_ms": [
+        1.12
+      ]
+    },
+    "ts-sjc-2": {
+      "region": "sjc",
+      "health": {
+        "status": "ok",
+        "version": "0.1.0",
+        "region": "sjc",
+        "storageFormat": "23-41a88901325a",
+        "revision": "006bc37f24d99d9984b876ca9d432e580a4f8155",
+        "machine": "ts-sjc-2"
+      },
+      "samples_ms": [
+        2.424
+      ]
+    }
+  },
+  "peer_local_ack_metrics": {
+    "ts-sjc-1": [
+      "terrabase_localack_partner{otel_scope_name=\"TerraScale.TerraBase\"} 1",
+      "terrabase_localwrites_available{otel_scope_name=\"TerraScale.TerraBase\"} 1"
+    ],
+    "ts-sjc-2": [
+      "terrabase_localack_partner{otel_scope_name=\"TerraScale.TerraBase\"} 1"
+    ]
+  },
+  "peer_write_metrics": {
+    "ts-fra-1": [
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"miss\"} 68",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"records\",result=\"miss\"} 16",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"hit\"} 75",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"miss\"} 12",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"hit\"} 63",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"registrations\",result=\"miss\"} 5",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"records\",result=\"hit\"} 66",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"tenants\",result=\"miss\"} 7",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"tenants\",result=\"hit\"} 13",
+      "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+    ],
+    "ts-fra-2": [
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"miss\"} 59",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"records\",result=\"miss\"} 2",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"hit\"} 10",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"miss\"} 4",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"hit\"} 8",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"registrations\",result=\"miss\"} 4"
+    ],
+    "ts-gru-1": [
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"miss\"} 153",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"records\",result=\"miss\"} 12",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"miss\"} 45",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"hit\"} 19977",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"tenants\",result=\"miss\"} 118",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"hit\"} 9857",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"tenants\",result=\"hit\"} 9613",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"registrations\",result=\"miss\"} 9",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"records\",result=\"hit\"} 50",
+      "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+    ],
+    "ts-gru-2": [
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"miss\"} 57",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"records\",result=\"miss\"} 2",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"hit\"} 6",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"miss\"} 3",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"hit\"} 5",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"registrations\",result=\"miss\"} 4"
+    ],
+    "ts-sjc-1": [
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"miss\"} 83",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"records\",result=\"miss\"} 16",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"hit\"} 110",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"miss\"} 17",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"hit\"} 87",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"registrations\",result=\"miss\"} 5",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"records\",result=\"hit\"} 98",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"tenants\",result=\"miss\"} 7",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"tenants\",result=\"hit\"} 21",
+      "terrabase_push_pending{otel_scope_name=\"TerraScale.TerraBase\"} 0"
+    ],
+    "ts-sjc-2": [
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"miss\"} 63",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"records\",result=\"miss\"} 2",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"miss\"} 5",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"plans\",result=\"hit\"} 11",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"registrations\",result=\"miss\"} 4",
+      "terrabase_catalog_cache_lookups_total{otel_scope_name=\"TerraScale.TerraBase\",cache=\"placements\",result=\"hit\"} 14"
+    ]
+  }
+}
