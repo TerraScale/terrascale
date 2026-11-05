@@ -31,10 +31,10 @@ npm project) bundles it with Lightning CSS into the single stylesheet
    tokens meet WCAG 2.2 AA: every ink keeps 4.5:1 on the canvas and all
    surfaces, white text sits on `--ts-accent-fill` (never `--ts-accent`), and
    form controls use the 3:1 `--ts-control-line` border.
-5. **No custom JavaScript.** Tabs, filters and pagination are GET links and
+5. **Native navigation.** Navigation tabs, filters and pagination are GET links and
    forms. Interactivity comes from native HTML (`<details>` menus, `<dialog>`
    with `command`/`commandfor`) and Datastar attributes; write JavaScript only
-   as a last resort.
+   as a last resort. SDK snippet tabs use the shared keyboard handler described below.
 
 ## Page anatomy
 
@@ -59,7 +59,8 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 | Pattern | C# location and use |
 |---|---|
 | Page heading | Markup only: signed-in pages render `<h1 class="ts-sr-only">` and `.ts-page-actions`; `Shared/UI/Slices/ShellDocument.cshtml` sets the `<title>` |
-| Tabs | Markup only: `nav.ts-tabs` with `a.ts-tab` and `aria-current` (e.g. `Features/Databases/DatabaseFrame.cshtml`) |
+| Navigation tabs | Markup only: `nav.ts-tabs` with `a.ts-tab` and `aria-current` (e.g. `Features/Databases/DatabaseFrame.cshtml`) |
+| SDK language tabs | Shared `.sdk-tabs` stylesheet and keyboard handler; see [SDK language tabs](sdk-language-tabs.md) |
 | Card | Markup only: `section.ts-card` with `ts-card-head` and `ts-card-body`; `ts-card-flush` for tables |
 | Stats | Markup only: `dl.ts-stats` with `div.ts-stat` and `data-tone` (`ts-stats-compact` for word values) |
 | Disclosure | No C# equivalent; create and destructive forms use `dialog.ts-dialog` |
@@ -69,6 +70,19 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 | Field | Markup only: `div.ts-field` with `ts-label`, the control and, only on failure, an error |
 | Region map | `Shared/UI/Slices/RegionMap.cshtml` (decorative) and `Shared/UI/Slices/RegionPicker.cshtml` with `Shared/UI/RegionMapField.cs` (highlights hubs chosen in a select or checkbox group) |
 | Icons | `Shared/UI/Icons.cs` (`Icons.Render`) and `Shared/UI/Slices/ShellIcons.cs` |
+
+## Tabs and segmented controls
+
+SDK language selectors always use the shared `.sdk-tabs` component used by
+dashboard, docs and landing: a flat row with self-hosted official language logos
+and names, one blue selected underline and visible keyboard focus. Never put
+boxed buttons inside another box. Select the first tab initially and let the row
+scroll on narrow screens. Keep ARIA tab/panel associations, arrow-key navigation,
+snippet selection and the copy target synchronized.
+
+See [SDK language tabs](sdk-language-tabs.md) for source paths and integration.
+Before shipping, compare before/after screenshots against the simple-ui rules in
+dashboard dark, landing dark and docs light/dark, including narrow layouts.
 
 ## Classes
 
