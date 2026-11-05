@@ -218,3 +218,67 @@ async fn only_one_401_refresh_and_no_403_or_uncertain_write_replay() {
         assert_eq!(auth.seen.lock().unwrap().len(), exchanges);
     }
 }
+
+#[tokio::test]
+async fn background_renewal_keeps_valid_token_and_shares_expired_waiters() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let gate = Arc::new(tokio::sync::Barrier::new(2));
+    let auth = Fixture::gated(
+        move |_| {
+            if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                ok(grant("access-one", 60))
+            } else {
+                (401, "application/json", "{}".into())
+            }
+        },
+        Some(gate.clone()),
+    )
+    .await;
+    let data = Fixture::new(|_| ok("{}".into())).await;
+    let client = data.client(&auth);
+    read(&client).await.unwrap();
+    let Auth::Key(key) = &client.inner.auth else {
+        unreachable!()
+    };
+    {
+        let mut cached = key.cached.lock().await;
+        let Some(super::auth::Cached::Token {
+            refresh_at,
+            expires_at,
+            ..
+        }) = cached.as_mut()
+        else {
+            unreachable!()
+        };
+        *refresh_at = tokio::time::Instant::now();
+        // This lies inside the old early-blocking margin, but is still valid.
+        *expires_at = tokio::time::Instant::now() + Duration::from_secs(1);
+    }
+    tokio::time::timeout(Duration::from_secs(1), read(&client))
+        .await
+        .unwrap()
+        .unwrap();
+    // The second response is held at the issuer. Another valid request must
+    // still finish without acquiring the exchange gate.
+    tokio::time::timeout(Duration::from_secs(1), read(&client))
+        .await
+        .unwrap()
+        .unwrap();
+    {
+        let mut cached = key.cached.lock().await;
+        let Some(super::auth::Cached::Token { expires_at, .. }) = cached.as_mut() else {
+            unreachable!()
+        };
+        *expires_at = tokio::time::Instant::now();
+    }
+    let clone = client.clone();
+    let waiting = tokio::spawn(async move { read(&clone).await });
+    // Releasing the single renewal delivers its permanent refusal to the
+    // expired waiter. No second exchange may race it.
+    tokio::time::timeout(Duration::from_secs(2), gate.wait())
+        .await
+        .unwrap();
+    assert!(waiting.await.unwrap().is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}

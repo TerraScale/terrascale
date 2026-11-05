@@ -356,3 +356,7 @@ clients (route manifest, regional contract, responses) and the retained ts-auth 
 publication. NuGet remains on hold. Source/local-pack consumers must verify the loaded SDK DLL
 matches their pinned package, then qualify their actual service flow. Client-side validation does
 not establish server admission or plan enforcement; retain scope, role, region and quota errors.
+
+Built-in project API-key tokens renew in the background from 60 seconds before expiry
+(or at half-life for short tokens). Concurrent callers share one exchange and continue
+using a valid token; only missing, actually expired, or refused tokens require a wait.

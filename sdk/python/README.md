@@ -245,3 +245,7 @@ create a new source/client with a replacement key. Token endpoint
 `invalid_client` is a terminal `TokenError`. Caller-owned providers must discard
 refused tokens themselves. `503 auth_unavailable` follows the existing safe-read
 backoff and `Retry-After` policy without discarding the cached token.
+
+Built-in project API-key tokens renew in the background from 60 seconds before expiry
+(or at half-life for short tokens). Concurrent callers share one exchange and continue
+using a valid token; only missing, actually expired, or refused tokens require a wait.

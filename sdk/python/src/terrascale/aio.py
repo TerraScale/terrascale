@@ -67,6 +67,8 @@ class AsyncTerraScale:
     # Lifecycle -----------------------------------------------------------
 
     async def close(self) -> None:
+        if self._source is not None:
+            await self._source.close()
         if self._owns_http:
             await self._http.aclose()
 

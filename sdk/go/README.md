@@ -484,8 +484,7 @@ ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
 
 Both return a `*tsauth.TokenSource`: from 60 seconds (at most half the
 lifetime) before expiry it refreshes the token in the background while callers
-keep using the cached one; callers wait for a new token only 10 seconds (at most
-a quarter of the lifetime) before expiry. Concurrent callers share one request.
+keep using the cached one; callers wait for a new token only at actual expiry. Concurrent callers share one request.
 A refresh retries 429, 502, 503, 504 and transport failures up to three times
 with full-jitter backoff or `Retry-After` inside its 30-second budget; other
 failures are returned and not cached. `Invalidate(token)` drops a token a

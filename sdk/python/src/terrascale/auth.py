@@ -15,6 +15,7 @@ import re
 import threading
 import time
 from collections.abc import Sequence
+from concurrent.futures import Future
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -85,6 +86,7 @@ class _Exchange:
         self._auth = "Basic " + base64.b64encode(pair).decode()
         self.token: str | None = None
         self.refresh_at = 0.0
+        self.expires_at = 0.0
         self.refusal: TerraScaleError | None = None
 
     def retry_delay(self, response: httpx.Response | None, attempt: int, max_attempts: int) -> float | None:
@@ -108,7 +110,7 @@ class _Exchange:
     def cached(self) -> str | None:
         if self.refusal is not None:
             raise self.refusal
-        if self.token and time.monotonic() < self.refresh_at:
+        if self.token and time.monotonic() < self.expires_at:
             return self.token
         return None
 
@@ -141,7 +143,7 @@ class _Exchange:
             ok = ok and str(body.get("token_type", "")).lower() == "bearer"
         except (ValueError, KeyError, TypeError, OverflowError):
             ok = False
-        if not ok or not math.isfinite(lifetime) or lifetime <= 0:
+        if not ok or not math.isfinite(lifetime) or lifetime <= 0 or started + lifetime <= time.monotonic():
             # The body may hold credentials: never include it.
             raise TokenError(response.status_code, "invalid_token_response", "not a Bearer access_token with expires_in",
                              request_id=response_request_id(response.headers))
@@ -149,6 +151,7 @@ class _Exchange:
         # Refresh a minute early (or at half-life for short tokens); the
         # lifetime counts from before the request.
         self.refresh_at = started + lifetime - min(60.0, lifetime / 2)
+        self.expires_at = started + lifetime
         return token
 
     def invalidate(self, token: str) -> None:
@@ -176,32 +179,72 @@ class APIKeyTokenSource:
         self._x = _Exchange(api_key, project, scopes, issuer)
         self._http = http_client or httpx.Client(timeout=30.0, follow_redirects=False, http2=True)
         self._lock = threading.Lock()
+        self._flight: Future[str] | None = None
+        self._thread: threading.Thread | None = None
+        self._closed = False
+        self._owns_http = http_client is None
         self._max_attempts = max(1, max_attempts)
 
     def token(self) -> str:
-        # One exchange at a time: concurrent callers wait for it instead of stampeding ts-auth.
         with self._lock:
+            if self._closed:
+                raise RuntimeError("token source is closed")
             cached = self._x.cached()
+            if cached and time.monotonic() < self._x.refresh_at:
+                return cached
+            flight = self._flight
+            if flight is None:
+                flight = Future()
+                self._flight = flight
+                self._thread = threading.Thread(target=self._renew, args=(flight,), daemon=True)
+                self._thread.start()
+            # Refresh never holds the state lock during network I/O. A valid
+            # token remains usable until its actual expiry, even on failure.
             if cached:
                 return cached
+        return flight.result()
+
+    def _renew(self, flight: Future[str]) -> None:
+        try:
             attempt = 0
             while True:
                 attempt += 1
                 started = time.monotonic()
+                response: httpx.Response | None = None
+                transport: Exception | None = None
                 try:
                     response = self._http.send(self._x.request(), auth=None, follow_redirects=False)
-                except httpx.TransportError as exc:
-                    delay = self._x.retry_delay(None, attempt, self._max_attempts)
+                except (httpx.TransportError, httpx.DecodingError) as exc:
+                    transport = exc
+                with self._lock:
+                    delay = self._x.retry_delay(response, attempt, self._max_attempts)
+                    if isinstance(transport, httpx.DecodingError):
+                        delay = None
                     if delay is None:
-                        raise _transport_error(attempt, exc) from exc
-                    time.sleep(delay)
-                    continue
-                except httpx.DecodingError as exc:
-                    raise _transport_error(attempt, exc) from exc
-                delay = self._x.retry_delay(response, attempt, self._max_attempts)
-                if delay is None:
-                    return self._x.accept(response, started)
+                        if transport is not None:
+                            raise _transport_error(attempt, transport) from transport
+                        assert response is not None
+                        token = self._x.accept(response, started)
+                        flight.set_result(token)
+                        return
                 time.sleep(delay)
+        except Exception as exc:
+            with self._lock:
+                self._x.refresh_at = min(self._x.expires_at, time.monotonic() + 1.0)
+                flight.set_exception(exc)
+        finally:
+            with self._lock:
+                self._flight = None
+
+    def close(self) -> None:
+        """Finish this source's bounded renewal before releasing its HTTP client."""
+        with self._lock:
+            self._closed = True
+            thread = self._thread
+        if thread is not None:
+            thread.join()
+        if self._owns_http:
+            self._http.close()
 
     def reject(self, error: TerraScaleError) -> None:
         """Drop a permanently refused token and stop exchanging this key."""
@@ -210,7 +253,8 @@ class APIKeyTokenSource:
 
     def invalidate(self, token: str) -> None:
         """Drop token after a resource server refused it (401)."""
-        self._x.invalidate(token)
+        with self._lock:
+            self._x.invalidate(token)
 
 
 class AsyncAPIKeyTokenSource:
@@ -228,17 +272,28 @@ class AsyncAPIKeyTokenSource:
     ):
         self._x = _Exchange(api_key, project, scopes, issuer)
         self._http = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=False, http2=True)
-        self._lock: asyncio.Lock | None = None
+        self._flight: asyncio.Task[str] | None = None
+        self._closed = False
+        self._owns_http = http_client is None
         self._max_attempts = max(1, max_attempts)
 
     async def token(self) -> str:
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        # One exchange at a time: concurrent callers wait for it instead of stampeding ts-auth.
-        async with self._lock:
-            cached = self._x.cached()
-            if cached:
-                return cached
+        if self._closed:
+            raise RuntimeError("token source is closed")
+        cached = self._x.cached()
+        if cached and time.monotonic() < self._x.refresh_at:
+            return cached
+        if self._flight is None:
+            self._flight = asyncio.create_task(self._renew())
+            # Background failures are observed; missing/expired callers still
+            # receive the same result. Cancelling one waiter cannot cancel it.
+            self._flight.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+        if cached:
+            return cached
+        return await asyncio.shield(self._flight)
+
+    async def _renew(self) -> str:
+        try:
             attempt = 0
             while True:
                 attempt += 1
@@ -257,6 +312,23 @@ class AsyncAPIKeyTokenSource:
                 if delay is None:
                     return self._x.accept(response, started)
                 await asyncio.sleep(delay)
+        except Exception:
+            self._x.refresh_at = min(self._x.expires_at, time.monotonic() + 1.0)
+            raise
+        finally:
+            self._flight = None
+
+    async def close(self) -> None:
+        """Cancel this source's renewal before releasing its HTTP client."""
+        self._closed = True
+        if self._flight is not None:
+            self._flight.cancel()
+            try:
+                await self._flight
+            except asyncio.CancelledError:
+                pass
+        if self._owns_http:
+            await self._http.aclose()
 
     def reject(self, error: TerraScaleError) -> None:
         """Drop a permanently refused token and stop exchanging this key."""

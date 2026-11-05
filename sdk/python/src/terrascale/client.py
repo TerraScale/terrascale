@@ -83,6 +83,8 @@ class TerraScale:
     # Lifecycle -----------------------------------------------------------
 
     def close(self) -> None:
+        if self._source is not None:
+            self._source.close()
         if self._owns_http:
             self._http.close()
 

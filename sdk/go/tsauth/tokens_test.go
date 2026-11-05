@@ -47,12 +47,24 @@ func answer(w http.ResponseWriter, token string, expiresIn int) {
 }
 
 func TestAPIKeySourceCachesUntilAMinuteBeforeExpiry(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
 	var srv *tokenServer
 	srv = newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
 		id, secret, ok := r.BasicAuth()
 		if !ok || id != testKey[:26] || secret != testKey || form.Get("grant_type") != "client_credentials" ||
 			form.Get("project") != "01K6SY8PVAFJ6SW3RT5CY4TQKF" || form.Get("scope") != "sql:read sql:write" {
 			t.Errorf("client credentials request: %q %q %v", id, secret, form)
+		}
+		if srv.hits.Load() == 2 {
+			close(entered)
+			<-release
 		}
 		answer(w, fmt.Sprintf("token-%d", srv.hits.Load()), 900)
 	})
@@ -61,22 +73,34 @@ func TestAPIKeySourceCachesUntilAMinuteBeforeExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clock := time.Now()
-	s.now = func() time.Time { return clock }
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	s.now = func() time.Time { return time.Unix(0, clock.Load()) }
 	for range 3 {
 		if tok, err := s.Token(t.Context()); err != nil || tok != "token-1" {
 			t.Fatalf("token: %q %v", tok, err)
 		}
 	}
-	clock = clock.Add(839 * time.Second)
+	clock.Add(int64(839 * time.Second))
 	if tok, _ := s.Token(t.Context()); tok != "token-1" || srv.hits.Load() != 1 {
 		t.Fatalf("before refresh: %q, %d requests", tok, srv.hits.Load())
 	}
-	clock = clock.Add(time.Second) // 60 s before expiry: refreshed in the background
+	clock.Add(int64(time.Second)) // 60 s before expiry: refreshed in the background
 	if tok, _ := s.Token(t.Context()); tok != "token-1" {
 		t.Fatalf("during refresh: %q", tok)
 	}
-	waitIdle(t, s)
+	<-entered
+	clock.Add(int64(59 * time.Second))
+	if tok, _ := s.Token(t.Context()); tok != "token-1" {
+		t.Fatalf("still valid just before expiry: %q", tok)
+	}
+	clock.Add(int64(time.Second))
+	result := make(chan string, 1)
+	go func() { token, _ := s.Token(t.Context()); result <- token }()
+	close(release)
+	if token := <-result; token != "token-2" {
+		t.Fatalf("expired waiter: %q", token)
+	}
 	if tok, _ := s.Token(t.Context()); tok != "token-2" || srv.hits.Load() != 2 {
 		t.Fatalf("after refresh: %q, %d requests", tok, srv.hits.Load())
 	}
@@ -97,12 +121,6 @@ func waitIdle(t *testing.T, s *TokenSource) {
 		}
 	}
 }
-
-// refresh starts; the token is valid for 30 s more
-
-// 11 s left: still handed out
-
-// 10 s left: callers wait for a new token
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
