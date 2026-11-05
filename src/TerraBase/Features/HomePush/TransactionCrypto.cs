@@ -51,11 +51,17 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
             return null;
         }
 
+        var id = Encoding.ASCII.GetString(sealedBody, 4, 26);
+        if (!Ulid.TryParse(id, out var parsed) || parsed.ToString() != id)
+        {
+            return null;
+        }
+
         var store = keys ?? throw new IOException("durable local writes require the database key store");
         byte[] dataKey;
         try
         {
-            dataKey = await store.GetAsync(BackupLayout.KeyScope(database), Encoding.ASCII.GetString(sealedBody, 4, 26), cancellationToken).ConfigureAwait(false);
+            dataKey = await store.GetAsync(BackupLayout.KeyScope(database), id, cancellationToken).ConfigureAwait(false);
         }
         catch (DatabaseShreddedException)
         {
@@ -81,7 +87,11 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
         }
     }
 
-    private static byte[] Derive(TenantContext database, byte[] dataKey, byte[] header) =>
-        HKDF.DeriveKey(HashAlgorithmName.SHA256, dataKey, 32, header.AsSpan(30, 32),
+    private static byte[] Derive(TenantContext database, byte[] dataKey, byte[] header)
+    {
+        var derived = new byte[32];
+        HKDF.DeriveKey(HashAlgorithmName.SHA256, dataKey, derived, header.AsSpan(30, 32),
             Encoding.UTF8.GetBytes("TBP1 transaction\0" + BackupLayout.KeyScope(database)));
+        return derived;
+    }
 }
