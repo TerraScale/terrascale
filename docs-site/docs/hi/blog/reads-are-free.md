@@ -9,28 +9,35 @@ title: SQL shape read benchmark
 
 # SQL shape read benchmark
 
-In three measured repeats on November 4, 2026, the JavaScript SDK in Node.js read a
-16-row SQL table shape through the CDN with zero billed read units at 1, 10
-and 100 concurrent readers. The workload included a sealed snapshot, a
-one-row catch-up change and a live update.
+The JavaScript SDK in Node.js delivered snapshots, catch-up changes and live
+updates with zero billed read units at 1, 10, 100 and 1,000 concurrent
+listeners. The November 4–5, 2026 benchmark measured table and filtered shapes
+through Cloudflare with regional egress in GRU, SJC and FRA. Each group had
+three measured repeats.
 
-| Concurrent readers | CDN HIT ratio | Total origin requests | Billed read units |
+Identical listeners in one SDK client shared one upstream stream. These
+results measure that sharing behavior; independent clients and browser
+sessions were not measured.
+
+| Listeners in one client | Origin attempts per cohort | CDN GET attempts per cohort | Billed read units |
 | ---: | ---: | ---: | ---: |
-| 1 | 0% | 6 | 0 |
-| 10 | 90% | 68 (66–68) | 0 |
-| 100 | 99% (98.99–99.05%) | 1,198 (1,176–1,295) | 0 |
+| 1 | 7–8 | 2–3 | 0 |
+| 10 | 7–8 | 2–3 | 0 |
+| 100 | 7–8 | 2–3 | 0 |
+| 1,000 | 7–8 | 2–3 | 0 |
 
-Values show the median and range across three repeats, with CDN responses
-from Cloudflare’s GRU location. Origin counts include authenticated shape
-control requests, live polling, retries and refusals. CDN caching reduced
-payload delivery from the origin; total origin requests increased with
-reader count, including HTTP 429 responses at higher concurrency.
+Ranges cover all 18 cohorts at each listener count. Origin attempts include
+shape discovery, keys, head reads and WebSocket upgrades. Each cohort used a
+fresh 16-row table, sealed snapshot and catch-up URLs, and one live update.
 
-The full regional matrix is not qualified. One 1,000-reader pilot did not
-finish within 180 seconds, and the run was stopped after a CPU measurement
-error was found. These results do not establish performance for larger
-snapshots, 1,000-reader cohorts or browser bootstrap. See the
-[benchmark method and results](https://github.com/TerraScale/terrascale/blob/main/benchmark/bench/2026-11-04-f10-free-reads.md),
-[subscription pricing](/hi/pricing/) and [usage accounting](/hi/concepts/pricing-philosophy).
+The CDN HIT ratio was 0.00% across 192 GET attempts against these cold URLs.
+SDK sharing kept upstream requests bounded in this workload. This does not
+establish cache-hit rates or flat origin cost across independent clients,
+larger snapshots, longer histories or sustained writes.
+
+The [full results and method](https://github.com/TerraScale/terrascale/blob/main/benchmark/bench/2026-11-04-f10-post-f12.md)
+include regional p50/p99 latency, CPU, R2 operations, the failed readiness
+attempt and the before/after comparison. See also [subscription pricing](/hi/pricing/)
+and [usage accounting](/hi/concepts/pricing-philosophy).
 
 </div>
