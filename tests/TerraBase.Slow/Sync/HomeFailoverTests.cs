@@ -37,6 +37,8 @@ public sealed class HomeFailoverTests
 
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         var project = await gru.CreateProjectAsync(organization, "Project");
+        using var published = await sjc.Server.Client.PutAsJsonAsync(ManagementApi.Uri($"/admin/organizations/{organization}/plan"), new { plan = "hobby" }, token);
+        await Assert.That(published.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await published.Content.ReadAsStringAsync(token));
         var bearer = issuer.Mint(gru.User, descriptor =>
         {
             descriptor.Claims["project_id"] = project;
