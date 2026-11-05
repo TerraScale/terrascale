@@ -29,12 +29,15 @@ public sealed class RegionReplicaTests
             var database = await server.CreateSyncedDatabaseAsync();
             var marker = "plaintext-marker-" + _faker.Random.AlphaNumeric(24);
             var expected = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            var initial = new List<string>();
             for (var i = 0; i < 100; i++)
             {
                 var id = $"r{i:D4}";
                 expected[id] = marker + i;
-                await server.ExecuteAsync(database, $"INSERT INTO items(id, tenant, v) VALUES ('{id}', '{database.DatabaseId}', '{expected[id]}')");
+                initial.Add($"('{id}', '{database.DatabaseId}', '{expected[id]}')");
             }
+
+            await server.ExecuteAsync(database, "INSERT INTO items(id, tenant, v) VALUES " + string.Join(", ", initial));
 
             var options = server.Services.GetRequiredService<TerraBaseOptions>() with { DataDirectory = directory };
             using var http = PeerTls.CreateClient(server.BaseAddress);
