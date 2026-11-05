@@ -123,7 +123,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
             return plans.Any(plan => plan.Key == raw) ? raw! : "";
         }
 
-        // Free leads the payment step and is the default; an explicit paid plan stays selected.
         private static string SelectedPlan(IReadOnlyList<BillingPlan> plans, string? raw)
         {
             return plans.Any(plan => plan.Key == raw && plan.PriceCents > 0) ? raw! : OnboardingService.FreePlanKey;
