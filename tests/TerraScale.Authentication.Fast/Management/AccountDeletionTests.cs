@@ -11,8 +11,8 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
     [Test]
     public async Task Deleting_an_account_refuses_its_token_and_releases_its_email()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false);
-        var (user, token) = await oidc.CreateUserTokenAsync("erase@example.test");
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var (user, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("erase"));
         await oidc.OkAsync(HttpMethod.Delete, "/v1/terrascale/account", token, status: HttpStatusCode.NoContent);
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, PlatformCalls.Organizations, token)).IsEqualTo((401, "unauthorized"));
         var users = oidc.Server.App.Services.GetRequiredService<Users>();

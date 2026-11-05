@@ -3,13 +3,13 @@ using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Data
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class AccessTokenSqlMcpJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<DatabaseMcpFixture>(Shared = SharedType.PerClass)]
+    public sealed class AccessTokenSqlMcpJourneyTests(DatabaseMcpFixture fixture)
     {
         [Test]
         public async Task PersonalAccessTokenWritesAndReadsThroughMcpSqlTools()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = fixture.Scenario;
             using var client = scenario.CreateClient();
             var account = await DatabaseJourney.NativeWorkspaceAsync(client);
             var token = await HttpJourney.CreatePatAsync(client, "MCP SQL E2E", account.Password);

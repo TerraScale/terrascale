@@ -3,13 +3,13 @@ using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Data
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class AgentDatabaseMcpJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<DatabaseMcpFixture>(Shared = SharedType.PerClass)]
+    public sealed class AgentDatabaseMcpJourneyTests(DatabaseMcpFixture fixture)
     {
         [Test]
         public async Task AgentCreatesForksWritesInspectsRestoresAndDeletesThroughMcp()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = fixture.Scenario;
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
             using var identity = await client.GetAsync("/api/v1/auth/me");
@@ -63,7 +63,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         [Test]
         public async Task ScopedReadKeyCannotWriteThroughMcp()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = fixture.Scenario;
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
             var token = await CreateKeyAsync(client);
