@@ -25,7 +25,7 @@ internal static class HomeForwarding
 
     private static readonly HashSet<string> Unreturned = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Connection", "Keep-Alive", "Transfer-Encoding", "Trailer", "Upgrade", "Proxy-Connection",
+        "Connection", "Keep-Alive", "Transfer-Encoding", "Trailer", "Upgrade", "Proxy-Connection", ShapeOverlay.CommitHeader,
     };
 
     public static WebApplication UseTerraBaseHomeForwarding(this WebApplication app)
@@ -119,7 +119,8 @@ internal static class HomeForwarding
         context.RequestServices.GetRequiredService<InternalCredential>().Sign(request.Headers);
     }
 
-    internal static async Task ForwardAsync(HttpContext context, HomeNode home, byte[]? body = null, string? pushThrough = null)
+    internal static async Task ForwardAsync(HttpContext context, HomeNode home, byte[]? body = null, string? pushThrough = null,
+        Action<HttpResponseMessage>? answered = null)
     {
         var services = context.RequestServices;
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
@@ -163,6 +164,7 @@ internal static class HomeForwarding
 
         using (response)
         {
+            answered?.Invoke(response);
             context.Response.StatusCode = (int)response.StatusCode;
             foreach (var (name, values) in response.Headers.Concat(response.Content.Headers))
             {

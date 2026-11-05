@@ -60,6 +60,7 @@ internal sealed class HomePush(
     private readonly ConcurrentDictionary<(string Origin, string Organization, string Project, string Database), ulong> _applied = new();
     private readonly ConcurrentDictionary<string, ulong> _floors = new(StringComparer.Ordinal);
     private TaskCompletionSource _progress = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Lazy<ILocalCommitFeed?> _feed = new(services.GetService<ILocalCommitFeed>);
     private readonly Channel<(TenantContext Database, ulong Through)> _purges = Channel.CreateBounded<(TenantContext, ulong)>(
         new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.DropOldest });
     private readonly Lock _queuesGate = new();
@@ -691,6 +692,7 @@ internal sealed class HomePush(
             }
 
             await writer.DisposeAsync().ConfigureAwait(false);
+            push._feed.Value?.Committed(database, transaction.Id!, captured);
             if (!homeDurable)
             {
                 return new LocalCommit(transaction.Id, null);

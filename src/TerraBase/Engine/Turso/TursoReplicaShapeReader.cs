@@ -85,6 +85,11 @@ internal sealed class TursoReplicaShapeReader : IReplicaShapeReader
             }
         }, cancellationToken));
 
+    public ValueTask<ShapeProvisional> ProvisionalAsync(ShapeScope scope, ShapeLineage lineage, IReadOnlyList<ProvisionalTransaction> pending, IMemoryBudget memory,
+        CancellationToken cancellationToken) =>
+        new(Task.Run(() => _reader.ReadProvisional(
+            new ShapeSealDefinition(lineage.ShapeId, lineage.Handle, scope.Table, scope.Generation, Incarnation(), scope.Filter), pending, memory, cancellationToken), cancellationToken));
+
     public ValueTask DisposeAsync() => new(Task.Run(() =>
     {
         foreach (var command in _commands)

@@ -211,8 +211,13 @@ internal sealed class SqlSession(
     private int _expiring = -1;
     private string? _plannedSql;
     private SqlPlanOutcome _planned;
+    private List<IReadOnlyList<CapturedRowChange>>? _committed;
 
     public bool IsAutocommit => !_inTransaction;
+
+    public void KeepCommitted() => _committed ??= [];
+
+    public IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => _committed ?? [];
 
     public void BeginRequest() => _transportStarted = time.GetTimestamp();
 
@@ -796,7 +801,13 @@ internal sealed class SqlSession(
                 await transaction.AddSqlStorageAsync(growth, cancellationToken).ConfigureAwait(false);
             }
 
+            var captured = _committed is null ? null : await transaction.ReadCapturedChangesAsync(cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            if (captured is { Count: > 0 })
+            {
+                _committed!.Add(captured);
+            }
+
             lease?.Committed(growth);
             if (tally.Rows > 0)
             {
