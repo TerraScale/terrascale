@@ -92,6 +92,7 @@ public sealed class HomeMoveLocalWritesTests
                 {
                     var row = EntityIds.New().ToString();
                     using var response = await ExecuteAsync(viaSjc, sql, $"INSERT INTO acked (id) VALUES ('{row}')", token);
+                    Console.WriteLine($"move={round + 1} attempt={write + 1} status={(int)response.StatusCode} id={row}");
                     if (response.StatusCode == HttpStatusCode.OK)
                     {
                         expected.Add(row);
@@ -108,7 +109,9 @@ public sealed class HomeMoveLocalWritesTests
             var late = await delayed.CommitAsync(homeDurable: false, token);
             await Assert.That(late.Id).IsNotNull();
             expected.Add(lateId);
-            await writer.WaitAsync(TimeSpan.FromSeconds(30), token);
+            // A forwarded attempt can already be waiting at the old home's 30-second
+            // ordering barrier when it is fenced. Allow its refusal to finish too.
+            await writer.WaitAsync(TimeSpan.FromSeconds(60), token);
             string[] observed = [];
             var readStatus = HttpStatusCode.OK;
             try
