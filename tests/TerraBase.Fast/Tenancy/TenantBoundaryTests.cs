@@ -13,7 +13,7 @@ public sealed class TenantBoundaryTests
         using var outsider = await api.CreateTenantAsync("sql:read", "sql:write");
         using var dashboard = api.As(owner.User);
         using var otherDashboard = api.As(outsider.User);
-        await api.CreateDatabaseAsync(owner.OrganizationId, owner.ProjectId, "private", dashboard);
+        var database = await api.CreateDatabaseAsync(owner.OrganizationId, owner.ProjectId, "private", dashboard);
         await api.CreateDatabaseAsync(outsider.OrganizationId, outsider.ProjectId, "own", otherDashboard);
         var path = $"/v1/projects/{owner.ProjectId}/databases/private";
         using var seeded = await owner.Data.PostAsJsonAsync(ManagementApi.Uri(path + "/sql/execute"), new
@@ -30,7 +30,7 @@ public sealed class TenantBoundaryTests
         admitted.EnsureSuccessStatusCode();
 
         var managementPath = ManagementApi.Uri(
-            $"/v1/management/organizations/{owner.OrganizationId}/projects/{owner.ProjectId}/databases/private");
+            $"/v1/management/organizations/{owner.OrganizationId}/projects/{owner.ProjectId}/databases/{database}");
         using var visible = await dashboard.GetAsync(managementPath);
         visible.EnsureSuccessStatusCode();
 
