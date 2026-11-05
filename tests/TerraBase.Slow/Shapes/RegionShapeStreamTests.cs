@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using NATS.Client.JetStream;
 using TerraBase.Configuration;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Sync;
@@ -21,28 +22,34 @@ public sealed class RegionShapeStreamTests
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var nats = await JetStreamServer.StartAsync(token);
         await using var world = await LocalWriteWorld.StartAsync(nats);
-        await using var fra = await Reader.StartAsync(world, nats, token);
         await world.Overlay.StartAsync(token);
         await world.Overlay.Subscribed.WaitAsync(TimeSpan.FromSeconds(5), token);
-
+        // fra joins after the original insert. Home assigns the same rowid to a different primary key.
+        var inserted = await world.LocalAsync(false, ["INSERT INTO items (id, v) VALUES ('p', 'first')"], token);
+        var js = new NatsJSContext(world.Client);
+        await TerraBaseTestServer.EventuallyAsync(async cancellation =>
+            (await js.GetStreamAsync("TERRABASE_PROVISIONAL_SJC", cancellationToken: cancellation)).Info.State.Messages == 1, TimeSpan.FromSeconds(5));
+        await world.HomeSqlAsync("INSERT INTO items (id, v) VALUES ('h', 'gru')");
+        await using var fra = await Reader.StartAsync(world, nats, token);
         var parked = fra.NextAsync(token);
-        var commit = await world.LocalAsync(false, ["INSERT INTO items (id, v) VALUES ('p', 'sjc')"], token);
+        var commit = await world.LocalAsync(false, ["UPDATE items SET v = 'sjc' WHERE id = 'p'"], token);
         var provisional = await parked.WaitAsync(TimeSpan.FromSeconds(5), token);
         await Assert.That(Pending(provisional).Single().GetProperty("id").GetString()).IsEqualTo(commit.Id);
         await Assert.That(Pending(provisional).Single().GetProperty("ops")[0].GetProperty("row").GetProperty("v").GetString()).IsEqualTo("sjc");
-        await Assert.That((await world.HomeSqlAsync("SELECT count(*) FROM items")).GetRawText()).IsEqualTo("[[0]]");
-        var duplicate = world.Overlay.Snapshot(world.Database).Single();
+        await Assert.That(Pending(provisional).Single().GetProperty("ops")[0].GetProperty("key").GetString()!).StartsWith("~" + commit.Id + ".");
+        await Assert.That((await world.HomeSqlAsync("SELECT id FROM items")).GetRawText()).IsEqualTo("[[\"h\"]]");
+        var duplicate = world.Overlay.Snapshot(world.Database).Single(entry => entry.Id == commit.Id);
         fra.Overlay.Add(world.Database, duplicate);
         await Assert.That(fra.Overlay.Snapshot(world.Database).Count).IsEqualTo(1);
 
         await using (var home = await world.HomeNodeAsync())
         {
-            await TerraBaseTestServer.EventuallyAsync(async _ => (await world.HomeSqlAsync("SELECT count(*) FROM items")).GetRawText() == "[[1]]", TimeSpan.FromSeconds(10));
+            await TerraBaseTestServer.EventuallyAsync(async _ => (await world.HomeSqlAsync("SELECT count(*) FROM items")).GetRawText() == "[[2]]", TimeSpan.FromSeconds(10));
         }
 
         await fra.PullAsync(token);
         var confirmed = await fra.NextAsync(token);
-        await Assert.That(Settled(confirmed, "confirmed")).IsEquivalentTo([commit.Id]);
+        await Assert.That(Settled(confirmed, "confirmed")).IsEquivalentTo([inserted.Id, commit.Id]);
         await Assert.That(Pending(confirmed).Count).IsEqualTo(0);
         // A delayed direct message after the pages arrived must never resurrect the provisional copy.
         await DeliverAsync(world, fra, duplicate, token);
