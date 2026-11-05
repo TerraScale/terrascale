@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Builder;
 namespace TerraScale.Dashboard.E2E.Platform
 {
     // ts-orch probes /readyz and ts-status probes /health/ready: both must fail, naming the dependency, when a signed-in
-    // request would fail, and neither may publish the build revision.
+    // request would fail, and each body carries the build revision it reports through X-TerraScale-Revision.
     [ClassDataSource<DashboardRootFixture>]
     public sealed class ReadinessJourneyTests(DashboardRootFixture fixture)
     {
@@ -30,20 +30,24 @@ namespace TerraScale.Dashboard.E2E.Platform
         }
 
         [Test]
-        public async Task ReadyBodiesNameTheRegionAndNeverTheBuildRevision()
+        public async Task ReadyBodiesNameTheRegionAndTheBuildRevision()
         {
             await using var app = await StartAsync(new DemoEnvironment());
             using var client = Client(app);
+            string? revision = null;
             foreach (var path in ReadyPaths.Append("/health/live"))
             {
                 using var response = await client.GetAsync(path);
                 var text = await response.Content.ReadAsStringAsync();
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(path + ": " + text);
-                await Assert.That(text).DoesNotMatch("[0-9a-f]{40}").Because(path + " must not publish the commit.");
                 using var json = JsonDocument.Parse(text);
                 await Assert.That(json.RootElement.GetProperty("status").GetString()).IsEqualTo("ok");
                 await Assert.That(json.RootElement.GetProperty("region").GetString()).IsEqualTo("gru");
-                await Assert.That(json.RootElement.TryGetProperty("version", out _)).IsFalse();
+                var version = json.RootElement.GetProperty("version").GetString();
+                await Assert.That(version).IsNotNull().Because(path + " names its build revision.");
+                await Assert.That(version).Matches("[0-9a-f]{40}|unknown").Because(path + " carries the commit sha or the local fallback.");
+                revision ??= response.Headers.GetValues("X-TerraScale-Revision").Single();
+                await Assert.That(version).IsEqualTo(revision).Because(path + " reports the same revision as the header.");
             }
         }
 

@@ -3,13 +3,13 @@ using System.Reflection;
 namespace TerraScale.Dashboard.Platform.Persistence
 {
     // Readiness names each dependency a signed-in request needs: ts-auth (its own unauthenticated /readyz) and the
-    // TerraBase state. Public bodies carry the region and never the build revision; the revision travels in a header.
+    // TerraBase state. Public bodies carry the region and the build revision, which also travels in a header.
     public sealed class DependencyReadiness(IDashboardState state, DashboardStateInitializer initializer, IHttpClientFactory http, IConfiguration configuration,
         TimeProvider time, ILogger<DependencyReadiness> logger)
     {
         private static readonly Uri AuthReady = new("https://auth.terrascale.tech/readyz");
         // The SDK's informational version carries the SourceRevisionId that the image build passes (+<sha>).
-        private static readonly string Revision = typeof(DependencyReadiness).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[^1] ?? "unknown";
+        public string Revision { get; } = typeof(DependencyReadiness).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[^1] ?? "unknown";
         private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(2);
         // Probes from ts-orch, ts-status and the internet share one ts-auth check for this long.
         private static readonly TimeSpan AuthReuse = TimeSpan.FromSeconds(5);
@@ -29,6 +29,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
             {
                 status = ready ? "ok" : "unavailable",
                 region = Region,
+                version = Revision,
                 dependencies = new Dictionary<string, string> { ["ts-auth"] = Name(authReady), ["terrabase"] = Name(terraBase) }
             }, statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
         }
