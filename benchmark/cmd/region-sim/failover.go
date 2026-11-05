@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nats-io/nats.go"
+	natsclient "github.com/nats-io/nats.go"
 )
 
 // homeFailover is last because it changes the database's home for the rest of the run.
@@ -18,7 +18,7 @@ func (s *sim) homeFailover() (string, string, error) {
 	if _, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, "[[0]]", "SELECT count(*) FROM failover"); err != nil {
 		return "", "", err
 	}
-	nc, err := nats.Connect(s.c.nats.url(), nats.Token(s.c.natsToken), nats.Timeout(2*time.Second))
+	nc, err := natsclient.Connect(s.c.nats.url(), natsclient.Token(s.c.natsToken), natsclient.Timeout(2*time.Second))
 	if err != nil {
 		return "", "", err
 	}
@@ -27,7 +27,7 @@ func (s *sim) homeFailover() (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	var kv nats.KeyValue
+	var kv natsclient.KeyValue
 	var before homeLease
 	if err := pollEvery(s.ctx, 30*time.Second, 200*time.Millisecond, func() (bool, error) {
 		var err error
@@ -101,7 +101,7 @@ type homeLease struct {
 	Epoch int64  `json:"epoch"`
 }
 
-func readHome(kv nats.KeyValue, database string) (homeLease, error) {
+func readHome(kv natsclient.KeyValue, database string) (homeLease, error) {
 	entry, err := kv.Get("home." + database)
 	if err != nil {
 		return homeLease{}, err
