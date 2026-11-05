@@ -162,11 +162,12 @@ internal static class QosExtensions
         if (context.Features.Get<ProjectToken>()?.ProjectId is { } project
             && context.Request.RouteValues["project"] as string == project)
         {
-            // First-database creation resolves its project after binding; existing projects still share admission.
             return await context.RequestServices.GetRequiredService<IProjectCatalog>()
                 .ResolveProjectAsync(project, context.User.UserId(), createIn: null, context.RequestAborted).ConfigureAwait(false) switch
             {
                 string organization => await ResolvePlanAsync(context, organization).ConfigureAwait(false),
+                NotFound when context.User.FindFirst("org_id")?.Value is { } tokenOrganization =>
+                    await ResolvePlanAsync(context, tokenOrganization).ConfigureAwait(false),
                 NotFound => new Done(),
                 Unavailable error => error,
             };
