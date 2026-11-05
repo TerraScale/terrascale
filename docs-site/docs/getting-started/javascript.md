@@ -141,7 +141,7 @@ npx tsc --noEmit
 }
 ```
 
-The quickstart is valid TypeScript as written; `strict` mode needs one change:
+The quickstart is valid TypeScript as written; `strict` mode needs two annotations:
 annotate the token cache (`let cached;` becomes `let cached: string | undefined;`)
 and the helper parameter (`const required = (name: string) => {`).
 
