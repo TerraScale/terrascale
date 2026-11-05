@@ -258,6 +258,7 @@ internal sealed class RegionalHandoff(
             {
                 return false;
             }
+            logger.ZLogInformation($"Regional candidate applied proof: {request.Source:@Source} to {options.MachineId:@Target}, database {position.Database:@Database}, source {position.Revision:@SourceRevision}, target {actual.ToString():@TargetRevision}, epoch {request.Epoch:@Epoch}");
         }
 
         // Check every position before detaching any replica. A partially prepared retry re-pulls from the still-live source.
@@ -383,9 +384,11 @@ internal sealed class RegionalHandoff(
                 return false;
             }
             owners.Drain();
+            logger.ZLogInformation($"Regional handoff source fenced: {options.MachineId:@Source} to {target:@Target}, epoch {owner.Epoch:@Epoch}");
             var catalog = services.GetRequiredService<IReplicaCatalog>();
             var revisions = services.GetRequiredService<IDatabaseRevisions>();
             var replicas = services.GetRequiredService<IDatabaseReplicas>();
+            var replication = services.GetRequiredService<RegionReplication>();
             var positions = new List<RegionalPosition>();
             foreach (var region in nodes.Select(node => node.Region).Distinct(StringComparer.Ordinal))
             {
@@ -412,6 +415,10 @@ internal sealed class RegionalHandoff(
                         }
                         else
                         {
+                            // Freeze this source's applied position while its peer proves the final barrier.
+                            // Resume is registered even when a failed handoff keeps this process serving.
+                            await replication.SuspendAsync(database).ConfigureAwait(false);
+                            _promoted[database.DatabaseId!] = database;
                             position = replicas.HeldRevision(database);
                         }
 
@@ -491,7 +498,13 @@ internal sealed class RegionalHandoff(
             var resumed = new RegionalOwner(options.Region, options.MachineId, owner.Epoch + 1);
             _ = await kv.UpdateAsync(options.Region, Encode(resumed), entry.Value.Revision, cancellationToken: recovery.Token).ConfigureAwait(false);
             Observe(resumed);
+            foreach (var database in _promoted.Values)
+            {
+                services.GetRequiredService<RegionReplication>().Resume(database);
+            }
+            _promoted.Clear();
             owners.Renew();
+            logger.ZLogInformation($"Regional handoff rolled back before commit; {options.MachineId:@Source} resumed at epoch {resumed.Epoch:@Epoch}");
         }
         catch (Exception error)
         {
