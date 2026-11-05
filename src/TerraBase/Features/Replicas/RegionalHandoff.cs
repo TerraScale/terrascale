@@ -506,6 +506,13 @@ internal sealed class RegionalHandoff(
             if (owner.Node != options.MachineId)
             {
                 Observe(owner);
+                // A standby replacement can fail without changing regional ownership.
+                // Observe then sees no transition, but its frozen pulls still need resuming.
+                foreach (var database in _promoted.Values)
+                {
+                    services.GetRequiredService<RegionReplication>().Resume(database);
+                }
+                _promoted.Clear();
                 return;
             }
             var resumed = new RegionalOwner(options.Region, options.MachineId, owner.Epoch + 1);
