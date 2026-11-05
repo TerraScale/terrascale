@@ -20,7 +20,8 @@ or presigned-link fallback in production. Development integration fixtures
 inject their own isolated shape identity and named HTTP transport.
 
 PUT, HEAD, LIST and DELETE all use `shapes-s3` and the shape credentials.
-Backup/PITR and project data-key custody keep their existing Tigris identity.
+Backup/PITR ciphertext keeps its existing Tigris identity. F11 moves database envelope-key custody to the
+private R2 `v1/keys/` prefix outside every backup destination; see [the F11 contract](../crypto-shredding-f11.md).
 CDN purge and analytics use only the separate shape CDN token. Purges accept
 only canonical production object URLs and submit handle prefixes, clearing
 all browser Origin variants. Each worker retains its 4,096-entry bound,

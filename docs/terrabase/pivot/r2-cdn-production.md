@@ -95,7 +95,8 @@ prerequisite, not evidence that the cache actions are correct.
    ownership and SSL. Reuse the zone's WAF guard: for `shapes-*` hosts allow
    only GET/HEAD of `/v1/shapes/…`, no query, `..`, or raw `%` in the path.
    Reject other methods and paths before cache lookup. Never store plaintext,
-   keys, manifests, catalog records, backups or logs in this bucket.
+   manifests, catalog records, backups or logs in this bucket. F11 additionally stores wrapped database keys in
+   the private, uncached `v1/keys/` prefix; see [the custody contract](../crypto-shredding-f11.md).
 2. In phase `http_request_cache_settings`, make the shape GET/HEAD paths
    cache-eligible, including extensionless SHA-256 names. Match hosts ending
    `.terrascale.tech` and starting `shapes-`, path starting `/v1/shapes/`,
