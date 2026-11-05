@@ -141,7 +141,7 @@ if __name__=='__main__':
                 c.database(config['database']).query('SELECT 1')
                 for n in range(10):
                     key=new_id()
-                    _,ok=attempt(mode,region,lambda:c.database(config['database']).execute('INSERT INTO acceptance_rows (id, writer, sequence, body) VALUES (?, ?, ?, ?)',[key,region,n,mode]),last,id=key)
+                    _,ok=attempt(mode,region,lambda:c.database(config['database']).execute('INSERT INTO acceptance_rows (id, writer, sequence, body) VALUES (?, ?, ?, ?)',[key,region,n,mode]),last,id=key,n=n)
                     if not ok:break
             finally:
                 c.close()

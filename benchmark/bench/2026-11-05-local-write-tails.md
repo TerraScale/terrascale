@@ -1,6 +1,8 @@
 # Concurrent regional local-write tails (#1105)
 
-Date: 2026-11-05. Client: beta. GRU home, SJC/FRA replicas. Public Python SDK, public regional HTTPS APIs, fresh synthetic throwaway accounts. No load client ran on a serving node.
+Status: the original pooled completion claim was withdrawn after independent acceptance failed. See the independent failure and follow-up sections below.
+
+Date: 2026-11-05. Original comparable client: beta. GRU home, SJC/FRA replicas. Public Python SDK, public regional HTTPS APIs, fresh synthetic throwaway accounts. No load client ran on a serving node.
 
 DECISION: Judge the primary acceptance gate on server `app` p99 <100 ms. Judge client p99 against the measured beta→region reused-connection baseline median +100 ms, replacing the fixed 200 ms client limit. Reason: beta's approximately 192 ms SJC /212 ms FRA network path already consumes the old client budget. Keep first measured insert <300 ms. Report baseline p99 too; retain all samples.
 
@@ -10,7 +12,7 @@ DECISION: The independent acceptance rerun may use mariogk-dev rather than wait 
 
 ## Method
 
-`benchmark/local-write-tails/run.py` preserves #1105's workload: three concurrent regional workers, each performing three measured repeats of 100 fresh ULID inserts. Each write is followed by SELECTs through the other two regions. There are 900 default writes and 1,800 cross-region reads per run. SDK retries are set to one attempt. Read-only warmup waits for a local replica (`replica_open`, no `home` span); no write primes the measured writer. Before warmup, 30 health requests on a reused connection measure each beta path; initial connection samples remain separately recorded. Ten home-durable and ten forced-home samples per region are separate diagnostics.
+`benchmark/local-write-tails/run.py` preserves #1105's workload: three concurrent regional workers, each performing three measured repeats of 100 fresh ULID inserts. Each write is followed by SELECTs through the other two regions. There are 900 default writes and 1,800 cross-region reads per run. SDK retries are set to one attempt. Read-only warmup waits for a local replica (`replica_open`, no `home` span); no write primes the measured writer. The original comparable before/after runs used 30 health requests on a reused connection to measure each beta path; initial connection samples remain separately recorded. Ten home-durable and ten forced-home samples per region are separate diagnostics.
 
 All percentiles use the retained observed order statistic `sorted[ceil(q*(n-1))]`: with 100 samples, p99 is the observed maximum. We do not drop first inserts, auth renewal, overload, failed requests or tail samples. `app` is the producer's server application time; nested `local_allowance` and `local_native` must not be summed into their parent `local_execute` again.
 
@@ -119,3 +121,12 @@ DECISION: retain the agreed server p99 <100 ms target and client p99 <the admitt
 The next proof retains 100 SELECT-1 baselines before writes, sanitized SQL messages, issuer-exchange durations and precise UTC receipt times. No replacement live result is claimed in this section yet.
 
 A later independent public home-move run reproduced the same admission error without a rollout: SJC request `01M6PMJE24DEMZDJ63M4MDZ7CH`, 19:56:59.223754–19:56:59.425580Z, HTTP 400 `sql_error`, sanitized message `the database does not exist`, app 9.45 ms. All 45 acknowledged rows reconciled after the three moves. This strengthens the pre-replica routing diagnosis independently of the edge restart gap; [acceptance evidence](https://github.com/TerraScale/terrascale/issues/1105#issuecomment-6667871689).
+
+
+## Admission and authority follow-up qualification
+
+Server/harness fix shipped as `26338d3151770a15137c6cb077b94d6da47c1257`. Exact-revision ts-ship gates passed: TerraBase 65 tests /10.865 s; driver 4 tests /5.486 s; auth 29 tests /17.488 s; benchmark Fast 0.241 s; the existing local E2E proof passed in 3.826 s. The new cold-replica forwarding test and all four key-revocation/authority tests each passed five consecutive runs (25 retained regression executions total). No expiry/revocation bound, test, admission hold or gate was weakened.
+
+One preceding standalone full run passed all 65 functional tests but failed the 30-second wall budget at 30.153 s. This remains a failed qualification attempt; the exact-revision ts-ship service proof above subsequently passed within budget. Two earlier fixture-only errors (manual hosted-worker shutdown and a hardcoded home identity) were corrected before the five repeats and shipment.
+
+The HTTP routing regression uses the actual home and away apps with a durable placement and no open replica. Its INSERT and SELECT forward to the home successfully and leave the away replica unopened. The authority regression proves background renewal across a warmup-to-write pause and then verifies that issuer failure still refuses after the renewed two-second answer expires.
