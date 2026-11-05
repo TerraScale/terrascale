@@ -55,6 +55,7 @@ public static class BackupExtensions
             .AddSingleton(provider => new DataKeys(provider.GetRequiredService<KeyCustody>().Store, provider.GetRequiredService<IMasterKey>(),
                 provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<BackupSettings>(),
                 revocations: provider.GetRequiredService<KeyCustody>().Revocations))
+            .AddHostedService<DataKeyRefresh>()
             .AddSingleton<BackupTargets>()
             .AddSingleton<ContinuousBackup>()
             .AddSingleton<IContinuousBackup>(provider => provider.GetRequiredService<ContinuousBackup>())

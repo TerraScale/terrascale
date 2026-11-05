@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Channels;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Internal;
 using TerraBase.Configuration;
@@ -60,10 +61,49 @@ internal sealed class DataKeys : IDisposable
     private readonly MemoryCache _current;
     private readonly MemoryCache _keys;
     private readonly Lock _cacheAdmission = new();
+    private readonly HashSet<string> _refreshing = new(StringComparer.Ordinal);
+    private readonly Channel<string> _refreshes = Channel.CreateBounded<string>(64);
     // ponytail: 64 stripes per operation bound synchronization memory; colliding selections or key reads serialize.
     // Separate arrays keep a slow publication from blocking historical reads and prevent re-entering a selection stripe.
     private readonly SemaphoreSlim[] _selectionGates = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
     private readonly SemaphoreSlim[] _keyGates = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
+
+    internal ChannelReader<string> Refreshes => _refreshes.Reader;
+
+    internal Task<(string Id, byte[] Key)> ForSealingAsync(string scope, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_current.TryGetValue(scope, out CurrentKey? current) && current is not null && Fresh(current.Id))
+        {
+            if (time.GetUtcNow() - current.CheckedAt >= RefreshInterval)
+            {
+                lock (_cacheAdmission)
+                {
+                    if (_refreshing.Add(scope) && !_refreshes.Writer.TryWrite(scope))
+                    {
+                        _refreshing.Remove(scope);
+                    }
+                }
+            }
+            return Task.FromResult((current.Id, current.Key));
+        }
+        return CurrentAsync(scope, cancellationToken);
+    }
+
+    internal async Task RefreshAsync(string scope, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _ = await CurrentAsync(scope, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_cacheAdmission)
+            {
+                _refreshing.Remove(scope);
+            }
+        }
+    }
 
     /// <summary>The data key new objects of <paramref name="scope"/> are sealed with.</summary>
     public async Task<(string Id, byte[] Key)> CurrentAsync(string scope, CancellationToken cancellationToken)

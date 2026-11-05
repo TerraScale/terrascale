@@ -7,6 +7,7 @@ namespace TerraBase.Features.HomePush;
 
 internal interface ITransactionCrypto
 {
+    Task PrepareAsync(TenantContext database, CancellationToken cancellationToken);
     Task<byte[]> SealAsync(TenantContext database, byte[] packed, CancellationToken cancellationToken);
     Task<byte[]?> OpenAsync(TenantContext database, byte[] sealedBody, CancellationToken cancellationToken);
 }
@@ -18,10 +19,18 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
     internal const int Overhead = 78;
     private const int Header = 62;
 
+    public async Task PrepareAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (keys is not null)
+        {
+            _ = await keys.ForSealingAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public async Task<byte[]> SealAsync(TenantContext database, byte[] packed, CancellationToken cancellationToken)
     {
         var store = keys ?? throw new LocalWriteRefusedException("durable local writes require the database key store");
-        var (id, dataKey) = await store.CurrentAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false);
+        var (id, dataKey) = await store.ForSealingAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false);
         return Seal(database, packed, id, dataKey);
     }
 
