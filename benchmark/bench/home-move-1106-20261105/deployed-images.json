@@ -1,0 +1,26 @@
+[
+  {
+    "region": "gru",
+    "at": "2026-11-05T19:56:37.975311+00:00",
+    "container": "ts-m3zwvgo2qo4mygw2jchjsmbzi",
+    "image": "ghcr.io/terrascale/terrabase@sha256:2a87ea2d4246be6d5e73cd13f62796eb2da2f142237c1e7eeb9eacf684e51f79",
+    "revision": "b06bd58a8c564f15539b5691cf019888f0545b2b",
+    "arch": "arm64"
+  },
+  {
+    "region": "sjc",
+    "at": "2026-11-05T19:56:39.986130+00:00",
+    "container": "ts-dtwqreupbvslofgkyuwxy4of3",
+    "image": "ghcr.io/terrascale/terrabase@sha256:2a87ea2d4246be6d5e73cd13f62796eb2da2f142237c1e7eeb9eacf684e51f79",
+    "revision": "b06bd58a8c564f15539b5691cf019888f0545b2b",
+    "arch": "arm64"
+  },
+  {
+    "region": "fra",
+    "at": "2026-11-05T19:56:39.717285+00:00",
+    "container": "ts-j52jtagoroxnzqcr5ao3u5ft9",
+    "image": "ghcr.io/terrascale/terrabase@sha256:2a87ea2d4246be6d5e73cd13f62796eb2da2f142237c1e7eeb9eacf684e51f79",
+    "revision": "b06bd58a8c564f15539b5691cf019888f0545b2b",
+    "arch": "arm64"
+  }
+]
