@@ -29,6 +29,7 @@ public sealed class HomeMoveTests
 
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         var project = await gru.CreateProjectAsync(organization, "Project");
+        await gru.SetPlanAsync(gru.User, organization, "hobby", token);
         var bearer = issuer.Mint(gru.User, descriptor =>
         {
             descriptor.Claims["project_id"] = project;
