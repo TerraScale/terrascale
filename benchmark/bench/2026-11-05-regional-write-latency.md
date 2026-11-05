@@ -190,3 +190,58 @@ format `22-41a88901325a` before the reset
 ([deployment snapshot](2026-11-05-regional-write-deployed.json)). New live writes
 are held through the reset; final measurements will use a new account after
 the reset handoff.
+
+## Pre-reset stage probe and HLC correction
+
+This diagnostic cohort ran on `ae8c2de66` in all three regions, format
+`22-41a88901325a`, after the lock and acknowledgement-routing fixes. It is
+preserved separately from the required post-reset proof. Three repeats used
+40 measured writes per mode on a reused HTTPS connection from SJC. Every
+response correlated with its server request-log observation, every measured
+row reached home exactly once, and each proof database and the account were
+deleted. SJC was a discovered one-node quorum (`localwrites_available=1`,
+`localack_partner=0`); it did not acknowledge on an absent second node.
+
+| Repeat | Mode | Server p50 ms | Server p99 ms | Client p50 ms | Client p99 ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | default | 26.56 | 77.64 | 28.63 | 79.63 |
+| 1 | durable_home | 223.00 | 521.48 | 224.93 | 522.99 |
+| 1 | forced_home | 197.32 | 240.45 | 199.07 | 242.09 |
+| 2 | default | 21.90 | 86.57 | 23.89 | 89.56 |
+| 2 | durable_home | 225.28 | 535.60 | 227.17 | 537.83 |
+| 2 | forced_home | 197.53 | 232.75 | 199.38 | 234.76 |
+| 3 | default | 22.84 | 72.88 | 25.56 | 75.05 |
+| 3 | durable_home | 223.91 | 261.43 | 226.17 | 263.79 |
+| 3 | forced_home | 196.49 | 213.94 | 198.23 | 215.14 |
+
+[Raw diagnostic samples](2026-11-05-regional-write-pre-reset-stages.json).
+The default client target passes; its origin median and the first two
+home-durable tails do not. Default `home_lookup` medians were 3.82–4.12 ms,
+`tenant` 4.44–4.88 ms and `ack` 8.52–9.50 ms. `NodeHlcClock` durably committed
+the system database for every issued or observed stamp. That advanced the
+system commit sequence and invalidated the catalog caches on every write.
+
+The correction serializes timestamp issuance in memory and durably reserves
+an upper bound five seconds ahead before returning any uncovered stamp.
+Most writes avoid both the system transaction and its cache invalidation.
+On restart the full reserved range is skipped. The guard sees the recovered
+bound and keeps local admission closed until the existing 50 ms skew limit
+permits it; current-process admission sees issued/observed time, rather than
+the unused reservation. Observation still immediately advances the guard.
+No quorum, local transaction durability or home acknowledgement rule changes.
+
+DECISION: reserve five seconds of HLC time durably, and fail local admission
+closed after restart until time catches up. Reason: retain durable coverage,
+monotonic restart order and R12's pre/post admission and 50 ms skew guarantees
+while removing per-write system commits. The availability tradeoff is up to
+five seconds before local admission resumes; forwarding home remains available.
+
+The two largest home-durable samples spent 501.34 and 503.96 ms inside `ack`,
+against approximately 190 ms for its median. GRU's apply counter recorded four
+temporary failures over the whole diagnostic window. Its retry loop delays
+100 ms then 200 ms: consistent with the excess, but these aggregate counters
+do not identify the failed operation or prove which sample retried. New
+acknowledgement substeps separate capture, HLC, sealing, durable publish,
+regional hold, local commit and home wait. Home apply also records attempt
+time and bounded retry reasons. The final proof must distinguish that evidence
+from this preliminary attribution.
