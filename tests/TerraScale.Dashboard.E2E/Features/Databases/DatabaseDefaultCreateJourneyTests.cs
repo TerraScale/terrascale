@@ -159,6 +159,16 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var page = WebUtility.HtmlDecode(await client.GetStringAsync(DatabaseService.Path(databaseId, "replication")));
             await Assert.That(page).Contains("data-home-region=\"SJC\"");
             await Assert.That(page).Contains("action=\"/api/v1/dashboard/databases/move-home\"");
+
+            using (var external = await producer.PostAsJsonAsync("/__test/control", new { command = "external-home", name = "orders", value = "fra" }))
+            {
+                await Assert.That(external.IsSuccessStatusCode).IsTrue();
+            }
+
+            using var listing = JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/databases"));
+            await Assert.That(listing.RootElement.GetProperty("items")[0].GetProperty("region").GetString()).IsEqualTo("FRA");
+            var refreshed = WebUtility.HtmlDecode(await client.GetStringAsync(DatabaseService.Path(databaseId, "replication")));
+            await Assert.That(refreshed).Contains("data-home-region=\"FRA\"");
         }
     }
 }
