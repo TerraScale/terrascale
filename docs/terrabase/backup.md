@@ -1,6 +1,6 @@
 # Continuous backup
 
-TerraBase streams every the engine database file of a node (each database and `_system.db`) to Tigris,
+TerraBase streams every database file of a node (each database and `_system.db`) to Tigris,
 about once a second, and restores a database as of a chosen second (TS-633).
 Tigris remains managed through the Fly organization; compute runs on OCI.
 The [Litestream](https://litestream.io/how-it-works/) design uses generations, snapshots and log segments.

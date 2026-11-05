@@ -16,10 +16,8 @@ Other replica regions receive provisional changes directly over NATS; a missing 
   (`change_type = 2`). Before images support F2's move-in and move-out. `INSERT … ON CONFLICT DO UPDATE` needs native
   patch 0008 (the backport of upstream `26dbb464`), which the pinned native release carries.
 - Shapes read only the native capture table and the table itself.
-- The database's home seals snapshots and immutable chunks. Replica regions serve live tails from their replicated
-  the native capture table and provisional overlays. Every sealed chunk holds only home-confirmed changes; region writes enter
-  that history through the home apply, which commits through the same capture.
-- the native capture table uses `AUTOINCREMENT` change ids, so ids are never reused, also after retention trims old rows.
+- The database's home seals immutable snapshots and chunks from home-confirmed commits. Ready replicas serve live tails under the [regional shape contract](region-shape-tails-and-cdc-retention.md). Regional writes reach confirmed shapes through home apply, which commits through the same capture.
+- The native capture table uses `AUTOINCREMENT` change ids, so ids are never reused, also after retention trims old rows.
 
 ## 2. Route
 
