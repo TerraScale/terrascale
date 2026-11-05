@@ -107,8 +107,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/dashboard-qualified" "$RUNNER_TEMP/dashboard-publish"
-          gh release download "dashboard/qualified-$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" \
-            --dir "$RUNNER_TEMP/dashboard-qualified" --pattern dashboard-publish.tar.gz --pattern dashboard-qualification.json
+          python3 scripts/ci/proof_release.py download "$GITHUB_SHA" dashboard \
+            "$RUNNER_TEMP/dashboard-qualified" dashboard-publish.tar.gz dashboard-qualification.json
           python3 - <<'PYTHON'
           import hashlib
           import json

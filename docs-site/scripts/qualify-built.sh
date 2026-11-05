@@ -28,14 +28,10 @@ output = Path(sys.argv[1])
 manifest = {"revision": sys.argv[2], "sourceDirectory": "docs-site", "sha256": hashlib.sha256((output / "site.tar.gz").read_bytes()).hexdigest()}
 (output / "site-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 PY
-tag="docs/qualified-$revision"
-if ! gh release create "$tag" "$output/site.tar.gz" "$output/site-manifest.json" \
-  --repo TerraScale/terrascale --target "$revision" --prerelease \
-  --title "Documentation qualified $revision" \
-  --notes "Dev-host audit, build, example/starter tests and prebuilt dry-run passed for $revision."; then
+tag="ci/qualified-$revision"
+if ! python3 ../scripts/ci/proof_release.py publish "$revision" docs "$output/site.tar.gz" "$output/site-manifest.json"; then
   mkdir "$output/existing"
-  gh release download "$tag" --repo TerraScale/terrascale --dir "$output/existing" \
-    --pattern site.tar.gz --pattern site-manifest.json
+  python3 ../scripts/ci/proof_release.py download "$revision" docs "$output/existing" site.tar.gz site-manifest.json
   gh api --paginate --slurp "repos/TerraScale/terrascale/commits/$revision/statuses?per_page=100" > "$output/existing/statuses.json"
   python3 - "$output" "$revision" <<'PY'
 import hashlib, json, pathlib, sys, tarfile
@@ -47,7 +43,7 @@ assert hashlib.sha256((existing / 'site.tar.gz').read_bytes()).hexdigest() == ma
 statuses = [status for page in json.loads((existing / 'statuses.json').read_text()) for status in page]
 proof = next(status for status in statuses if status['context'] == 'docs-release/docs')
 assert proof['state'] == 'success' and proof['creator']['login'].lower() == 'mariogk'
-assert proof['target_url'] == f'https://github.com/TerraScale/terrascale/releases/tag/docs/qualified-{sys.argv[2]}'
+assert proof['target_url'] == f'https://github.com/TerraScale/terrascale/releases/tag/ci/qualified-{sys.argv[2]}'
 with tarfile.open(existing / 'site.tar.gz') as package:
     names = set()
     for member in package.getmembers():

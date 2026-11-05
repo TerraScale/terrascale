@@ -80,7 +80,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "docs/qualified-$REVISION" --repo TerraScale/terrascale --dir "$RUNNER_TEMP/docs-site"
+          python3 ../scripts/ci/proof_release.py download "$REVISION" docs "$RUNNER_TEMP/docs-site" site.tar.gz site-manifest.json
           python3 - "$RUNNER_TEMP/docs-site" "$REVISION" <<'PY'
           import hashlib, json, pathlib, sys, tarfile
           root = pathlib.Path(sys.argv[1])

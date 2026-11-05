@@ -27,6 +27,7 @@ with tempfile.TemporaryDirectory() as scratch:
     original = copy.deepcopy(rows)
     qualified.statuses = lambda revision: rows
     qualified.gh = lambda *args: ''
+    qualified.download_proof = lambda *args, **kwargs: None
     def verify():
         with contextlib.redirect_stdout(io.StringIO()):
             return qualified.verify('terrabase', sha, directory)
@@ -95,3 +96,41 @@ for code, expected in ((503, 3), (404, 1), (403, 1)):
             raise AssertionError('Persistent download failure accepted')
         assert request.call_count == expected
 print('qualified-build-test: five transient 5xx recoveries, retry exhaustion and permanent 4xx boundaries: ok')
+
+# The release is shared, but assets remain immutable and area-bound. Exercise
+# simultaneous-create reconciliation and upload ambiguity without live writes.
+import proof_release as store
+for _ in range(5):
+    conflict = subprocess.CalledProcessError(1, ['gh'], stderr='HTTP 422: already exists')
+    with patch.object(store, 'release', side_effect=[subprocess.CalledProcessError(1, ['gh'], stderr='HTTP 404'), {'id': 1}]), patch.object(store, 'gh', side_effect=conflict):
+        assert store.ensure_release(sha) == {'id': 1}
+with tempfile.TemporaryDirectory() as scratch:
+    root = Path(scratch)
+    source = root / 'manifest.json'
+    source.write_text('source-bound bytes')
+    uploaded = {}
+    def request(*args):
+        if args[:2] == ('release', 'upload'):
+            staged = Path(args[3])
+            uploaded[staged.name] = staged.read_bytes()
+            # Server committed the asset before returning a transient error.
+            raise subprocess.CalledProcessError(1, ['gh'], stderr='HTTP 502')
+        if args[:2] == ('release', 'download'):
+            name = args[args.index('--pattern') + 1]
+            destination = Path(args[args.index('--dir') + 1])
+            (destination / name).write_bytes(uploaded[name])
+            return ''
+        raise AssertionError(args)
+    with patch.object(store, 'ensure_release'), patch.object(store, 'release', return_value={'assets': []}), patch.object(store, 'gh', side_effect=request):
+        for area in ('libs', 'auth', 'terrabase', 'docs', 'dashboard', 'sdk-go'):
+            assert store.publish(sha, area, [source]).endswith('ci/qualified-' + sha)
+        assert len(uploaded) == 6
+    with patch.object(store, 'ensure_release'), patch.object(store, 'release', return_value={'assets': [{'name': 'libs-manifest.json'}]}), patch.object(store, 'gh', side_effect=request):
+        source.write_text('different bytes')
+        try:
+            store.publish(sha, 'libs', [source])
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Existing immutable asset overwritten')
+print('qualified-build-test: shared per-commit release, concurrent creation, ambiguous upload and immutable area assets: ok')
