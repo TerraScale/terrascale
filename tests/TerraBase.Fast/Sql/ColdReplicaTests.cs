@@ -23,10 +23,13 @@ public sealed class ColdReplicaTests
         {
             await Assert.That(schema.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
+        var peers = new HomePeer();
         await using var away = await ManagementApi.StartAsync(settings => settings["region"] = "sjc", services =>
-            services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new HomePeer(home.Server.BaseAddress))), sharedIssuer: home.Issuer);
-        // Hold this fixture in the real startup interval: catalog present, follower not yet running, no primary file.
-        await away.Server.Services.GetRequiredService<RegionReplication>().StopAsync(token);
+            services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(peers)), sharedIssuer: home.Issuer);
+        // Let the initial empty catalog sweep finish before exposing the home to request forwarding.
+        // The follower has not opened yet; the durable catalog can already route requests.
+        await peers.InitialSweep.Task.WaitAsync(token);
+        peers.Address = home.Server.BaseAddress;
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
         await Assert.That(await away.Server.Services.GetRequiredService<IReplicaCatalog>().RecordAsync(
             new ReplicaCatalogEntry(database.Organization, database.Project, database.Id, database.Name, "gru", ["sjc"], 1), token)).IsTrue();
@@ -43,9 +46,20 @@ public sealed class ColdReplicaTests
         await Assert.That(away.Server.Services.GetRequiredService<IDatabaseReplicas>().Holds(tenant)).IsFalse();
     }
 
-    private sealed class HomePeer(Uri address) : IReplicaPeers
+    private sealed class HomePeer : IReplicaPeers
     {
-        public ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken) =>
-            ValueTask.FromResult<IReadOnlyList<ReplicaPeer>>([new("gru", "gru-1", address)]);
+        private int _reads;
+        public Uri? Address { get; set; }
+        public TaskCompletionSource InitialSweep { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken)
+        {
+            IReadOnlyList<ReplicaPeer> snapshot = Address is { } address ? [new("gru", "gru-1", address)] : [];
+            if (Interlocked.Increment(ref _reads) == 2)
+            {
+                InitialSweep.TrySetResult();
+            }
+            return ValueTask.FromResult(snapshot);
+        }
     }
 }
