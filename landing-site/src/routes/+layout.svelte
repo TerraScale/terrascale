@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { installSdkTabs } from '../../../src/TerraScale.Dashboard/web/assets/js/sdk-tabs.js'
   import { page } from '$app/state'
   import type { Snippet } from 'svelte'
 
@@ -43,6 +44,7 @@
   const metadata = $derived(metadataByPath[canonicalPath] ?? metadataByPath['/404'])
 
   onMount(() => {
+    installSdkTabs()
     initLocale()
   })
 </script>
