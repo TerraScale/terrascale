@@ -66,6 +66,7 @@ public static class ShapesExtensions
         services.AddHttpClient(ShapeObjectStore.HttpClientName);
         services.AddSingleton(provider => provider.GetRequiredService<TerraBaseOptions>().ShapeStorage!);
         services.AddHttpClient(ShapeCdnPurge.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
+        services.AddHttpClient(ShapeCdnPurge.VerificationClientName, client => client.Timeout = TimeSpan.FromSeconds(10));
         return services.ConfigureHttpJsonOptions(json =>
             {
                 json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeJsonContext.Default);

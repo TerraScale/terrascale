@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Headers;
@@ -23,12 +24,13 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
     : BackgroundService, IShapeCdnPurge
 {
     internal const string HttpClientName = "cloudflare-api";
+    internal const string VerificationClientName = "shape-cdn-verification";
 
     internal const string Zone = "4cc466e19478c116fae7dc445a6d0911";
 
     internal static readonly Uri PurgeUri = new($"https://api.cloudflare.com/client/v4/zones/{Zone}/purge_cache");
 
-    private const int QueueItems = 4096;
+    private const int QueueItems = 2000;
     private const int BatchUrls = 100;
     private const int Attempts = 5;
     private const string ObjectPrefix = "https://" + ShapeStorageSettings.CdnHost + "/v1/shapes/";
@@ -39,6 +41,10 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
     private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(1);
     private const string Outbox = "shape_cdn_purges";
     private string? _after;
+    private long _pending;
+    private long _oldestTicks;
+    private readonly Counter<long> _attempts = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.shape.cdn.purge_attempts",
+        description: "Cloudflare purge requests by accepted or failed result; includes retries.");
     private readonly Counter<long> _purges = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.shape.cdn.purges",
         description: "Shape CDN handle prefixes by purge outcome: purged, failed (Cloudflare refused or kept failing) or dropped (queue full).");
 
@@ -64,13 +70,20 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
                 _purges.Add(1, new KeyValuePair<string, object?>("outcome", "dropped"));
                 return false; // The caller keeps its object and retries; no deletion loses its purge authority.
             }
-            _ = await transaction.PutAsync(Outbox, id, JsonSerializer.SerializeToUtf8Bytes(url, ShapeCdnPurgeJsonContext.Default.String), cancellationToken).ConfigureAwait(false);
+            _ = await transaction.PutAsync(Outbox, id, JsonSerializer.SerializeToUtf8Bytes(new ShapeCdnPurgeWork(url, time.GetUtcNow()),
+                ShapeCdnPurgeJsonContext.Default.ShapeCdnPurgeWork), cancellationToken).ConfigureAwait(false);
             return true;
         }, cancellationToken, durable: true).ConfigureAwait(false);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var meter = meters.Create(Telemetry.MeterName);
+        meter.CreateObservableGauge("terrabase.shape.cdn.purge_pending", () => Interlocked.Read(ref _pending),
+            description: "Durable CDN purge URLs awaiting verified removal.");
+        meter.CreateObservableGauge("terrabase.shape.cdn.purge_oldest_age", () =>
+            Interlocked.Read(ref _oldestTicks) is > 0 and var ticks ? Math.Max(0, (time.GetUtcNow() - new DateTimeOffset(ticks, TimeSpan.Zero)).TotalSeconds) : 0,
+            "s", "Age of the oldest queued CDN URL; healthy-provider removal bound is 420 seconds.");
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
@@ -80,6 +93,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
             }
             catch (Exception) when (!stoppingToken.IsCancellationRequested)
             {
+                _purges.Add(1, new KeyValuePair<string, object?>("outcome", "unavailable"));
                 logger.ZLogWarning($"Shape CDN purge outbox is unavailable; durable work retries");
             }
         }
@@ -87,25 +101,53 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
 
     internal async Task RunOnceAsync(CancellationToken token)
     {
-        var page = await catalog.ReadUncheckedAsync(transaction => transaction.ListAsync(Outbox, _after, BatchUrls, BatchUrls * 1024L, token), token).ConfigureAwait(false);
-        var ready = new List<(string Id, string Prefix)>();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(18), time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
+        token = linked.Token;
+        var inventory = await catalog.ReadUncheckedAsync(transaction => transaction.ListAsync(Outbox, null, QueueItems, QueueItems * 1024L, token), token).ConfigureAwait(false);
+        var work = inventory.Records.Select(record => (record.Id, Work: ReadWork(record.Json.Span))).ToArray();
+        Interlocked.Exchange(ref _pending, work.Length);
+        Interlocked.Exchange(ref _oldestTicks, work.Length == 0 ? 0 : work.Min(item => item.Work.QueuedAt.UtcTicks));
+        var page = work.Where(item => _after is null || string.CompareOrdinal(item.Id, _after) > 0).Take(BatchUrls).ToArray();
+        if (page.Length == 0)
+        {
+            _after = null;
+            return;
+        }
+        var ready = new ConcurrentBag<(string Id, string Url, string Prefix)>();
         if (custody is null)
         {
             return;
         }
-        foreach (var record in page.Records)
+        await Parallel.ForEachAsync(page, new ParallelOptions { MaxDegreeOfParallelism = 32, CancellationToken = token }, async (record, cancellationToken) =>
         {
-            var url = JsonSerializer.Deserialize(record.Json.Span, ShapeCdnPurgeJsonContext.Default.String)!;
+            var url = record.Work.Url;
             // Queue is durable BEFORE R2 DELETE. Never purge early, which could allow a cache refill before DELETE.
-            if (!await custody.Store.ReadAsync(new Uri(url).AbsolutePath[1..], static (_, _) => Task.CompletedTask, token).ConfigureAwait(false))
+            if (!await custody.Store.ReadAsync(new Uri(url).AbsolutePath[1..], static (_, _) => Task.CompletedTask, cancellationToken).ConfigureAwait(false))
             {
-                ready.Add((record.Id, url[8..(ObjectPrefix.Length + 20)]));
+                ready.Add((record.Id, url, url[8..(ObjectPrefix.Length + 20)]));
             }
-        }
+        }).ConfigureAwait(false);
         if (ready.Count > 0)
         {
             var batch = ready.Select(item => item.Prefix).Distinct(StringComparer.Ordinal).ToList();
             var success = await PurgeAsync(batch, token).ConfigureAwait(false);
+            if (success)
+            {
+                // API acceptance is not eviction proof. A stale 200, failed probe or outage keeps the durable work.
+                var client = http.CreateClient(VerificationClientName);
+                var unverified = 0;
+                await Parallel.ForEachAsync(ready, new ParallelOptions { MaxDegreeOfParallelism = 32, CancellationToken = token }, async (item, cancellationToken) =>
+                {
+                    using var response = await client.GetAsync(item.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                    if (response.StatusCode != HttpStatusCode.NotFound)
+                    {
+                        Interlocked.Increment(ref unverified);
+                    }
+                }).ConfigureAwait(false);
+                success = unverified == 0;
+                _purges.Add(unverified, new KeyValuePair<string, object?>("outcome", "verification_failed"));
+            }
             _purges.Add(batch.Count, new KeyValuePair<string, object?>("outcome", success ? "purged" : "failed"));
             if (success)
             {
@@ -117,10 +159,16 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
                     }
                     return true;
                 }, token, durable: true).ConfigureAwait(false);
+                Interlocked.Add(ref _pending, -ready.Count);
             }
         }
-        _after = page.HasMore && page.Records.Count > 0 ? page.Records[^1].Id : null;
+        _after = page.Length == BatchUrls ? page[^1].Id : null;
     }
+
+    private ShapeCdnPurgeWork ReadWork(ReadOnlySpan<byte> json) => json[0] == (byte)'"'
+        // Preserve already-durable work across deployment; these entries predate timestamped admission.
+        ? new(JsonSerializer.Deserialize(json, ShapeCdnPurgeJsonContext.Default.String)!, time.GetUtcNow())
+        : JsonSerializer.Deserialize(json, ShapeCdnPurgeJsonContext.Default.ShapeCdnPurgeWork)!;
 
     private async Task<bool> PurgeAsync(List<string> urls, CancellationToken cancellationToken)
     {
@@ -149,13 +197,16 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
                 if (response.IsSuccessStatusCode
                     && await response.Content.ReadFromJsonAsync(ShapeCdnPurgeJsonContext.Default.ShapeCdnPurgeResponse, cancellationToken).ConfigureAwait(false) is { Success: true })
                 {
+                    _attempts.Add(1, new KeyValuePair<string, object?>("outcome", "accepted"));
                     return true;
                 }
             }
+
             catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
             {
                 logger.ZLogWarning(error, $"Shape CDN purge request failed");
             }
+            _attempts.Add(1, new KeyValuePair<string, object?>("outcome", "failed"));
 
             if (attempt == Attempts || status is { } code && (int)code is >= 400 and < 500 && code != HttpStatusCode.TooManyRequests)
             {
@@ -173,8 +224,11 @@ internal sealed record ShapeCdnPurgeRequest(IReadOnlyList<string> Prefixes);
 
 internal sealed record ShapeCdnPurgeResponse(bool Success);
 
+internal sealed record ShapeCdnPurgeWork(string Url, DateTimeOffset QueuedAt);
+
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(ShapeCdnPurgeRequest))]
 [JsonSerializable(typeof(ShapeCdnPurgeResponse))]
+[JsonSerializable(typeof(ShapeCdnPurgeWork))]
 internal sealed partial class ShapeCdnPurgeJsonContext : JsonSerializerContext;
