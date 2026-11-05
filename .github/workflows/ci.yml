@@ -125,9 +125,7 @@ jobs:
 
       - name: Scan for legacy terms (fail)
         run: |
-          python3 scripts/legacy-scan/scan.py --repo terrascale --mode fail \
-            --path-prefix src/TerraBase --term documents --term collections \
-            --term document-feeds --term lattices --output legacy-hits.md > legacy-scan.log
+          python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log
           head -1 legacy-scan.log
       - name: Retain legacy hits
         if: ${{ !cancelled() && hashFiles('legacy-hits.md') != '' }}

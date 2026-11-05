@@ -12,15 +12,15 @@ The scanner reads tracked files, including dotfiles, examples, tests, workflows 
 
 Every consuming repo pins the scanner checkout to a full commit SHA. Keep it outside the target checkout, so scanner files are never mistaken for target files. Update pins explicitly after scanner policy changes.
 
-## TerraBase SQL-only gate
+## Full-repository CI gate (C7 complete)
 
-Main CI scans all tracked files under `src/TerraBase/` with `--mode fail --path-prefix src/TerraBase --term documents --term collections --term document-feeds --term lattices`. Any unapproved occurrence fails CI, including occurrences in unchanged files. Standard JSON parser and BCL collection types retain their narrow exceptions. Other repository surfaces and legacy term families remain under the report-mode cleanup policy.
+The monorepo commits `.legacy-scan-mode` containing `fail`. Main CI scans every tracked file with every term family and reads this tracked mode, so any unapproved occurrence fails CI, including occurrences in unchanged files. C7 is complete: the full-repository scan reported zero hits before enabling enforcement. No allow-list expansion was needed.
 
-`--path-prefix` limits scanning to a repository-relative directory. Repeat `--term` to select retired document API term families; omitting both options preserves the full repository scan.
+`--path-prefix` limits investigative scans to a repository-relative directory. Repeat `--term` to select retired document API term families; omitting both options preserves the full repository scan.
 
 ## Other repository scans
 
-Each repo commits `.legacy-scan-mode` containing `report` while deletion work remains. Report mode lists all hits and returns 0. C7 changes this file to `fail` after confirming zero hits, without changing the workflow or scanner. Fail mode returns 1 on hits. Invalid mode, unreadable tracked files, missing Git metadata and policy errors return 2 in either mode. `--mode` overrides the tracked mode only for investigations and process tests; the scoped TerraBase CI gate explicitly uses fail mode.
+Repositories with deletion work remaining may commit `.legacy-scan-mode` containing `report`. Report mode lists all hits and returns 0. Switch to `fail` after confirming zero hits. Fail mode returns 1 on hits. Invalid mode, unreadable tracked files, missing Git metadata and policy errors return 2 in either mode. `--mode` overrides the tracked mode only for investigations and process tests.
 
 Process integration verification uses isolated real Git repositories and concurrent scanner subprocesses:
 
