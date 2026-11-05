@@ -242,6 +242,12 @@ internal sealed class DatabaseBackupPurge(
 
         await services.GetRequiredService<KeyRevocationPeers>().RevokeAsync(database, token).ConfigureAwait(false);
 
+        // Admit this database's CDN work before acknowledging DELETE, independently of the shared erasure backlog.
+        if (!await services.GetRequiredService<Shapes.ShapeMirror>().DeleteIndexedDatabaseAsync(database, token).ConfigureAwait(false))
+        {
+            return null;
+        }
+
         logger.ZLogInformation($"Backup keys of deleted database {database.DatabaseId:@Database} are destroyed");
         return record.ShreddedAt;
     }

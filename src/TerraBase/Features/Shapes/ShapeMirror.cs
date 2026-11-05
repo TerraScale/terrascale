@@ -70,6 +70,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     });
     private readonly Lock _gate = new();
     private readonly Dictionary<string, string> _pending = [];
+    private TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly HashSet<string> _trimming = [];
     private readonly Dictionary<string, Cached> _cache = [];
     private readonly Dictionary<string, Proven> _proofs = [];
@@ -265,6 +266,10 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             return (null, true);
         }
         var owner = ShapeObjectStore.Owner(database);
+        if (!await DeleteIndexedDatabaseAsync(database, token).ConfigureAwait(false))
+        {
+            return (after, false);
+        }
         var count = 0;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), _time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
@@ -275,7 +280,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 var head = await _objects.HeadAsync(stored.Key, linked.Token).ConfigureAwait(false);
                 if (head?.Owner == owner)
                 {
-                    if (!await _objects.DeleteAsync(stored.Key, linked.Token).ConfigureAwait(false))
+                    if (!await _objects.DeleteAsync(stored.Key, linked.Token, head.Owner).ConfigureAwait(false))
                     {
                         return (after, false);
                     }
@@ -297,6 +302,49 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             // Only this database's publishers must drain before certifying its cleanup.
             var complete = !_pending.ContainsValue(owner);
             return (complete ? null : after, complete);
+        }
+    }
+
+    // Shared, durable authority is written before publication, so a different region can erase after a home move.
+    internal async Task<bool> DeleteIndexedDatabaseAsync(TenantContext database, CancellationToken token)
+    {
+        if (_objects is null)
+        {
+            return true;
+        }
+        var prefix = ShapeObjectStore.InventoryPrefix(ShapeObjectStore.Owner(database));
+        var count = 0;
+        await foreach (var entry in _objects.ListInventoryAsync(prefix, token).ConfigureAwait(false))
+        {
+            if (++count > ScanItems)
+            {
+                return false;
+            }
+            var key = "v1/shapes/" + entry.Key[prefix.Length..];
+            if (!await _objects.DeleteAsync(key, token, ShapeObjectStore.Owner(database)).ConfigureAwait(false))
+            {
+                return false;
+            }
+            Remove(key);
+        }
+        return true;
+    }
+
+    internal async Task RetireDeletedAsync(TenantContext database, CancellationToken token)
+    {
+        var owner = ShapeObjectStore.Owner(database);
+        while (true)
+        {
+            Task released;
+            lock (_gate)
+            {
+                if (!_pending.ContainsValue(owner))
+                {
+                    return;
+                }
+                released = _released.Task;
+            }
+            await released.WaitAsync(token).ConfigureAwait(false);
         }
     }
 
@@ -346,7 +394,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 after = stored.Key;
                 var head = await RetentionHeadAsync(stored.Key, linked.Token).ConfigureAwait(false);
                 if (head is not null && head.Owner == owner && !Retained(head, floor)
-                    && await _objects.DeleteAsync(stored.Key, linked.Token).ConfigureAwait(false))
+                    && await _objects.DeleteAsync(stored.Key, linked.Token, head.Owner).ConfigureAwait(false))
                 {
                     Remove(stored.Key);
                     deleted++;
@@ -580,7 +628,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                     after = stored.Key;
                     var head = await RetentionHeadAsync(stored.Key, linked.Token).ConfigureAwait(false);
                     if (head is not null && head.SealedAt < (_time.GetUtcNow() - ShapeRetention.Age).ToUnixTimeMilliseconds()
-                        && await _objects.DeleteAsync(stored.Key, linked.Token).ConfigureAwait(false))
+                        && await _objects.DeleteAsync(stored.Key, linked.Token, head.Owner).ConfigureAwait(false))
                     {
                         Remove(stored.Key);
                     }
@@ -718,7 +766,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         floor = await FloorAsync(pending.Database, pending.Handle, linked.Token).ConfigureAwait(false);
         if (floor == long.MaxValue)
         {
-            _ = await _objects.DeleteAsync(key, linked.Token).ConfigureAwait(false);
+            _ = await _objects.DeleteAsync(key, linked.Token, head.Owner).ConfigureAwait(false);
             return;
         }
 
@@ -726,7 +774,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         {
             if (head.Owner == owner)
             {
-                _ = await _objects.DeleteAsync(key, linked.Token).ConfigureAwait(false);
+                _ = await _objects.DeleteAsync(key, linked.Token, head.Owner).ConfigureAwait(false);
             }
 
             return;
@@ -857,6 +905,8 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         {
             _pending.Remove(key);
             _queuedBytes -= bytes;
+            _released.TrySetResult();
+            _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
         admission.Dispose();
@@ -937,17 +987,26 @@ internal sealed class ShapeObjectStore : IDisposable
     internal static string Owner(TenantContext database) => Convert.ToHexStringLower(SHA256.HashData(
         Encoding.UTF8.GetBytes(database.OrganizationId + "\0" + database.ProjectId + "\0" + database.DatabaseId)));
 
+    internal static string InventoryPrefix(string owner) => "v1/shape-owners/" + owner + "/";
+
+    internal IAsyncEnumerable<StoredObject> ListInventoryAsync(string prefix, CancellationToken token) =>
+        _objects.ListAsync(prefix, null, token);
+
     public IAsyncEnumerable<StoredObject> ListAsync(string? handle, string? after, CancellationToken cancellationToken) =>
         _objects.ListAsync(handle is null ? "v1/shapes/" : "v1/shapes/" + handle + "/", after, cancellationToken);
 
     /// <summary>Deletes the object; on an R2 bucket its Cloudflare copies are then purged in the background.</summary>
-    public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken)
+    public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken, string? owner = null)
     {
         if (_cdn is not null && !await _purge.QueueAsync(_cdn.AbsoluteUri + key, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }
-        return await _objects.DeleteAsync(key, cancellationToken).ConfigureAwait(false);
+        if (!await _objects.DeleteAsync(key, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+        return owner is null || await _objects.DeleteAsync(InventoryPrefix(owner) + key["v1/shapes/".Length..], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<ShapeObjectHead?> HeadAsync(string key, CancellationToken cancellationToken)
@@ -984,6 +1043,8 @@ internal sealed class ShapeObjectStore : IDisposable
 
     public async Task<ShapeObjectHead> PutAsync(string key, ShapeObjectHead head, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
+        using var inventory = new MemoryStream();
+        await _objects.PutAsync(InventoryPrefix(head.Owner) + key["v1/shapes/".Length..], inventory, cancellationToken).ConfigureAwait(false);
         if (!System.Runtime.InteropServices.MemoryMarshal.TryGetArray(bytes, out var segment))
         {
             throw new ArgumentException("shape ciphertext must be array-backed", nameof(bytes));

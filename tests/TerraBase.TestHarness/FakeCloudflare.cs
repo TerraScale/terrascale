@@ -26,6 +26,8 @@ public sealed class FakeCloudflare : IDisposable
     /// <summary>Every URL purged so far, in request order.</summary>
     public IReadOnlyCollection<string> Purged => _purged;
 
+    public HttpStatusCode VerificationStatus { get; set; } = HttpStatusCode.NotFound;
+
     /// <summary>The (cache status, count) groups every analytics query answers.</summary>
     public IReadOnlyList<(string CacheStatus, long Count)> Analytics { get; set; } = [];
 
@@ -39,8 +41,11 @@ public sealed class FakeCloudflare : IDisposable
     }
 
     /// <summary>Routes the server's Cloudflare API client to this fake.</summary>
-    public void Route(IServiceCollection services) =>
+    public void Route(IServiceCollection services)
+    {
         services.AddHttpClient("cloudflare-api").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
+        services.AddHttpClient("shape-cdn-verification").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
+    }
 
     /// <summary>Waits until at least <paramref name="count"/> URLs are purged; the caller's token bounds the wait.</summary>
     public async Task PurgedAsync(int count, CancellationToken cancellationToken)
@@ -62,6 +67,10 @@ public sealed class FakeCloudflare : IDisposable
 
     private async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        if (request.Method == HttpMethod.Get && request.RequestUri?.Host == "shapes-ts-terrabase-shapes-prod.terrascale.tech")
+        {
+            return new HttpResponseMessage(VerificationStatus);
+        }
         if (request.Method != HttpMethod.Post)
         {
             return new HttpResponseMessage(HttpStatusCode.NotFound);
