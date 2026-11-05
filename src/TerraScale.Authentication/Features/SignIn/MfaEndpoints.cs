@@ -29,7 +29,7 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         Summary("Sign in with a second factor");
         Description("Same-origin form post with challenge (from the code, password, sign-up or platform provider step), code and next. code is the authenticator app's current six-digit code or one unused 24-character recovery code; each works once. The challenge lasts 5 minutes, completes at most once and dies with a sign-out everywhere, reset or factor change; a spent or expired challenge answers 401 with sign-in from the start. Charges the IP call bucket of 120 refilling 30 per minute and 10 second-factor attempts per account per 15 minutes; exhaustion answers 429 with Retry-After and keeps a live challenge. A wrong code answers 401 with the step again. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
-        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
@@ -335,7 +335,7 @@ internal static class SecurityFlow
     /// submission. The endpoint then opens the replacement from the committed user state.
     /// </summary>
     public static MfaAuthorization Consumed(SessionRecord session, string version) =>
-        new(AuthStore.Delete(AuthStore.SessionCollection, session.InstanceId, session.TokenHash, version), session.ExpiresAt);
+        new(AuthStore.Delete(AuthStore.SessionTable, session.InstanceId, session.TokenHash, version), session.ExpiresAt);
 
     /// <summary>The answer to a factor change that did not commit: sign in again once the caller's session is gone.</summary>
     public static async Task<IResult> RefusedAsync(HttpContext context, Sessions sessions, TotpCredentials mfa, UserRecord user, (string Title, string Message) error, int statusCode,

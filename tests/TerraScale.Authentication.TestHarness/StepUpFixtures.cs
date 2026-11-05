@@ -49,7 +49,7 @@ public static class StepUpFixtures
             mailRequested = false,
             bindings = bindings ?? user.AuthenticationBindings,
         };
-        await store.CreateAsync(AuthStore.StepUpProofCollection, user.InstanceId, id,
+        await store.CreateAsync(AuthStore.StepUpProofTable, user.InstanceId, id,
             JsonSerializer.SerializeToElement(record, Metadata));
         return proof;
     }

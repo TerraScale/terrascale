@@ -168,11 +168,11 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 }
                 if (pending.Length > 0)
                 {
-                    var open = await store.QueryAsync(AuthStore.MailOutboxCollection, OpenRows, Batch, CancellationToken.None).ConfigureAwait(false);
+                    var open = await store.QueryAsync(AuthStore.MailOutboxTable, OpenRows, Batch, CancellationToken.None).ConfigureAwait(false);
                     if (open.Count < Batch)
                     {
                         this.Release(id => pending.Contains(id, StringComparer.Ordinal)
-                            && !open.Any(row => row.Id == AuthStore.NaturalKeyId(Instance, AuthStore.MailOutboxCollection, id)));
+                            && !open.Any(row => row.Id == AuthStore.NaturalKeyId(Instance, AuthStore.MailOutboxTable, id)));
                     }
                 }
 
@@ -182,7 +182,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                     // fill the first batch and starve newly accepted work or spin the worker.
                     var now = JsonSerializer.Serialize(clock.GetUtcNow(), MailJson.Default.DateTimeOffset);
                     using var due = JsonDocument.Parse($$"""{"and":[{{OpenRows.GetRawText()}},{"lte":["/leaseUntil",{{now}}]}]}""");
-                    var rows = await store.QueryAsync(AuthStore.MailOutboxCollection, due.RootElement, DeliveryConcurrency - active.Count, CancellationToken.None).ConfigureAwait(false);
+                    var rows = await store.QueryAsync(AuthStore.MailOutboxTable, due.RootElement, DeliveryConcurrency - active.Count, CancellationToken.None).ConfigureAwait(false);
                     foreach (var row in rows)
                     {
                         active.Add(this.ProcessAsync(row));
@@ -232,16 +232,16 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
     }
 
-    private async Task ProcessAsync(StoredDocument document)
+    private async Task ProcessAsync(StoredRow rowData)
     {
-        var row = document.Document.Deserialize(MailJson.Default.MailRow);
+        var row = rowData.Body.Deserialize(MailJson.Default.MailRow);
         if (row is null)
         {
             return;
         }
 
         this.Release(id => id == row.Id);
-        if (row.LeaseUntil > clock.GetUtcNow() || await this.SaveAsync(row with { LeaseUntil = clock.GetUtcNow() + Lease }, document.Version) is not { } claimed)
+        if (row.LeaseUntil > clock.GetUtcNow() || await this.SaveAsync(row with { LeaseUntil = clock.GetUtcNow() + Lease }, rowData.Version) is not { } claimed)
         {
             return;
         }
@@ -274,7 +274,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             if (await this.IssueAsync(work).ConfigureAwait(false) is not { } issued)
             {
                 // No account, a reached issue limit or a lost race: nothing to send, nothing to keep.
-                await store.CompareAndDeleteAsync(AuthStore.MailOutboxCollection, Instance, row.Id, version, CancellationToken.None).ConfigureAwait(false);
+                await store.CompareAndDeleteAsync(AuthStore.MailOutboxTable, Instance, row.Id, version, CancellationToken.None).ConfigureAwait(false);
                 return;
             }
 
@@ -366,17 +366,17 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     {
         var cutoff = JsonSerializer.Serialize(clock.GetUtcNow() - Retention, MailJson.Default.DateTimeOffset);
         using var filter = JsonDocument.Parse($$"""{"lte":["/createdAt",{{cutoff}}]}""");
-        foreach (var document in await store.QueryAsync(AuthStore.MailOutboxCollection, filter.RootElement, Batch, CancellationToken.None).ConfigureAwait(false))
+        foreach (var rowData in await store.QueryAsync(AuthStore.MailOutboxTable, filter.RootElement, Batch, CancellationToken.None).ConfigureAwait(false))
         {
-            if (document.Document.Deserialize(MailJson.Default.MailRow) is { } row)
+            if (rowData.Body.Deserialize(MailJson.Default.MailRow) is { } row)
             {
-                await store.CompareAndDeleteAsync(AuthStore.MailOutboxCollection, Instance, row.Id, document.Version, CancellationToken.None).ConfigureAwait(false);
+                await store.CompareAndDeleteAsync(AuthStore.MailOutboxTable, Instance, row.Id, rowData.Version, CancellationToken.None).ConfigureAwait(false);
             }
         }
     }
 
     private async Task<(MailRow Row, string Version)?> SaveAsync(MailRow row, string version) =>
-        await store.ReplaceAsync(AuthStore.MailOutboxCollection, Instance, row.Id, JsonSerializer.SerializeToElement(row, MailJson.Default.MailRow), version, CancellationToken.None).ConfigureAwait(false) is { } saved
+        await store.ReplaceAsync(AuthStore.MailOutboxTable, Instance, row.Id, JsonSerializer.SerializeToElement(row, MailJson.Default.MailRow), version, CancellationToken.None).ConfigureAwait(false) is { } saved
             ? (row, saved)
             : null;
 
@@ -496,7 +496,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         var written = false;
         try
         {
-            await store.CreateAsync(AuthStore.MailOutboxCollection, Instance, id, JsonSerializer.SerializeToElement(row, MailJson.Default.MailRow), CancellationToken.None).ConfigureAwait(false);
+            await store.CreateAsync(AuthStore.MailOutboxTable, Instance, id, JsonSerializer.SerializeToElement(row, MailJson.Default.MailRow), CancellationToken.None).ConfigureAwait(false);
             written = true;
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)

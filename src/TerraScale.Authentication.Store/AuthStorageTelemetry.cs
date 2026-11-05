@@ -3,7 +3,7 @@ using System.Diagnostics.Metrics;
 
 namespace TerraScale.Authentication.Store;
 
-/// <summary>Storage read timings without document keys, tenant ids, claims or credentials.</summary>
+/// <summary>Storage read timings without record keys, tenant ids, claims or credentials.</summary>
 public static class AuthStorageTelemetry
 {
     /// <summary>The meter and activity source registered by the host.</summary>
@@ -20,10 +20,10 @@ public static class AuthStorageTelemetry
         _ => "unknown",
     };
 
-    internal static async Task<T> ReadAsync<T>(string collection, string operation, Func<Task<T>> read)
+    internal static async Task<T> ReadAsync<T>(string table, string operation, Func<Task<T>> read)
     {
         using var activity = Activities.StartActivity("auth.storage.read");
-        activity?.SetTag("db.collection.name", collection);
+        activity?.SetTag("db.collection.name", table);
         activity?.SetTag("db.operation.name", operation);
         activity?.SetTag("cloud.region", Region);
         var started = Stopwatch.GetTimestamp();
@@ -42,7 +42,7 @@ public static class AuthStorageTelemetry
             }
 
             Duration.Record(Stopwatch.GetElapsedTime(started).TotalSeconds,
-                new("collection", collection), new("operation", operation), new("region", Region), new("outcome", success ? "completed" : "failed"));
+                new("table", table), new("operation", operation), new("region", Region), new("outcome", success ? "completed" : "failed"));
         }
     }
 }

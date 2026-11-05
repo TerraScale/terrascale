@@ -13,7 +13,7 @@ namespace TerraScale.Authentication.Features.Oidc;
 /// </summary>
 public sealed class FormPostSecurityPolicy : IOpenIddictServerHandler<ApplyAuthorizationResponseContext>
 {
-    /// <summary>SHA-256 of OpenIddict 7.7.1's inline <c>document.form.submit();</c>, the only script on the page.</summary>
+    /// <summary>SHA-256 of OpenIddict 7.7.1's inline <c>record.form.submit();</c>, the only script on the page.</summary>
     public const string AutoSubmitScriptHash = "sha256-j7OoGArf6XW6YY4cAyS3riSSvrJRqpSi1fOF9vQ5SrI=";
 
     /// <inheritdoc />

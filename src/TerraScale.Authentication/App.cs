@@ -54,7 +54,7 @@ public static class App
     /// </summary>
     public const string StorageProject = "00000000000000000000000002";
 
-    /// <summary>ts-auth's database in <see cref="StorageProject"/>; ts-auth creates its collections there itself.</summary>
+    /// <summary>ts-auth's database in <see cref="StorageProject"/>; ts-auth creates its tables there itself.</summary>
     public const string StorageDatabase = "ts-auth";
 
     /// <summary>
@@ -143,11 +143,11 @@ public static class App
         builder.Services.AddSingleton<IStorageHealth, SigningKeyReadiness>();
         builder.Services.AddSingleton<ReadinessProbe>();
         builder.Services.AddHostedService(services => services.GetRequiredService<ReadinessProbe>());
-        builder.Services.AddSingleton<IDocumentStore, TerraBaseDocumentStore>();
+        builder.Services.AddSingleton<IRecordStore, TerraBaseRecordStore>();
         builder.Services.AddSingleton<KeyRing>();
         builder.Services.AddSingleton<SigningKeyRotation>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<SigningKeyRotation>());
-        builder.Services.AddSingleton(services => new AttemptLimiter(services.GetRequiredService<IDocumentStore>(), services.GetRequiredService<TimeProvider>(), options,
+        builder.Services.AddSingleton(services => new AttemptLimiter(services.GetRequiredService<IRecordStore>(), services.GetRequiredService<TimeProvider>(), options,
             services.GetRequiredService<IConfiguration>()["TS_REGION"] ?? (options.Development ? "gru" : throw new AuthConfigurationException("TS_REGION is required outside Development")),
             services.GetRequiredService<ILogger<AttemptLimiter>>()));
         builder.Services.AddSingleton<EmailAdmission>();
