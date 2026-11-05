@@ -10,6 +10,8 @@ Production runs on OCI gru under ts-orch; see the
 
 [Agent databases](agent-databases.md) describes TTL, forks and the database MCP lifecycle.
 
+[SDK language tabs](sdk-language-tabs.md) defines the shared dashboard, docs and landing control.
+
 Connect an assistant with the [MCP guide](https://docs.terrascale.tech/guides/mcp).
 The [dashboard integration API](platform-api.md) describes the serving
 session-authenticated contract and links its interactive reference.
