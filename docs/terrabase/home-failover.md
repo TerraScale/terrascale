@@ -53,6 +53,13 @@ every 15 s, which also picks up databases that gained replica regions.
    prepare home apply (R6).
 6. Every region watches `home.*` and takes the new placement at once, so home routing (421 `wrong_region`, Postgres and
    WebSocket home sessions) follows within the watch delay; the 30 s catalog sweep stays the backstop.
+7. The new home drains the local writes still addressed to the old home. Each push carries header `Tb-Epoch`, the
+   placement version its origin saw. For every region's push stream (its own included) the new home reads subject
+   `terrabase.push.<origin>.<old home>.<organization>.<project>.<database>` from the start and applies each message
+   stamped with an epoch below its own; `_ts_applied`, which came with the replica file, answers the ones the old home
+   already applied, so each transaction applies once. It keeps reading for 60 s (two catalog sweeps) to catch pushes from
+   regions that had not yet seen the new placement, then publishes each result on the applied subject as the old home
+   would have. Planned moves (R9) drain the same way.
 
 ## The old home
 
@@ -96,12 +103,11 @@ discarded with the file (`terrabase.home.demotions`).
 `tests/TerraBase.Slow/Sync/HomeFailoverTests.cs` runs gru and sjc on one JetStream server, writes to two databases (one
 with `durability: all`, one default), cuts gru off from JetStream and from its replica mid-write, and checks that sjc
 takes over, keeps every `all` write, loses only a tail of default writes, and that gru refuses writes before and after
-it reconnects.
+it reconnects. While gru is cut off, sjc commits local writes that each increment a counter; after the takeover every
+acknowledged one is in the new home and the counter shows each applied once.
 
 ## Known gaps
 
-- R7 push replay: messages that the old home applied but no replica pulled are replayed by the new home once R7's
-  consumer reads the old home's subjects for failed-over databases.
 - `durability` is accepted on SQL REST only; the WebSocket frame field and `SET terrascale.durability` follow.
 
 ## Planned moves (R9)
