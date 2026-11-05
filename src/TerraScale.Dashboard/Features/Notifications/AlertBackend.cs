@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     series.GetProperty("storageBytes") is { ValueKind: JsonValueKind.Number } storage ? storage.GetInt64() : null))]))]);
         }
 
-        // The allowance feed is the authoritative month-to-date operation units per organization.
+        // The allowance snapshot is the authoritative month-to-date operation units per organization.
         public async Task<IReadOnlyDictionary<string, long>> ReadOperationUnitsAsync(CancellationToken cancellationToken)
         {
             var units = new Dictionary<string, long>(StringComparer.Ordinal);

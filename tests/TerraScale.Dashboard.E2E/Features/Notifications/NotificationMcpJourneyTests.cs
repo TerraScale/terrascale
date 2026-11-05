@@ -105,9 +105,9 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
             var key = AccountService.AccountStorageKey("test-user");
             for (var attempt = 0; ; attempt++)
             {
-                var document = await state.GetAsync(AccountService.AccountsTable, key, CancellationToken.None)
+                var row = await state.GetAsync(AccountService.AccountsTable, key, CancellationToken.None)
                     ?? throw new InvalidOperationException("The seeded test account is unavailable.");
-                var account = AccountService.Read<AccountRecord>(document);
+                var account = AccountService.Read<AccountRecord>(row);
                 string[] ids = [AccountService.NewId(), AccountService.NewId()];
                 account.Notifications.AddRange([
                     new NotificationRecord
@@ -125,7 +125,7 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
                 try
                 {
                     await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account),
-                        StatePrecondition.Matches(document.Version), CancellationToken.None);
+                        StatePrecondition.Matches(row.Version), CancellationToken.None);
                     return ids;
                 }
                 catch (StateConflictException) when (attempt < 7) { }
@@ -140,17 +140,17 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
                 var key = AccountService.AccountStorageKey("test-user");
                 for (var attempt = 0; attempt < 8; attempt++)
                 {
-                    if (await state.GetAsync(AccountService.AccountsTable, key, CancellationToken.None) is not { } document)
+                    if (await state.GetAsync(AccountService.AccountsTable, key, CancellationToken.None) is not { } row)
                     {
                         return;
                     }
 
-                    var account = AccountService.Read<AccountRecord>(document);
+                    var account = AccountService.Read<AccountRecord>(row);
                     account.Notifications.RemoveAll(item => seed.Contains(item.Id));
                     try
                     {
                         await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account),
-                            StatePrecondition.Matches(document.Version), CancellationToken.None);
+                            StatePrecondition.Matches(row.Version), CancellationToken.None);
                         return;
                     }
                     catch (StateConflictException) { }
