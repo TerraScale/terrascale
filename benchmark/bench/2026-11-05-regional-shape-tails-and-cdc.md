@@ -1,13 +1,13 @@
 # Regional shape tails and bounded CDC
 
-The live tail run used TerraBase `4b04ad56f711ab7e10735273a037f67dfa60464b`, including the F9/F5 fixes in `d9a35dc535c805c73aa7c4a06bf481f474780bcc`. A fresh Free account held a gru-home database with sjc and fra replicas. Clients ran on the corresponding replica nodes. Every live continuation and replay returned HTTP 200 from that region's node; none required a refetch. The account was deleted.
+The final live tail run used TerraBase `8f97bd989f09e8ab0b03379238199954cd9950f6` on gru, sjc and fra, including the combined F9/F4 grant changes and F5 consumer cleanup in `1c15bcda38c9f9f46af05b2b70cb5adafcfd2a2e`. A fresh Free account held a gru-home database with sjc and fra replicas. Clients ran on the corresponding replica nodes. Every live continuation and replay returned HTTP 200 from that region's node; none required a refetch. The account was deleted. Public observations are under `final_runtime_tails` in the raw JSON.
 
 | Client | Reader | Consecutive updates | Replay median / maximum | Write start to tail median / maximum |
 | --- | --- | ---: | ---: | ---: |
-| sjc | Project token, filtered shape | 30 | 15.35 / 195.0 ms | 575.0 / 771.1 ms |
-| sjc | End-user token, filter and column projection | 10 | 15.90 / 26.0 ms | 584.35 / 783.8 ms |
-| fra | Project token, filtered shape | 30 | 13.85 / 202.3 ms | 626.9 / 1045.6 ms |
-| fra | End-user token, filter and column projection | 10 | 14.70 / 18.5 ms | 722.55 / 834.4 ms |
+| sjc | Project token, filtered shape | 30 | 191.20 / 202.1 ms | 769.80 / 1457.1 ms |
+| sjc | End-user token, filter and column projection | 10 | 16.50 / 36.3 ms | 572.60 / 770.7 ms |
+| fra | Project token, filtered shape | 30 | 21.50 / 216.9 ms | 818.35 / 1298.0 ms |
+| fra | End-user token, filter and column projection | 10 | 15.85 / 23.8 ms | 628.20 / 825.3 ms |
 
 Write-to-tail timing includes the client's cross-region write request to gru. Replay measures a subsequent read at the replica. Before these fixes, a small three-sample home-forwarded replay baseline measured 361.0 ms median from sjc and 403.1 ms from fra; those small baseline samples are descriptive, not a throughput comparison. Every end-user operation contained only the granted `value` column.
 
@@ -34,10 +34,22 @@ The catalog guard fixes a schema-ownership error: system catalogs have no `_tb_s
 
 Five further full Fast repeats on the shipped `1c15bcda38c9f9f46af05b2b70cb5adafcfd2a2e` passed on delta through `ts-heavy-any`: 96/96 TerraBase tests and 5/5 driver tests in every run, with zero failures or skips. TerraBase suite times were 19.449, 14.164, 12.615, 13.043 and 13.100 seconds. The retention case took 13.286, 8.425, 7.000, 8.492 and 7.382 seconds; the first run emitted the temporary #1084 per-test timing warning. The catalog regression assertions are on main in `d98c02048afeec1b32719308b1b7129b82b56c6e`.
 
+The specifically requested `RegionShapeTailTests.An_end_user_tails_only_their_granted_rows_from_the_sjc_replica` also passed on the deployed runtime revision `8f97bd989`: 1/1, no skips, 3.598 seconds, through `ts-heavy-any`.
+
 ## CDC load
 
 Before consumer-triggered cleanup, one 1,024-update round remained at 2,089 retained change-id positions after backup lag reached zero. The proof database occupied 4,108,288 bytes with a 646,872-byte WAL. This failed drain exposed the ordering gap: the durable backup can acknowledge before a replica releases its pin, and an idle database with no shapes otherwise has no later cleanup trigger. That throwaway account was deleted. The raw failed-drain observations are retained in the JSON alongside the tail results.
 
-The consumer cleanup change is on main at `1c15bcda38c9f9f46af05b2b70cb5adafcfd2a2e`. Its TerraBase and auth proof checks passed; TerraBase Fast took 20.532 seconds. Its CI runtime-payload restore failed separately: Cloudflare returned HTTP 403 for the checked R2 bundle in [run 41947282761](https://github.com/TerraScale/terrascale/actions/runs/41947282761).
+The consumer cleanup change is on main at `1c15bcda38c9f9f46af05b2b70cb5adafcfd2a2e`. Its TerraBase and auth proof checks passed; TerraBase Fast took 20.532 seconds. An initial CI runtime-payload restore failed separately with HTTP 403, delaying the automatic release; the later normal release included the change. No manual deployment was used.
 
-The final load proof waits for a green deployment containing the consumer cleanup change, then uses another fresh throwaway account. The post-reset tail run confirmed production was still on `4b04ad56f`, before that change. No bounded-storage result is claimed yet.
+The final load proof used runner `4cea834d4f39dbd32bbca2509615bbce1a7675f8` through `ts-heavy-any` on beta and a fresh throwaway account. The image-label check before the proof sequence showed `8f97bd989` in all three regions; after the final run all three showed its descendant `5c1ced123`. TerraBase runtime source is unchanged between those revisions. Each measured round wrote 1,024 updates with 1 KiB values and required three consecutive observations at baseline plus 256 or below before continuing.
+
+| Round | Writes per second | Retained change-id span, observed peak / final | Database file after drain | WAL after drain |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 260.6 | 2,089 / 9 | 4,685,824 bytes | 32 bytes |
+| 2 | 295.4 | 2,089 / 9 | 4,685,824 bytes | 32 bytes |
+| 3 | 297.9 | 2,089 / 9 | 4,685,824 bytes | 32 bytes |
+
+The retained-CDC gauge returned to the nine-position baseline after every round, and the database file reused its allocation across all three rounds. The three-observation drain confirmation completed 35.68, 28.25 and 28.55 seconds after each round started, including the writes. The gauge is a conservative change-id span across open home databases, not an exact per-database row count; observations do not measure every transient peak. Raw observations and file sizes are under `final_bounded_cdc` in the JSON. The account was deleted successfully after the helper's asynchronous deletion completed.
+
+An earlier sustained-drain attempt completed two rounds with the same 4,685,824-byte file size, then stopped on a 401 before completing round three because the project token lasts 60 seconds. Those observations remain under `sustained_drain_interrupted`. The final runner refreshes its token before each measured burst and never retries a write request.
