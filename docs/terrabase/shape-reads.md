@@ -17,9 +17,9 @@ Other replica regions receive provisional changes directly over NATS; a missing 
   (`change_type = 2`). Before images feed F2's move-in and move-out. `INSERT … ON CONFLICT DO UPDATE` needs native
   patch 0008 (the backport of upstream `26dbb464`), which the pinned native release carries.
 - Shapes read only `turso_cdc` and the table itself. The document feed (`_tb_feed`) is not read.
-- Only the database's home serves and seals shapes. Region replicas are not served yet (`replicas_unavailable`), so
-  every sealed chunk holds only home-committed, home-confirmed changes. When region writes arrive (PIVOT R4 to R7),
-  they reach shapes through the home apply, which commits through the same capture.
+- The database's home seals snapshots and immutable chunks. Replica regions serve live tails from their replicated
+  `turso_cdc` and provisional overlays. Every sealed chunk holds only home-confirmed changes; region writes enter
+  that history through the home apply, which commits through the same capture.
 - `turso_cdc` uses `AUTOINCREMENT` change ids, so ids are never reused, also after retention trims old rows.
 
 ## 2. Route
