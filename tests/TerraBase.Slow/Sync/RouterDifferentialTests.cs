@@ -177,6 +177,7 @@ public sealed class RouterDifferentialTests
             var project = await gru.CreateProjectAsync(organization, "Project");
             var bearer = issuer.Mint(gru.User, descriptor =>
             {
+                descriptor.Expires = DateTime.UtcNow.AddMinutes(30);
                 descriptor.Claims["project_id"] = project;
                 descriptor.Claims["scope"] = "databases:read sql:read sql:write";
             });
