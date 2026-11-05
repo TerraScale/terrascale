@@ -81,11 +81,10 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     [Test]
     public async Task Users_exchange_their_sign_in_for_organization_and_project_tokens_their_role_allows()
     {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await StartAsync(clock);
-        var (alice, aliceToken) = await oidc.CreateUserTokenAsync("alice@example.test");
-        var (bob, bobToken) = await oidc.CreateUserTokenAsync("bob@example.test");
-        var (dave, daveToken) = await oidc.CreateUserTokenAsync("dave@example.test");
+        await using var oidc = await StartAsync();
+        var (alice, aliceToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("alice"));
+        var (bob, bobToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("bob"));
+        var (dave, daveToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("dave"));
         var organization = await oidc.CreateOrganizationAsync(aliceToken);
         var first = await oidc.CreateProjectAsync(aliceToken, organization, "Production");
         var second = await oidc.CreateProjectAsync(aliceToken, organization, "Staging");
@@ -98,9 +97,9 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
             var body = await OidcHarness.JsonAsync(exchanged);
             await Assert.That(body.GetProperty("issued_token_type").GetString()).IsEqualTo("urn:ietf:params:oauth:token-type:access_token");
             await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
-            var access = await oidc.ValidateAsync(body.GetProperty("access_token").GetString()!, Audience, clock);
+            var access = await oidc.ValidateAsync(body.GetProperty("access_token").GetString()!, Audience);
             await Assert.That(access.Subject).IsEqualTo(alice.Id);
-            await Assert.That(access.GetClaim("email").Value).IsEqualTo("alice@example.test");
+            await Assert.That(access.GetClaim("email").Value).IsEqualTo(alice.Email);
             await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
             await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(first);
             await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "databases:write", "sql:read", "sql:write"]);
@@ -117,7 +116,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         // A viewer gets read scopes and no more.
         using (var viewer = await oidc.ExchangeAsync(bobToken, new() { ["organization"] = organization }))
         {
-            var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(viewer)).GetProperty("access_token").GetString()!, Audience, clock);
+            var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(viewer)).GetProperty("access_token").GetString()!, Audience);
             await Assert.That(access.TryGetClaim("project_id", out _)).IsFalse();
             await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "sql:read"]);
         }
@@ -161,8 +160,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(scopes);
     }
 
-    private Task<OidcHarness> StartAsync(TimeProvider? clock = null) =>
-        clock is null ? OidcHarness.StartSharedManagementAsync(fixture) : OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock);
+    private Task<OidcHarness> StartAsync() => OidcHarness.StartSharedManagementAsync(fixture);
 
     private static async Task<(int Status, string? Error)> TokenErrorAsync(Task<HttpResponseMessage> call)
     {
