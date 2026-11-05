@@ -61,10 +61,11 @@ public interface ILocalCommitPath
     bool Ready(TenantContext database);
 
     /// <summary>
-    /// Whether a local commit is acknowledged on two nodes of the region (PIVOT D16): the region's second node answers and the
-    /// push stream is ready and connected, and the clock is admitted. Without it, only <c>durability=home</c> writes commit locally; the others go home.
+    /// Whether the discovered regional quorum can acknowledge a local commit: one node when the region has no partner,
+    /// otherwise two healthy nodes, with a connected push stream and an admitted clock. Without it, only
+    /// <c>durability=home</c> writes commit locally; the others go home.
     /// </summary>
-    bool TwoNodeAck { get; }
+    bool LocalAckAvailable { get; }
 }
 
 internal sealed class WriteRouter(
@@ -79,7 +80,7 @@ internal sealed class WriteRouter(
         "Writes of replica regions by the router's decision (route, reason) and where they committed (commit).");
 
     private bool LocalCommitAvailable(TenantContext database, bool homeDurable) =>
-        _clock?.Allowed == true && _path?.Ready(database) == true && (homeDurable || _path.TwoNodeAck);
+        _clock?.Allowed == true && _path?.Ready(database) == true && (homeDurable || _path.LocalAckAvailable);
 
     public async ValueTask<WriteRoute> RouteAsync(
         TenantContext database, IReplicaReader? reader, IReadOnlyList<string> statements, WriteOverride preference, bool homeDurable,
