@@ -16,7 +16,7 @@ public sealed class ShapeGrantTests
     [Test]
     public async Task An_end_user_reads_only_their_own_rows_and_the_granted_columns()
     {
-        await using var db = await StartSharedAsync();
+        await using var db = await StartAsync();
         var (alice, bob) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         await db.OkAsync(Notes);
         await db.OkAsync(Stmt("INSERT INTO notes (id, owner_id, body, secret) VALUES (1, ?, 'a1', 's'), (2, ?, 'b1', 's'), (3, ?, 'a2', 's')", alice, bob, alice));

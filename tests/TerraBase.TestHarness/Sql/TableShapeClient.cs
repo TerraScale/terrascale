@@ -26,7 +26,7 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
 
     public async Task<ShapeReply> SyncAsync()
     {
-        var bootstrap = await GetAvailableAsync(new Uri($"{Path}?offset=-1{filter}", UriKind.Relative));
+        var bootstrap = await GetAsync(new Uri($"{Path}?offset=-1{filter}", UriKind.Relative));
         if (bootstrap.Status != HttpStatusCode.TemporaryRedirect)
         {
             throw new InvalidOperationException($"bootstrap answered {bootstrap.Status}: {System.Text.Encoding.UTF8.GetString(bootstrap.Body)}");
@@ -34,7 +34,7 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
 
         State.Clear();
         Handle = bootstrap.Handle;
-        Apply(await GetAvailableAsync(bootstrap.Location!));
+        Apply(await GetAsync(bootstrap.Location!));
         return await CatchUpAsync();
     }
 
@@ -55,7 +55,7 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
 
     public async Task<ShapeReply> ReadAsync(string offset)
     {
-        var reply = await GetAvailableAsync(Uri(offset, live: false));
+        var reply = await GetAsync(Uri(offset, live: false));
         Apply(reply);
         return reply;
     }
@@ -69,21 +69,6 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
 
     public Uri Uri(string offset, bool live, string? cursor = null, string? handle = null) =>
         new($"{Path}?handle={handle ?? Handle}&offset={offset}" + (live ? "&live=true" : "") + (cursor is null ? "" : "&cursor=" + cursor) + filter, UriKind.Relative);
-
-    // The shape contract permits 429 while another database seals its snapshot. Keep the same
-    // request and state, then retry with bounded backoff; raw GetAsync still exposes every refusal.
-    private async Task<ShapeReply> GetAvailableAsync(Uri target)
-    {
-        var token = TestContext.Current!.Execution.CancellationToken;
-        var reply = await GetAsync(target);
-        for (var attempt = 0; attempt < 6 && reply.Status == HttpStatusCode.TooManyRequests && reply.Code == "shape_busy"; attempt++)
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(10 << attempt), token);
-            reply = await GetAsync(target);
-        }
-
-        return reply;
-    }
 
     public async Task<ShapeReply> GetAsync(Uri target, params (string Name, string Value)[] headers)
     {
