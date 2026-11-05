@@ -36,7 +36,7 @@ public sealed class UserAuthTests
     [Test]
     public async Task Tokens_outside_their_lifetime_or_for_another_issuer_or_audience_are_rejected()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartSharedAsync();
         var user = EntityIds.New().ToString();
         var now = DateTime.UtcNow;
         Action<SecurityTokenDescriptor>[] invalid =
