@@ -1,0 +1,36 @@
+{
+  "confirmed_at": "2026-11-05T17:10:13.410519+00:00",
+  "accounts": [
+    {
+      "tag": "fastwrites-sjc-proof-20261105",
+      "result": "DELETED",
+      "local_state_and_key_absent": true,
+      "remote_copies_absent": true
+    },
+    {
+      "tag": "fastwrites-fra-proof-20261105",
+      "result": "DELETED",
+      "local_state_and_key_absent": true,
+      "remote_copies_absent": true
+    },
+    {
+      "tag": "fastwrites-sjc-window2-20261105",
+      "result": "DELETED",
+      "local_state_and_key_absent": true,
+      "remote_copies_absent": true
+    },
+    {
+      "tag": "fastwrites-fra-window2-20261105",
+      "result": "DELETED",
+      "local_state_and_key_absent": true,
+      "remote_copies_absent": true
+    }
+  ],
+  "final_sjc_database_delete_status": [
+    204,
+    204,
+    204
+  ],
+  "fra_diagnostic_database": "01M6PAK5M31V83QZJD9N6M7DQQ",
+  "fra_cleanup": "Initial delete503; subsequent account deletion completed; private copies removed"
+}

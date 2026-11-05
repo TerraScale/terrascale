@@ -1,5 +1,14 @@
 # Regional write latency: SJC client, GRU home
 
+Three final SJC repeats pass: default origin p50 **11.86–14.38 ms**, default
+client p99 **52.22–69.35 ms**, and opt-in home-durable client p99
+**252.65–345.40 ms**. Durability, regional partner hold, R12 clock admission
+and home lease fencing are preserved. Code shipped at `a2de2bdeb` (HLC) and
+`ca3063480` (initial lease); final serving source is `80303f9d3`.
+The separate forced-home comparison has one **409.76 ms** tail, tracked in
+[#1103](https://github.com/TerraScale/terrascale/issues/1103).
+
+
 ## Before local acknowledgements: exact server correlation
 
 Serving source `d38f9b02e` includes the read owner's fixes. Three additional
@@ -270,3 +279,247 @@ Authenticated health on GRU/SJC/FRA confirmed `a2de2bdeb` serving format
 `23-41a88901325a` ([deployment snapshot](2026-11-05-regional-write-hlc-deployed.json)).
 This snapshot records one discovered SJC node, local writes available and no
 regional partner. It is deployment evidence, not the final latency proof.
+
+## Post-reset HLC diagnostic: local targets pass, durable tail still open
+
+Two complete SJC repeats used 40 measured writes per mode, five excluded
+warmups and one reused HTTPS connection. Serving source stayed `a2de2bdeb`
+in all regions. SJC had one discovered node: local writes available, no
+regional partner. Both proof databases were verified at GRU and deleted;
+`fastwrites-hlc-final-20261105` returned `DELETED` at 15:30 UTC and its remote
+credential copies were removed. A third repeat crossed deployment during its
+final snapshot; its database was deleted, but it is excluded from this evidence.
+These two repeats are diagnostic, not the required final three-repeat proof.
+
+| Repeat | Mode | Server p50 ms | Server p99 ms | Client p50 ms | Client p99 ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 21 | default | 7.43 | 17.00 | 9.12 | 20.63 |
+| 21 | durable_home | 429.52 | 615.83 | 432.29 | 617.77 |
+| 21 | forced_home | 203.88 | 401.39 | 205.83 | 403.20 |
+| 22 | default | 6.31 | 10.13 | 8.16 | 11.49 |
+| 22 | durable_home | 412.77 | 583.87 | 414.75 | 585.97 |
+| 22 | forced_home | 202.57 | 237.33 | 205.04 | 241.89 |
+
+[Raw HLC diagnostic samples](2026-11-05-regional-write-hlc-sjc-diagnostic.json).
+Repeat 21 default stage medians were HLC 0.01 ms, tenant 0.17 ms,
+home lookup 0.76 ms, durable publish 0.53 ms and local commit 2.88 ms.
+The server median fell below 20 ms without changing commit durability.
+
+The durable path's median home wait was 398.52 ms. GRU recorded 92 apply
+attempts for 90 confirmed pushes in each repeat, including two temporary
+`StorageBusyException` failures. Its attempt sums were 1137.239 ms and
+1008.631 ms, or 12.36 and 10.96 ms per attempt. Home application is therefore
+small relative to the wait. Decode called `DataKeys.GetAsync`, whose warm-key
+path still read the remote shred record on every message. F11 owns removing
+that roughly 210 ms remote dependency while preserving immediate revocation;
+no custody code was changed in this work.
+
+## First home-lease confirmation interrupts active writes
+
+GRU's retry pairs occurred at 15:20:08.497/.599 and 15:21:08.444/.544 UTC,
+with the unchanged 100 ms and 200 ms backoffs. They line up with the first
+15-second lease scan after each database was created. `ConfirmAsync` added
+an unheld lease before its WAN KV read/CAS; engine begin/commit checks then
+correctly refused writes during confirmation.
+
+Independent lag evidence retained the lease for database
+`01M6P5DHXGD23RDC9CP319CDVD`: KV sequence 9666, written at
+15:32:22.800329175 UTC. Its sequential writer's previous row was visible at
+15:32:22.584347 UTC, followed immediately by a `409 serialization_conflict`.
+The actual initial lease publication therefore overlaps the write failure,
+corroborating the scan-phase attribution rather than relying on timing alone.
+
+DECISION: confirm the initial lease during replicated database preparation,
+including all-regions placement, before returning management success. Reason:
+move the initial WAN CAS into setup while preserving the serialized confirmation,
+expiry margin, failover CAS and engine checks at begin and commit. Later scans
+reuse the confirmed session without closing its gate. The write retry policy
+is unchanged. Temporary rate-limited stack diagnostics were removed once the
+cause was corroborated; permanent bounded-reason retry counters remain.
+
+The existing real-NATS failover test now asserts that creation has already
+confirmed both explicit-replica and all-regions database leases. It then
+continues through its partition, failover and acknowledged-write preservation
+checks. The focused test passed on beta through `ts-heavy-any` at source
+`0eaef8c2a`: one test, 47.634 s.
+
+The diagnostic rollout `8811ba597` passed all Fast checks but stopped after SJC:
+[CI 42057765641](https://github.com/TerraScale/terrascale/actions/runs/42057765641)
+rejected the new SJC-2 task as running on an unexpected machine. N1 owns that
+rollout fix. Final repeats wait for complete deployment of the lease fix and
+F11's key-cache fix. At this boundary SJC discovers two nodes and reports a
+healthy in-region partner; final proof must record the actual topology.
+
+## Lease fix shipping and exact Libraries qualification
+
+The lease fix shipped through `ts-ship` at
+`ca30634800bba781f99ce3846dca6b37723fab02`, including lease preparation
+`21834b712`, benchmark identity/timestamps `5d2a89a52` and temporary-stack
+removal `ca3063480`, after rebasing on `9aa1c1bf6`. TerraBase Fast passed
+in 11.950 s (62 tests plus four driver tests); Auth Fast passed in 8.600 s
+(30 tests), and benchmark Fast was carried at 0.344 s over a disjoint change.
+
+The official `ts-ship` runner separately qualified Libraries at that exact
+main SHA through `ts-heavy-any`: Fast 7.671 s, checked build 54.137 s.
+Both `ts-ship/libs` and `ci-build/libs` success statuses were published by
+`MarioGK`. The checked-build manifest SHA-256 is
+`8bd1050d5721ea4a7f0e742d58a2001dc9c4239893855dfca600aa852c1cfdfc`.
+[Exact-commit receipt](2026-11-05-regional-write-libs-receipt.json).
+This supersedes the missing receipt at the earlier diagnostic commit.
+
+F11's prerequisite cache fix is `f7a8881d5`: warm decoding performs no R2
+GET, while cache revocation remains acknowledged by all serving nodes.
+The lease candidate includes this commit; this work makes no custody changes.
+
+The final lease deployment completed successfully in
+[CI 42065444915](https://github.com/TerraScale/terrascale/actions/runs/42065444915).
+Authenticated health verified all six nodes (two each in GRU, SJC and FRA)
+serving `ca3063480` and format `23-41a88901325a`.
+[SJC mesh and deployment snapshot](2026-11-05-regional-write-lease-deployed.json)
+records a reused SJC→GRU health median of 187.86–187.99 ms and healthy SJC
+partners. The earlier four-node mesh snapshot remains separate historical
+context in [mesh evidence](2026-11-05-regional-write-final-mesh.json).
+
+The first final-proof attempt stopped before completing a repeat because the
+new SJC-2 node returned 404 for an empty database log. Its database was deleted.
+The collector now skips only per-node 404s while still requiring every measured
+request ID; other HTTP errors fail the proof. All three measured repeats were
+restarted. This changes proof collection, not write routing or server behavior.
+
+One complete two-node SJC qualification repeat at stable `ca3063480` measured
+server p50/p99 14.04/20.57 ms and client p50/p99 15.96/28.47 ms for default
+local acknowledgements. Home-durable server p50/p99 was 227.31/248.87 ms,
+client 229.52/250.89 ms; forced-home client p99 was 223.29 ms. SJC partner
+hold median was 5.93 ms, and durable home-wait median 190.56 ms, close to the
+187.86 ms mesh RTT. No GRU apply retry series was present before or after
+(equivalent to zero retries since process start).
+[Qualification raw data](2026-11-05-regional-write-lease-sjc-qualification.json).
+
+The next repeat completed its writes and deleted its database, but a concurrent
+rollout made a peer's health connection fail during the final snapshot. That
+incomplete repeat is excluded; the collector now saves measured samples before
+that snapshot and marks incomplete snapshots ineligible. All three final
+repeats are restarted after the current rollout, within the coordinated main
+hold through 17:12 UTC. No latency sample is removed from a completed repeat.
+
+The subsequent `80303f9d3` release failed before mutating serving state:
+[CI 42067463433](https://github.com/TerraScale/terrascale/actions/runs/42067463433)
+could not download the selected orchestrator release asset (`no assets to
+download`). All six nodes remained on `20609ac99`, a descendant of the lease
+and cache fixes, with successful
+[CI 42066502559](https://github.com/TerraScale/terrascale/actions/runs/42066502559).
+The release-asset issue was handed to the parent. An already-running retry
+then rolled forward to `80303f9d3`; final proof waits for all six nodes on
+that revision. No infrastructure changes were made here.
+
+The parent identified the 16:52:15–17 UTC ts-orch restart as the cause of the
+peer connection refusals. A subsequent attempt stopped during its initial
+snapshot before timed writes; its DELETE returned 503 with key destruction
+pending. The previous FRA account (unused for measurements) was deleted.
+Two replacement synthetic accounts stopped during onboarding with 503 while
+the rollout was active; their private state is retained for safe resumption.
+The fabric freeze was extended until 20 minutes after the in-flight
+`80303f9d3` rollout finishes. Final runs wait for that exact revision on all
+six nodes and preserve database IDs and cleanup status from creation onward.
+
+## Final post-reset proof
+
+All three SJC repeats meet the brief's targets on deployed
+`80303f9d36c24cdea1976225bd234ecc4c40127a`, which includes HLC, lease and
+F11 cache fixes. [CI 42067463433](https://github.com/TerraScale/terrascale/actions/runs/42067463433)
+completed successfully on retry. Authenticated health verified all six nodes
+(two per region), format `23-41a88901325a`, and unchanged revisions before and
+after every repeat. Both SJC nodes reported a healthy regional partner.
+[Final deployment snapshot](2026-11-05-regional-write-final-deployed.json).
+
+Each repeat used 40 measured sequential writes per mode and five excluded
+warmups through a reused HTTPS connection from SJC. Every measured response ID
+matched its exact origin request-log observation. Every database contained
+exactly 40 rows per measured mode plus 15 warmups at GRU, then returned 204 on
+deletion. No completed repeat or latency outlier is excluded. With 40 samples,
+the reported p99 is the observed maximum; this is a warmed sequential latency
+proof, not a saturation or long-duration availability test.
+
+| Repeat | Mode | Server p50 ms | Server p99 ms | Client p50 ms | Client p99 ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | default | 14.38 | 50.30 | 16.80 | 52.22 |
+| 1 | durable_home | 229.58 | 267.27 | 231.59 | 270.52 |
+| 1 | forced_home | 205.22 | 240.62 | 207.70 | 242.79 |
+| 2 | default | 11.86 | 59.94 | 14.00 | 62.06 |
+| 2 | durable_home | 227.90 | 250.81 | 230.08 | 252.65 |
+| 2 | forced_home | 203.50 | 232.59 | 205.49 | 235.01 |
+| 3 | default | 12.03 | 63.87 | 14.43 | 69.35 |
+| 3 | durable_home | 227.37 | 342.92 | 229.80 | 345.40 |
+| 3 | forced_home | 201.80 | 407.40 | 203.91 | 409.76 |
+
+[All final samples, paired stages, cleanup and six-node snapshots](2026-11-05-regional-write-final-sjc.json).
+
+The comparable before/after ranges below cover three measured repeats per
+cohort. Server time uses paired request-log observations in both cohorts.
+The earlier baseline was `d38f9b02e`; default writes then committed at home.
+The final cohort uses two-node regional acknowledgements. The intermediate
+post-HLC diagnostic's home-durable p99 reached 617.77 ms and included the two
+initial-lease retries per repeat; the final cohort has zero such retries.
+
+| SJC metric | Before, three repeats ms | Final, three repeats ms | Target ms |
+| --- | ---: | ---: | ---: |
+| Default server p50 | 196.06–205.66 | 11.86–14.38 | <20 |
+| Default server p99 | 225.90–373.12 | 50.30–63.87 | — |
+| Default client p50 | 197.93–207.82 | 14.00–16.80 | — |
+| Default client p99 | 227.73–374.99 | 52.22–69.35 | <150 |
+| Home-durable server p50 | 222.37–223.42 | 227.37–229.58 | — |
+| Home-durable server p99 | 262.12–267.35 | 250.81–342.92 | — |
+| Home-durable client p50 | 224.27–225.32 | 229.80–231.59 | ≈one RTT plus apply |
+| Home-durable client p99 | 264.36–269.65 | 252.65–345.40 | <400 |
+
+Default acknowledgement medians were 9.05–10.31 ms, including a 5.46–6.04 ms
+regional durable hold and 2.61–2.97 ms local commit. Home-durable home-wait
+medians were 190.69–191.11 ms, close to the 187.86–187.99 ms mesh RTT. GRU
+made exactly 90 apply attempts per repeat, without retries; their mean durations
+were 12.25, 11.75 and 12.91 ms. The old 100+200 ms retry penalty is absent.
+The final worst home-durable sample spent 310.88 ms in home wait and still
+completed in 345.40 ms client time.
+
+DECISION: ship the local-ack fixes and retain the forced-home 409.76 ms p99
+against the 400 ms comparison as a shared-pool follow-up in
+[#1103](https://github.com/TerraScale/terrascale/issues/1103). Reason: default
+local-ack and opt-in home-durable meet their stated targets; the forced-home
+outlier contains an extra WAN RTT in the shared HTTP forwarding pool. Preserve
+durability and the read path while tracking a write-pool correction separately.
+
+The measured modes are distinct: `durable_home` sends `TerraScale-Durability:
+home` and has worst client p99 **345.40 ms**; `forced_home` sends
+`TerraScale-Write: home` and has worst client p99 **409.76 ms**. The latter's
+home span was 385.80 ms with only 10.20 ms inside GRU's application span,
+leaving 375.60 ms outside that application window, approximately two mesh
+RTTs. The named shared client uses IHttpClientFactory's default two-minute
+handler lifetime. Handler retirement and replacement connection setup are the
+leading explanation; no per-connection trace was captured. The issue retains
+the exact request ID, UTC timestamp and stage evidence.
+
+## FRA diagnostic and cleanup boundary
+
+A FRA repeat on `80303f9d3` measured the following rows before database deletion
+returned 503 with key destruction pending. It has no final snapshot and is
+ineligible for the three-repeat SJC Done proof. Further FRA repeats were held
+while custody cleanup was pending, following the parent's instruction to record
+the accepted transport follow-up and finish this task. FRA's numbers are
+retained as diagnostics and do not establish the SJC latency thresholds there.
+
+| Mode | Server p50/p99 ms | Client p50/p99 ms |
+| --- | ---: | ---: |
+| default | 37.70 / 182.67 | 41.59 / 187.90 |
+| durable_home | 229.82 / 488.03 | 232.69 / 492.16 |
+| forced_home | 195.78 / 223.26 | 198.92 / 228.16 |
+
+[Raw FRA diagnostic and cleanup status](2026-11-05-regional-write-final-fra-diagnostic.json).
+Its database ID is `01M6PAK5M31V83QZJD9N6M7DQQ`.
+
+Cleanup completed: `fastwrites-sjc-proof-20261105`,
+`fastwrites-fra-proof-20261105`, `fastwrites-sjc-window2-20261105` and
+`fastwrites-fra-window2-20261105` all returned `DELETED`. The FRA account's
+successful deletion at 17:09 UTC completed its pending database cleanup; no
+account or proof resource remains outstanding. Private key/state copies were
+removed from both serving hosts, and local helper files are absent.
+[Cleanup confirmation](2026-11-05-regional-write-cleanup.json).
+The earlier pending SJC case was also resolved and handed back to F11.

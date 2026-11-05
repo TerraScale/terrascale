@@ -31,9 +31,15 @@ address = next(row[2] for row in peers if row[0] == environment[b"TS_NODE"].deco
 config = f'header = "X-TerraBase-Peer-Credential: {credential}"\n'
 
 
-def get(path, at=address):
-    return subprocess.check_output(["curl", "--http2-prior-knowledge", "-fsS", "--max-time", "10",
-                                    "-K", "-", f"http://{at}:8081/{path}"], input=config.encode())
+def get(path, at=address, missing_ok=False):
+    response = subprocess.check_output(["curl", "--http2-prior-knowledge", "-sS", "--max-time", "10",
+                                       "-K", "-", "-w", "\n%{response_code}", f"http://{at}:8081/{path}"], input=config.encode())
+    body, status = response.rsplit(b"\n", 1)
+    if missing_ok and status == b"404":
+        return None
+    if status != b"200":
+        raise RuntimeError(("internal proof request failed", int(status)))
+    return body
 
 
 parser = argparse.ArgumentParser()

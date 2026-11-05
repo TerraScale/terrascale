@@ -146,7 +146,9 @@ def main():
         status, body, _, _ = control.call(databases, "POST", {"name": name, "homeRegion": "gru", "replicaRegions": [args.region]}, headers({"Host": "gru.api.terrascale.tech"}))
         require(status, body, 201, "create database")
         database_id = body["id"]
-        samples = {"repeat": repeat, "database_id": database_id, "transports": {}}
+        samples = {"repeat": repeat, "database_id": database_id, "transports": {}, "cleanup_complete": False}
+        report["repeats"].append(samples)
+        pathlib.Path(args.output).write_text(json.dumps(report, indent=2) + "\n")
         try:
             if args.snapshot_script:
                 samples["before"] = json.loads(subprocess.check_output(["python3", str(args.snapshot_script), "--health-samples", "1"]))
@@ -202,7 +204,10 @@ def main():
                             while True:
                                 recorded = {}
                                 for address in log_addresses:
-                                    body = json.loads(internal_get(f"v1/usage/projects/{project}/databases/{database_id}/logs", address))
+                                    payload = internal_get(f"v1/usage/projects/{project}/databases/{database_id}/logs", address, missing_ok=True)
+                                    if payload is None:
+                                        continue
+                                    body = json.loads(payload)
                                     recorded.update({row.get("requestId"): row["latencyMs"] for row in body["items"] if row["region"] == args.region})
                                 if all(request_id in recorded for request_id in request_ids):
                                     break
@@ -223,12 +228,19 @@ def main():
             samples["home_counts"] = counts
         finally:
             status, body, _, _ = control.call(databases + "/" + name, "DELETE", headers=headers({"Host": "gru.api.terrascale.tech"}))
+            samples["cleanup_http_status"] = status
+            samples["cleanup_complete"] = status == 204
+            pathlib.Path(args.output).write_text(json.dumps(report, indent=2) + "\n")
             require(status, body, 204, "delete database")
         if args.snapshot_script:
+            # Preserve measured samples if a concurrent rollout prevents the final snapshot.
+            samples["source_stable"] = False
+            samples["snapshot_complete"] = False
+            pathlib.Path(args.output).write_text(json.dumps(report, indent=2) + "\n")
             samples["after"] = json.loads(subprocess.check_output(["python3", str(args.snapshot_script), "--health-samples", "1"]))
             revisions = lambda snapshot: {node: data["health"]["revision"] for node, data in snapshot["peer_internal_health_ms"].items()}
             samples["source_stable"] = revisions(samples["before"]) == revisions(samples["after"])
-        report["repeats"].append(samples)
+            samples["snapshot_complete"] = True
         pathlib.Path(args.output).write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps({"repeat": repeat, "result": "verified and deleted", "output": args.output}), flush=True)
     control.close()

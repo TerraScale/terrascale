@@ -39,9 +39,16 @@ health and metrics, without credentials or SQL bodies.
 Add `--request-logs` to correlate every measured response's `X-Request-ID`
 with the exact server `latencyMs` observation. This requires `--snapshot-script`
 and reads the existing authenticated internal logs endpoint on every discovered
-entry-region node, including pending observations. Missing or duplicate response IDs and
+entry-region node, including pending observations. A node with no database log
+may return 404 and contributes no observations. Missing or duplicate response IDs and
 missing server observations fail the proof. Request-log time includes response
 completion; `app` timing ends at response headers.
+
+Database identity is saved immediately after creation, with cleanup status saved
+after deletion, so an interrupted proof retains its cleanup evidence.
+Measured samples are saved before the final snapshot. A failed snapshot leaves
+`snapshot_complete: false` and `source_stable: false`; retain these diagnostics
+and exclude them from the final comparison.
 
 `push-proof/metrics.py --health-samples 20` also measures direct internal HTTP/2
 health for every discovered peer. Each node gets one reused connection; its
