@@ -24,7 +24,7 @@ internal readonly union PromoteResult(HomePromoteAnswer, Conflict, Unavailable);
 
 internal sealed class HomeMoves(
     TerraBaseOptions options, IHomeMoveCatalog moves, IReplicaCatalog catalog, IReplicaPeers peers, ITenantDirectory tenants, IDatabaseReplicas replicas, RegionReplication replication,
-    IStorageEngine engine, IDatabaseRevisions revisions, IWalBackup imports, DatabaseFences fences, Regions.IRegionCatalog regions, HomeApply.IHomeApply apply, HomeLeases leases,
+    IStorageEngine engine, IDatabaseRevisions revisions, IWalBackup imports, DatabaseFences fences, Regions.IRegionCatalog regions, HomeApply.IHomeApply apply, HomeLeases leases, HomePush.HomePush pushes,
     InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<HomeMoves> logger)
     : BackgroundService
 {
@@ -364,6 +364,7 @@ internal sealed class HomeMoves(
             }
 
             await apply.PrepareAsync(database, CancellationToken.None).ConfigureAwait(false);
+            _ = DrainAsync(database, fromRegion);
             return new HomePromoteAnswer(true);
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -376,6 +377,26 @@ internal sealed class HomeMoves(
             if (detached is not null)
             {
                 TerraBase.Engine.Turso.TursoReplicas.DeleteDetached(detached);
+            }
+        }
+    }
+
+    private async Task DrainAsync(TenantContext database, string formerHome)
+    {
+        var backoff = TimeSpan.FromMilliseconds(200);
+        for (var attempt = 0; attempt < 60; attempt++)
+        {
+            try
+            {
+                var drained = await pushes.DrainFormerHomeAsync(database, formerHome, CancellationToken.None).ConfigureAwait(false);
+                logger.ZLogInformation($"A new home applied {drained} pushed transactions addressed to its former home");
+                return;
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                logger.ZLogWarning($"Pushes addressed to the former home wait to be applied: {error.GetType().Name:@Error}");
+                await Task.Delay(backoff, time).ConfigureAwait(false);
+                backoff = TimeSpan.FromTicks(Math.Min(TimeSpan.FromSeconds(5).Ticks, backoff.Ticks * 2));
             }
         }
     }
