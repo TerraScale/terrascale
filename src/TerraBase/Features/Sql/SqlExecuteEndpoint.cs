@@ -17,7 +17,7 @@ namespace TerraBase.Features.Sql;
 /// <summary><c>POST /v1/projects/{project}/databases/{database}/sql/execute</c>: runs relational SQL statements.</summary>
 internal sealed class SqlExecuteEndpoint(
     ISqlService sql, IAuthorizationService authorization, ITenantDirectory tenants, IReplicaCatalog placements, IDatabaseReplicas replicas, IReplicaPeers peers,
-    WriteRouter router, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+    WriteRouter router, TerraBaseOptions options, ILogger<SqlExecuteEndpoint> diagnostics) : EndpointWithoutRequest<IResult>
 {
 
     /// <inheritdoc />
@@ -147,7 +147,13 @@ internal sealed class SqlExecuteEndpoint(
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
+            diagnostics.LogWarning("PROBE replica read begin failed: {Type} {Message}", error.GetType().Name, error.Message);
             reader = null;
+        }
+
+        if (reader is null && !writes)
+        {
+            diagnostics.LogWarning("PROBE replica read forwarded home: reader null, preference {Preference}", preference);
         }
         if (reader is null || writes || preference == WriteOverride.Home)
         {

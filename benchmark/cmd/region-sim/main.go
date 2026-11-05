@@ -62,6 +62,8 @@ func run() error {
 	tsBin := flag.String("ts", "", "ts CLI binary (go build ./cmd/ts in sdk/go)")
 	out := flag.String("out", "", "also write the Markdown report to this file")
 	logs := flag.String("logs", "", "directory to keep node, NATS and CLI logs in (default: removed with the run directory)")
+	flag.DurationVar(&peerDelay, "peer-delay", 0, "one-way latency added to the peer path between the two nodes, e.g. 85ms for gru-sjc")
+	lagWrites = flag.Int("lag-writes", 100, "single-row writes in the replica-lag scenario")
 	flag.Parse()
 	if *terrabase == "" || *tsBin == "" {
 		flag.Usage()
@@ -145,6 +147,7 @@ func (s *sim) execute(terrabase, logDir string) (string, int) {
 		{"create-project-db-replica-sjc", s.create},
 		{"dml-in-A-visible-in-B", s.dml},
 		{"restart-B-catches-up", s.restartB},
+		{"replica-lag", s.replicaLag},
 	}
 	prerequisite := map[string]bool{"cli-login": true, "create-project-db-replica-sjc": true}
 	var blocked string
@@ -355,6 +358,45 @@ func (s *sim) dml() (string, string, error) {
 		return ms(lag), "", fmt.Errorf("CLI read on sjc printed %q", truncate(out, 200))
 	}
 	return ms(lag), "DDL+insert/update/delete via ts exec on gru; lag = last write ack to visible on sjc", nil
+}
+
+var lagWrites *int
+
+// replicaLag writes one row at a time on A and polls B until it reads it: lag runs from the write's answer to the first
+// read on B that returns it. A read slower than 50 ms on B did not come from B's replica.
+func (s *sim) replicaLag() (string, string, error) {
+	if err := s.api.mustExec(s.ctx, s.c.a, stmt{SQL: "CREATE TABLE lag (id INTEGER PRIMARY KEY)"}); err != nil {
+		return "", "", err
+	}
+	if _, err := s.api.waitFor(s.ctx, s.c.b, visibleTimeout, visiblePoll, "[[0]]", "SELECT count(*) FROM lag"); err != nil {
+		return "", "", err
+	}
+	var lags []float64
+	slow := 0
+	for i := 1; i <= *lagWrites; i++ {
+		if err := s.api.mustExec(s.ctx, s.c.a, stmt{SQL: "INSERT INTO lag (id) VALUES (?)", Args: []any{i}}); err != nil {
+			return "", "", err
+		}
+		acked := time.Now()
+		for {
+			before := time.Now()
+			rows, r, err := s.api.query(s.ctx, s.c.b, "SELECT id FROM lag WHERE id = ?", i)
+			if time.Since(before) > 50*time.Millisecond {
+				slow++
+			}
+			if err == nil && r.status == 200 && rows != "[]" {
+				break
+			}
+			if time.Since(acked) > visibleTimeout {
+				return "", "", fmt.Errorf("write %d not visible on sjc", i)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		lags = append(lags, float64(time.Since(acked).Microseconds())/1000)
+	}
+	slices.Sort(lags)
+	p := func(q float64) float64 { return lags[min(len(lags)-1, int(float64(len(lags))*q))] }
+	return fmt.Sprintf("p50 %.1f ms / p99 %.1f ms", p(0.5), p(0.99)), fmt.Sprintf("%d writes, peer delay %s one way, %d reads on sjc over 50 ms", len(lags), peerDelay, slow), nil
 }
 
 func (s *sim) restartB() (string, string, error) {

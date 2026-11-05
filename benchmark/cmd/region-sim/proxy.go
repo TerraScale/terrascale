@@ -239,6 +239,9 @@ type forwarder struct {
 	closed bool
 }
 
+// peerDelay is the one-way latency every forwarder adds to the peer path (-peer-delay), as between two regions.
+var peerDelay time.Duration
+
 func startForwarder(listen, target string) (*forwarder, error) {
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -329,6 +332,10 @@ func (f *forwarder) relay(in net.Conn) {
 }
 
 func (f *forwarder) pipe(dst, src net.Conn) {
+	if peerDelay > 0 {
+		f.delayed(dst, src)
+		return
+	}
 	buf := make([]byte, 64<<10)
 	for {
 		n, err := src.Read(buf)
@@ -345,6 +352,43 @@ func (f *forwarder) pipe(dst, src net.Conn) {
 			if tc, ok := dst.(*net.TCPConn); ok {
 				tc.CloseWrite()
 			}
+			return
+		}
+	}
+}
+
+// delayed relays src to dst, writing each chunk peerDelay after it was read, so a round trip costs 2×peerDelay.
+func (f *forwarder) delayed(dst, src net.Conn) {
+	type chunk struct {
+		at time.Time
+		b  []byte
+	}
+	q := make(chan chunk, 8192)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for c := range q {
+			time.Sleep(time.Until(c.at))
+			<-f.open()
+			if _, err := dst.Write(c.b); err != nil {
+				for range q {
+				}
+				return
+			}
+		}
+		if tc, ok := dst.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
+	}()
+	buf := make([]byte, 64<<10)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			q <- chunk{time.Now().Add(peerDelay), append([]byte(nil), buf[:n]...)}
+		}
+		if err != nil {
+			close(q)
+			<-done
 			return
 		}
 	}
