@@ -4,7 +4,7 @@ Three final SJC repeats pass: default origin p50 **11.86–14.38 ms**, default
 client p99 **52.22–69.35 ms**, and opt-in home-durable client p99
 **252.65–345.40 ms**. Durability, regional partner hold, R12 clock admission
 and home lease fencing are preserved. Code shipped at `a2de2bdeb` (HLC) and
-`ca3063480` (initial lease); final serving source is `80303f9d3`.
+`ca3063480` (initial lease); final proof served source `80303f9d3`.
 The separate forced-home comparison has one **409.76 ms** tail, tracked in
 [#1103](https://github.com/TerraScale/terrascale/issues/1103).
 
@@ -492,9 +492,10 @@ home` and has worst client p99 **345.40 ms**; `forced_home` sends
 `TerraScale-Write: home` and has worst client p99 **409.76 ms**. The latter's
 home span was 385.80 ms with only 10.20 ms inside GRU's application span,
 leaving 375.60 ms outside that application window, approximately two mesh
-RTTs. The named shared client uses IHttpClientFactory's default two-minute
-handler lifetime. Handler retirement and replacement connection setup are the
-leading explanation; no per-connection trace was captured. The issue retains
+RTTs. `Program.cs` globally configures an infinite handler lifetime and a two-minute
+`SocketsHttpHandler.PooledConnectionLifetime`; the named forwarding client
+inherits that connection limit. Connection retirement and replacement setup
+are the leading explanation; no per-connection trace was captured. The issue retains
 the exact request ID, UTC timestamp and stage evidence.
 
 ## FRA diagnostic and cleanup boundary
