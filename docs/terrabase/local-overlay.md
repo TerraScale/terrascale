@@ -105,11 +105,18 @@ pages do not hold yet, in stream order.
 
 ## `durability=home`
 
-A local write can ask for the home's acknowledgement: `"durability": "home"` on SQL REST and SQL WebSocket requests,
-and `SET terrascale.durability = 'home'` on the Postgres wire. The answer then waits for the `applied` notice of
-the transaction. `confirmed` answers success. `reverted` answers the conflict, and the transaction is not applied
-anywhere. A write that goes home anyway (an unsafe shape, or a database homed in this region) is already
-home-durable.
+Until in-region quorum acks land (R10, D16), a region commits a write locally only when the request asks for the
+home's acknowledgement, so no acknowledged write depends on one node:
+
+- SQL REST: send `TerraScale-Durability: home` with `/sql/execute`. When the router (R4) routes the request local, the
+  region runs it on its replica, publishes it to its push stream and answers only after the `applied` notice: the
+  results for `confirmed`, the home's constraint error (`unique_violation`, `foreign_key_violation`, `check_violation`,
+  …, or `transaction_rolled_back`) for `reverted`, in which case the transaction is applied nowhere. The answer carries
+  `TerraScale-Write-Route: …; commit=local`.
+- A request without the header (or `TerraScale-Durability: local`), a request the router sends home, and every write
+  over SQL WebSocket and the Postgres wire is forwarded to the home whole, as before.
+- A refused local transaction (a shape the capture cannot carry, a busy replica, a full push stream) is forwarded home
+  instead; a commit whose outcome is unknown answers `503 unavailable`.
 
 ## Metrics
 

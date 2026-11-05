@@ -12,6 +12,7 @@ using TerraBase.Features.Clock;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Sql.Routing;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -37,7 +38,7 @@ internal sealed class LocalOutcomeUnknownException(Exception inner)
 
 internal sealed class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
-    IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger) : BackgroundService, ILocalWrites
+    IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger) : BackgroundService, ILocalWrites, ILocalCommitPath
 {
     internal const int MaxPayloadBytes = 8 << 20;
     private const int MaxParallelDatabases = 16;
@@ -64,7 +65,9 @@ internal sealed class HomePush(
 
     private string Region => options.Region;
 
-    internal bool Ready => _ready;
+    internal bool Started => _ready;
+
+    public bool Ready(TenantContext database) => _ready && _js is not null;
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {

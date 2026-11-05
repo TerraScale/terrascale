@@ -98,6 +98,12 @@ internal interface ISqlService
     ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
         TenantContext database, IReplicaReader reader, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements, CancellationToken cancellationToken);
 
+    ValueTask<ReplicaSqlOutcome> ExecuteOnCopyAsync(
+        TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements,
+        bool write, CancellationToken cancellationToken);
+
+    void RecordLocalWrites(TenantContext database, long rows);
+
     ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken);
 
     ISqlSession Open(TenantContext database, bool canWrite);

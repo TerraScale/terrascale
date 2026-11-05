@@ -308,7 +308,7 @@ internal sealed class ReplicaSqlSession(
 
         try
         {
-            return LastRoute = await router.RouteAsync(database, reader, statements, _preference, cancellationToken).ConfigureAwait(false);
+            return LastRoute = await router.RouteAsync(database, reader, statements, _preference, homeDurable: false, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

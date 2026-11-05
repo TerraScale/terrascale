@@ -168,7 +168,7 @@ public sealed class HomePushTests
                 await world.HomeSqlAsync("CREATE TABLE items (id TEXT PRIMARY KEY, v TEXT)");
                 await replicas.OpenAsync(world.Database, api.Server.PullAddress(world.Database), pulls, CancellationToken.None);
                 await region.StartAsync(CancellationToken.None);
-                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(region.Ready), TimeSpan.FromSeconds(30));
+                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(region.Started), TimeSpan.FromSeconds(30));
                 return world;
             }
             catch

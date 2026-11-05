@@ -62,42 +62,28 @@ public interface ILocalCommitPath
 }
 
 internal sealed class WriteRouter(
-    SchemaFactsCache schemas, IMeterFactory meters, TerraBaseOptions options, TimeProvider time, IEnumerable<ILocalWriteClock> clocks,
+    SchemaFactsCache schemas, IMeterFactory meters, TerraBaseOptions options, IEnumerable<ILocalWriteClock> clocks,
     IEnumerable<ILocalCommitPath> paths)
 {
-    private static readonly TimeSpan NodesLifetime = TimeSpan.FromSeconds(30);
     private readonly ILocalWriteClock? _clock = clocks.LastOrDefault();
     private readonly ILocalCommitPath? _path = paths.LastOrDefault();
-    private (int Count, DateTimeOffset Until) _nodes;
     private const int MaxFingerprints = 65_536;
     private readonly ConcurrentDictionary<string, byte> _fingerprints = new(StringComparer.Ordinal);
     private readonly Counter<long> _routes = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.sql.write_routes", "{transaction}",
         "Writes of replica regions by the router's decision (route, reason) and where they committed (commit).");
 
-    private async ValueTask<bool> LocalCommitAvailableAsync(TenantContext database, CancellationToken cancellationToken)
-    {
-        if (_clock?.Allowed != true || _path?.Ready(database) != true)
-        {
-            return false;
-        }
-
-        if (time.GetUtcNow() >= _nodes.Until)
-        {
-            var nodes = options.PeersFile is null ? [] : await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
-            _nodes = (nodes.Count(node => node.Region == options.Region), time.GetUtcNow() + NodesLifetime);
-        }
-
-        return _nodes.Count >= 2;
-    }
+    private bool LocalCommitAvailable(TenantContext database, bool homeDurable) =>
+        homeDurable && _clock?.Allowed == true && _path?.Ready(database) == true;
 
     public async ValueTask<WriteRoute> RouteAsync(
-        TenantContext database, IReplicaReader? reader, IReadOnlyList<string> statements, WriteOverride preference, CancellationToken cancellationToken)
+        TenantContext database, IReplicaReader? reader, IReadOnlyList<string> statements, WriteOverride preference, bool homeDurable,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(statements);
         var decided = preference == WriteOverride.Home ? new StatementRoute(WritePath.Home, WriteReasons.Override)
             : await DecideAsync(database, reader, statements, preference, cancellationToken).ConfigureAwait(false);
-        return Record(decided, decided.Path == WritePath.Local && await LocalCommitAvailableAsync(database, cancellationToken).ConfigureAwait(false));
+        return Record(decided, decided.Path == WritePath.Local && LocalCommitAvailable(database, homeDurable));
     }
 
     public WriteRoute Record(StatementRoute decided, bool local = false)
