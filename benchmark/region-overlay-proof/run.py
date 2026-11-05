@@ -18,6 +18,8 @@ import time
 import urllib.parse
 import urllib.request
 
+from websockets.sync.client import connect
+
 
 CREDS = json.load(sys.stdin)
 PROJECT = CREDS["project"]
@@ -144,7 +146,7 @@ class Tail:
         self.accept(page)
         return page
 
-    def follow(self, row):
+    def follow(self, row, seen=None):
         evidence = {"pages": [], "provisional_at": None, "settled_at": None}
         end = time.monotonic() + 70
         pending_id = None
@@ -157,6 +159,8 @@ class Tail:
             if found and pending_id is None:
                 pending_id = found[0]["id"]
                 evidence.update(provisional_at=at, transaction=pending_id)
+                if seen is not None:
+                    seen.set()
             changes = page.get("changes", [])
             confirmed = [x for change in changes for x in change.get("confirmed", [])]
             reverted = [x for change in changes for x in change.get("revert", [])]
@@ -196,6 +200,69 @@ def measure(database, tail, pool, row, text):
     return evidence
 
 
+def held_home_measure(database, tail, pool):
+    """Keep a short, uncommitted home writer on only this disposable database."""
+    row = ulid()
+    seen = threading.Event()
+    path = f"wss://gru.api.terrascale.tech/v1/projects/{PROJECT}/databases/{database}/sql/ws"
+    with connect(path, subprotocols=["terrascale.sql.v1"], additional_headers={"Authorization": "Bearer " + token()},
+                 open_timeout=10, close_timeout=2) as socket:
+        sequence = 0
+
+        def frame(kind, statements=None):
+            nonlocal sequence
+            sequence += 1
+            request = {"id": sequence, "type": kind}
+            if statements is not None:
+                request["statements"] = [{"sql": statement} for statement in statements]
+            socket.send(json.dumps(request))
+            response = json.loads(socket.recv(timeout=3))
+            if response.get("type") != "result":
+                raise RuntimeError("home writer frame failed: " + response.get("error", {}).get("code", "unknown"))
+            return response
+
+        frame("begin")
+        held = True
+        try:
+            frame("execute", [f"INSERT INTO blockers (id) VALUES ('{row}')"])
+            observation = pool.submit(tail.follow, row, seen)
+            time.sleep(0.15)  # Park before the measured write; not a service test or measured delay.
+            started = time.perf_counter()
+            def timed_write():
+                answer = sql(database, f"INSERT INTO items (id,v) VALUES ('{row}','sjc')", {"TerraScale-Durability": "home"})
+                return answer, time.perf_counter()
+
+            write = pool.submit(timed_write)
+            if not seen.wait(2):
+                raise RuntimeError("fra did not observe the provisional row while the home writer was held")
+            time.sleep(0.1)  # Controlled hold after observation; natural repeats below have no hold.
+            if write.done():
+                raise RuntimeError("home-durable write answered while the home writer was held")
+            released = time.perf_counter()
+            frame("rollback")
+            held = False
+            (status, body, headers), ack = write.result(timeout=35)
+            evidence = observation.result(timeout=35)
+            require(status, 200, body, "held-home local write")
+            if headers.get("x-terrabase-region") != "sjc" or "commit=local" not in headers.get("terrascale-write-route", ""):
+                raise RuntimeError("held-home write did not commit locally in sjc")
+            if evidence["state"] != "confirmed":
+                raise RuntimeError("held-home transaction did not confirm on fra")
+            evidence.update(write_ms=1000 * (ack - started),
+                            write_to_provisional_ms=1000 * (evidence["provisional_at"] - started),
+                            provisional_before_home_release_ms=1000 * (released - evidence["provisional_at"]),
+                            home_release_ms=1000 * (released - started),
+                            write_to_confirmed_ms=1000 * (evidence["settled_at"] - started),
+                            home_durable_response_ms=1000 * (ack - started))
+            evidence.pop("provisional_at")
+            evidence.pop("settled_at")
+            return evidence
+        finally:
+            # Also releases the writer after any failed assertion or timeout.
+            if held:
+                frame("rollback")
+
+
 def main():
     database = "f8direct" + str(int(time.time()))
     path = f"/v1/projects/{PROJECT}/databases/{database}"
@@ -203,9 +270,9 @@ def main():
                             {"name": database, "homeRegion": "gru", "replicaRegions": ["sjc", "fra"]})
     require(status, 201, body, "create database")
     result = {"database": database, "writer_region": "sjc", "reader_region": "fra", "warmup": [], "repeats": [],
-              "revert_attempts": [], "read_retries": READ_RETRIES}
+              "held_home_repeats": [], "revert_attempts": [], "read_retries": READ_RETRIES}
     try:
-        status, body, _ = sql(database, "CREATE TABLE items (id TEXT PRIMARY KEY, v TEXT)")
+        status, body, _ = sql(database, "CREATE TABLE items (id TEXT PRIMARY KEY, v TEXT); CREATE TABLE blockers (id TEXT PRIMARY KEY)")
         require(status, 200, body, "create table")
         tail = Tail(database)
         print("fra shape bootstrapped", file=sys.stderr, flush=True)
@@ -215,6 +282,7 @@ def main():
                 sample = measure(database, tail, pool, row, f"INSERT INTO items (id,v) VALUES ('{row}','sjc')")
                 result["warmup"].append(sample)
             for repeat in range(1, 4):
+                result["held_home_repeats"].append(held_home_measure(database, tail, pool))
                 samples = []
                 for _ in range(5):
                     row = ulid()
