@@ -11,6 +11,7 @@ using TerraBase.Features.Sql.Routing;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
+using ZLogger;
 
 namespace TerraBase.Features.Sql;
 
@@ -147,13 +148,13 @@ internal sealed class SqlExecuteEndpoint(
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            diagnostics.LogWarning("PROBE replica read begin failed: {Type} {Message}", error.GetType().Name, error.Message);
+            diagnostics.ZLogWarning($"PROBE replica read begin failed: {error.GetType().Name:@Type} {error.Message:@Reason}");
             reader = null;
         }
 
         if (reader is null && !writes)
         {
-            diagnostics.LogWarning("PROBE replica read forwarded home: reader null, preference {Preference}", preference);
+            diagnostics.ZLogWarning($"PROBE replica read forwarded home: reader null, preference {preference:@Preference}");
         }
         if (reader is null || writes || preference == WriteOverride.Home)
         {
