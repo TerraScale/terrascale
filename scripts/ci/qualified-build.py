@@ -152,7 +152,7 @@ def prepare(area, sha, directory):
     command = {
         'libs': 'bash scripts/ci/test-area.sh build libs',
         'auth': 'bash scripts/ci/auth-build.sh && make -o restore auth-publish RUNTIME=linux-x64 PUBLISH_DIR="$RUNNER_TEMP/auth-publish" && bash scripts/ci/image-payloads.sh auth',
-        'terrabase': 'bash scripts/ci/test-area.sh build terrabase && make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release && bash scripts/ci/image-payloads.sh terrabase amd64 && bash scripts/ci/image-payloads.sh terrabase arm64',
+        'terrabase': 'bash scripts/ci/test-area.sh build terrabase && make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release && bash scripts/ci/image-payloads.sh terrabase-all',
     }[area]
     with log.open('w') as stream:
         with subprocess.Popen(['bash', '-euo', 'pipefail', '-c', command], env=env,
