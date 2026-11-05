@@ -171,9 +171,9 @@ internal sealed class DatabaseBackupPurge(
     }
 
     /// <summary>
-    /// Shreds the database's keys in the platform bucket and every customer bucket it was shipped to.
+    /// Shreds the database's keys in the shared custody store outside backup destinations.
     /// </summary>
-    /// <returns>When the keys were destroyed, or <see langword="null"/> while some bucket still holds one.</returns>
+    /// <returns>When the keys were destroyed, or <see langword="null"/> while custody still holds one.</returns>
     internal async Task<DateTimeOffset?> ShredAsync(TenantContext database, CancellationToken token)
     {
         var scope = BackupLayout.KeyScope(database);

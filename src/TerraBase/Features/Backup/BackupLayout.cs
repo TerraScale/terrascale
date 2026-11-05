@@ -30,9 +30,6 @@ internal static class BackupLayout
     public static string KeyScope(TenantContext? database) =>
         database is null ? System : $"{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
 
-    // Project-wide keys from before per-database scopes; a database's shred removes them too.
-    public static string ProjectKeys(TenantContext database) => $"{Version}/keys/{database.OrganizationId}/{database.ProjectId}/";
-
     // The deletion record left in a shredded scope; never a ULID, so key selection never picks it.
     public const string ShreddedName = "shredded";
 
