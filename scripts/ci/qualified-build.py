@@ -10,6 +10,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -25,6 +27,20 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def status_read(operation):
+    for attempt in range(3):
+        try:
+            return operation()
+        except (urllib.error.HTTPError, subprocess.CalledProcessError) as error:
+            transient = (isinstance(error, urllib.error.HTTPError) and 500 <= error.code < 600
+                         or isinstance(error, subprocess.CalledProcessError)
+                         and re.search(r'(?i)HTTP\s+5[0-9]{2}\b', error.stderr or ''))
+            if not transient or attempt == 2:
+                raise
+            print(f'GitHub status read returned 5xx; retry {attempt + 1}/2 in {2 ** attempt}s', file=sys.stderr)
+            time.sleep(2 ** attempt)
+
+
 def statuses(sha):
     if os.environ.get('GITHUB_ACTIONS') == 'true':
         # Commit statuses are public. Preserve the existing anonymous lookup so
@@ -33,13 +49,15 @@ def statuses(sha):
         url = f'https://api.github.com/repos/{REPO}/commits/{sha}/statuses?per_page=100'
         while url:
             request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json'})
-            with urllib.request.urlopen(request, timeout=20) as response:
+            with status_read(lambda: urllib.request.urlopen(request, timeout=20)) as response:
                 pages.append(json.load(response))
                 link = response.headers.get('Link', '')
                 next_page = re.search(r'<([^>]+)>; rel="next"', link)
                 url = next_page[1] if next_page else None
     else:
-        pages = json.loads(gh('api', '--paginate', '--slurp', f'repos/{REPO}/commits/{sha}/statuses?per_page=100'))
+        pages = json.loads(status_read(lambda: subprocess.check_output(
+            ['gh', 'api', '--paginate', '--slurp', f'repos/{REPO}/commits/{sha}/statuses?per_page=100'],
+            text=True, stderr=subprocess.PIPE, timeout=20)))
     latest = {}
     for page in pages:
         for row in page:
@@ -127,8 +145,6 @@ def area_input(area, path):
     if documentation(path):
         return False
     def independent():
-        if not path.startswith(('src/', 'tests/', 'sdk/', 'benchmark/dotnet/')):
-            return False
         inputs = project_inputs(area, str(Path.cwd().resolve()), git('rev-parse', 'HEAD'))
         if inputs is None:
             return True  # Unresolved graph: require fresh proof.
@@ -297,5 +313,5 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
         sys.exit('FAILED ' + str(error))
