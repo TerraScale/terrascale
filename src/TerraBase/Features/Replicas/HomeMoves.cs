@@ -400,10 +400,6 @@ internal sealed class HomeMoves(
                 logger.ZLogInformation($"A new home applied {drained} pushed transactions addressed to its former home");
                 return;
             }
-            catch (ObjectDisposedException)
-            {
-                return;
-            }
             catch (Exception error) when (error is not OperationCanceledException)
             {
                 logger.ZLogWarning($"Pushes addressed to the former home wait to be applied: {error.GetType().Name:@Error}");
