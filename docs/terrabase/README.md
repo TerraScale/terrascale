@@ -1,6 +1,7 @@
 # TerraBase
 
 Read the [required zero-configuration operating contract](zero-configuration.md).
+Organization plans: [Publication and admission in every region](regional-organization-plans.md).
 Current configuration paths are implementation limitations, not production activation instructions.
 
 Hosting: [OCI and ts-orch](../oci.md); node discovery: [TerraBase on ts-orch](ts-orch.md).
