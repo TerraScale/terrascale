@@ -3,7 +3,7 @@
 .ts-onboarding {
   display: grid;
   align-content: start;
-  gap: var(--ts-s4);
+  gap: var(--ts-s6);
   width: min(32rem, 100%);
   margin-inline: auto;
   padding: var(--ts-s6) var(--ts-s4) var(--ts-s8);
@@ -17,10 +17,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding-bottom: var(--ts-s2);
 }
 
-.ts-onboarding-header .ts-brand-logo {
+.ts-onboarding-header .ts-login-brand {
+  gap: var(--ts-s3);
+}
+
+.ts-onboarding-header .ts-login-brand img {
+  width: auto;
   height: 40px;
+}
+
+.ts-onboarding-header .ts-login-brand-word {
+  font-size: 24px;
 }
 
 .ts-onboarding-progress {
@@ -97,6 +107,21 @@
   display: grid;
   flex: 1 1 20rem;
   gap: var(--ts-s1);
+  min-width: 0;
+}
+
+.ts-onboarding-heading .ts-section-title {
+  font-size: 22px;
+  line-height: 1.35;
+}
+
+.ts-onboarding-heading .ts-meta {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.ts-onboarding-card > .ts-form {
+  gap: var(--ts-s5);
 }
 
 .ts-onboarding-payment-head {
@@ -160,16 +185,19 @@
 /* Plan cards: the radio is visually hidden, the whole card is the target. */
 .ts-onboarding-plans {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: var(--ts-s3);
 }
 
 .ts-onboarding-plan {
   position: relative;
   display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
   align-content: start;
   justify-items: start;
-  gap: var(--ts-s2);
+  gap: var(--ts-s4);
+  min-width: 0;
   padding: var(--ts-s4);
   border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius-lg);
@@ -180,6 +208,7 @@
 
 .ts-onboarding-plan > .ts-row-between {
   width: 100%;
+  flex-wrap: nowrap;
 }
 
 .ts-onboarding-plan:hover {
@@ -204,11 +233,12 @@
 
 .ts-onboarding-plan-name {
   color: var(--ts-ink);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .ts-onboarding-plan-check {
   display: grid;
+  flex: none;
   place-items: center;
   width: 20px;
   height: 20px;
@@ -232,9 +262,43 @@
   font-size: var(--ts-fs-xl);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+
+.ts-onboarding-plan-billing {
+  display: grid;
+  gap: var(--ts-s1);
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.ts-onboarding-plan-price .ts-meta {
+  font-family: var(--ts-font-sans);
+  font-weight: 400;
+}
+
+.ts-onboarding-plan-features {
+  display: grid;
+  gap: var(--ts-s2);
+  width: 100%;
+  padding-top: var(--ts-s4);
+  border-top: 1px solid var(--ts-line);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  line-height: 1.5;
+  text-wrap: pretty;
 }
 
 @media (max-width: 30rem) {
+  .ts-onboarding-header .ts-login-brand img {
+    height: 34px;
+  }
+
+  .ts-onboarding-header .ts-login-brand-word {
+    font-size: 22px;
+  }
+
   .ts-onboarding-progress {
     margin-inline: calc(var(--ts-s5) + 1px);
   }
@@ -261,8 +325,7 @@
 }
 
 /* The auth column supplies outer spacing; keep the onboarding form flat. */
-.ts-login-column > .ts-onboarding { width: min(400px, 100%); padding: 0; }
-.ts-login-column > .ts-onboarding-wide { width: min(520px, 100%); }
-.ts-login-column .ts-onboarding-header .ts-brand-logo { height: 28px; }
+.ts-login-column > .ts-onboarding { width: min(448px, 100%); padding: 0; }
+.ts-login-column > .ts-onboarding-wide { width: min(680px, 100%); }
 .ts-login-column .ts-onboarding-progress { margin-inline: 0; }
 .ts-login-column .ts-onboarding-card { padding: 0; border: 0; background: transparent; }
