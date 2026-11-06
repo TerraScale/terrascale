@@ -3,7 +3,8 @@
 Producer pin: `4b6dfd03b2d814cea0b1f7d599478f6b06532b4a` (monorepo origin/main).
 Authority: `src/TerraScale.Authentication/Features/ProjectTenants/` endpoints,
 `ProjectTenantEndpoint.cs` DTOs/serializer, `TenantDirectory.cs`, and platform
-`PlatformEndpoints.cs` authentication, paging, metadata and errors.
+`PlatformEndpoints.cs` authentication, paging, metadata and errors. The live
+sessions section below pins `a811367bd82e0cbe510cd2340fc93e25f81c2dd0`.
 
 | Method/path | Operation | Role | Success |
 | --- | --- | --- | --- |
@@ -32,3 +33,27 @@ Disable prevents sign-in and invalidates existing sessions/tokens immediately.
 Enable permits new sign-ins but does not restore ended sessions. Delete releases
 email and invalidates tokens/sessions. Never automatically replay any mutation;
 reconcile an uncertain response through the directory before a manual retry.
+
+## Live sessions
+
+Producer pin: `a811367bd82e0cbe510cd2340fc93e25f81c2dd0` (monorepo origin/main),
+`ListProjectSessionsEndpoint.cs`, `RevokeProjectSessionEndpoint.cs` and the
+`ProjectSessionBody`/`ProjectSessionPageBody` DTOs of `ProjectTenantEndpoint.cs`.
+
+| Method/path | Operation | Role | Success |
+| --- | --- | --- | --- |
+| GET /v1/{project}/sessions | list_project_sessions | viewer | 200 ProjectSessionPageBody |
+| DELETE /v1/{project}/sessions/{session} | revoke_project_session | admin | 204 empty |
+
+Go operations: `ProjectSessions(ctx, project, ProjectSessionsOptions{User,
+Limit, After})` and `RevokeProjectSession(ctx, project, session)` on
+`client.WithToken(signInToken)`. Sessions are live ones only: unrevoked, within
+their issued expiry and the project's lifetime policy (the earlier effective
+`expires_at` is returned), of enabled users at their current epoch. Items carry
+`id`, `user_id`, `email`, `created_at`, `expires_at`; every member is required
+and `next` alone is nullable. `user` narrows to one canonical user ULID; limit
+1..100 defaults to 50; `after` is the previous page's opaque cursor. Revoke
+signs the session out; an already revoked session answers 204 again, an unknown
+one 404. Revocation is never automatically replayed; reconcile an uncertain
+outcome through the listing before a manual retry.
+
