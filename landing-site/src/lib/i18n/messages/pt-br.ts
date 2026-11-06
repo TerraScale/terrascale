@@ -376,19 +376,18 @@ export const ptBr: Messages = {
   },
 
   about: {
-    titleLead: 'Bancos de dados SQL',
-    titleAccent: 'em três regiões.',
-    ctaPricing: 'Ver preços',
-    regionsAria: 'Regiões em operação',
-    missionTitle: 'Uma plataforma para bancos de dados, chaves e cobrança.',
-    pillars: [
-      { title: 'Bancos de dados SQL' },
-      { title: 'Uma região de escrita e réplicas criptografadas' },
-      { title: 'Tetos de escrita por plano' },
-    ],
-    bandTitle: 'Preços regionais fixos, medidos pelo uso real.',
-    bandText:
-      'O armazenamento conta os bytes que cada banco de dados guarda na região principal. Distância de rede estimada e latência medida da API continuam separadas.',
+    title: 'Sobre a TerraScale',
+    introduction:
+      'A TerraScale desenvolve o TerraBase, um serviço de banco de dados SQL. O dashboard reúne bancos de dados, gestão de acesso e uso.',
+    databaseTitle: 'TerraBase',
+    databaseText:
+      'Cada banco de dados tem uma região principal para escritas e pode ter réplicas de leitura criptografadas em outras regiões. As réplicas têm consistência eventual.',
+    integrationText:
+      'Use o dialeto SQL do SQLite com clientes compatíveis com PostgreSQL, a API HTTP ou os SDKs. Gerencie bancos de dados e chaves de API pelo dashboard.',
+    alphaTitle: 'Alpha pública',
+    alphaText:
+      'A TerraScale está em Alpha pública. Funcionalidades, limites e APIs podem mudar. Não há SLA durante a Alpha.',
+    ctaDocs: 'Ler a documentação',
   },
 
   notFound: {
