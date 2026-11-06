@@ -1,0 +1,153 @@
+{
+  "status": "local qualification passed; production HOLD",
+  "engine_candidate": "7845bed259c0be3ad378d9f3d9d3c8519a0cc2c4",
+  "base": "5fd89c3e7271abc350125b0e68e18b4fd50f5f76",
+  "host": "beta",
+  "slow_repeats": 5,
+  "slow_drills_per_repeat": 11,
+  "slow_passes": 55,
+  "slow_failures": 0,
+  "drills": {
+    "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": [
+      "19s 651ms",
+      "19s 796ms",
+      "19s 164ms",
+      "19s 266ms",
+      "19s 402ms"
+    ],
+    "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": [
+      "24s 569ms",
+      "24s 146ms",
+      "23s 923ms",
+      "23s 600ms",
+      "24s 398ms"
+    ],
+    "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": [
+      "25s 323ms",
+      "24s 574ms",
+      "25s 122ms",
+      "24s 948ms",
+      "24s 607ms"
+    ],
+    "A_certified_manual_owner_CAS_with_a_connected_source_holding_admission_never_allows_dual_commit": [
+      "26s 298ms",
+      "24s 958ms",
+      "25s 011ms",
+      "24s 615ms",
+      "25s 053ms"
+    ],
+    "Foreign_and_third_node_database_leases_are_isolated_without_stranding_the_regional_writer": [
+      "27s 285ms",
+      "26s 471ms",
+      "26s 384ms",
+      "26s 833ms",
+      "26s 536ms"
+    ],
+    "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": [
+      "27s 535ms",
+      "26s 555ms",
+      "26s 657ms",
+      "26s 189ms",
+      "26s 657ms"
+    ],
+    "A_target_that_acquired_admission_then_failed_activation_recovers_without_losing_acked_rows": [
+      "28s 020ms",
+      "27s 886ms",
+      "27s 866ms",
+      "28s 509ms",
+      "28s 129ms"
+    ],
+    "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": [
+      "28s 598ms",
+      "27s 950ms",
+      "29s 103ms",
+      "28s 559ms",
+      "28s 173ms"
+    ],
+    "Recovery_retries_the_certified_live_target_instead_of_returning_ownership_to_a_dead_source": [
+      "30s 861ms",
+      "30s 135ms",
+      "29s 425ms",
+      "29s 946ms",
+      "29s 671ms"
+    ],
+    "An_upgraded_follower_cannot_claim_its_own_regions_database_during_owner_restart": [
+      "49s 902ms",
+      "50s 034ms",
+      "50s 663ms",
+      "50s 037ms",
+      "50s 434ms"
+    ],
+    "A_retained_legacy_owner_bootstraps_in_place_without_changing_its_epoch_or_losing_rows": [
+      "1m 14s 255ms",
+      "1m 12s 893ms",
+      "1m 13s 270ms",
+      "1m 13s 405ms",
+      "1m 14s 088ms"
+    ]
+  },
+  "fast": {
+    "native": {
+      "passed": 4,
+      "failed": 0,
+      "duration": "389ms"
+    },
+    "terrabase": {
+      "passed": 66,
+      "failed": 0,
+      "duration": "9s 395ms"
+    }
+  },
+  "source_sha256": {
+    "src/TerraBase/Features/Replicas/HomeLeases.cs": "325798ce370229c7deda2fc6606baea739ba86568a52ae198b683a5ce1553998",
+    "src/TerraBase/Features/Replicas/RegionalHandoff.cs": "34a58a7d13d530de4c5c20f5ce145ace46779e400f102227dc242a536a900048",
+    "src/TerraBase/Features/Replicas/RegionalHandoff.Control.cs": "d29a9fc0db56cb1305617179f967488429066b60bdb1d78c530c3e69e2ae113b",
+    "src/TerraBase/Features/Replicas/RegionalOwners.cs": "2d9a1a7812530440bb06784069d879adbec023345efa5df454cd0314500a9acf",
+    "src/TerraBase/Features/Replicas/RegionalWriterLease.cs": "aadeb4b814970b490f8a50510695addb4ff2900f8ede80402c716d173f18f5ad",
+    "src/TerraBase/Hosting/TerraBaseJsonContext.cs": "0f7652cfe761d9f24e5fd16afe3b1a7cd6593799ac98d41951dc8791979bb28d",
+    "tests/TerraBase.Slow/Sync/RegionalHandoffTests.cs": "6072f152565aaf52cee608d55e506374d052572bdeed3834c688c3229d6767b9",
+    "tests/TerraBase.Slow/Sync/RegionalWriterCrashTests.cs": "a4fde081630c441055f21d07d1c095fe528ded978db609962078d849f6f1a86f",
+    "tests/TerraBase.Slow/Sync/RegionalWriterRecoveryTests.cs": "a919030deccc5cc636eb48d817aec56d6a9ed2275bc9f663f2d59bfb06e40ff0",
+    "tests/TerraBase.Slow/Sync/RegionalNatsFault.cs": "16e9ab09247015227bc1b7fc7c6718380dab38d6cf2d0977c562e515abd0b950",
+    "src/TerraBase/Engine/Turso/TursoChangeTap.cs": "d042e0717cbcc84159130dc45013e7fc66253061328a589829be553f945612f5",
+    "src/TerraBase/Features/Backup/ContinuousBackup.cs": "be0f869a7a6947fde1c33e50f86818c2cdbb84152cee38ff269a895b620569f8",
+    "src/TerraBase/Features/Sql/SqlService.cs": "cdb932f6e24804ff940cec582b4f8ca9155d4b1355d74a70d1fe6852c6fd6b3e",
+    "src/TerraBase/Features/Sql/ReplicaSqlSession.cs": "ac6f033ca359e16ff16503112d76d931ba8236e6d0cf61d007a761e15bbe1f11",
+    "benchmark/regional-bootstrap/run.sh": "7ab7adc666101802a36afbe3988c472dea82f57161e22126296508866a7dbfb6"
+  },
+  "logs": {
+    "zdt-real-bootstrap-r2.log": {
+      "sha256": "5915d55557873c8b7878401e2ac870ed18a9e7c5009a438df2f97ca4da5521d2",
+      "delta_path": ".cos/zdt-20261105/qualification/zdt-real-bootstrap-r2.log"
+    },
+    "zdt-real-bootstrap-r3.log": {
+      "sha256": "c1e325383fbd9c474a40ba103f26ee8c8b818f44a92478c652bfbc4df1224346",
+      "delta_path": ".cos/zdt-20261105/qualification/zdt-real-bootstrap-r3.log"
+    },
+    "zdt-real-bootstrap-r4.log": {
+      "sha256": "57b0982f8ab6be4432301a5ef0e0f26f268719b2aeed4426e924311dcff31830",
+      "delta_path": ".cos/zdt-20261105/qualification/zdt-real-bootstrap-r4.log"
+    }
+  },
+  "legacy": {
+    "revision": "b443b6ea83f519018c0d9f9d8f04e65c3df12724",
+    "dll_sha256": "b2fa60c461c4cd198821781ec21b44cdda2fe1350f3f281ccad900962f989d03",
+    "build": "git archive exact revision; unmodified Program, ordinary dotnet host on retained fixture data"
+  },
+  "production_actions": [],
+  "limits": [
+    "No live rollout, p99 or client-error acceptance proof",
+    "No production watcher restart or stale-key deletion",
+    "Orchestrator fence installation and final reconciliation remain held",
+    "Rebase to current main and repeat affected qualification before shipping"
+  ],
+  "target_failed_before_admission_max_ms": 12507.573,
+  "target_failed_after_admission_max_ms": 12700.593,
+  "legacy_process_exit_and_admission": [
+    "2026-11-06T02:10:02.8281948+00:00 candidate_admission=2026-11-06T02:10:50.8465074+00:00; owner/epoch retained; follower home revision unchanged through 32s outage",
+    "2026-11-06T02:11:17.0645739+00:00 candidate_admission=2026-11-06T02:12:05.0755020+00:00; owner/epoch retained; follower home revision unchanged through 32s outage",
+    "2026-11-06T02:12:31.5828825+00:00 candidate_admission=2026-11-06T02:13:19.5445269+00:00; owner/epoch retained; follower home revision unchanged through 32s outage",
+    "2026-11-06T02:13:46.2768386+00:00 candidate_admission=2026-11-06T02:14:34.2887578+00:00; owner/epoch retained; follower home revision unchanged through 32s outage",
+    "2026-11-06T02:15:01.6091753+00:00 candidate_admission=2026-11-06T02:15:49.6220276+00:00; owner/epoch retained; follower home revision unchanged through 32s outage"
+  ]
+}

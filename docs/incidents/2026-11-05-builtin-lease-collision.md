@@ -126,6 +126,16 @@ this worker and was retained.
 
 ## Re-review corrections, locally qualified
 
+The later [bootstrap qualification](../../benchmark/bench/2026-11-06-zdt-bootstrap.md)
+adds the actual unmodified b443 Program, same-region follower expiry coverage,
+identity mismatch and direct source-primary overlap inspection. Its eleven Slow
+drills passed five repeats (55/55); Fast passed 66/66 plus 4/4 native-driver tests.
+That proof also found and fixed a Version:0 recovery race: an upgraded follower
+could mistake a preparation certificate for permission to take ownership while
+the retained owner was still adopting the new protocol. All Version:0 records now
+stay pinned to that owner, including after preparation. These are local results;
+no new production recovery or deployment occurred during qualification.
+
 The first exclusive-admission candidate was rejected: one conflicting database
 lease could still block every regional activation, and the manual-CAS drill did
 not exercise a certified target competing with a connected source. The corrected
