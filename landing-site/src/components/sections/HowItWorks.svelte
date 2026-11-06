@@ -16,10 +16,10 @@
   }))
 </script>
 
-<section class="how" id="how-it-works" use:reveal>
-  <div class="how__inner">
+<section class="how ts-section" id="how-it-works" use:reveal>
+  <div class="ts-container">
     <div class="how__head">
-      <h2 class="how__title">
+      <h2 class="ts-section-title">
         {$dict.howItWorks.titleLead}<br />
         <span class="how__accent">{$dict.howItWorks.titleAccent}</span>
       </h2>
@@ -49,31 +49,13 @@
 
 <style>
   .how {
-    padding: 96px 0;
     border-top: 1px solid var(--ts-divider);
   }
 
-  .how__inner {
-    padding: 0 clamp(16px, 2.5vw, 40px);
-  }
-
   .how__head {
-    display: grid;
-    justify-items: center;
-    gap: 16px;
     max-width: 680px;
-    margin: 0 auto 48px;
+    margin: 0 auto var(--ts-section-gap);
     text-align: center;
-  }
-
-  .how__title {
-    margin: 0;
-    font-size: 48px;
-    font-weight: 600;
-    line-height: 1;
-    letter-spacing: -0.035em;
-    color: var(--ts-text);
-    text-wrap: balance;
   }
 
   .how__accent {
@@ -86,49 +68,40 @@
     padding: 0;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 16px;
+    gap: 24px;
   }
 
   .how__step {
-    position: relative;
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 32px;
-    border: 1px solid var(--ts-divider);
-    border-radius: 16px;
-    background: var(--ts-bg-surface);
-    transition: border-color 300ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  .how__step:hover {
-    border-color: var(--ts-glass-border);
+    padding-block: 20px 0;
+    border-top: 1px solid var(--ts-divider);
   }
 
   .how__step-top {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
   }
 
   .how__step-icon {
     display: grid;
     place-items: center;
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
     border-radius: 8px;
     background: rgba(var(--ts-primary-light-rgb), 0.12);
     color: var(--ts-primary-light);
   }
 
   :global(.how__step-glyph) {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
   }
 
   .how__step-num {
-    font: 400 30px / 36px var(--ts-font-mono);
+    font: 400 24px / 32px var(--ts-font-mono);
     color: var(--ts-text-muted);
     opacity: 0.5;
     letter-spacing: -0.02em;
@@ -156,7 +129,6 @@
     flex-wrap: wrap;
     gap: 8px;
     margin-top: auto;
-    padding-top: 12px;
   }
 
   .how__tag {
@@ -172,31 +144,9 @@
     line-height: 1;
   }
 
-  @media (max-width: 1024px) {
+  @media (max-width: 767px) {
     .how__steps {
       grid-template-columns: minmax(0, 1fr);
-    }
-  }
-
-  @media (max-width: 640px) {
-    .how {
-      padding: 64px 0;
-    }
-    .how__head {
-      margin-bottom: 32px;
-    }
-    .how__title {
-      font-size: 30px;
-      line-height: 36px;
-    }
-    .how__step {
-      padding: 24px;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .how__step {
-      transition: none;
     }
   }
 </style>

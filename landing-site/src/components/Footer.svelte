@@ -91,7 +91,7 @@
     display: grid;
     grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
     gap: var(--ts-s10) var(--ts-s8);
-    padding-block: var(--ts-s16) var(--ts-s12);
+    padding-block: var(--ts-s10) var(--ts-s8);
   }
 
   .site-footer__brand {
@@ -211,7 +211,7 @@
     .site-footer__grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: var(--ts-s8) var(--ts-s6);
-      padding-block: var(--ts-s12) var(--ts-s8);
+      padding-block: var(--ts-s8) var(--ts-s6);
     }
     .site-footer__lang {
       margin-left: 0;
