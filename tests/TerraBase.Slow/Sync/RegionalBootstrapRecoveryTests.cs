@@ -91,7 +91,15 @@ public sealed partial class RegionalWriterCrashTests
         foreach (var (key, before) in retained)
         {
             var after = await store.GetEntryAsync<byte[]>(key, cancellationToken: token);
-            await Assert.That(after.Revision).IsEqualTo(before.Revision);
+            if (key == "gru")
+            {
+                // b443 renews its authority by CAS of the unchanged raw bytes.
+                await Assert.That(after.Revision >= before.Revision).IsTrue();
+            }
+            else
+            {
+                await Assert.That(after.Revision).IsEqualTo(before.Revision);
+            }
             await Assert.That(after.Value).IsEquivalentTo(before.Value!);
         }
         await drill.Source.KillAsync();
