@@ -37,6 +37,7 @@ The public listener serves `/openapi/v1.json` and `/scalar/`. `/healthz` is live
 
 - [Zero-configuration contract](zero-configuration.md), [OCI hosting](../oci.md) and [ts-orch](ts-orch.md).
 - [Local host](local-host.md) and [region discovery](region-catalog.md).
+- [Regional rollout authority and recovery](regional-rollout-handoff.md): exclusive writer leases, durable drains and activation recovery.
 - [Continuous backup](backup.md), [crypto-shredding](crypto-shredding.md), [complete deletion](crypto-shredding-f11.md) and [deletion retention](deletion-retention.md).
 - [Regional organization plans](regional-organization-plans.md): publication and admission in every region.
 - [Resource admission](qos.md), [shared-process tenancy](shared-process-tenancy.md) and [disk admission](disk-admission.md).

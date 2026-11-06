@@ -14,8 +14,8 @@ using ZLogger;
 namespace TerraBase.Features.Replicas;
 
 internal sealed record RegionalPosition(string Organization, string Project, string Database, string Home, string Revision);
-internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, long Epoch, RegionalCatalogSnapshot? Catalog = null);
-internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready);
+internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, long Epoch, RegionalCatalogSnapshot? Catalog = null, string? Operation = null);
+internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "");
 internal sealed record RegionalDrain(string Target);
 
 /// <summary>
@@ -23,7 +23,7 @@ internal sealed record RegionalDrain(string Target);
 /// positions are sampled. The candidate imports proven replicas; the regional CAS precedes database lease activation.
 /// An uncommitted preparation leaves database leases untouched; a quorum rollback resumes the old writer.
 /// </summary>
-internal sealed class RegionalHandoff(
+internal sealed partial class RegionalHandoff(
     TerraBaseOptions options, RegionalOwners owners, HomeLeaseGate gate, InternalCredential credential,
     IServiceProvider services, ILogger<RegionalHandoff> logger) : BackgroundService
 {
@@ -33,12 +33,16 @@ internal sealed class RegionalHandoff(
     private readonly Dictionary<string, TenantContext> _promoted = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _prepared = new(StringComparer.Ordinal);
     private long _activeEpoch;
+    private long _activatingEpoch;
+    private TenantContext? _activationAfter;
     private INatsKVStore? _kv;
     private NatsConnection? _nats;
+    private RegionalWriterLease? _writerLease;
+    private readonly string _session = Guid.NewGuid().ToString("N");
 
     internal async Task<RegionalStatus> StatusAsync(CancellationToken cancellationToken, string? region = null) => new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
         owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
-        await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false));
+        await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false), _session);
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -74,6 +78,17 @@ internal sealed class RegionalHandoff(
                     Storage = NatsKVStorageType.File,
                     NumberOfReplicas = _nats.ServerInfo?.Cluster is { Length: > 0 } ? 3 : 1,
                 }, stoppingToken).ConfigureAwait(false);
+                if (_writerLease is null)
+                {
+                    var writers = await new NatsKVContext(js).CreateOrUpdateStoreAsync(new NatsKVConfig(RegionalWriterLease.Bucket)
+                    {
+                        History = 1,
+                        Storage = NatsKVStorageType.File,
+                        NumberOfReplicas = _nats.ServerInfo?.Cluster is { Length: > 0 } ? 3 : 1,
+                        LimitMarkerTTL = RegionalWriterLease.Ttl,
+                    }, stoppingToken).ConfigureAwait(false);
+                    _writerLease = new RegionalWriterLease(js, writers, options.Region, options.MachineId, _session);
+                }
                 await RefreshAsync(_kv, stoppingToken).ConfigureAwait(false);
             }
             catch (Exception error) when (error is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
@@ -98,7 +113,7 @@ internal sealed class RegionalHandoff(
                 {
                     // Any admitted local node may publish the same deterministic initial
                     // owner. A follower can start first during the first rolling deployment.
-                    var first = new RegionalOwner(region, nodes.First(node => node.Region == region).Name, 1);
+                    var first = new RegionalOwner(region, nodes.First(node => node.Region == region).Name, 1, Version: ProtocolVersion);
                     try
                     {
                         _ = await kv.CreateAsync(region, Encode(first), cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -119,16 +134,19 @@ internal sealed class RegionalHandoff(
                         throw new InvalidDataException("regional owner is outside admitted peers");
                     }
 
+                    if (region == options.Region)
+                    {
+                        _startupOwner ??= owner;
+                    }
+
+                    if (region == options.Region && await RecoverTransferAsync(kv, observed, owner, cancellationToken).ConfigureAwait(false))
+                    {
+                        continue;
+                    }
                     Observe(owner);
                     if (region == options.Region && owner.Node == options.MachineId)
                     {
-                        if (!await ActivateAsync(owner, cancellationToken).ConfigureAwait(false))
-                        {
-                            continue;
-                        }
-                        // A quorum CAS, rather than a cached watch value, renews write admission.
-                        _ = await kv.UpdateAsync(region, observed.Value!, observed.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
-                        owners.Renew();
+                        await RenewWriterAsync(kv, observed, owner, cancellationToken).ConfigureAwait(false);
                     }
                 }
             }
@@ -145,33 +163,47 @@ internal sealed class RegionalHandoff(
         {
             return true;
         }
-        if (owner.Previous is { } source)
+        // A restarted owner must also confirm its database leases. Its node
+        // session changed even when the durable regional epoch did not.
+        var source = owner.Previous ?? options.MachineId;
+        var leases = services.GetRequiredService<HomeLeases>();
+        if (!leases.Ready)
         {
-            var leases = services.GetRequiredService<HomeLeases>();
-            if (!leases.Ready)
+            return false;
+        }
+        var catalog = services.GetRequiredService<IReplicaCatalog>();
+        if (_activatingEpoch != owner.Epoch)
+        {
+            _activatingEpoch = owner.Epoch;
+            _activationAfter = null;
+        }
+        do
+        {
+            if (await catalog.ListHomedAsync(options.Region, _activationAfter, cancellationToken).ConfigureAwait(false) is not TenantDatabasePage page)
             {
                 return false;
             }
-            var catalog = services.GetRequiredService<IReplicaCatalog>();
-            TenantContext? after = null;
-            do
+            foreach (var database in page.Databases)
             {
-                if (await catalog.ListHomedAsync(options.Region, after, cancellationToken).ConfigureAwait(false) is not TenantDatabasePage page)
+                if (!await leases.TakeRegionalAsync(database, source, cancellationToken).ConfigureAwait(false))
                 {
                     return false;
                 }
-                foreach (var database in page.Databases)
-                {
-                    if (!await leases.TakeRegionalAsync(database, source, cancellationToken).ConfigureAwait(false))
-                    {
-                        return false;
-                    }
-                }
-                after = page.Next;
+                // A bounded attempt may expire between database confirmations.
+                // Keep progress for this epoch instead of redoing its first
+                // leases forever when a region has many replicated databases.
+                _activationAfter = database;
             }
-            while (after is not null);
+            if (page.Next is null)
+            {
+                break;
+            }
+            _activationAfter = page.Next;
         }
+        while (true);
         _activeEpoch = owner.Epoch;
+        _activatingEpoch = 0;
+        _activationAfter = null;
         return true;
     }
 
@@ -179,8 +211,22 @@ internal sealed class RegionalHandoff(
     {
         var changed = owners.Find(owner.Region) != owner;
         owners.Observe(owner);
+        if (owner.Region == options.Region && owner.Node == options.MachineId)
+        {
+            // Refresh and recovery also call Observe for an unchanged record.
+            // A previous failed drain must not leave that writer fenced forever.
+            owners.Resume();
+        }
         if (!changed)
         {
+            if (owner.Region == options.Region && owner.Node != options.MachineId && owner.Transfer is null)
+            {
+                foreach (var database in _promoted.Values)
+                {
+                    services.GetRequiredService<RegionReplication>().Resume(database);
+                }
+                _promoted.Clear();
+            }
             return;
         }
 
@@ -209,6 +255,9 @@ internal sealed class RegionalHandoff(
 
     internal async Task<bool> PrimeAsync(string source, CancellationToken cancellationToken)
     {
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(DrainBudget);
+        cancellationToken = bounded.Token;
         if (owners.Find(options.Region)?.Node != source || source == options.MachineId)
         {
             return false;
@@ -222,6 +271,9 @@ internal sealed class RegionalHandoff(
 
     internal async Task<bool> PrepareAsync(RegionalPrepare request, CancellationToken cancellationToken)
     {
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(DrainBudget);
+        cancellationToken = bounded.Token;
         await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -311,6 +363,11 @@ internal sealed class RegionalHandoff(
         }
 
         await services.GetRequiredService<HomePush.HomePush>().RebuildForPromotionAsync(cancellationToken).ConfigureAwait(false);
+        if (!await PreparingAsync(request, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+        await WritePreparedAsync(_kv!, new RegionalPrepared(request.Source, options.MachineId, request.Epoch, request.Operation), cancellationToken).ConfigureAwait(false);
         return await PreparingAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
@@ -322,11 +379,17 @@ internal sealed class RegionalHandoff(
         }
         var entry = await ReadAsync(kv, options.Region, cancellationToken).ConfigureAwait(false);
         return entry is { Value: { } value } && Decode(value) is { } owner
-            && owner.Node == request.Source && owner.Epoch == request.Epoch;
+            && owner.Node == request.Source && owner.Epoch == request.Epoch
+            && (owner.Transfer is { Phase: Preparing } transfer && transfer.Id == request.Operation
+                || request.Operation is null && (owner.Version == 0 && owner.Transfer is null
+                    || owner.Transfer is { Phase: Recovering, Source: var restored } && restored == request.Source));
     }
 
     internal async Task<bool> VerifyAsync(RegionalPrepare request, CancellationToken cancellationToken)
     {
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(DrainBudget);
+        cancellationToken = bounded.Token;
         var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
         if (!owners.Writer || request.Positions.Count > 10_000
             || !nodes.Any(node => node.Name == request.Source && node.Region == options.Region && node.Name != options.MachineId))
@@ -367,6 +430,24 @@ internal sealed class RegionalHandoff(
 
     internal async Task<bool> DrainAsync(string target, CancellationToken cancellationToken)
     {
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(DrainBudget);
+        try
+        {
+            return await DrainCoreAsync(target, bounded.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (NatsKVWrongLastRevisionException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> DrainCoreAsync(string target, CancellationToken cancellationToken)
+    {
         var kv = _kv;
         if (kv is null)
         {
@@ -384,13 +465,14 @@ internal sealed class RegionalHandoff(
         await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var entry = await ReadAsync(kv, options.Region, cancellationToken).ConfigureAwait(false);
+            var entry = await BeginDrainAsync(kv, target, cancellationToken).ConfigureAwait(false);
             if (entry is null)
             {
                 return false;
             }
 
             var owner = Decode(entry.Value.Value!);
+            var transfer = owner.Transfer!;
             var promoting = owner.Node == options.MachineId;
             if (!promoting && owner.Node != target)
             {
@@ -442,7 +524,7 @@ internal sealed class RegionalHandoff(
                             position = replicas.HeldRevision(database);
                         }
 
-                        if (region == options.Region && promoting && position is null)
+                        if (region == options.Region && position is null)
                         {
                             return false;
                         }
@@ -460,7 +542,7 @@ internal sealed class RegionalHandoff(
 
             var address = new UriBuilder(Uri.UriSchemeHttp, peer.Address.ToString(), options.InternalPort).Uri;
             var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, promoting
-                ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null), TerraBaseJsonContext.Default.RegionalPrepare);
+                ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null, transfer.Id), TerraBaseJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
             {
                 return false;
@@ -475,21 +557,31 @@ internal sealed class RegionalHandoff(
 
             if (!promoting)
             {
+                var retired = owner with { Transfer = transfer with { Phase = Retiring } };
+                _ = await kv.UpdateAsync(options.Region, Encode(retired), entry.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
                 return true;
             }
 
-            var next = new RegionalOwner(options.Region, target, owner.Epoch + 1, options.MachineId);
+            // Native writers and in-flight requests are finished before releasing
+            // exclusive admission. A delayed owner watch cannot admit both nodes.
+            await _writerLease!.ReleaseDrainedAsync(cancellationToken).ConfigureAwait(false);
+            var next = new RegionalOwner(options.Region, target, owner.Epoch + 1, options.MachineId,
+                Transfer: transfer with { Phase = Activating, Deadline = DateTimeOffset.UtcNow + ActivationBudget }, Version: ProtocolVersion);
             _ = await kv.UpdateAsync(options.Region, Encode(next), entry.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
             Observe(next);
-            while (true)
+            using (var activation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
-                using var ready = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), cancellationToken).ConfigureAwait(false);
-                if (ready.IsSuccessStatusCode && await ready.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, cancellationToken).ConfigureAwait(false)
-                    is { Writer: true, Ready: true, Owner: var active } && active == target)
+                activation.CancelAfter(ActivationBudget);
+                while (true)
                 {
-                    break;
+                    using var ready = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), activation.Token).ConfigureAwait(false);
+                    if (ready.IsSuccessStatusCode && await ready.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, activation.Token).ConfigureAwait(false)
+                        is { Writer: true, Ready: true, Owner: var active } && active == target)
+                    {
+                        break;
+                    }
+                    await Task.Delay(TimeSpan.FromMilliseconds(25), activation.Token).ConfigureAwait(false);
                 }
-                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
             }
             // Remote forwarding uses the observed regional owner directly, outside this
             // region's edge. Do not stop its old address while an admitted peer still routes there.
@@ -525,48 +617,6 @@ internal sealed class RegionalHandoff(
                 admission?.Dispose();
                 _changing.Release();
             }
-        }
-    }
-
-    private async Task RecoverUncommittedAsync(INatsKVStore kv)
-    {
-        // A cancelled HTTP call can hide a successful regional CAS. Read the quorum before
-        // resuming anything; database leases are only acquired by the committed new owner.
-        using var recovery = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        try
-        {
-            var entry = await ReadAsync(kv, options.Region, recovery.Token).ConfigureAwait(false);
-            if (entry is null)
-            {
-                return;
-            }
-            var owner = Decode(entry.Value.Value!);
-            if (owner.Node != options.MachineId)
-            {
-                Observe(owner);
-                // A standby replacement can fail without changing regional ownership.
-                // Observe then sees no transition, but its frozen pulls still need resuming.
-                foreach (var database in _promoted.Values)
-                {
-                    services.GetRequiredService<RegionReplication>().Resume(database);
-                }
-                _promoted.Clear();
-                return;
-            }
-            var resumed = new RegionalOwner(options.Region, options.MachineId, owner.Epoch + 1);
-            _ = await kv.UpdateAsync(options.Region, Encode(resumed), entry.Value.Revision, cancellationToken: recovery.Token).ConfigureAwait(false);
-            Observe(resumed);
-            foreach (var database in _promoted.Values)
-            {
-                services.GetRequiredService<RegionReplication>().Resume(database);
-            }
-            _promoted.Clear();
-            owners.Renew();
-            logger.ZLogInformation($"Regional handoff rolled back before commit; {options.MachineId:@Source} resumed at epoch {resumed.Epoch:@Epoch}");
-        }
-        catch (Exception error)
-        {
-            logger.ZLogWarning(error, $"Regional handoff outcome could not be confirmed; this writer stays fenced");
         }
     }
 

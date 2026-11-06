@@ -96,9 +96,27 @@ preserve acknowledged writes. Initial fixture attempts failed to compile, tried
 to alter the runtime bucket TTL configuration, and omitted platform seeding;
 those attempts are not passes. Exact-source qualification passed all five repeats (3.963, 4.773, 5.370, 5.554 and 3.816 seconds). The same fixture against shipped 5fd runtime failed on the foreign auth lease entering the cache, as expected. See [the lease-isolation report](../../benchmark/bench/2026-11-05-zdt-lease-isolation.md).
 
-Activation rollback, retry after quorum loss, bounded waits, old-writer lease
-expiry, and a durable drain intent remain required by the independent review.
-Six Slow drills must each pass five repeats before release approval is requested.
+The complete local candidate now adds exclusive regional writer admission
+(six-second server TTL, five-second monotonic admission), persisted drain and
+activation phases, preparation certificates, bounded attempts, and automatic
+recovery only before activation commits. Database confirmation also runs after
+process restart and retains progress across bounded attempts. A durable retiring
+intent prevents stopping the surviving writer until its peer has restarted and
+caught up. Legitimate foreign-held replicated databases fence only that database.
+
+All six requested Slow drills passed five consecutive repeats (30/30). In the
+strong target-failure drill, the source handler and target are both killed after
+the owner CAS while no target admission exists. Restarting only the retained
+source restores a writer automatically in 11.539–11.802 seconds, below the stated
+30-second bound with reachable quorum. Every acknowledged row remains and a new
+write succeeds. Fast checks passed 66/66 TerraBase and 4/4 driver within budgets.
+Exact source hashes, timings, limitations and commands are in [the recovery
+qualification report](../../benchmark/bench/2026-11-06-zdt-control.md).
+
+These results qualify the new protocol locally; they do not qualify old b443
+processes during the initial transition. That first legacy handoff still lacks
+new recovery and stop exclusion and needs a coordinated, explicitly approved
+window. No candidate has been pushed or deployed.
 Restore CI/Images only after the collision regressions pass and explicit release
 approval. No live rollout, deployment or manual CAS is authorized during this
 hold. Three measured live rollouts and the independent acceptance handoff remain

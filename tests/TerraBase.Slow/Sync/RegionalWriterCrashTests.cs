@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
@@ -15,7 +16,7 @@ using TerraBase.Testing;
 
 namespace TerraBase.Slow.Sync;
 
-public sealed class RegionalWriterCrashTests
+public sealed partial class RegionalWriterCrashTests
 {
     private const string HostConfig = "TERRABASE_TEST_REGIONAL_CRASH_HOST";
     private static readonly string[] ReplicaRegions = ["sjc"];
@@ -73,6 +74,7 @@ public sealed class RegionalWriterCrashTests
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(writer.MidWrite)), TimeSpan.FromSeconds(10));
             await Assert.That(interrupted.IsCompleted).IsFalse();
             await writer.KillAsync();
+            await follower.KillAsync();
             try
             {
                 using var response = await interrupted;
@@ -84,6 +86,7 @@ public sealed class RegionalWriterCrashTests
             }
             File.Delete(writer.Arm);
             await writer.StartAsync(token);
+            await follower.StartAsync(token);
             using var recovered = PeerTls.CreateClient(writer.Address);
             await TerraBaseTestServer.EventuallyAsync(async _ =>
             {
@@ -91,6 +94,7 @@ public sealed class RegionalWriterCrashTests
                 var body = await status.Content.ReadFromJsonAsync<JsonElement>(token);
                 return body.GetProperty("writer").GetBoolean() && body.GetProperty("ready").GetBoolean();
             }, TimeSpan.FromSeconds(15));
+            await ExecuteAsync(recovered, "INSERT INTO acked VALUES ('after-restart')");
             using var transfer = await recovered.PostAsync(ManagementApi.Uri("/v1/rollout/drain?target=gru-2"), null, token);
             await Assert.That(transfer.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await transfer.Content.ReadAsStringAsync(token));
             using var survivor = PeerTls.CreateClient(follower.Address);
@@ -103,11 +107,12 @@ public sealed class RegionalWriterCrashTests
             using var read = await survivor.PostAsJsonAsync(ManagementApi.Uri(sql), new { statements = new[] { new { sql = "SELECT id FROM acked ORDER BY id" } } }, token);
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await read.Content.ReadAsStringAsync(token));
             var rows = (await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows");
-            await Assert.That(rows.GetArrayLength()).IsEqualTo(10);
+            await Assert.That(rows.GetArrayLength()).IsEqualTo(11);
             for (var i = 0; i < 10; i++)
             {
                 await Assert.That(rows[i][0].GetString()).IsEqualTo($"ack-{i}");
             }
+            await Assert.That(rows[10][0].GetString()).IsEqualTo("after-restart");
             await ExecuteAsync(survivor, "INSERT INTO acked VALUES ('after-promotion')");
 
             async Task<string> CreateAsync(string path, object body)
@@ -153,6 +158,7 @@ public sealed class RegionalWriterCrashTests
         }, services =>
         {
             storage.Route(services);
+            TerraBaseTestServer.CaptureDebugLogs(services, new RecoveryLog(directory + ".recovery-failed"));
             services.AddHttpClient("backup-s3").AddHttpMessageHandler(() => new PersistObjects(storage, objects));
             var options = (TerraBaseOptions)services.Last(descriptor => descriptor.ServiceType == typeof(TerraBaseOptions)).ImplementationInstance!;
             services.Replace(ServiceDescriptor.Singleton(options with
@@ -169,8 +175,15 @@ public sealed class RegionalWriterCrashTests
                 var arm = directory + ".arm";
                 if (step == "writer.commit" && File.Exists(arm) && File.ReadAllText(arm) == database.DatabaseId)
                 {
-                    File.WriteAllText(directory + ".mid-write", "native transaction is open; COMMIT has not run");
                     using var blocked = new ManualResetEventSlim();
+                    using var changed = new FileSystemWatcher(Path.GetDirectoryName(arm)!, Path.GetFileName(arm));
+                    changed.Deleted += (_, _) => blocked.Set();
+                    changed.EnableRaisingEvents = true;
+                    File.WriteAllText(directory + ".mid-write", "native transaction is open; COMMIT has not run");
+                    if (!File.Exists(arm))
+                    {
+                        blocked.Set();
+                    }
                     blocked.Wait(token);
                 }
             }));
@@ -219,7 +232,24 @@ public sealed class RegionalWriterCrashTests
         }
     }
 
-    private sealed class Node(string root, string name, string address, int port, string peers, JetStreamServer nats) : IAsyncDisposable
+    // Observe the real warning at emission; TUnit may buffer console output
+    // until a test ends, which cannot synchronize a running child host.
+    private sealed class RecoveryLog(string path) : ILoggerProvider, ILogger
+    {
+        public ILogger CreateLogger(string categoryName) => this;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (formatter(state, exception).Contains("Regional handoff recovery retries from its durable phase", StringComparison.Ordinal))
+            {
+                File.WriteAllText(path, "bounded rollback failed; durable retry remains pending");
+            }
+        }
+        public void Dispose() { }
+    }
+
+    private sealed class Node(string root, string name, string address, int port, string peers, JetStreamServer nats, Uri? natsUrl = null) : IAsyncDisposable
     {
         private Process? _process;
         private readonly Queue<string> _errors = new();
@@ -227,9 +257,11 @@ public sealed class RegionalWriterCrashTests
         internal string Arm => DirectoryPath + ".arm";
         internal string MidWrite => DirectoryPath + ".mid-write";
         internal Uri Address => new($"http://{address}:{port}");
+        internal Task RecoveryFailed => TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(DirectoryPath + ".recovery-failed")), TimeSpan.FromSeconds(10));
 
         internal async Task StartAsync(CancellationToken token)
         {
+            File.Delete(DirectoryPath + ".recovery-failed");
             var ready = DirectoryPath + ".ready";
             File.Delete(ready);
             var configPath = DirectoryPath + ".json";
@@ -240,7 +272,7 @@ public sealed class RegionalWriterCrashTests
                 ["address"] = address,
                 ["port"] = port,
                 ["peers"] = peers,
-                ["nats"] = nats.Url.ToString(),
+                ["nats"] = (natsUrl ?? nats.Url).ToString(),
                 ["token"] = nats.Token,
             }.ToJsonString(), token);
             if (!OperatingSystem.IsWindows())
@@ -255,14 +287,13 @@ public sealed class RegionalWriterCrashTests
             };
             start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "TerraBase.Slow.dll"));
             start.ArgumentList.Add("--treenode-filter");
-            start.ArgumentList.Add("/*/*/*RegionalWriterCrashTests/*");
+            start.ArgumentList.Add("/*/*/*RegionalWriterCrashTests/Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion");
             start.ArgumentList.Add("--results-directory");
             start.ArgumentList.Add(DirectoryPath + ".results");
             start.Environment[HostConfig] = configPath;
             start.Environment[PeerTls.TestSecretVariable] = PeerTls.Secret;
             _process?.Dispose();
             _process = Process.Start(start) ?? throw new IOException("regional process did not start");
-            _process.OutputDataReceived += static (_, _) => { };
             _process.ErrorDataReceived += (_, line) =>
             {
                 if (line.Data is not { } text)

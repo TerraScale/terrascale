@@ -258,7 +258,24 @@ internal sealed class HomeLeases(
             }
 
             var previous = current?.Value is { } bytes ? Decode(bytes) : null;
-            if (previous is not null && (previous.Home != options.Region || previous.Node != source && previous.Node != options.MachineId))
+            if (previous is not null && previous.Home != options.Region)
+            {
+                if (previous.OrganizationId != database.OrganizationId || previous.ProjectId != database.ProjectId
+                    || previous.DatabaseId != database.DatabaseId || previous.Epoch < placement.Version)
+                {
+                    return false;
+                }
+                // A legitimate cross-region move may precede this regional
+                // catalog's refresh. Fence just that database and follow its
+                // newer placement; it must not block the entire region.
+                leaseGate.Lease(database.DatabaseId!, held: false);
+                fences.Moved(database.DatabaseId!, previous.Home);
+                await catalog.UpdatePlacementAsync(database, Moved(placement, previous), cancellationToken).ConfigureAwait(false);
+                replication.Resume(database);
+                replication.WakeCatalog(previous.Home);
+                return true;
+            }
+            if (previous is not null && previous.Node != source && previous.Node != options.MachineId)
             {
                 return false;
             }

@@ -1,0 +1,91 @@
+{
+  "base": "5fd89c3e7271abc350125b0e68e18b4fd50f5f76",
+  "host": "beta",
+  "runner": "ts-heavy-any / terrabase-test-slow",
+  "configuration": "Debug",
+  "sources_sha256": {
+    "src/TerraBase/Features/Replicas/HomeLeases.cs": "22d9edd7cde598a8a1f403b92b3e3f4f51e55ebf607abcf6e8463df741582716",
+    "src/TerraBase/Features/Replicas/RegionalHandoff.cs": "4842ab20f46a5b2418a024dfce3a013fb54c709156bb63c6a745347c7f67a370",
+    "src/TerraBase/Features/Replicas/RegionalHandoff.Control.cs": "d20e9f149ebe350a6f386379ba2c105abc63e53d64aaaf4b30aa86d89db82141",
+    "src/TerraBase/Features/Replicas/RegionalOwners.cs": "62c707484e1e6951072589d4452d33c823d0d05109fe04a2a6738a97aadc171f",
+    "src/TerraBase/Features/Replicas/RegionalWriterLease.cs": "aadeb4b814970b490f8a50510695addb4ff2900f8ede80402c716d173f18f5ad",
+    "src/TerraBase/Hosting/TerraBaseJsonContext.cs": "0f7652cfe761d9f24e5fd16afe3b1a7cd6593799ac98d41951dc8791979bb28d",
+    "tests/TerraBase.Slow/Sync/RegionalHandoffTests.cs": "765b9319c9235690024862e6fa61dfdd4d5fe9a1fa4f9ef76abdc2c4112e073e",
+    "tests/TerraBase.Slow/Sync/RegionalWriterCrashTests.cs": "f05e698857f90003be9402a436d16e21fe995c060de0448ed5464a70a59e9410",
+    "tests/TerraBase.Slow/Sync/RegionalWriterRecoveryTests.cs": "c5b9ea90cc51c80218a89fbffdfb3531fd13111f2007aa2f3aa6bcdcb461e9e7",
+    "tests/TerraBase.Slow/Sync/RegionalNatsFault.cs": "16e9ab09247015227bc1b7fc7c6718380dab38d6cf2d0977c562e515abd0b950"
+  },
+  "raw_log_path": "/tmp/zdt-six-drills-r5.log",
+  "raw_log_sha256": "49c13c4abf423f19c2e8464aca60f0b11cd0912df2f910435834366ba2804678",
+  "slow_repeats": [
+    {
+      "repeat": 1,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "9s 544ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "14s 243ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "14s 908ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "15s 810ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "20s 251ms",
+        "An_uncertified_manual_owner_CAS_during_a_native_write_cannot_admit_a_second_writer_or_lose_acknowledged_rows": "20s 442ms"
+      },
+      "recovery_ms": 11670.871
+    },
+    {
+      "repeat": 2,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "8s 552ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "13s 785ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "14s 655ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "15s 246ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "19s 519ms",
+        "An_uncertified_manual_owner_CAS_during_a_native_write_cannot_admit_a_second_writer_or_lose_acknowledged_rows": "20s 455ms"
+      },
+      "recovery_ms": 11539.337
+    },
+    {
+      "repeat": 3,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "8s 748ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "13s 406ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "14s 635ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "15s 418ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "19s 602ms",
+        "An_uncertified_manual_owner_CAS_during_a_native_write_cannot_admit_a_second_writer_or_lose_acknowledged_rows": "21s 459ms"
+      },
+      "recovery_ms": 11786.587
+    },
+    {
+      "repeat": 4,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "8s 963ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "13s 950ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "14s 814ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "15s 559ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "19s 790ms",
+        "An_uncertified_manual_owner_CAS_during_a_native_write_cannot_admit_a_second_writer_or_lose_acknowledged_rows": "20s 917ms"
+      },
+      "recovery_ms": 11737.964
+    },
+    {
+      "repeat": 5,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "8s 889ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "13s 873ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "14s 974ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "15s 155ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "19s 869ms",
+        "An_uncertified_manual_owner_CAS_during_a_native_write_cannot_admit_a_second_writer_or_lose_acknowledged_rows": "21s 001ms"
+      },
+      "recovery_ms": 11802.377
+    }
+  ],
+  "fast": {
+    "terrascale_tests": 66,
+    "terrascale_wall_s": 10.02,
+    "terrascale_slowest_test_s": 3.687,
+    "driver_tests": 4,
+    "driver_wall_s": 5.954,
+    "driver_slowest_test_s": 0.047,
+    "exit_code": 0
+  }
+}

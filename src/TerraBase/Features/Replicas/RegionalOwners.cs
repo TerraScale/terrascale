@@ -4,7 +4,12 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed record RegionalOwner(string Region, string Node, long Epoch, string? Previous = null);
+internal sealed record RegionalTransfer(string Id, string Source, string Target, string SourceSession, string Phase, DateTimeOffset Deadline);
+
+internal sealed record RegionalPrepared(string Source, string Target, long Epoch, string? Operation);
+
+internal sealed record RegionalOwner(string Region, string Node, long Epoch, string? Previous = null,
+    bool Activated = false, RegionalTransfer? Transfer = null, int Version = 0);
 
 /// <summary>Observed ownership, independent of reachability and peers-file ordering.</summary>
 internal sealed class RegionalOwners(TerraBaseOptions options)
@@ -21,7 +26,8 @@ internal sealed class RegionalOwners(TerraBaseOptions options)
 
     internal void Observe(RegionalOwner owner)
     {
-        if (owner.Region == options.Region && Find(owner.Region) != owner)
+        var previous = Find(owner.Region);
+        if (owner.Region == options.Region && (previous is null || previous.Node != owner.Node || previous.Epoch != owner.Epoch))
         {
             // A former writer's unexpired renewal must never admit a new epoch before activation.
             Volatile.Write(ref _until, 0);
@@ -29,9 +35,13 @@ internal sealed class RegionalOwners(TerraBaseOptions options)
         _owners[owner.Region] = owner;
     }
 
-    internal void Renew() => Volatile.Write(ref _until, TimeProvider.System.GetTimestamp() + 6 * TimeProvider.System.TimestampFrequency);
+    internal void Renew(long until) => Volatile.Write(ref _until, until);
 
-    internal void Drain() => Volatile.Write(ref _draining, 1);
+    internal void Drain()
+    {
+        Volatile.Write(ref _draining, 1);
+        Volatile.Write(ref _until, 0);
+    }
 
     internal void Resume() => Volatile.Write(ref _draining, 0);
 

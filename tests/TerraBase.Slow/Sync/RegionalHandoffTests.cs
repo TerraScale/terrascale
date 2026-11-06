@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using NATS.Client.Core;
@@ -22,6 +23,7 @@ namespace TerraBase.Slow.Sync;
 public sealed class RegionalHandoffTests
 {
     private static readonly string[] ReplicaRegions = ["sjc"];
+    private static readonly string[] AcknowledgedRows = ["after", "before", "returned"];
     [Test]
     public async Task A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back()
     {
@@ -41,6 +43,7 @@ public sealed class RegionalHandoffTests
             JsonSerializer.SerializeToUtf8Bytes(foreignPlatform, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
         using var issuer = new TestIssuer();
         var storage = new FakeS3();
+        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var directory = Directory.CreateTempSubdirectory("regional-handoff-").FullName;
         using var reservation = new TcpListener(IPAddress.Any, 0);
         reservation.Start();
@@ -120,10 +123,19 @@ public sealed class RegionalHandoffTests
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await read.Content.ReadAsStringAsync(token));
             await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows")[0][0].GetInt32()).IsEqualTo(2);
             await Assert.That(first.Server.Services.GetRequiredService<RegionalOwners>().Writer).IsFalse();
-            // Keep both processes alive: this exercises role reversal without relying on a restart to clear fencing.
+            // A durable stop intent survives the first drain response. Another
+            // controller cannot stop the surviving writer before replacement.
+            await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().DrainAsync("gru-1", token)).IsFalse();
+            await first.DisposeAsync();
+            await using var returned = await StartAsync("gru-1", "127.0.0.2");
             await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().DrainAsync("gru-1", token)).IsTrue();
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(first.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
-            await ExecuteAsync(viaFirst, "INSERT INTO acked VALUES ('returned')");
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(returned.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
+            using var viaReturned = returned.WithToken(bearer);
+            await ExecuteAsync(viaReturned, "INSERT INTO acked VALUES ('returned')");
+            using var reconciled = await viaReturned.PostAsJsonAsync(sql, new { statements = new[] { new { sql = "SELECT id FROM acked ORDER BY id" } } }, token);
+            await Assert.That(reconciled.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await reconciled.Content.ReadAsStringAsync(token));
+            var ids = (await reconciled.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows");
+            await Assert.That(ids.EnumerateArray().Select(row => row[0].GetString()!).ToArray()).IsEquivalentTo(AcknowledgedRows);
             var retained = await homes.GetEntryAsync<byte[]>("home." + regionalId, cancellationToken: token);
             await Assert.That(JsonSerializer.Deserialize(retained.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(foreign);
             foreach (var ignored in new[] { foreignPlatform, foreignDashboard })
@@ -146,6 +158,8 @@ public sealed class RegionalHandoffTests
         Task<ManagementApi> StartAsync(string node, string address) => ManagementApi.StartAsync(settings =>
         {
             settings["region"] = "gru";
+            settings["data-directory"] = Path.Combine(directory, node);
+            settings["master-key"] = masterKey;
             storage.Configure(settings);
         }, services =>
         {
