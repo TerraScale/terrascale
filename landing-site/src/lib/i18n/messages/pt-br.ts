@@ -330,8 +330,48 @@ export const ptBr: Messages = {
   },
 
   contact: {
+    eyebrow: 'Contato TerraScale',
     titleLead: 'Vamos construir',
     titleAccent: 'algo juntos.',
+    subtitle:
+      'Tem uma dúvida sobre seu projeto, precisa de ajuda técnica ou quer conversar sobre uma parceria? Fale com a nossa equipe.',
+    emailCta: 'Envie um e-mail',
+    topicsTitle: 'Como podemos ajudar?',
+    topics: [
+      {
+        title: 'Suporte técnico',
+        text: 'Dúvidas sobre seu banco de dados, integração com o SDK ou um erro inesperado.',
+      },
+      {
+        title: 'Planos e cobrança',
+        text: 'Ajuda para entender planos, faturas ou qual opção atende melhor ao seu projeto.',
+      },
+      {
+        title: 'Trabalhe com a gente',
+        text: 'Parcerias, integrações e outras formas de construir com a TerraScale.',
+      },
+    ],
+    github: {
+      title: 'Encontre a gente no GitHub',
+      text: 'Explore nossos repositórios e SDKs.',
+    },
+    resourcesTitle: 'Procurando uma resposta rápida?',
+    resourcesSubtitle: 'Estes recursos são um bom ponto de partida.',
+    resources: {
+      documentation: {
+        title: 'Documentação',
+        text: 'Guias e exemplos para ajudar você a construir sua aplicação.',
+      },
+      status: {
+        title: 'Status da plataforma',
+        text: 'Confira a disponibilidade e as atualizações sobre incidentes em andamento.',
+      },
+      api: {
+        title: 'Referência da API',
+        text: 'Explore endpoints e formatos de requisição para sua integração.',
+      },
+    },
+    note: 'Para pedidos de suporte técnico, inclua a mensagem de erro e os passos para reproduzir o problema. Nunca compartilhe senhas ou chaves de API.',
   },
 
   about: {

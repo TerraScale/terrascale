@@ -3,122 +3,337 @@
   import Icon from '@/components/Icon.svelte'
   import type { AppIconName } from '@/lib/icons'
   import { dict } from '@/lib/i18n'
+  import { docsLink } from '@/lib/site'
 
-  type ChannelHrefKind = 'external' | 'mailto' | 'internal'
-  // Email shows its address because visitors copy it; the web channels need only their name.
-  const channels: Array<{ icon: AppIconName; label: string; value?: string; href: string; kind: ChannelHrefKind }> = [
-    { icon: 'mail', label: 'Email', value: 'support@terrascale.tech', href: 'mailto:support@terrascale.tech', kind: 'mailto' },
-    { icon: 'brandGithub', label: 'GitHub', href: 'https://github.com/TerraScale', kind: 'external' },
+  const email = 'support@terrascale.tech'
+  const topicIcons: AppIconName[] = ['messageCircle', 'dollarSign', 'users']
+  const resources: { key: 'documentation' | 'status' | 'api'; icon: AppIconName; href: string }[] = [
+    { key: 'documentation', icon: 'bookOpen', href: docsLink.href },
+    { key: 'status', icon: 'activity', href: 'https://status.terrascale.tech' },
+    { key: 'api', icon: 'code2', href: 'https://api.terrascale.tech/scalar/' },
   ]
 </script>
 
-<section class="ts-section contact-hero">
-  <div class="ts-container contact-hero__inner">
-    <h1 class="contact-hero__title">
-      {$dict.contact.titleLead}
-      <span class="ts-h-muted">{$dict.contact.titleAccent}</span>
-    </h1>
-    <ul class="contact-channels">
-      {#each channels as c (c.label)}
+<div class="ts-container contact-page">
+  <section class="contact-overview" aria-labelledby="contact-title">
+    <div class="contact-intro">
+      <p class="contact-eyebrow">{$dict.contact.eyebrow}</p>
+      <h1 id="contact-title">
+        {$dict.contact.titleLead}
+        <span>{$dict.contact.titleAccent}</span>
+      </h1>
+      <p class="contact-description">{$dict.contact.subtitle}</p>
+      <ExternalLink href={`mailto:${email}`} class="ts-btn ts-btn-primary contact-email-button">
+        {$dict.contact.emailCta}
+        <Icon name="externalLink" className="contact-email-icon" />
+      </ExternalLink>
+      <ExternalLink href={`mailto:${email}`} class="contact-email-address">{email}</ExternalLink>
+    </div>
+
+    <div class="contact-details">
+      <section class="contact-topics" aria-labelledby="contact-topics-title">
+        <h2 id="contact-topics-title">{$dict.contact.topicsTitle}</h2>
+        <ul class="contact-topic-list">
+          {#each $dict.contact.topics as topic, index (topic.title)}
+            <li class="contact-topic">
+              <Icon name={topicIcons[index]} className="contact-topic-icon" />
+              <div>
+                <h3>{topic.title}</h3>
+                <p>{topic.text}</p>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </section>
+      <ExternalLink href="https://github.com/TerraScale" target="_blank" class="contact-github">
+        <div>
+          <h2 class="contact-github-title">{$dict.contact.github.title}</h2>
+          <p class="contact-github-description">{$dict.contact.github.text}</p>
+        </div>
+        <Icon name="externalLink" className="contact-link-arrow" />
+      </ExternalLink>
+    </div>
+  </section>
+
+  <section class="contact-resources" aria-labelledby="contact-resources-title">
+    <h2 id="contact-resources-title">{$dict.contact.resourcesTitle}</h2>
+    <p class="contact-resources-description">{$dict.contact.resourcesSubtitle}</p>
+    <ul class="contact-resource-list">
+      {#each resources as resource (resource.key)}
         <li>
-          <ExternalLink href={c.href} target={c.kind === 'external' ? '_blank' : undefined} class="contact-channel">
-            <span class="ts-icon-tile"><Icon name={c.icon} /></span>
-            <span class="contact-channel__body">
-              <span class="contact-channel__label">{c.label}</span>
-              {#if c.value}<span class="contact-channel__value">{c.value}</span>{/if}
+          <ExternalLink href={resource.href} target="_blank" class="contact-resource">
+            <span class="contact-resource-icons">
+              <Icon name={resource.icon} className="contact-resource-icon" />
+              <Icon name="externalLink" className="contact-link-arrow" />
             </span>
-            <Icon name="chevronRight" className="contact-channel__chev" />
+            <h3>{$dict.contact.resources[resource.key].title}</h3>
+            <p class="contact-resource-description">{$dict.contact.resources[resource.key].text}</p>
           </ExternalLink>
         </li>
       {/each}
     </ul>
-  </div>
-</section>
+    <p class="contact-note">{$dict.contact.note}</p>
+  </section>
+</div>
 
 <style>
-  .contact-hero__inner {
+  .contact-page {
+    max-width: calc(var(--ts-content-max) + var(--ts-s20));
+    padding-block: var(--ts-s16) var(--ts-s12);
+  }
+
+  .contact-overview {
     display: grid;
-    gap: var(--ts-s10);
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+    gap: var(--ts-s16);
+    align-items: start;
+    padding-bottom: var(--ts-s12);
   }
 
-  .contact-hero__title {
-    max-width: 820px;
-    font-size: var(--ts-fs-5xl);
-    font-weight: var(--ts-display-weight);
-    letter-spacing: var(--ts-display-tracking);
-    line-height: 1.04;
-  }
-
-  .contact-channels {
-    max-width: 560px;
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--ts-line);
-  }
-
-  .contact-channels li {
-    border-bottom: 1px solid var(--ts-line);
-  }
-
-  .contact-channels :global(.contact-channel) {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-s4);
-    min-height: 72px;
-    padding: var(--ts-s3) var(--ts-s3);
-    color: var(--ts-ink);
-    transition: background-color var(--ts-fast) var(--ts-ease);
-  }
-
-  .contact-channels :global(.contact-channel:hover) {
-    background: var(--ts-surface);
-    text-decoration: none;
-  }
-
-  /* Label and value side by side on wide screens, stacked when the row gets narrow. */
-  .contact-channel__body {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--ts-s1) var(--ts-s4);
+  .contact-intro,
+  .contact-details {
     min-width: 0;
   }
 
-  .contact-channel__label {
-    font-weight: 500;
-    min-width: 88px;
+  .contact-eyebrow {
+    font-family: var(--ts-font-mono);
+    font-size: var(--ts-fs-xs);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ts-ink-3);
   }
 
-  .contact-channel__value {
+  h1 {
+    margin-top: var(--ts-s6);
+    font-size: calc(var(--ts-fs-5xl) + var(--ts-s2));
+    font-weight: var(--ts-display-weight);
+    letter-spacing: var(--ts-display-tracking);
+    line-height: 1.09;
+  }
+
+  h1 span {
+    display: block;
+    color: var(--ts-heading-muted);
+  }
+
+  .contact-description {
+    margin-top: var(--ts-s6);
+    max-width: 48ch;
+    font-size: var(--ts-fs-lg);
+    line-height: var(--ts-lh-prose);
     color: var(--ts-ink-2);
-    font-size: var(--ts-fs-md);
+  }
+
+  .contact-intro :global(.contact-email-button) {
+    margin-top: var(--ts-s8);
+    min-height: calc(var(--ts-control-h-lg) + var(--ts-s4));
+    height: auto;
+    min-width: calc(var(--ts-s20) * 3);
+    max-width: 100%;
+    padding: var(--ts-s4) var(--ts-s6);
+    justify-content: space-between;
+    gap: var(--ts-s10);
+    font-size: var(--ts-fs-lg);
+    font-weight: 600;
+  }
+
+  .contact-intro :global(.contact-email-icon) {
+    width: var(--ts-icon-lg);
+    height: var(--ts-icon-lg);
+  }
+
+  .contact-intro :global(.contact-email-address) {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin-top: var(--ts-s4);
+    font-size: var(--ts-fs-xl);
+    font-weight: 500;
+    color: var(--ts-ink);
     overflow-wrap: anywhere;
   }
 
-  .contact-channels :global(.contact-channel__chev) {
+  .contact-topics {
+    padding: var(--ts-s8);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-lg);
+    background: var(--ts-surface);
+  }
+
+  h2 {
+    font-size: var(--ts-fs-xl);
+  }
+
+  .contact-topic-list {
+    list-style: none;
+    margin: var(--ts-s6) 0 0;
+    padding: 0;
+  }
+
+  .contact-topic {
+    display: grid;
+    grid-template-columns: var(--ts-icon-lg) minmax(0, 1fr);
+    gap: var(--ts-s4);
+    padding-block: var(--ts-s5);
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .contact-topic:last-child {
+    padding-bottom: 0;
+  }
+
+  .contact-topic :global(.contact-topic-icon) {
+    width: var(--ts-icon-lg);
+    height: var(--ts-icon-lg);
+    color: var(--ts-ink-2);
+  }
+
+  h3 {
+    font-size: var(--ts-fs-lg);
+  }
+
+  .contact-topic p {
+    margin-top: var(--ts-s2);
+    font-size: var(--ts-fs-md);
+    line-height: var(--ts-lh-prose);
+    color: var(--ts-ink-2);
+  }
+
+  .contact-details :global(.contact-github) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-s5);
+    margin-top: var(--ts-s4);
+    padding: var(--ts-s6) var(--ts-s8);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-lg);
+  }
+
+  .contact-github-title {
+    font-size: var(--ts-fs-lg);
+  }
+
+  .contact-github-description {
+    margin-top: var(--ts-s1);
+    font-size: var(--ts-fs-sm);
+    line-height: var(--ts-lh-prose);
+    color: var(--ts-ink-2);
+  }
+
+  .contact-page :global(.contact-link-arrow) {
     width: var(--ts-icon);
     height: var(--ts-icon);
-    margin-left: auto;
     color: var(--ts-ink-3);
-    transition: transform var(--ts-fast) var(--ts-ease);
   }
 
-  .contact-channels :global(.contact-channel:hover .contact-channel__chev) {
-    transform: translateX(2px);
-    color: var(--ts-ink);
+  .contact-resources {
+    padding-top: var(--ts-s8);
+    border-top: 1px solid var(--ts-line);
   }
 
-  @media (max-width: 860px) {
-    .contact-hero__title {
-      font-size: var(--ts-fs-4xl);
+  .contact-resources-description {
+    margin-top: var(--ts-s2);
+    font-size: var(--ts-fs-md);
+    color: var(--ts-ink-2);
+  }
+
+  .contact-resource-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--ts-s5);
+    list-style: none;
+    margin: var(--ts-s6) 0 0;
+    padding: 0;
+  }
+
+  .contact-resource-list :global(.contact-resource) {
+    display: block;
+    height: 100%;
+    padding: var(--ts-s6);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-lg);
+    background: var(--ts-surface);
+  }
+
+  .contact-resource-icons {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ts-s4);
+    margin-bottom: var(--ts-s6);
+  }
+
+  .contact-resource-icons :global(.contact-resource-icon) {
+    width: var(--ts-icon-lg);
+    height: var(--ts-icon-lg);
+    color: var(--ts-ink-2);
+  }
+
+  .contact-resource-description {
+    max-width: 36ch;
+    margin-top: var(--ts-s2);
+    font-size: var(--ts-fs-md);
+    line-height: var(--ts-lh-prose);
+    color: var(--ts-ink-2);
+  }
+
+  .contact-page :global(.contact-github),
+  .contact-page :global(.contact-resource) {
+    transition: border-color var(--ts-fast) var(--ts-ease);
+  }
+
+  .contact-page :global(.contact-github:hover),
+  .contact-page :global(.contact-resource:hover) {
+    border-color: var(--ts-line-strong);
+    text-decoration: none;
+  }
+
+  .contact-note {
+    margin-top: var(--ts-s6);
+    font-size: var(--ts-fs-xs);
+    line-height: var(--ts-lh-prose);
+    color: var(--ts-ink-3);
+  }
+
+  @media (max-width: 1100px) {
+    .contact-overview {
+      gap: var(--ts-s10);
+    }
+
+    h1 {
+      font-size: var(--ts-fs-5xl);
+    }
+
+    .contact-topics,
+    .contact-details :global(.contact-github) {
+      padding: var(--ts-s6);
     }
   }
 
-  @media (max-width: 640px) {
-    .contact-channel__body {
-      flex-direction: column;
-      align-items: flex-start;
+  @media (max-width: 760px) {
+    .contact-page {
+      padding-block: var(--ts-s12);
+    }
+
+    .contact-overview {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--ts-s10);
+      padding-bottom: var(--ts-s10);
+    }
+
+    h1 {
+      max-width: 16ch;
+      font-size: var(--ts-fs-4xl);
+    }
+
+    .contact-resource-list {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--ts-s4);
+    }
+
+    .contact-resource-description {
+      max-width: none;
     }
   }
 </style>
