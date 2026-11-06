@@ -19,7 +19,7 @@ export const ptBr: Messages = {
     docs: 'Docs',
     status: 'Status',
     login: 'Entrar',
-    getStarted: 'Comece a construir',
+    getStarted: 'Criar conta',
     toggleNav: 'Abrir menu de navegação',
     language: {
       trigger: 'Idioma',
@@ -71,7 +71,7 @@ export const ptBr: Messages = {
 
   hero: {
     headline: 'Banco de dados multirregião',
-    cta: 'Comece grátis',
+    cta: 'Criar conta',
   },
 
 
@@ -175,9 +175,8 @@ export const ptBr: Messages = {
   },
 
   cta: {
-    headlineLead: 'Cadastre-se no',
-    headlineAccent: 'TerraScale Public Alpha.',
-    ctaPrimary: 'Cadastre-se no Public Alpha',
+    title: 'Vamos começar?',
+    ctaPrimary: 'Criar conta',
   },
 
   pricingTeaser: {
@@ -316,9 +315,8 @@ export const ptBr: Messages = {
       contactSales: 'Falar com vendas',
     },
     finalCta: {
-      titleLead: 'Pronto para',
-      titleAccent: 'começar?',
-      cta: 'Cadastre-se no Public Alpha',
+      title: 'Vamos começar?',
+      cta: 'Criar conta',
     },
     cadence: {
       free: 'Sem cartão de pagamento',
