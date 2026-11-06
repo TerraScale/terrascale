@@ -328,8 +328,48 @@ export const en = {
   },
 
   contact: {
+    eyebrow: 'Contact TerraScale',
     titleLead: 'Let’s build',
     titleAccent: 'something together.',
+    subtitle:
+      'Have a question about your project, need technical help, or want to talk about working together? Get in touch with the team.',
+    emailCta: 'Email our team',
+    topicsTitle: 'What can we help you with?',
+    topics: [
+      {
+        title: 'Technical support',
+        text: 'Questions about your database, SDK integration, or an unexpected error.',
+      },
+      {
+        title: 'Plans & billing',
+        text: 'Help understanding plans, invoices, or which option fits your project.',
+      },
+      {
+        title: 'Work with us',
+        text: 'Partnerships, integrations, and other ways to build with TerraScale.',
+      },
+    ],
+    github: {
+      title: 'Find us on GitHub',
+      text: 'Explore our repositories and SDKs.',
+    },
+    resourcesTitle: 'Looking for a quick answer?',
+    resourcesSubtitle: 'These resources are a good place to start.',
+    resources: {
+      documentation: {
+        title: 'Documentation',
+        text: 'Guides and examples to help you build your application.',
+      },
+      status: {
+        title: 'System status',
+        text: 'Check availability and updates on ongoing incidents.',
+      },
+      api: {
+        title: 'API reference',
+        text: 'Explore endpoints and request formats for your integration.',
+      },
+    },
+    note: 'For technical requests, include the error message and steps to reproduce. Never share passwords or API keys.',
   },
 
   about: {

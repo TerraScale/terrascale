@@ -36,6 +36,19 @@ for (const [file, route, title] of pages) {
   }
 }
 
+const contactMain = read('contact.html').match(/<main\b[^>]*>([\s\S]*?)<\/main>/)?.[1]
+assert.ok(contactMain, 'contact: prerendered main content')
+const contactLinks = [...contactMain.matchAll(/<a\b([^>]*)>/g)].map(([, attributes]) => attributes)
+assert.equal(contactLinks.filter((attributes) => /href="mailto:support@terrascale.tech"/.test(attributes)).length, 2,
+  'contact: the primary email button and readable address both open the mail client')
+for (const href of ['https://github.com/TerraScale', 'https://docs.terrascale.tech',
+  'https://status.terrascale.tech', 'https://api.terrascale.tech/scalar/']) {
+  const attributes = contactLinks.find((attributes) => attributes.includes(`href="${href}"`))
+  assert.ok(attributes, `contact: prerendered resource link ${href}`)
+  assert.match(attributes, /target="_blank"/, `contact: resource opens separately ${href}`)
+  assert.match(attributes, /rel="[^"]*noopener/, `contact: safe resource link ${href}`)
+}
+
 assert.match(read('robots.txt'), /Sitemap: https:\/\/terrascale.tech\/sitemap.xml/)
 for (const route of ['/', '/about', '/pricing', '/contact']) {
   assert.ok(read('sitemap.xml').includes(`<loc>https://terrascale.tech${route}</loc>`))

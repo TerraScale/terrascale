@@ -15,8 +15,9 @@ for (const [locale, messages] of locales) {
     assert.ok(messages.homeFaq.items.some((item) => noSla[locale].test(item.a)));
   });
 
-  // Simple UI: headings and real content only, no eyebrows, subtitles or taglines.
-  test(`${locale}: copy has no eyebrow, subtitle or tagline strings`, () => {
+  // The approved Contact design explicitly includes its section label and introduction.
+  // Keep the Simple UI restriction everywhere else, with only these two exact exceptions.
+  test(`${locale}: secondary copy is limited to the approved Contact introduction`, () => {
     const keys = [];
     const walk = (value, path) => {
       if (Array.isArray(value)) value.forEach((item, i) => walk(item, `${path}[${i}]`));
@@ -25,7 +26,9 @@ for (const [locale, messages] of locales) {
       }
     };
     walk(messages, locale);
-    assert.deepEqual(keys.filter((key) => /\.(?:\w*eyebrow|subtitle|tagline|ctaNote|perks|highlights)$/i.test(key)), []);
+    assert.deepEqual(keys.filter((key) => /\.(?:\w*eyebrow|subtitle|tagline|ctaNote|perks|highlights)$/i.test(key)),
+      [`${locale}.contact.eyebrow`, `${locale}.contact.subtitle`]);
+    assert.ok(messages.contact.eyebrow.trim() && messages.contact.subtitle.trim());
   });
 
   test(`${locale}: how it works has three steps`, () => {
