@@ -196,6 +196,7 @@ public sealed partial class RegionalWriterCrashTests
                 listener.UseTerraBaseListener(TerraBaseListener.Internal);
             }));
         }, lifetimeCancellationToken: token);
+        var nativeRows = ExportNativeRowsAsync(api.Server.Services, directory, token);
         await File.WriteAllTextAsync(directory + ".ready", "started", token);
         // Fixture-only IPC exports an actual source snapshot without changing
         // runtime admission. The manual-CAS drill sends it through real Prepare.
@@ -230,6 +231,26 @@ public sealed partial class RegionalWriterCrashTests
         var snapshot = new RegionalPrepare(node, positions, 0,
             await RegionalCatalog.ExportAsync(api.Server.Services.GetRequiredService<IStorageEngine>(), token));
         await File.WriteAllBytesAsync(directory + ".snapshot", JsonSerializer.SerializeToUtf8Bytes(snapshot, TerraBaseJsonContext.Default.RegionalPrepare), token);
+        await nativeRows;
+    }
+
+    private static async Task ExportNativeRowsAsync(IServiceProvider services, string directory, CancellationToken token)
+    {
+        var path = directory + ".native-request";
+        using var watcher = new FileSystemWatcher(Path.GetDirectoryName(directory)!, Path.GetFileName(path));
+        var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        watcher.Created += (_, _) => requested.TrySetResult();
+        watcher.Renamed += (_, _) => requested.TrySetResult();
+        watcher.EnableRaisingEvents = true;
+        if (File.Exists(path)) { requested.TrySetResult(); }
+        await requested.Task.WaitAsync(token);
+        var tenant = JsonSerializer.Deserialize<TenantContext>(await File.ReadAllTextAsync(path, token))!;
+        var store = await services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, token)
+            ?? throw new IOException("source primary is absent");
+        await using var transaction = await store.BeginTransactionAsync(write: false, token);
+        var result = await transaction.ExecuteStatementAsync(new SqlStatement("SELECT id FROM acked ORDER BY id", [],
+            new Dictionary<string, object?>(), 100, 8192, TimeSpan.FromSeconds(5)), token);
+        await File.WriteAllTextAsync(directory + ".native-rows", JsonSerializer.Serialize(result.Rows.Select(row => (string)row[0]!).ToArray()), token);
         await Task.Delay(Timeout.Infinite, token);
     }
 
@@ -313,6 +334,15 @@ public sealed partial class RegionalWriterCrashTests
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(DirectoryPath + ".snapshot")), TimeSpan.FromSeconds(10));
             return JsonSerializer.Deserialize(await File.ReadAllBytesAsync(DirectoryPath + ".snapshot", token), TerraBaseJsonContext.Default.RegionalPrepare)!;
         }
+        internal async Task<string[]> NativeRowsAsync(TenantContext tenant, CancellationToken token)
+        {
+            var request = DirectoryPath + ".native-request";
+            var temporary = request + ".new";
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(tenant), token);
+            File.Move(temporary, request);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(DirectoryPath + ".native-rows")), TimeSpan.FromSeconds(10));
+            return JsonSerializer.Deserialize<string[]>(await File.ReadAllTextAsync(DirectoryPath + ".native-rows", token))!;
+        }
         internal Uri Address => new($"http://{address}:{port}");
         internal Task RecoveryFailed => TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(DirectoryPath + ".recovery-failed")), TimeSpan.FromSeconds(10));
 
@@ -360,7 +390,7 @@ public sealed partial class RegionalWriterCrashTests
                 lock (_errors)
                 {
                     _errors.Enqueue(text);
-                    while (_errors.Count > 10)
+                    while (_errors.Count > 100)
                     {
                         _ = _errors.Dequeue();
                     }
@@ -379,6 +409,54 @@ public sealed partial class RegionalWriterCrashTests
                 }
                 return Task.FromResult(File.Exists(ready));
             }, TimeSpan.FromSeconds(30));
+        }
+
+        internal async Task StartLegacyAsync(CancellationToken token)
+        {
+            var binary = Environment.GetEnvironmentVariable("TERRABASE_TEST_LEGACY_BINARY")
+                ?? throw new IOException("real b443 binary required: run benchmark/regional-bootstrap/run.sh on a dev host");
+            const string revision = "b443b6ea83f519018c0d9f9d8f04e65c3df12724";
+            if (await File.ReadAllTextAsync(binary + ".revision", token) != revision + "\n")
+            {
+                throw new IOException("legacy binary provenance does not match b443");
+            }
+            var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet")
+            {
+                RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+            };
+            start.ArgumentList.Add(binary);
+            start.ArgumentList.Add("--environment=Development");
+            start.ArgumentList.Add("--data-directory=" + DirectoryPath);
+            start.ArgumentList.Add("--internal-port=" + port);
+            // These ordinary listeners remain bound by the actual Program.
+            // Separate ephemeral ports prevent test instances sharing a host port.
+            foreach (var listener in new[] { "port", "metrics-port", "postgres-port" })
+            {
+                using var reserve = new TcpListener(IPAddress.Loopback, 0);
+                reserve.Start();
+                start.ArgumentList.Add("--" + listener + "=" + ((IPEndPoint)reserve.LocalEndpoint).Port);
+            }
+            start.Environment["TS_REGION"] = "gru";
+            start.Environment["TS_NODE"] = name;
+            start.Environment["TS_PEERS_FILE"] = peers;
+            start.Environment["TS_NATS_URL"] = (natsUrl ?? nats.Url).ToString();
+            start.Environment["TERRABASE_NATS_TOKEN"] = nats.Token;
+            start.Environment["TERRABASE_PEER_SECRET"] = PeerTls.Secret;
+            TestMasterKey.ConfigureProcess(start);
+            _process?.Dispose();
+            _process = Process.Start(start) ?? throw new IOException("legacy Program did not start");
+            _process.ErrorDataReceived += (_, line) => { if (line.Data is { } text) { lock (_errors) { _errors.Enqueue(text); while (_errors.Count > 100) { _ = _errors.Dequeue(); } } } };
+            _process.OutputDataReceived += (_, line) => { if (line.Data is { } text) { lock (_errors) { _errors.Enqueue(text); while (_errors.Count > 100) { _ = _errors.Dequeue(); } } } };
+            _process.BeginOutputReadLine();
+            _process.BeginErrorReadLine();
+            using var http = PeerTls.CreateClient(Address);
+            await TerraBaseTestServer.EventuallyAsync(async _ =>
+            {
+                if (_process.HasExited) { lock (_errors) { throw new IOException("legacy Program exited: " + string.Join('\n', _errors)); } }
+                try { return (await RecoveryDrill.StatusAsync(http, token)).Writer; }
+                catch (HttpRequestException) { return false; }
+            }, TimeSpan.FromSeconds(30));
+            Console.WriteLine($"DRILL actual legacy Program: revision={revision} pid={_process.Id} binary_sha256={Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(binary, token)))}");
         }
 
         internal async Task KillAsync()

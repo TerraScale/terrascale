@@ -97,8 +97,11 @@ internal sealed partial class RegionalHandoff
     {
         if (owner.Transfer is not { } transfer)
         {
-            if (owner.Activated || owner.Previous is null || entry.Created + ActivationBudget > DateTimeOffset.UtcNow
-                || owner.Version == 0 && !await HasPreparedAsync(kv, owner, token).ConfigureAwait(false))
+            // A legacy owner never held the exclusive admission lease. Even a
+            // certificate written by its in-place upgrade cannot authorize a
+            // different node to reclaim it during the mixed-version window.
+            // Only the retained owner may complete Version:0 bootstrap.
+            if (owner.Version == 0 || owner.Activated || owner.Previous is null || entry.Created + ActivationBudget > DateTimeOffset.UtcNow)
             {
                 return false;
             }

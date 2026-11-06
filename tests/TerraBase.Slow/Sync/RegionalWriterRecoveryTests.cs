@@ -196,6 +196,9 @@ public sealed partial class RegionalWriterCrashTests
         {
             await Assert.That(refused.IsSuccessStatusCode).IsFalse();
         }
+        var sourceRows = await drill.Source.NativeRowsAsync(new TerraBase.Tenancy.TenantContext(drill.Organization,
+            TerraBase.Tenancy.PlanTier.Hobby, drill.Project, drill.Database), token);
+        await Assert.That(sourceRows).IsEquivalentTo(["ack-0", "ack-1", "ack-2"]);
         drill.SourceNats.Allow();
         await drill.AssertRowsAsync(drill.TargetHttp, ["ack-0", "ack-1", "ack-2", "target-committed"], token);
         Console.WriteLine("DRILL certified manual CAS: source TCP connected, source held lease at CAS, target commit succeeded, source overlap commit refused");
@@ -233,12 +236,14 @@ public sealed partial class RegionalWriterCrashTests
         await using var drill = await RecoveryDrill.StartAsync(token);
         var foreignDb = await drill.CreateDatabaseAsync("foreign-conflict", token);
         var thirdDb = await drill.CreateDatabaseAsync("third-conflict", token);
+        var mismatchDb = await drill.CreateDatabaseAsync("identity-conflict", token);
         await drill.Source.KillAsync();
         await drill.Target.KillAsync();
         var homes = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(HomeLeases.Bucket, token);
         var foreign = new HomeLease(drill.Organization, drill.Project, foreignDb, "sjc", "sjc-foreign", 0, "foreign-session");
         var third = new HomeLease(drill.Organization, drill.Project, thirdDb, "gru", "gru-third", 100, "third-session");
-        foreach (var conflict in new[] { foreign, third })
+        var mismatch = new HomeLease(EntityIds.New().ToString(), drill.Project, mismatchDb, "gru", "gru-1", 100, "mismatch-session");
+        foreach (var conflict in new[] { foreign, third, mismatch })
         {
             _ = await homes.PutAsync("node." + conflict.Node, JsonSerializer.SerializeToUtf8Bytes(new NodeLease(conflict.Node, conflict.Home, conflict.Session), TerraBaseJsonContext.Default.NodeLease), cancellationToken: token);
             _ = await homes.PutAsync("home." + conflict.DatabaseId, JsonSerializer.SerializeToUtf8Bytes(conflict, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
@@ -248,7 +253,7 @@ public sealed partial class RegionalWriterCrashTests
         await drill.Target.StartAsync(token);
         await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
         await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('healthy-after-conflict')", token);
-        foreach (var conflict in new[] { foreign, third })
+        foreach (var conflict in new[] { foreign, third, mismatch })
         {
             using var refused = await drill.SourceHttp.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{drill.Project}/databases/{conflict.DatabaseId}/sql/execute"),
                 new { statements = new[] { new { sql = "CREATE TABLE must_not_commit(id TEXT)" } } }, token);
@@ -273,16 +278,44 @@ public sealed partial class RegionalWriterCrashTests
         var legacy = new RegionalOwner("gru", "gru-1", 7, "gru-2");
         _ = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(legacy, TerraBaseJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
         await owners.DeleteAsync("protocol.gru", cancellationToken: token);
-        // Upgraded follower first: it must not treat an absent exclusive key
-        // as permission to take authority from the still-pinned legacy owner.
+        // Run the unmodified, separately built b443 Program on retained files.
+        // This is not the candidate runtime with a legacy metadata fixture.
+        await drill.Source.StartLegacyAsync(token);
+        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('legacy-acked')", token);
+        var actualLegacy = await drill.OwnerAsync(token);
+        await Assert.That(actualLegacy is { Node: "gru-1", Epoch: 7, Version: 0 }).IsTrue();
         await drill.Target.StartAsync(token);
         await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
+        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('legacy-with-upgraded-follower')", token);
+        // Fence by actual process exit before candidate same-node admission.
+        await drill.Source.KillAsync();
+        var exitedAt = DateTimeOffset.UtcNow;
+        var homes = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(HomeLeases.Bucket, token);
+        var home = await homes.GetEntryAsync<byte[]>("home." + drill.Database, cancellationToken: token);
+        await Task.Delay(HomeLeases.Ttl + TimeSpan.FromSeconds(22), token);
+        var retainedHome = await homes.GetEntryAsync<byte[]>("home." + drill.Database, cancellationToken: token);
+        await Assert.That(retainedHome.Revision).IsEqualTo(home.Revision);
+        await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
+        // Hold the real candidate after its Version:0 bootstrap certificate,
+        // long enough to deterministically cross automatic activation recovery.
+        var blocked = drill.SourceNats.Drop((subject, _) => subject == "$KV." + HomeLeases.Bucket + ".home." + drill.Database);
         await drill.Source.StartAsync(token);
-        await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
+        await blocked.WaitAsync(TimeSpan.FromSeconds(10), token);
+        await Task.Delay(TimeSpan.FromSeconds(12), token);
+        await Assert.That(await drill.OwnerAsync(token) is { Node: "gru-1", Epoch: 7, Version: 0 }).IsTrue();
+        await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
+        drill.SourceNats.Allow();
+        try { await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token); }
+        catch (OperationCanceledException error)
+        {
+            throw new IOException("legacy bootstrap admission timed out: owner=" + JsonSerializer.Serialize(await drill.OwnerAsync(token))
+                + "\nSOURCE: " + drill.Source.Diagnostics + "\nTARGET: " + drill.Target.Diagnostics, error);
+        }
         var adopted = await drill.OwnerAsync(token);
         await Assert.That(adopted is { Node: "gru-1", Epoch: 7, Version: 2, Activated: true }).IsTrue();
         await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('after-bootstrap')", token);
-        await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "after-bootstrap"], token);
+        await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "legacy-acked", "legacy-with-upgraded-follower", "after-bootstrap"], token);
+        Console.WriteLine($"DRILL real b443 exit={exitedAt:O} candidate_admission={DateTimeOffset.UtcNow:O}; owner/epoch retained; follower home revision unchanged through 32s outage");
         Console.WriteLine("DRILL retained Version:0 bootstrap: pinned owner/epoch retained; follower never admitted; exact rows preserved");
     }
 
@@ -308,6 +341,30 @@ public sealed partial class RegionalWriterCrashTests
         await RecoveryDrill.WaitWriterAsync(drill.TargetHttp, RegionalHandoff.RecoveryBound, token);
         await drill.ExecuteAsync(drill.TargetHttp, "INSERT INTO acked VALUES ('live-target-recovered')", token);
         await drill.AssertRowsAsync(drill.TargetHttp, ["ack-0", "ack-1", "ack-2", "live-target-recovered"], token);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task An_upgraded_follower_cannot_claim_its_own_regions_database_during_owner_restart(CancellationToken token)
+    {
+        await using var drill = await RecoveryDrill.StartAsync(token);
+        var homes = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(HomeLeases.Bucket, token);
+        var before = await homes.GetEntryAsync<byte[]>("home." + drill.Database, cancellationToken: token);
+        var retained = JsonSerializer.Deserialize(before.Value!, TerraBaseJsonContext.Default.HomeLease)!;
+        await Assert.That(retained.Node).IsEqualTo("gru-1");
+        await drill.Source.KillAsync();
+        // Cover node TTL, the entire 15s scan period and the 5s claim grace.
+        // The real follower and its replica/ack holds remain live throughout.
+        await Task.Delay(HomeLeases.Ttl + TimeSpan.FromSeconds(22), token);
+        var after = await homes.GetEntryAsync<byte[]>("home." + drill.Database, cancellationToken: token);
+        await Assert.That(JsonSerializer.Deserialize(after.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(retained);
+        await Assert.That(after.Revision).IsEqualTo(before.Revision);
+        await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
+        await drill.Source.StartAsync(token);
+        await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
+        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('after-owner-restart')", token);
+        await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "after-owner-restart"], token);
+        Console.WriteLine("DRILL same-region failover: owner absent 32s, home revision unchanged, follower never claimed; restart writer recovered");
     }
 
     private static bool OwnerPhase(string subject, ReadOnlyMemory<byte> payload, string phase)

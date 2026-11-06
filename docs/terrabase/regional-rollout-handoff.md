@@ -97,3 +97,16 @@ after admission acquisition; foreign/third-node DB isolation; dead-source recove
 and retained Version:0 bootstrap. Every drill reconciles acknowledged rows. Three later live
 rollouts must separately meet the request-error, latency and bounded-recovery
 criteria under the agreed regional load.
+
+A conflicting per-database holder is isolated at its exact KV revision, even if
+that holder is dead. Holder death does not establish tenant identity or certify
+a copy. The DB stays fenced until a valid newer authoritative lease/catalog
+revision is observed; unrelated DBs and the regional writer recover normally.
+Same-region node expiry cannot run cross-region failover: only the certified
+regional handoff protocol may change the regional writer.
+
+Version:0 never triggers automatic rollback or promotion, including after the
+pinned owner's upgrade writes its preparation certificate. A legacy process
+admits without the exclusive lease, so that certificate is not authority to
+reclaim a different node. Complete bootstrap on the same retained owner after
+physical old-process exit; protocol-v2 transfer phases enable automatic recovery.

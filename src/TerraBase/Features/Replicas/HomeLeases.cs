@@ -165,7 +165,7 @@ internal sealed class HomeLeases(
     internal async ValueTask<bool> TakeAsync(TenantContext database, string fromRegion, long epoch, HomeLease? failedHome, CancellationToken cancellationToken)
     {
         // An expired global record cannot promote an independent regional copy.
-        if (PlatformDatabase(database.DatabaseId!)
+        if (fromRegion == options.Region || PlatformDatabase(database.DatabaseId!)
             || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
             || RegionOnly(placement))
         {
@@ -260,14 +260,17 @@ internal sealed class HomeLeases(
             }
 
             var previous = current?.Value is { } bytes ? Decode(bytes) : null;
+            // Identity is mandatory even for a same-region source lease.
+            // A dead or mismatched holder stays isolated at this KV revision;
+            // its liveness never grants permission to overwrite its identity.
+            if (previous is not null && (previous.OrganizationId != database.OrganizationId || previous.ProjectId != database.ProjectId
+                || previous.DatabaseId != database.DatabaseId || previous.Epoch < placement.Version))
+            {
+                Isolate(previous, current!.Value.Revision);
+                return true;
+            }
             if (previous is not null && previous.Home != options.Region)
             {
-                if (previous.OrganizationId != database.OrganizationId || previous.ProjectId != database.ProjectId
-                    || previous.DatabaseId != database.DatabaseId || previous.Epoch < placement.Version)
-                {
-                    Isolate(previous, current!.Value.Revision);
-                    return true;
-                }
                 // A legitimate cross-region move may precede this regional
                 // catalog's refresh. Fence just that database and follow its
                 // newer placement; it must not block the entire region.
@@ -662,7 +665,9 @@ internal sealed class HomeLeases(
     {
         foreach (var (id, (lease, _)) in _homes)
         {
-            if (lease.Node != gone.Node || PlatformDatabase(id) || _isolated.ContainsKey(id))
+            // Same-region authority is exclusively RegionalHandoff's decision.
+            // Node TTL expiry during an owner restart must never promote its follower.
+            if (lease.Home == options.Region || lease.Node != gone.Node || PlatformDatabase(id) || _isolated.ContainsKey(id))
             {
                 continue;
             }
@@ -683,7 +688,7 @@ internal sealed class HomeLeases(
             for (var round = 0; round < ClaimRounds && !cancellationToken.IsCancellationRequested; round++)
             {
                 await Task.Delay(Grace, TimeProvider.System, cancellationToken).ConfigureAwait(false);
-                if (_kv is null || !_homes.TryGetValue(lease.DatabaseId, out var known) || known.Lease != lease || _nodes.ContainsKey(lease.Node) || !Ready)
+                if (lease.Home == options.Region || _kv is null || !_homes.TryGetValue(lease.DatabaseId, out var known) || known.Lease != lease || _nodes.ContainsKey(lease.Node) || !Ready)
                 {
                     return;
                 }
