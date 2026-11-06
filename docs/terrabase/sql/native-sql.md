@@ -22,7 +22,7 @@ Each result has `columns`, `rows`, `rows_affected` and `last_insert_rowid`. SQL 
 - WebSocket transaction frames and PostgreSQL transactions pin one session. Transactions live at most five seconds, then roll back and release the writer. See [WebSocket](websocket.md).
 - A failed statement inside an explicit transaction uses the session's savepoint/error rules; PostgreSQL aborted transactions require rollback or rollback to a savepoint.
 - Statement text is at most 16 KiB, the HTTP body at most 1 MiB, results at most 10,000 rows and 8 MiB, and a transaction changes at most 1,024 rows or grows the file by at most 8 MiB.
-- Native query cancellation and value-length bounds apply before large results are materialized. Request cancellation retains resource ownership until the running native work drains.
+- Native query cancellation and value-length bounds apply before large results are materialized. Beyond these limits, each plan sets an engine execution-time and engine work-unit budget for running statements (see [quality of service](../qos.md)); Enterprise has no plan time or work ceiling. A query past its budget answers `query_canceled`. Request cancellation retains resource ownership until the running native work drains.
 
 A batch runs one parsed statement at a time, so later statements see earlier DDL. The parser supplies boundaries; a single-statement call refuses trailing statements. Every write holds the organization's storage-quota lease before the database writer and retains it through commit or rollback.
 
