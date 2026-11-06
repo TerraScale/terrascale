@@ -12,6 +12,18 @@ on:
         description: 'Maintenance: prepare combined native release assets only (no Fast/images/publication)'
         type: boolean
         default: false
+      # Cold maintenance pins the TerraBase digest into its fences before the window, then releases it to the fenced
+      # regions: build-only qualifies and publishes the immutable images without releasing; release-only releases one
+      # TerraBase arm64 digest this main revision built, to each region separately, without building.
+      publication:
+        description: 'release (default), build-only (TerraBase images, no release) or release-only (needs terrabase_arm64)'
+        type: choice
+        options: [release, build-only, release-only]
+        default: release
+      terrabase_arm64:
+        description: 'release-only: the linux/arm64 child digest (sha256:...) a build-only run published for this main revision'
+        type: string
+        default: ''
 
 # A new push cancels the older run of the same PR. Every other run has its own group: each main push publishes the
 # images of the areas it changed, so none may be cancelled.
@@ -116,7 +128,7 @@ jobs:
               - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
       - id: areas
         env:
-          CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.native_artifacts && '[]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
+          CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
         run: |
           # The ts-auth image does not contain TerraBase: main publishes and Slow-tests auth only for its own changes.
           echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
@@ -462,7 +474,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}:${{ github.sha }}
-            ${{ github.ref == 'refs/heads/main' && format('ghcr.io/terrascale/{0}:main', env.AREA == 'auth' && 'ts-auth' || 'terrabase') || '' }}
+            ${{ github.ref == 'refs/heads/main' && inputs.publication != 'build-only' && format('ghcr.io/terrascale/{0}:main', env.AREA == 'auth' && 'ts-auth' || 'terrabase') || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -478,8 +490,21 @@ jobs:
       # failure of a push run's release (bake, rollback, a rerun's rebuilt digest under its already-approved run id)
       # dispatches one fresh main run, a newer signed run that releases the latest main; dispatched runs never
       # dispatch again.
+      - name: Record the build-only digest (no release)
+        if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
+        env:
+          SERVICE: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
+          INDEX: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/terrascale/${SERVICE}"
+          arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
+            jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
+          docker buildx imagetools inspect "${image}@${arm64}" --format '{{json .Image}}' |
+            jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
+          echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${arm64}" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Release to every region
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publication != 'build-only')
         env:
           GH_TOKEN: ${{ github.token }}
           SERVICE: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
@@ -513,6 +538,47 @@ jobs:
             gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
             echo "Release failed; dispatched a fresh main run to release the latest main." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
+          exit "$status"
+
+  # Cold maintenance: release a TerraBase digest that a build-only dispatch published for this exact main revision.
+  # Each region separately: a fenced founder retains the candidate only from a release it serves itself. No build,
+  # no other service, and a failure never dispatches another run.
+  release-only:
+    if: github.event_name == 'workflow_dispatch' && inputs.publication == 'release-only' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: production-terrabase
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # ts-orch accepts this job's OIDC token to release the pinned digest.
+      id-token: write
+    steps:
+      - *setup-builder
+      - name: Release the pinned arm64 digest to each region
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARM64: ${{ inputs.terrabase_arm64 }}
+        run: |
+          set -euo pipefail
+          [[ "$ARM64" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'terrabase_arm64 must be sha256:<64 hex>' >&2; exit 1; }
+          image="ghcr.io/terrascale/terrabase@${ARM64}"
+          docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
+            jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
+          tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
+          test -n "$tag"
+          gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
+          curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
+          chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
+          status=0
+          for i in $(jq -r 'keys[]' "${RUNNER_TEMP}/regions.json"); do
+            jq -c "[.[$i]]" "${RUNNER_TEMP}/regions.json" > "${RUNNER_TEMP}/region.json"
+            echo "Region $(jq -r '.[0].region' "${RUNNER_TEMP}/region.json")" | tee -a "$GITHUB_STEP_SUMMARY"
+            "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service terrabase \
+              --image "$image" --regions "${RUNNER_TEMP}/region.json" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+          done
           exit "$status"
 
   # Shared scope and contract changes must reach TerraBase before their issuer.
