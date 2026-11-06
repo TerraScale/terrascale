@@ -63,21 +63,19 @@ export type PublicAlphaPlanSlug = 'free' | 'starter' | 'pro' | 'team' | 'enterpr
 
 const planPresentation: Record<
   PublicAlphaPlanSlug,
-  { icon: AppIconName; popular: boolean }
+  { icon: AppIconName; popular: boolean; accent: string }
 > = {
-  free: { icon: 'zap', popular: false },
-  starter: { icon: 'star', popular: false },
-  pro: { icon: 'trendingUp', popular: true },
-  team: { icon: 'users', popular: false },
-  enterprise: { icon: 'shieldCheck', popular: false },
+  free: { accent: 'var(--ts-text-muted)', icon: 'zap', popular: false },
+  starter: { accent: 'var(--ts-success)', icon: 'star', popular: false },
+  pro: { accent: 'var(--ts-primary-light)', icon: 'trendingUp', popular: true },
+  team: { accent: 'var(--ts-tertiary)', icon: 'users', popular: false },
+  enterprise: { accent: 'var(--ts-warning)', icon: 'shieldCheck', popular: false },
 }
 
 export const publicAlphaCatalog = pricingJson.plans.map((plan) => ({
   name: plan.name,
   slug: plan.id as PublicAlphaPlanSlug,
   ...planPresentation[plan.id as PublicAlphaPlanSlug],
-  accent: 'var(--ts-primary)',
-  accentRgb: 'var(--ts-primary-rgb)',
   available: plan.available,
   price: plan.priceMonthlyUsd,
   annualPrice: plan.priceAnnualUsd,

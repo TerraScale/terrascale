@@ -186,6 +186,7 @@ export const es: Messages = {
   },
 
   pricing: {
+    recommended: 'Recomendado',
     titleLead: 'Precios',
     suffixMonthly: '/mes',
     suffixAnnual: '/año',

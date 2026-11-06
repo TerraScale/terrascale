@@ -184,6 +184,7 @@ export const en = {
   },
 
   pricing: {
+    recommended: 'Recommended',
     titleLead: 'Pricing',
     suffixMonthly: '/month',
     suffixAnnual: '/year',
