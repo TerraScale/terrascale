@@ -187,3 +187,26 @@ source/log hashes are in delta's `qualification/v2-fast.{md,json}` under the sam
 ZDT directory. The previous 55/55 Slow proof is retained without claiming a rerun.
 Independent review of Version:0 adoption, the cold fence and plan, then explicit
 user GO, are outstanding. Production, stale keys and workflows remain untouched.
+
+## v2 review follow-up (2026-11-06, unshipped)
+
+The coordinated cold-maintenance plan supersedes the earlier hot-install/key
+cleanup order: all six old watchers must be physically absent before the two
+conditional stale-key deletions, and every new process still retains its owner
+and epoch. No deletion, restart or workflow enable occurred during qualification.
+
+A further review found an activation crash cut: publishing the protocol marker
+before the owner CAS could leave Version:0/Previous:null permanently writerless.
+The candidate now publishes the activated owner CAS first, reasserts a missing
+marker on restart, and recognizes the exact retained self-certificate to recover
+an old marker-first orphan. The recovery bound is 30 seconds after the pinned
+owner restarts healthy with quorum; Version:0 still never permits follower takeover.
+
+All 13 regional Slow drills pass five repeats (65/65), including both publication
+crash cuts and a real-b443 rollback/re-upgrade on retained files and protocol keys.
+TerraBase Fast 66/66 and native Fast 4/4 also pass. The complete proof, exact source
+hashes, recovery times and production gates are in
+[the v2 review report](../../benchmark/bench/2026-11-06-zdt-v2-review.md).
+Production remains held. Workers' unit evidence is explicitly derived from their
+actual OCI launch metadata, not read back; the existing Run Command path did not
+execute. No new SSH access was added. No live rollout acceptance pass is claimed.

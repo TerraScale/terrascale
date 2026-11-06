@@ -113,3 +113,9 @@ review must cover the additional Version:0 guard and driver patch. A successful
 local test does not authorize production execution. The three live zero-error,
 p99 <500 ms rollout proofs, recovery-tail measurement and acceptance HANDOFF remain
 outstanding. No notice durability claim or #1104 closure is made.
+
+The later v2 review found and fixed a publication crash cut and added real-b443
+retained-file rollback/re-upgrade. The expanded proof is **65/65 Slow** plus affected
+Fast on the fresh-main candidate; see
+[the v2 review report](2026-11-06-zdt-v2-review.md). Earlier measurements above remain
+historical and are not relabeled as the new candidate's proof.
