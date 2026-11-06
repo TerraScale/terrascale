@@ -87,6 +87,11 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await ShotAsync("database-fork-dialog");
                     await GotoAsync($"/databases/{databaseId}/settings");
                     await page.Locator("#database-ttl").FillAsync("6");
+                    await page.Locator("#ttl-confirm-name").FillAsync("wrong-" + name);
+                    await SubmitAsync("form:is([action=\"/v1/databases/ttl\"],[action^=\"/v1/databases/ttl?\"])", "Set TTL");
+                    await Assert.That(page.Url).Contains("/settings").Because("A wrong typed name is refused without changing expiry");
+                    await page.Locator("#database-ttl").FillAsync("6");
+                    await page.Locator("#ttl-confirm-name").FillAsync(name);
                     await SubmitAsync("form:is([action=\"/v1/databases/ttl\"],[action^=\"/v1/databases/ttl?\"])", "Set TTL");
                     await page.GetByRole(AriaRole.Button, new() { Name = "Clear TTL", Exact = true }).WaitForAsync();
                     await ShotAsync("database-settings");

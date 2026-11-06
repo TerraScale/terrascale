@@ -65,13 +65,16 @@ restore a backup, and delete the databases. Substitute the IDs returned by earli
 | `create_scoped_key` | `{"databaseId":"<fork-id>","access":"read_write","ttlSeconds":600}` |
 | `run_sql` | `{"databaseId":"<fork-id>","sql":"SELECT * FROM results"}` |
 | `get_database_schema` | `{"databaseId":"<fork-id>"}` |
+| `set_database_ttl` | `{"databaseId":"<run-id>","ttlHours":2,"confirmName":"agent-run"}` |
 | `delete_database` | `{"databaseId":"<fork-id>","confirmName":"agent-fork"}` |
 | `create_backup` | `{"databaseId":"<run-id>"}` |
 | `restore_backup` | `{"databaseId":"<run-id>","backupId":"<backup-id>","name":"agent-restored"}` |
 | `delete_database` | `{"databaseId":"<restored-id>","confirmName":"agent-restored"}` |
 | `delete_database` | `{"databaseId":"<run-id>","confirmName":"agent-run"}` |
 
-MCP database TTLs use `ttlHours`; scoped keys use `ttlSeconds`.
+MCP database TTLs use `ttlHours`; scoped keys use `ttlSeconds`. Setting a TTL schedules the
+database for permanent deletion and, like deletion, takes the database's current name as
+`confirmName`; clearing the TTL needs no confirmation.
 Fork and restore each need room for another database under the organization's plan. Free allows one database;
 use a plan with capacity for the source and its copy.
 

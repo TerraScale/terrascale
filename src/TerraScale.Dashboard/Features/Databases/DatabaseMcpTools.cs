@@ -75,14 +75,14 @@ namespace TerraScale.Dashboard.Features.Databases
             return await DatabaseOutput(await databases.BranchAsync(Scope(organizationId, projectId), databaseId, name, Cancellation, ttlHours, pointInTime));
         }
 
-        [McpServerTool(Name = "set_database_ttl", Title = "Set database TTL", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Set expiry from now using ttlHours (one minute to 365 days), or clear expiry with clear=true.")]
-        public async Task<McpDatabase> SetDatabaseTtl(string databaseId, decimal? ttlHours = null, bool clear = false, string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "set_database_ttl", Title = "Set database TTL", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Set expiry from now using ttlHours (one minute to 365 days), or clear expiry with clear=true. Setting a TTL requires confirmName to equal the database name.")]
+        public async Task<McpDatabase> SetDatabaseTtl(string databaseId, decimal? ttlHours = null, bool clear = false, string? organizationId = null, string? projectId = null, string? confirmName = null, string? confirmation = null)
         {
             if (clear == (ttlHours is not null))
             {
                 throw new AccountAccessException("Supply ttlHours or clear=true, exclusively.", 422);
             }
-            return await DatabaseOutput(await databases.SetTtlAsync(Scope(organizationId, projectId), databaseId, ttlHours, Cancellation));
+            return await DatabaseOutput(await databases.SetTtlAsync(Scope(organizationId, projectId), databaseId, ttlHours, Cancellation, Alias(confirmName, confirmation, "confirmName", required: !clear)));
         }
 
         [McpServerTool(Name = "delete_database", Title = "Delete database", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Permanently delete a database and all of its data. Requires confirmName to equal the database name.")]

@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var table = schema.GetProperty("tables").EnumerateArray().Single(table => table.GetProperty("name").GetString() == "results");
             await Assert.That(table.GetProperty("fields").EnumerateArray().Any(field => field.GetProperty("path").GetString() == "value" && field.GetProperty("type").GetString() == "TEXT")).IsTrue();
             await CallAsync("delete_database", new { databaseId = forkId, confirmName = "agent-fork" });
-            await Assert.That((await CallAsync("set_database_ttl", new { databaseId = sourceId, ttlHours = 2 })).GetProperty("expiresAt").GetDateTimeOffset() > source.GetProperty("expiresAt").GetDateTimeOffset()).IsTrue();
+            await Assert.That((await CallAsync("set_database_ttl", new { databaseId = sourceId, ttlHours = 2, confirmName = "agent-source" })).GetProperty("expiresAt").GetDateTimeOffset() > source.GetProperty("expiresAt").GetDateTimeOffset()).IsTrue();
             await Assert.That((await CallAsync("set_database_ttl", new { databaseId = sourceId, clear = true })).GetProperty("expiresAt").ValueKind).IsEqualTo(JsonValueKind.Null);
             var backup = await CallAsync("create_backup", new { databaseId = sourceId });
             var restored = await CallAsync("restore_backup", new { databaseId = sourceId, backupId = backup.GetProperty("id").GetString(), name = "agent-restored" });

@@ -158,6 +158,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 var hours = Hours();
                 var clear = arguments?.TryGetValue("clear", out var value) == true && value.GetBoolean();
                 if (clear == (hours is not null)) throw new AccountAccessException("Supply ttlHours or clear=true, exclusively.", 422);
+                if (!clear && Text("confirmName", Text("confirmation")) != database.Name) throw new AccountAccessException("Type the database name to confirm scheduling its deletion.", 422);
                 var ttl = DatabaseTtl.Seconds(hours);
                 var updated = ttl is { } seconds ? await management.SetDatabaseTtlAsync(scope.ProjectId, databaseId, new(seconds))
                     : await management.ClearDatabaseTtlAsync(scope.ProjectId, databaseId);

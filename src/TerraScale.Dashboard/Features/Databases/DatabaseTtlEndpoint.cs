@@ -27,7 +27,9 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     throw new AccountAccessException("Enter a TTL in hours.", 422);
                 }
-                var database = await databases.SetTtlAsync(context, id, clear ? null : DatabaseTtl.Hours(form["ttlHours"].ToString()), http.RequestAborted);
+
+                var database = await databases.SetTtlAsync(context, id, clear ? null : DatabaseTtl.Hours(form["ttlHours"].ToString()), http.RequestAborted,
+                    confirmation: clear ? null : form["confirmName"].ToString());
                 return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings")) : Results.Json(database, DatabaseTtlJson.Default.DatabaseRecord);
             }
             catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))

@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(historical.GetProperty("expiresAt").ValueKind).IsEqualTo(JsonValueKind.String);
             await QueryAsync(historicalId, "snapshot");
             await QueryAsync(id, "current");
-            var updated = await CallAsync(replica, secret, "set_database_ttl", new { databaseId = id, ttlHours = 24m });
+            var updated = await CallAsync(replica, secret, "set_database_ttl", new { databaseId = id, ttlHours = 24m, confirmName = "agent-current" });
             await Assert.That(updated.GetProperty("expiresAt").GetDateTimeOffset()).IsGreaterThan(expires);
             var readback = await CallAsync(client, secret, "get_database", new { databaseId = id });
             await Assert.That(readback.GetProperty("expiresAt").GetString()).IsEqualTo(updated.GetProperty("expiresAt").GetString());
@@ -81,7 +81,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var source = await CallAsync(client, secret, "create_database", new { name = "agent-guard", ttlHours = 1m });
             var id = source.GetProperty("id").GetString()!;
             var expiry = source.GetProperty("expiresAt").GetString();
-            foreach (var invalid in new object[] { new { databaseId = id, ttlHours = 0m }, new { databaseId = id, ttlHours = 8761m }, new { databaseId = id, ttlHours = 1m, clear = true }, new { databaseId = id } })
+            foreach (var invalid in new object[] { new { databaseId = id, ttlHours = 0m }, new { databaseId = id, ttlHours = 8761m }, new { databaseId = id, ttlHours = 1m, clear = true }, new { databaseId = id }, new { databaseId = id, ttlHours = 1m, confirmName = "wrong-name" } })
             {
                 var rpc = await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "set_database_ttl", arguments = invalid });
                 await Assert.That(rpc.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();

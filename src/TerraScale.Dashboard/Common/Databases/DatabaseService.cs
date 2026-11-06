@@ -184,13 +184,18 @@ namespace TerraScale.Dashboard.Common.Databases
             return record;
         }
 
-        public async Task<DatabaseRecord> SetTtlAsync(AccountContext context, string id, decimal? ttlHours, CancellationToken cancellationToken)
+        public async Task<DatabaseRecord> SetTtlAsync(AccountContext context, string id, decimal? ttlHours, CancellationToken cancellationToken, string? confirmation = null)
         {
             var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
             context = await CurrentAsync(context, cancellationToken);
             var database = Database(context, id);
             if (!context.CanManage) { throw new AccountAccessException("Organization management access is required."); }
             if (PlatformDatabases.IsPlatform(context.Organization!.Id)) { throw PlatformDatabases.ReadOnly(); }
+            if (ttlSeconds is not null && confirmation != database.Name)
+            {
+                throw new AccountAccessException("Type the current database name to confirm scheduling its deletion.", 422);
+            }
+
             var remote = await backend.SetTtlAsync(Scope(context), await HomeAsync(context, database, cancellationToken), id, ttlSeconds, cancellationToken);
             if (remote.Id != id || remote.ProjectId != context.Project!.Id || remote.Name != database.Name ||
                 ttlSeconds is null && remote.ExpiresAt is not null || ttlSeconds is not null && remote.ExpiresAt is null)
