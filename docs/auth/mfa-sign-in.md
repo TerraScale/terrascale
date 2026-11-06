@@ -17,6 +17,12 @@ active authenticator (TOTP) factor.
 - `POST /ui/{slug}/security/totp/disable` needs a current TOTP or unused
   recovery code, removes the factor, advances the epoch and opens a fresh
   session.
+- `POST /ui/{slug}/security/recovery-codes` needs a current TOTP or unused
+  recovery code, atomically replaces the whole recovery-code set (every code
+  from an earlier set stops working) and shows the new eight codes once with
+  their expiry. The factor stays enabled, the account's epoch and every
+  session stay untouched, and the page offers copy and download. It writes
+  `member.mfa_recovery_codes_regenerated` to the audit log.
 
 Every post is same-origin checked like the sign-in forms.
 

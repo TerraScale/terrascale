@@ -1,3 +1,4 @@
+using System.Globalization;
 using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Features.Ui;
@@ -135,8 +136,14 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The pending authenticator's base32 key, for manual entry.</summary>
     public string? Secret { get; init; }
 
-    /// <summary>Recovery codes, shown once at activation.</summary>
+    /// <summary>Recovery codes, shown once at activation or regeneration.</summary>
     public IReadOnlyList<string> RecoveryCodes { get; init; } = [];
+
+    /// <summary>When the shown recovery codes expire.</summary>
+    public DateTimeOffset? RecoveryExpiresAt { get; init; }
+
+    /// <summary>The expiry date of the shown recovery codes, or null when none are shown.</summary>
+    public string? RecoveryExpiresText => this.RecoveryExpiresAt?.UtcDateTime.ToString("d MMMM yyyy", CultureInfo.InvariantCulture);
 
     /// <summary>Whether the account has an active authenticator.</summary>
     public bool MfaEnabled { get; init; }

@@ -67,6 +67,17 @@ internal static class HostedPageBehavior
       });
     }
   });
+  var copy = rowData.querySelector('[data-copy-recovery]');
+  if (copy) {
+    var codes = Array.prototype.map.call(rowData.querySelectorAll('ul[aria-label="Recovery codes"] code'), function (node) { return node.textContent; });
+    copy.addEventListener('click', function () {
+      if (navigator.clipboard && codes.length) {
+        navigator.clipboard.writeText(codes.join('\n')).then(function () {
+          copy.setAttribute('aria-label', 'Recovery codes copied'); copy.focus();
+        }, function () { });
+      }
+    });
+  }
 })();
 """;
 }

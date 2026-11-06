@@ -50,7 +50,7 @@ case SignInStep.DeviceConfirm:
 <p class="sub">Approve only if you started this sign-in and the code matches your terminal.</p>
 break;
 case SignInStep.RecoveryCodes:
-<p class="sub">Each code signs you in once if you lose your authenticator. They are shown only now.</p>
+<p class="sub">Each code signs you in once if you lose your authenticator. They are shown only now.@(Model.RecoveryExpiresText is { } expiry ? $" They expire {expiry}." : string.Empty)</p>
 break;
 }
 </div>
@@ -344,6 +344,13 @@ case SignInStep.Security:
 </dl>
 @if (Model.MfaEnabled)
 {
+<form method="post" action="/ui/@Model.Slug/security/recovery-codes">
+<div class="field">
+<label for="regenerate-code">Authenticator or recovery code</label>
+<input id="regenerate-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
+</div>
+<button type="submit">Regenerate recovery codes</button>
+</form>
 <form method="post" action="/ui/@Model.Slug/security/totp/disable">
 <div class="field">
 <label for="disable-code">Authenticator or recovery code</label>
@@ -380,6 +387,10 @@ case SignInStep.RecoveryCodes:
 <li><code>@recovery</code></li>
 }
 </ul>
+<div class="actions" aria-label="Recovery code actions">
+<button class="secondary" type="button" data-copy-recovery>Copy codes</button>
+<a class="btn secondary" href="data:text/plain;charset=utf-8,@(Uri.EscapeDataString(string.Join("\\n", Model.RecoveryCodes) + "\\n"))" download="terrascale-recovery-codes.txt">Download</a>
+</div>
 <a class="btn" href="/ui/@Model.Slug/security">I saved them<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.Reauthenticate:

@@ -229,6 +229,32 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             : null;
     }
 
+    /// <summary>
+    /// Consumes a fresh factor proof and replaces the whole recovery-code set in one transaction: every code from any
+    /// earlier set stops working, the factor stays enabled and no other account state moves. The proof is purpose-bound
+    /// to this change: it consumes an unused TOTP step or recovery code of the still-active factor, charges the MFA
+    /// attempt budget, and a stale caller or lost race changes nothing. Returns the new codes once.
+    /// </summary>
+    internal async Task<IssuedRecoveryCodes?> RegenerateAsync(UserRecord caller, string code, MfaAuthorization authorization, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
+            || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
+            || !current.Record.Enabled
+            || this.Consume(caller, current.Record, code) is not { } proof)
+        {
+            return null;
+        }
+
+        var codes = Enumerable.Range(0, RecoveryCount).Select(_ => Tokens.RandomToken(24)).ToArray();
+        var recoveryExpires = clock.GetUtcNow() + RecoveryLifetime;
+        var rotated = proof with { RecoveryHashes = codes.Select(Tokens.Sha256Hex).ToArray(), RecoveryExpiresAt = recoveryExpires };
+        return await this.CommitAsync(user.User, rotated, current.Version, null, authorization, cancellationToken).ConfigureAwait(false)
+            ? new IssuedRecoveryCodes(user.User, codes, recoveryExpires)
+            : null;
+    }
+
     /// <summary>Consumes an active TOTP step or recovery code exactly once; a stale caller never receives a proof.</summary>
     public Task<bool> VerifyAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
         this.VerifyAsync(caller, code, null, cancellationToken);

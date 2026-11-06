@@ -247,7 +247,7 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
             BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token, tenant);
         }
 
-        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.RecoveryCodes, tenant) { Account = live.User.Email, RecoveryCodes = issued.Codes });
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.RecoveryCodes, tenant) { Account = live.User.Email, RecoveryCodes = issued.Codes, RecoveryExpiresAt = issued.ExpiresAt });
     }
 }
 
@@ -301,6 +301,64 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
         }
 
         return await SecurityFlow.PageAsync(this.HttpContext, mfa, user, null, cancellationToken, notice: "Two-factor authentication is off.");
+    }
+}
+
+/// <summary>
+/// <c>POST /ui/{slug}/security/recovery-codes</c>: replaces the whole recovery-code set after a fresh TOTP or recovery
+/// code, while the factor stays enabled.
+/// </summary>
+public sealed class RecoveryCodesRegenerateEndpoint(Sessions sessions, TotpCredentials mfa, PlatformDirectory platform, AuthOptions options,
+    ILogger<RecoveryCodesRegenerateEndpoint> logger) : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post("/ui/{slug}/security/recovery-codes");
+        Name("ui_security_recovery_codes_regenerate");
+        Summary("Regenerate recovery codes");
+        Description("Same-origin form post with code (the authenticator's current code or an unused recovery code) from a live session; the code reauthenticates the change, and a sign-out that lands before it commits refuses it. Success atomically replaces every recovery code of the still-active factor with a new set of eight, shown once with its expiry; the factor itself and every session stay as they are, and member.mfa_recovery_codes_regenerated lands in the account's organizations' audit logs. A wrong code answers 401; 10 attempts per account per 15 minutes (429).");
+        Tags("Security");
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
+        Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        AllowAnonymous();
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
+        {
+            return SignInFlow.Refused(this.HttpContext);
+        }
+
+        if (await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is not { } live)
+        {
+            return SecurityFlow.SignIn(this.HttpContext);
+        }
+
+        var tenant = SignInFlow.Tenant(this.HttpContext);
+        // The change binds to the live session without consuming it: a sign-out that lands first fails it, and the factor state is untouched.
+        var binding = new MfaAuthorization(Sessions.Live(live.Session, this.HttpContext.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()), live.Session.ExpiresAt);
+        if (await mfa.RegenerateAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(),
+                binding, cancellationToken) is not { } issued)
+        {
+            return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."),
+                StatusCodes.Status401Unauthorized, cancellationToken);
+        }
+
+        logger.ZLogInformation($"Audit: user {live.User.Id:@UserId} regenerated MFA recovery codes");
+        await SecurityFlow.AuditAsync(platform, tenant, live.User.Id, "member.mfa_recovery_codes_regenerated", cancellationToken);
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.RecoveryCodes, tenant)
+        {
+            Account = live.User.Email,
+            RecoveryCodes = issued.Codes,
+            RecoveryExpiresAt = issued.ExpiresAt,
+        });
     }
 }
 
