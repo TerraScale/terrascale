@@ -30,11 +30,11 @@
   }
 </script>
 
-<section class="code" use:reveal>
-  <div class="code__inner">
+<section class="code ts-section" use:reveal>
+  <div class="ts-container">
     <div class="code__grid">
       <div class="code__copy">
-        <h2 class="code__headline">
+        <h2 class="ts-section-title">
           {$dict.code.headlineLead}<br />
           <span class="code__accent">{$dict.code.headlineAccent}</span>
         </h2>
@@ -106,18 +106,13 @@
 
 <style>
   .code {
-    padding: 80px 0;
     border-top: 1px solid var(--ts-divider);
-  }
-
-  .code__inner {
-    padding: 0 clamp(16px, 2.5vw, 40px);
   }
 
   .code__grid {
     display: grid;
     grid-template-columns: minmax(0, 6fr) minmax(0, 7fr);
-    gap: 64px;
+    gap: var(--ts-section-gap);
     align-items: start;
   }
 
@@ -127,26 +122,16 @@
     align-content: start;
   }
 
-  .code__headline {
-    font-size: clamp(30px, 3.2vw, 48px);
-    font-weight: 600;
-    color: var(--ts-text);
-    line-height: 1.08;
-    letter-spacing: -0.035em;
-    margin: 0;
-  }
-
   .code__accent {
     color: var(--ts-primary);
   }
 
   .code__bullets {
     list-style: none;
-    margin: var(--ts-s2) 0 0;
+    margin: 0;
     padding: 0;
-    margin: 16px 0 0;
     display: grid;
-    gap: 12px;
+    gap: 8px;
   }
 
   .code__bullet {
@@ -176,8 +161,8 @@
   .code__agent {
     display: grid;
     gap: 12px;
-    margin-top: 24px;
-    padding-top: 24px;
+    margin-top: 8px;
+    padding-top: 16px;
     border-top: 1px solid var(--ts-divider);
   }
 
@@ -304,7 +289,7 @@
   .code__pre {
     margin: 0;
     padding: 16px;
-    height: 520px;
+    height: 400px;
     overflow: auto;
     font-family: var(--ts-font-mono);
     font-size: 13px;
@@ -318,25 +303,18 @@
     font: inherit;
   }
 
-  @media (max-width: 1280px) {
+  @media (max-width: 1023px) {
     .code__grid {
       grid-template-columns: minmax(0, 1fr);
-      gap: 40px;
     }
   }
 
   @media (max-width: 640px) {
-    .code {
-      padding: 64px 0;
-    }
-    .code__inner {
-      padding: 0 clamp(16px, 2.5vw, 40px);
-    }
     .code__head {
       padding-inline: 8px;
     }
     .code__pre {
-      height: 380px;
+      height: 320px;
       font-size: 12px;
     }
   }
