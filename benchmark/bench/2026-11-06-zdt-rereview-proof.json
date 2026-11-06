@@ -1,0 +1,138 @@
+{
+  "stale_read_negative_control": {
+    "raw_log_path": "/tmp/zdt-recovery-read-negative-r4.log",
+    "raw_log_sha256": "426a4662446acdd33b480497efcfad1cb242c5001b569a0fd4658c8f7b29d454",
+    "expected_failure": "recovered native write acknowledged but retained replica read omits it"
+  },
+  "base": "5fd89c3e7271abc350125b0e68e18b4fd50f5f76",
+  "host": "beta",
+  "runner": "ts-heavy-any / terrabase-test-slow",
+  "configuration": "Debug",
+  "sources_sha256": {
+    "src/TerraBase/Features/Replicas/HomeLeases.cs": "c91879fd7ead75e2512bd6d380f3785fd9f29b42a582cd5aa5b746205411d6a7",
+    "src/TerraBase/Features/Replicas/RegionalHandoff.cs": "34a58a7d13d530de4c5c20f5ce145ace46779e400f102227dc242a536a900048",
+    "src/TerraBase/Features/Replicas/RegionalHandoff.Control.cs": "61f23b084d544525a6b0dcc2579845c351ded0bd4c11cbb43af219dd2c97e420",
+    "src/TerraBase/Features/Replicas/RegionalOwners.cs": "2d9a1a7812530440bb06784069d879adbec023345efa5df454cd0314500a9acf",
+    "src/TerraBase/Features/Replicas/RegionalWriterLease.cs": "aadeb4b814970b490f8a50510695addb4ff2900f8ede80402c716d173f18f5ad",
+    "src/TerraBase/Hosting/TerraBaseJsonContext.cs": "0f7652cfe761d9f24e5fd16afe3b1a7cd6593799ac98d41951dc8791979bb28d",
+    "tests/TerraBase.Slow/Sync/RegionalHandoffTests.cs": "6072f152565aaf52cee608d55e506374d052572bdeed3834c688c3229d6767b9",
+    "tests/TerraBase.Slow/Sync/RegionalWriterCrashTests.cs": "416c8d23de3caff08d87416cc28cd6de8b53249f1843cd81aa8f6596f614a1f6",
+    "tests/TerraBase.Slow/Sync/RegionalWriterRecoveryTests.cs": "cc939bef1d273661e8836d57f366f13a25fcd20b9fb7bf75a321a2d6ec72ff44",
+    "tests/TerraBase.Slow/Sync/RegionalNatsFault.cs": "16e9ab09247015227bc1b7fc7c6718380dab38d6cf2d0977c562e515abd0b950",
+    "src/TerraBase/Engine/Turso/TursoChangeTap.cs": "d042e0717cbcc84159130dc45013e7fc66253061328a589829be553f945612f5",
+    "src/TerraBase/Features/Backup/ContinuousBackup.cs": "be0f869a7a6947fde1c33e50f86818c2cdbb84152cee38ff269a895b620569f8",
+    "src/TerraBase/Features/Sql/SqlService.cs": "cdb932f6e24804ff940cec582b4f8ca9155d4b1355d74a70d1fe6852c6fd6b3e",
+    "src/TerraBase/Features/Sql/ReplicaSqlSession.cs": "ac6f033ca359e16ff16503112d76d931ba8236e6d0cf61d007a761e15bbe1f11"
+  },
+  "raw_log_path": "/tmp/zdt-rereview-five-r8.log",
+  "raw_log_sha256": "25fb9ef260279c8e40f36156797b14f56025f082ceeaf56ec7b3b4c205ec2359",
+  "slow_repeats": [
+    {
+      "repeat": 1,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "18s 606ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "23s 036ms",
+        "A_certified_manual_owner_CAS_with_a_connected_source_holding_admission_never_allows_dual_commit": "23s 348ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "23s 394ms",
+        "Foreign_and_third_node_database_leases_are_isolated_without_stranding_the_regional_writer": "24s 631ms",
+        "A_retained_legacy_owner_bootstraps_in_place_without_changing_its_epoch_or_losing_rows": "24s 992ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "25s 045ms",
+        "A_target_that_acquired_admission_then_failed_activation_recovers_without_losing_acked_rows": "26s 636ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "26s 758ms",
+        "Recovery_retries_the_certified_live_target_instead_of_returning_ownership_to_a_dead_source": "27s 339ms"
+      },
+      "before_admission_recovery_ms": 12438.461,
+      "after_admission_recovery_ms": 12434.472
+    },
+    {
+      "repeat": 2,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "18s 185ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "22s 659ms",
+        "A_certified_manual_owner_CAS_with_a_connected_source_holding_admission_never_allows_dual_commit": "23s 020ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "23s 098ms",
+        "Foreign_and_third_node_database_leases_are_isolated_without_stranding_the_regional_writer": "24s 642ms",
+        "A_retained_legacy_owner_bootstraps_in_place_without_changing_its_epoch_or_losing_rows": "24s 826ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "24s 984ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "26s 278ms",
+        "A_target_that_acquired_admission_then_failed_activation_recovers_without_losing_acked_rows": "26s 722ms",
+        "Recovery_retries_the_certified_live_target_instead_of_returning_ownership_to_a_dead_source": "27s 844ms"
+      },
+      "before_admission_recovery_ms": 12092.694,
+      "after_admission_recovery_ms": 12428.999
+    },
+    {
+      "repeat": 3,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "18s 283ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "22s 421ms",
+        "A_certified_manual_owner_CAS_with_a_connected_source_holding_admission_never_allows_dual_commit": "22s 579ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "23s 229ms",
+        "Foreign_and_third_node_database_leases_are_isolated_without_stranding_the_regional_writer": "24s 683ms",
+        "A_retained_legacy_owner_bootstraps_in_place_without_changing_its_epoch_or_losing_rows": "24s 740ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "25s 053ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "26s 350ms",
+        "A_target_that_acquired_admission_then_failed_activation_recovers_without_losing_acked_rows": "26s 455ms",
+        "Recovery_retries_the_certified_live_target_instead_of_returning_ownership_to_a_dead_source": "28s 251ms"
+      },
+      "before_admission_recovery_ms": 12386.895,
+      "after_admission_recovery_ms": 12500.994
+    },
+    {
+      "repeat": 4,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "18s 669ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "22s 313ms",
+        "A_certified_manual_owner_CAS_with_a_connected_source_holding_admission_never_allows_dual_commit": "23s 098ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "23s 188ms",
+        "A_retained_legacy_owner_bootstraps_in_place_without_changing_its_epoch_or_losing_rows": "24s 429ms",
+        "Foreign_and_third_node_database_leases_are_isolated_without_stranding_the_regional_writer": "24s 758ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "25s 154ms",
+        "A_target_that_acquired_admission_then_failed_activation_recovers_without_losing_acked_rows": "26s 301ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "26s 385ms",
+        "Recovery_retries_the_certified_live_target_instead_of_returning_ownership_to_a_dead_source": "28s 359ms"
+      },
+      "before_admission_recovery_ms": 11946.689,
+      "after_admission_recovery_ms": 12351.445
+    },
+    {
+      "repeat": 5,
+      "tests": {
+        "A_regional_follower_takes_over_only_after_applying_the_drained_writer_position_and_can_hand_back": "18s 585ms",
+        "Controller_disconnect_before_reservation_before_CAS_after_CAS_and_after_activation_never_strands_or_stops_both_nodes": "22s 419ms",
+        "Quorum_loss_during_rollback_retries_from_the_persisted_phase_after_healing": "22s 659ms",
+        "A_certified_manual_owner_CAS_with_a_connected_source_holding_admission_never_allows_dual_commit": "23s 915ms",
+        "Foreign_and_third_node_database_leases_are_isolated_without_stranding_the_regional_writer": "24s 286ms",
+        "A_retained_legacy_owner_bootstraps_in_place_without_changing_its_epoch_or_losing_rows": "24s 900ms",
+        "Killing_the_regional_writer_before_commit_preserves_every_acknowledged_write_through_recovery_and_promotion": "24s 971ms",
+        "A_target_that_acquired_admission_then_failed_activation_recovers_without_losing_acked_rows": "26s 408ms",
+        "A_target_killed_after_the_owner_CAS_before_acquiring_admission_recovers_the_source_within_the_bound": "26s 949ms",
+        "Recovery_retries_the_certified_live_target_instead_of_returning_ownership_to_a_dead_source": "28s 433ms"
+      },
+      "before_admission_recovery_ms": 12463.215,
+      "after_admission_recovery_ms": 12721.492
+    }
+  ],
+  "backup_negative_control": {
+    "raw_log_path": "/tmp/zdt-backup-negative.log",
+    "raw_log_sha256": "0f7c1792a969e136f7d52e4521f0141f401620f84510fbffe2c93052ba64a57d",
+    "expected_failure": "retired native backup tap incorrectly reports Ended=false"
+  },
+  "fast": {
+    "terrabase": {
+      "passed": 66,
+      "tunit_seconds": 8.438,
+      "budget_wall_seconds": 10.036,
+      "slowest_test_seconds": 3.659
+    },
+    "native_driver": {
+      "passed": 4,
+      "tunit_seconds": 0.389,
+      "budget_wall_seconds": 5.918
+    }
+  },
+  "commands": {
+    "slow": "dotnet run --project tests/TerraBase.Slow --configuration Debug --no-build -- --treenode-filter \"/*/*/*Regional*/*\" --output detailed --no-ansi (five consecutive invocations)",
+    "fast": "make terrabase-test-fast"
+  }
+}

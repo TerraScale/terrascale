@@ -112,7 +112,9 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
         }
     }
 
-    public bool Ended => _lineage != _store.Lineage;
+    // Regional promotion can replace this primary with a detached replica.
+    // The old store remains closed even when its lineage number is unchanged.
+    public bool Ended => _store.IsClosed || Volatile.Read(ref _disposed) != 0 || _lineage != _store.Lineage;
 
     public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
     {

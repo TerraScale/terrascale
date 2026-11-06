@@ -17,6 +17,7 @@ internal sealed class ReplicaSqlSession(
         "the transaction read in this region and then wrote: retry it, and the retry runs at the database's home");
 
     private ISqlSession? _home;
+    private bool _primary;
     private IReplicaReader? _snapshot;
     private bool _readOnlyTransaction;
     private bool _declaredReadOnly;
@@ -43,7 +44,8 @@ internal sealed class ReplicaSqlSession(
     public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        if (_home is { IsAutocommit: false })
+        await UsePrimaryAsync(cancellationToken).ConfigureAwait(false);
+        if (_primary || _home is { IsAutocommit: false })
         {
             return await HomeAsync(command, admit, cancellationToken).ConfigureAwait(false);
         }
@@ -133,7 +135,8 @@ internal sealed class ReplicaSqlSession(
     public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        if (_home is { IsAutocommit: false })
+        await UsePrimaryAsync(cancellationToken).ConfigureAwait(false);
+        if (_primary || _home is { IsAutocommit: false })
         {
             return await DescribeAtHomeAsync(command, cancellationToken).ConfigureAwait(false);
         }
@@ -367,6 +370,19 @@ internal sealed class ReplicaSqlSession(
         }
 
         return outcome;
+    }
+
+    private async ValueTask UsePrimaryAsync(CancellationToken cancellationToken)
+    {
+        // Recovery can retain both a primary and a same-region replica. The
+        // admitted writer must read its primary, while followers keep their
+        // replica and R10 holds. Preserve any transaction's existing snapshot.
+        if (!_primary && !_readOnlyTransaction && (_home is null || _home is SqlSession { IsAutocommit: true })
+            && await service.UsePrimaryAsync(database, cancellationToken).ConfigureAwait(false))
+        {
+            _home ??= local();
+            _primary = true;
+        }
     }
 
     private async ValueTask<(ISqlSession? Session, SqlError? Error)> OpenHomeAsync(CancellationToken cancellationToken)

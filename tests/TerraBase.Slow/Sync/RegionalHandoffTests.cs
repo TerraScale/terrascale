@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Regions;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Platform;
 using TerraBase.Tenancy;
 using TerraBase.Features.Replicas;
@@ -112,12 +113,20 @@ public sealed class RegionalHandoffTests
             var localPlatform = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Hobby, PlatformDatabases.AuthProjectId, PlatformDatabases.AuthId);
             await Assert.That(await first.Server.Services.GetRequiredService<HomeLeases>().TakeAsync(localPlatform, "sjc", 4, foreignPlatform, token)).IsFalse();
             await Assert.That(await first.Server.Services.GetRequiredService<HomeLeases>().PrepareAsync(localPlatform, token)).IsTrue();
+            // Keep a real native backup tap open across replacement of the
+            // target's old primary. It must end, never read the disposed store.
+            _ = await second.Server.Services.GetRequiredService<IStorageEngine>().CreateDatabaseAsync(localPlatform, token);
+            await using var replacedTap = await second.Server.Services.GetRequiredService<IWalBackup>().OpenTapAsync(localPlatform, token);
+            await Assert.That(replacedTap).IsNotNull();
+            await second.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(token);
             // Bound a failed activation so the negative control cannot hang the drill.
             using var activation = CancellationTokenSource.CreateLinkedTokenSource(token);
             activation.CancelAfter(TimeSpan.FromSeconds(8));
             var handoff = first.Server.Services.GetRequiredService<RegionalHandoff>();
             await Assert.That(await handoff.DrainAsync("gru-2", activation.Token)).IsTrue();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(second.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
+            await Assert.That(replacedTap!.Ended).IsTrue();
+            await second.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(token);
             await ExecuteAsync(viaSecond, "INSERT INTO acked VALUES ('after')");
             using var read = await viaSecond.PostAsJsonAsync(sql, new { statements = new[] { new { sql = "SELECT count(*) FROM acked" } } }, token);
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await read.Content.ReadAsStringAsync(token));
@@ -128,6 +137,12 @@ public sealed class RegionalHandoffTests
             await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().DrainAsync("gru-1", token)).IsFalse();
             await first.DisposeAsync();
             await using var returned = await StartAsync("gru-1", "127.0.0.2");
+            // Listener startup precedes the first ownership refresh. Wait for
+            // the replacement's actual ready/owner/session proof before asking
+            // for a second stop; refusal before that point is intentional.
+            await TerraBaseTestServer.EventuallyAsync(async cancellation =>
+                await returned.Server.Services.GetRequiredService<RegionalHandoff>().StatusAsync(cancellation)
+                    is { Ready: true, Owner: "gru-2", Epoch: >= 2, Session.Length: > 0 }, TimeSpan.FromSeconds(10));
             await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().DrainAsync("gru-1", token)).IsTrue();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(returned.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
             using var viaReturned = returned.WithToken(bearer);

@@ -9,6 +9,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.Replicas;
+using TerraBase.Tenancy;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -194,6 +197,39 @@ public sealed partial class RegionalWriterCrashTests
             }));
         }, lifetimeCancellationToken: token);
         await File.WriteAllTextAsync(directory + ".ready", "started", token);
+        // Fixture-only IPC exports an actual source snapshot without changing
+        // runtime admission. The manual-CAS drill sends it through real Prepare.
+        var requestPath = directory + ".snapshot-request";
+        using var requests = new FileSystemWatcher(Path.GetDirectoryName(directory)!, Path.GetFileName(requestPath));
+        var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        requests.Created += (_, _) => requested.TrySetResult();
+        requests.EnableRaisingEvents = true;
+        if (File.Exists(requestPath)) { requested.TrySetResult(); }
+        await requested.Task.WaitAsync(token);
+        var catalog = api.Server.Services.GetRequiredService<IReplicaCatalog>();
+        var revisions = api.Server.Services.GetRequiredService<IDatabaseRevisions>();
+        var positions = new List<RegionalPosition>();
+        TenantContext? after = null;
+        do
+        {
+            if (await catalog.ListHomedAsync("gru", after, token) is not TenantDatabasePage page)
+            {
+                throw new IOException("fixture could not export regional database catalog");
+            }
+            foreach (var database in page.Databases)
+            {
+                var revision = await revisions.CurrentRevisionAsync(database, token);
+                if (revision is { } applied)
+                {
+                    positions.Add(new RegionalPosition(database.OrganizationId, database.ProjectId!, database.DatabaseId!, "gru", applied.ToString()));
+                }
+            }
+            after = page.Next;
+        }
+        while (after is not null);
+        var snapshot = new RegionalPrepare(node, positions, 0,
+            await RegionalCatalog.ExportAsync(api.Server.Services.GetRequiredService<IStorageEngine>(), token));
+        await File.WriteAllBytesAsync(directory + ".snapshot", JsonSerializer.SerializeToUtf8Bytes(snapshot, TerraBaseJsonContext.Default.RegionalPrepare), token);
         await Task.Delay(Timeout.Infinite, token);
     }
 
@@ -236,12 +272,25 @@ public sealed partial class RegionalWriterCrashTests
     // until a test ends, which cannot synchronize a running child host.
     private sealed class RecoveryLog(string path) : ILoggerProvider, ILogger
     {
+        private readonly object _logGate = new();
         public ILogger CreateLogger(string categoryName) => this;
-        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (formatter(state, exception).Contains("Regional handoff recovery retries from its durable phase", StringComparison.Ordinal))
+            var message = formatter(state, exception);
+            if (message.StartsWith("Regional ", StringComparison.Ordinal) || message.StartsWith("A replica could not", StringComparison.Ordinal))
+            {
+                var diagnostic = path + ".handoff-log";
+                lock (_logGate)
+                {
+                    if (!File.Exists(diagnostic) || new FileInfo(diagnostic).Length < 64 * 1024)
+                    {
+                        File.AppendAllText(diagnostic, message + "\n");
+                    }
+                }
+            }
+            if (message.Contains("Regional handoff recovery retries from its durable phase", StringComparison.Ordinal))
             {
                 File.WriteAllText(path, "bounded rollback failed; durable retry remains pending");
             }
@@ -254,8 +303,16 @@ public sealed partial class RegionalWriterCrashTests
         private Process? _process;
         private readonly Queue<string> _errors = new();
         private string DirectoryPath => Path.Combine(root, name);
+        internal string Diagnostics => File.Exists(DirectoryPath + ".recovery-failed.handoff-log")
+            ? File.ReadAllText(DirectoryPath + ".recovery-failed.handoff-log") : "no handoff diagnostics";
         internal string Arm => DirectoryPath + ".arm";
         internal string MidWrite => DirectoryPath + ".mid-write";
+        internal async Task<RegionalPrepare> SnapshotAsync(CancellationToken token)
+        {
+            await File.WriteAllTextAsync(DirectoryPath + ".snapshot-request", "export", token);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(DirectoryPath + ".snapshot")), TimeSpan.FromSeconds(10));
+            return JsonSerializer.Deserialize(await File.ReadAllBytesAsync(DirectoryPath + ".snapshot", token), TerraBaseJsonContext.Default.RegionalPrepare)!;
+        }
         internal Uri Address => new($"http://{address}:{port}");
         internal Task RecoveryFailed => TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(DirectoryPath + ".recovery-failed")), TimeSpan.FromSeconds(10));
 

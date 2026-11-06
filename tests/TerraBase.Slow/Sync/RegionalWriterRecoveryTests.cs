@@ -35,14 +35,20 @@ public sealed partial class RegionalWriterCrashTests
         catch (Exception error) when (error is NatsKVKeyNotFoundException or NatsKVKeyDeletedException)
         {
         }
-        // Kill the source handler first so it cannot catch the target's
-        // disconnect and roll back in its finally block. Recovery must use
-        // persisted phases, without a surviving controller or drain handler.
+        // Kill the source handler first so it cannot roll back in its finally
+        // block. Restart it while the unadmitted target can still supply reads:
+        // its normal follower path can retain a same-region replica in memory.
         await drill.Source.KillAsync();
-        await drill.Target.KillAsync();
         await IgnoreControllerDisconnectAsync(draining);
-        await Assert.That(await drill.OwnerAsync(token) is { Node: "gru-2", Activated: false, Transfer.Phase: "activating" }).IsTrue();
         await drill.Source.StartAsync(token);
+        await TerraBaseTestServer.EventuallyAsync(async cancellation =>
+            (await RecoveryDrill.StatusAsync(drill.SourceHttp, cancellation)) is { Owner: "gru-2", Ready: true }, TimeSpan.FromSeconds(5));
+        await Assert.That(await drill.OwnerAsync(token) is { Node: "gru-2", Activated: false, Transfer.Phase: "activating" }).IsTrue();
+        using (var followed = await drill.SourceHttp.PostAsync(ManagementApi.Uri("/v1/rollout/prime?source=gru-2"), null, token))
+        {
+            await Assert.That(followed.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await followed.Content.ReadAsStringAsync(token));
+        }
+        await drill.Target.KillAsync();
         await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
         await Assert.That(elapsed.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
         Console.WriteLine($"DRILL target activation failed: recovered_ms={elapsed.Elapsed.TotalMilliseconds:F3}, bound_ms={RegionalHandoff.RecoveryBound.TotalMilliseconds:F0}");
@@ -115,7 +121,8 @@ public sealed partial class RegionalWriterCrashTests
 
         using (var completed = await drill.SourceHttp.PostAsync(ManagementApi.Uri("/v1/rollout/drain?target=gru-2"), null, token))
         {
-            await Assert.That(completed.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await completed.Content.ReadAsStringAsync(token));
+            await Assert.That(completed.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await completed.Content.ReadAsStringAsync(token)
+                + "\nSOURCE: " + drill.Source.Diagnostics + "\nTARGET: " + drill.Target.Diagnostics);
         }
         await RecoveryDrill.WaitWriterAsync(drill.TargetHttp, RegionalHandoff.RecoveryBound, token);
         await Assert.That(await drill.OwnerAsync(token) is { Node: "gru-2", Activated: true, Transfer.Phase: "retiring" }).IsTrue();
@@ -130,67 +137,177 @@ public sealed partial class RegionalWriterCrashTests
 
     [Test]
     [Timeout(120_000)]
-    public async Task An_uncertified_manual_owner_CAS_during_a_native_write_cannot_admit_a_second_writer_or_lose_acknowledged_rows(CancellationToken token)
+    public async Task A_certified_manual_owner_CAS_with_a_connected_source_holding_admission_never_allows_dual_commit(CancellationToken token)
     {
         await using var drill = await RecoveryDrill.StartAsync(token);
-        // First create a real prepared copy, then cancel the controller. Its
-        // certificate must be unusable after rollback advances the epoch.
-        var prepared = drill.SourceNats.Drop(static (subject, payload) => OwnerPhase(subject, payload, "activating"));
-        using (var controller = CancellationTokenSource.CreateLinkedTokenSource(token))
-        {
-            var draining = drill.SourceHttp.PostAsync(ManagementApi.Uri("/v1/rollout/drain?target=gru-2"), null, controller.Token);
-            await prepared.WaitAsync(TimeSpan.FromSeconds(20), token);
-            await controller.CancelAsync();
-            await IgnoreControllerDisconnectAsync(draining);
-        }
-        drill.SourceNats.Allow();
-        await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
-        await TerraBaseTestServer.EventuallyAsync(async cancellation => (await drill.OwnerAsync(cancellation)).Transfer is null,
-            RegionalHandoff.RecoveryBound);
-        await File.WriteAllTextAsync(drill.Source.Arm, drill.Database, token);
-        var writing = drill.SourceHttp.PostAsJsonAsync(ManagementApi.Uri(drill.Sql), new { statements = new[] { new { sql = "INSERT INTO acked VALUES ('unacknowledged')" } } }, token);
-        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(drill.Source.MidWrite)), TimeSpan.FromSeconds(10));
-        await Assert.That(writing.IsCompleted).IsFalse();
-
+        var snapshot = await drill.Source.SnapshotAsync(token);
         var context = new NatsKVContext(new NatsJSContext(drill.Connection));
         var owners = await context.GetStoreAsync(RegionalHandoff.Bucket, token);
         var current = await owners.GetEntryAsync<byte[]>("gru", cancellationToken: token);
         var previous = JsonSerializer.Deserialize(current.Value!, TerraBaseJsonContext.Default.RegionalOwner)!;
-        var manual = new RegionalOwner("gru", "gru-2", previous.Epoch + 1, "gru-1", Version: 2);
         var writers = await context.GetStoreAsync(RegionalWriterLease.Bucket, token);
-        var expired = WaitForLeaseExpiryAsync(writers, token);
-        drill.SourceNats.Partition();
-        _ = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(manual, TerraBaseJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
-        await expired.WaitAsync(TimeSpan.FromSeconds(10), token);
-        await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
-        using (var secondWriter = await drill.TargetHttp.PostAsJsonAsync(ManagementApi.Uri(drill.Sql),
-            new { statements = new[] { new { sql = "INSERT INTO acked VALUES ('dual-writer')" } } }, token))
+        // Certify through the real recovery-prepare path while the source is
+        // still connected and renewing admission. Blocking its owner reads
+        // before preparation would race its five-second admission deadline.
+        var recoverable = previous with
         {
-            await Assert.That(secondWriter.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            Transfer = new RegionalTransfer("manual-cas-proof", "gru-1", "gru-2",
+                (await RecoveryDrill.StatusAsync(drill.SourceHttp, token)).Session, "recovering", DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30)),
+        };
+        var revision = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(recoverable, TerraBaseJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
+        using var payload = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(snapshot with { Epoch = previous.Epoch }, TerraBaseJsonContext.Default.RegionalPrepare));
+        payload.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        using (var prepared = await drill.TargetHttp.PostAsync(ManagementApi.Uri("/v1/rollout/prepare"), payload, token))
+        {
+            await Assert.That(prepared.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await prepared.Content.ReadAsStringAsync(token)
+                + "\nSOURCE: " + drill.Source.Diagnostics + "\nTARGET: " + drill.Target.Diagnostics);
         }
+        var certificate = await owners.GetEntryAsync<byte[]>("prepared.gru.gru-2", cancellationToken: token);
+        await Assert.That(JsonSerializer.Deserialize(certificate.Value!, TerraBaseJsonContext.Default.RegionalPrepared))
+            .IsEqualTo(new RegionalPrepared("gru-1", "gru-2", previous.Epoch, null));
+        // Only now lose owner reads. TCP, node lease traffic and SQL stay live;
+        // the source still owns the exclusive writer key at the manual CAS.
+        var blocked = drill.SourceNats.Drop(static (subject, payload) =>
+            subject.StartsWith("$JS.API.", StringComparison.Ordinal)
+            && subject.Contains("KV_" + RegionalHandoff.Bucket, StringComparison.Ordinal)
+            && (subject.EndsWith(".gru", StringComparison.Ordinal)
+                || System.Text.Encoding.UTF8.GetString(payload.Span).Contains("$KV." + RegionalHandoff.Bucket + ".gru", StringComparison.Ordinal)));
+        var held = await writers.GetEntryAsync<byte[]>("gru", cancellationToken: token);
+        await Assert.That(JsonSerializer.Deserialize(held.Value!, TerraBaseJsonContext.Default.RegionalWriter)!.Node).IsEqualTo("gru-1");
+        await Assert.That((await RecoveryDrill.StatusAsync(drill.SourceHttp, token)).Writer).IsTrue();
+        await File.WriteAllTextAsync(drill.Source.Arm, drill.Database, token);
+        var writing = drill.SourceHttp.PostAsJsonAsync(ManagementApi.Uri(drill.Sql),
+            new { statements = new[] { new { sql = "INSERT INTO acked VALUES ('source-overlap')" } } }, token);
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(drill.Source.MidWrite)), TimeSpan.FromSeconds(5));
+        var manual = new RegionalOwner("gru", "gru-2", previous.Epoch + 1, "gru-1", Version: 2);
+        _ = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(manual, TerraBaseJsonContext.Default.RegionalOwner), revision, cancellationToken: token);
+        await blocked.WaitAsync(TimeSpan.FromSeconds(5), token);
+        using (var refused = await drill.TargetHttp.PostAsJsonAsync(ManagementApi.Uri(drill.Sql),
+            new { statements = new[] { new { sql = "INSERT INTO acked VALUES ('target-too-early')" } } }, token))
+        {
+            await Assert.That(refused.IsSuccessStatusCode).IsFalse();
+        }
+        await RecoveryDrill.WaitWriterAsync(drill.TargetHttp, TimeSpan.FromSeconds(10), token);
+        await drill.ExecuteAsync(drill.TargetHttp, "INSERT INTO acked VALUES ('target-committed')", token);
+        // The source still has its cached owner and a real open transaction.
+        // Its monotonic admission expires before the target can obtain the key.
         File.Delete(drill.Source.Arm);
         using (var refused = await writing)
         {
             await Assert.That(refused.IsSuccessStatusCode).IsFalse();
         }
-        await TerraBaseTestServer.EventuallyAsync(async cancellation => (await drill.OwnerAsync(cancellation)).Node == "gru-1",
-            RegionalHandoff.RecoveryBound);
-        drill.SourceNats.Heal();
-        await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
-        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('after-manual-recovery')", token);
-        await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "after-manual-recovery"], token);
+        drill.SourceNats.Allow();
+        await drill.AssertRowsAsync(drill.TargetHttp, ["ack-0", "ack-1", "ack-2", "target-committed"], token);
+        Console.WriteLine("DRILL certified manual CAS: source TCP connected, source held lease at CAS, target commit succeeded, source overlap commit refused");
     }
 
-    private static async Task WaitForLeaseExpiryAsync(INatsKVStore writers, CancellationToken token)
+    [Test]
+    [Timeout(120_000)]
+    public async Task A_target_that_acquired_admission_then_failed_activation_recovers_without_losing_acked_rows(CancellationToken token)
     {
-        await foreach (var entry in writers.WatchAsync<byte[]>("gru", cancellationToken: token))
+        await using var drill = await RecoveryDrill.StartAsync(token);
+        var blocked = drill.TargetNats.Drop((subject, _) => subject == "$KV." + HomeLeases.Bucket + ".home." + drill.Database);
+        var elapsed = Stopwatch.StartNew();
+        var draining = drill.SourceHttp.PostAsync(ManagementApi.Uri("/v1/rollout/drain?target=gru-2"), null, token);
+        await blocked.WaitAsync(TimeSpan.FromSeconds(20), token);
+        await Assert.That(await drill.OwnerAsync(token) is { Node: "gru-2", Activated: false, Transfer.Phase: "activating" }).IsTrue();
+        var writers = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(RegionalWriterLease.Bucket, token);
+        var held = await writers.GetEntryAsync<byte[]>("gru", cancellationToken: token);
+        await Assert.That(JsonSerializer.Deserialize(held.Value!, TerraBaseJsonContext.Default.RegionalWriter)!.Node).IsEqualTo("gru-2");
+        // No surviving handler may undo this in a finally block.
+        await drill.Source.KillAsync();
+        await drill.Target.KillAsync();
+        await IgnoreControllerDisconnectAsync(draining);
+        await drill.Source.StartAsync(token);
+        await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
+        await Assert.That(elapsed.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
+        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('after-acquired-failure')", token);
+        await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "after-acquired-failure"], token);
+        Console.WriteLine($"DRILL target failed after acquiring admission: recovered_ms={elapsed.Elapsed.TotalMilliseconds:F3}");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task Foreign_and_third_node_database_leases_are_isolated_without_stranding_the_regional_writer(CancellationToken token)
+    {
+        await using var drill = await RecoveryDrill.StartAsync(token);
+        var foreignDb = await drill.CreateDatabaseAsync("foreign-conflict", token);
+        var thirdDb = await drill.CreateDatabaseAsync("third-conflict", token);
+        await drill.Source.KillAsync();
+        await drill.Target.KillAsync();
+        var homes = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(HomeLeases.Bucket, token);
+        var foreign = new HomeLease(drill.Organization, drill.Project, foreignDb, "sjc", "sjc-foreign", 0, "foreign-session");
+        var third = new HomeLease(drill.Organization, drill.Project, thirdDb, "gru", "gru-third", 100, "third-session");
+        foreach (var conflict in new[] { foreign, third })
         {
-            if (entry.Operation != NatsKVOperation.Put)
-            {
-                return;
-            }
+            _ = await homes.PutAsync("node." + conflict.Node, JsonSerializer.SerializeToUtf8Bytes(new NodeLease(conflict.Node, conflict.Home, conflict.Session), TerraBaseJsonContext.Default.NodeLease), cancellationToken: token);
+            _ = await homes.PutAsync("home." + conflict.DatabaseId, JsonSerializer.SerializeToUtf8Bytes(conflict, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
         }
-        throw new IOException("writer lease watch ended before expiry");
+        var elapsed = Stopwatch.StartNew();
+        await drill.Source.StartAsync(token);
+        await drill.Target.StartAsync(token);
+        await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
+        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('healthy-after-conflict')", token);
+        foreach (var conflict in new[] { foreign, third })
+        {
+            using var refused = await drill.SourceHttp.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{drill.Project}/databases/{conflict.DatabaseId}/sql/execute"),
+                new { statements = new[] { new { sql = "CREATE TABLE must_not_commit(id TEXT)" } } }, token);
+            await Assert.That(refused.IsSuccessStatusCode).IsFalse();
+            var retained = await homes.GetEntryAsync<byte[]>("home." + conflict.DatabaseId, cancellationToken: token);
+            await Assert.That(JsonSerializer.Deserialize(retained.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(conflict);
+        }
+        await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "healthy-after-conflict"], token);
+        await Assert.That(elapsed.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
+        Console.WriteLine($"DRILL isolated foreign and third-node DBs: healthy writer recovered_ms={elapsed.Elapsed.TotalMilliseconds:F3}");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task A_retained_legacy_owner_bootstraps_in_place_without_changing_its_epoch_or_losing_rows(CancellationToken token)
+    {
+        await using var drill = await RecoveryDrill.StartAsync(token);
+        await drill.Source.KillAsync();
+        await drill.Target.KillAsync();
+        var owners = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(RegionalHandoff.Bucket, token);
+        var current = await owners.GetEntryAsync<byte[]>("gru", cancellationToken: token);
+        var legacy = new RegionalOwner("gru", "gru-1", 7, "gru-2");
+        _ = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(legacy, TerraBaseJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
+        await owners.DeleteAsync("protocol.gru", cancellationToken: token);
+        // Upgraded follower first: it must not treat an absent exclusive key
+        // as permission to take authority from the still-pinned legacy owner.
+        await drill.Target.StartAsync(token);
+        await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
+        await drill.Source.StartAsync(token);
+        await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
+        var adopted = await drill.OwnerAsync(token);
+        await Assert.That(adopted is { Node: "gru-1", Epoch: 7, Version: 2, Activated: true }).IsTrue();
+        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('after-bootstrap')", token);
+        await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "after-bootstrap"], token);
+        Console.WriteLine("DRILL retained Version:0 bootstrap: pinned owner/epoch retained; follower never admitted; exact rows preserved");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task Recovery_retries_the_certified_live_target_instead_of_returning_ownership_to_a_dead_source(CancellationToken token)
+    {
+        await using var drill = await RecoveryDrill.StartAsync(token);
+        var blocked = drill.TargetNats.Drop((subject, _) => subject == "$KV." + HomeLeases.Bucket + ".home." + drill.Database);
+        var draining = drill.SourceHttp.PostAsync(ManagementApi.Uri("/v1/rollout/drain?target=gru-2"), null, token);
+        await blocked.WaitAsync(TimeSpan.FromSeconds(20), token);
+        var pending = await drill.OwnerAsync(token);
+        await Assert.That(pending is { Node: "gru-2", Activated: false }).IsTrue();
+        await drill.Source.KillAsync();
+        await IgnoreControllerDisconnectAsync(draining);
+        // A refreshed persisted activation deadline proves the recovery path
+        // ran with the source dead. No sleep and no guessed owner CAS.
+        await TerraBaseTestServer.EventuallyAsync(async cancellation =>
+            (await drill.OwnerAsync(cancellation)).Transfer!.Deadline > pending.Transfer!.Deadline,
+            RegionalHandoff.RecoveryBound);
+        await Assert.That((await drill.OwnerAsync(token)).Node).IsEqualTo("gru-2");
+        drill.TargetNats.Allow();
+        await RecoveryDrill.WaitWriterAsync(drill.TargetHttp, RegionalHandoff.RecoveryBound, token);
+        await drill.ExecuteAsync(drill.TargetHttp, "INSERT INTO acked VALUES ('live-target-recovered')", token);
+        await drill.AssertRowsAsync(drill.TargetHttp, ["ack-0", "ack-1", "ack-2", "live-target-recovered"], token);
     }
 
     private static bool OwnerPhase(string subject, ReadOnlyMemory<byte> payload, string phase)
@@ -227,6 +344,18 @@ public sealed partial class RegionalWriterCrashTests
         internal HttpClient TargetHttp { get; } = PeerTls.CreateClient(target.Address);
         internal string Sql { get; private set; } = "";
         internal string Database { get; private set; } = "";
+        internal string Organization { get; private set; } = "";
+        internal string Project { get; private set; } = "";
+        private string User { get; set; } = "";
+
+        internal async Task<string> CreateDatabaseAsync(string name, CancellationToken token)
+        {
+            using var management = PeerTls.CreateClient(source.Address);
+            management.DefaultRequestHeaders.Add("X-TerraBase-User-Id", User);
+            using var response = await management.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{Organization}/projects/{Project}/databases"), new { name, replicaRegions = ReplicaRegions }, token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync(token));
+            return (await response.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
+        }
 
         internal static async Task<RecoveryDrill> StartAsync(CancellationToken token)
         {
@@ -243,7 +372,7 @@ public sealed partial class RegionalWriterCrashTests
             var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
             reservation.Stop();
             var peers = Path.Combine(root, "peers");
-            await File.WriteAllTextAsync(peers, "gru-1 gru 127.0.0.2\ngru-2 gru 127.0.0.3\n", token);
+            await File.WriteAllTextAsync(peers, "gru-2 gru 127.0.0.3\ngru-1 gru 127.0.0.2\n", token);
             var sourceNats = new RegionalNatsFault(nats.Url);
             var targetNats = new RegionalNatsFault(nats.Url);
             var source = new Node(root, "gru-1", "127.0.0.2", port, peers, nats, sourceNats.Url);
@@ -257,10 +386,13 @@ public sealed partial class RegionalWriterCrashTests
                 await target.StartAsync(token);
                 await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, TimeSpan.FromSeconds(15), token);
                 using var management = PeerTls.CreateClient(source.Address);
-                management.DefaultRequestHeaders.Add("X-TerraBase-User-Id", EntityIds.New().ToString());
+                drill.User = EntityIds.New().ToString();
+                management.DefaultRequestHeaders.Add("X-TerraBase-User-Id", drill.User);
                 var organization = await CreateAsync("/v1/management/organizations", new { name = "Recovery drill" });
                 var project = await CreateAsync($"/v1/management/organizations/{organization}/projects", new { name = "Project" });
                 var database = await CreateAsync($"/v1/management/organizations/{organization}/projects/{project}/databases", new { name = "acked", replicaRegions = ReplicaRegions });
+                drill.Organization = organization;
+                drill.Project = project;
                 drill.Database = database;
                 drill.Sql = $"/v1/projects/{project}/databases/{database}/sql/execute";
                 await drill.ExecuteAsync(drill.SourceHttp, "CREATE TABLE acked(id TEXT PRIMARY KEY)", token);
@@ -309,7 +441,17 @@ public sealed partial class RegionalWriterCrashTests
         internal async Task ExecuteAsync(HttpClient http, string sql, CancellationToken token)
         {
             using var response = await http.PostAsJsonAsync(ManagementApi.Uri(Sql), new { statements = new[] { new { sql } } }, token);
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync(token));
+            var body = await response.Content.ReadAsStringAsync(token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body);
+            var result = JsonDocument.Parse(body);
+            using (result)
+            {
+                await Assert.That(result.RootElement.TryGetProperty("error", out _)).IsFalse().Because(body);
+                if (sql.StartsWith("INSERT", StringComparison.Ordinal))
+                {
+                    await Assert.That(result.RootElement.GetProperty("results")[0].GetProperty("rows_affected").GetInt64()).IsEqualTo(1).Because(body);
+                }
+            }
         }
 
         internal async Task AssertRowsAsync(HttpClient http, string[] expected, CancellationToken token)
@@ -317,7 +459,8 @@ public sealed partial class RegionalWriterCrashTests
             using var response = await http.PostAsJsonAsync(ManagementApi.Uri(Sql), new { statements = new[] { new { sql = "SELECT id FROM acked ORDER BY id" } } }, token);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync(token));
             var rows = (await response.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows");
-            await Assert.That(rows.EnumerateArray().Select(row => row[0].GetString()!).ToArray()).IsEquivalentTo(expected);
+            var actual = rows.EnumerateArray().Select(row => row[0].GetString()!).ToArray();
+            await Assert.That(actual).IsEquivalentTo(expected).Because("actual IDs=" + string.Join(',', actual) + "; owner=" + (await OwnerAsync(token)).Node);
         }
 
         public async ValueTask DisposeAsync()

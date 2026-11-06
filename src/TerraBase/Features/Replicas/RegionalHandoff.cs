@@ -113,7 +113,7 @@ internal sealed partial class RegionalHandoff(
                 {
                     // Any admitted local node may publish the same deterministic initial
                     // owner. A follower can start first during the first rolling deployment.
-                    var first = new RegionalOwner(region, nodes.First(node => node.Region == region).Name, 1, Version: ProtocolVersion);
+                    var first = new RegionalOwner(region, nodes.Where(node => node.Region == region).MinBy(node => node.Name, StringComparer.Ordinal)!.Name, 1, Version: ProtocolVersion);
                     try
                     {
                         _ = await kv.CreateAsync(region, Encode(first), cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -289,14 +289,18 @@ internal sealed partial class RegionalHandoff(
     {
         if (request.Positions.Count > 10_000 || !await PreparingAsync(request, cancellationToken).ConfigureAwait(false))
         {
-            return false;
+            return Refuse("preparation owner or reservation changed");
         }
 
         if (request.Catalog is null)
         {
-            return false;
+            return Refuse("preparation catalog missing");
         }
         await RegionalCatalog.ImportAsync(services.GetRequiredService<IStorageEngine>(), request.Catalog, cancellationToken).ConfigureAwait(false);
+        // An aborted preparation can leave the target's old follower suspended.
+        // Reconcile the newly imported catalog before asking it to catch up:
+        // the retry may include databases created after bulk priming as well.
+        await services.GetRequiredService<RegionReplication>().SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
 
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
         var replication = services.GetRequiredService<RegionReplication>();
@@ -310,7 +314,7 @@ internal sealed partial class RegionalHandoff(
 
             if (!DatabaseRevision.TryParse(position.Revision, out var expected))
             {
-                return false;
+                return Refuse("invalid applied-position proof");
             }
             // Bulk priming happens before the edge barrier. Reuse an already
             // applied replica; only the final missing suffix needs a fenced pull.
@@ -320,13 +324,13 @@ internal sealed partial class RegionalHandoff(
             {
                 if (!await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
                 {
-                    return false;
+                    return Refuse("replica follower unavailable during preparation");
                 }
             }
             if (replicas.HeldRevision(database) is not { } actual || actual.Incarnation != expected.Incarnation
                 || DatabaseRevision.Compare(actual, expected) < 0)
             {
-                return false;
+                return Refuse("replica has not applied the certified source position");
             }
             logger.ZLogInformation($"Regional candidate applied proof: {request.Source:@Source} to {options.MachineId:@Target}, database {position.Database:@Database}, source {position.Revision:@SourceRevision}, target {actual.ToString():@TargetRevision}, epoch {request.Epoch:@Epoch}");
         }
@@ -346,7 +350,7 @@ internal sealed partial class RegionalHandoff(
             var detached = await replicas.DetachAsync(database, cancellationToken).ConfigureAwait(false);
             if (detached is null)
             {
-                return false;
+                return Refuse("prepared replica could not be detached");
             }
 
             try
@@ -365,7 +369,7 @@ internal sealed partial class RegionalHandoff(
         await services.GetRequiredService<HomePush.HomePush>().RebuildForPromotionAsync(cancellationToken).ConfigureAwait(false);
         if (!await PreparingAsync(request, cancellationToken).ConfigureAwait(false))
         {
-            return false;
+            return Refuse("preparation owner or reservation changed");
         }
         await WritePreparedAsync(_kv!, new RegionalPrepared(request.Source, options.MachineId, request.Epoch, request.Operation), cancellationToken).ConfigureAwait(false);
         return await PreparingAsync(request, cancellationToken).ConfigureAwait(false);
@@ -378,11 +382,23 @@ internal sealed partial class RegionalHandoff(
             return false;
         }
         var entry = await ReadAsync(kv, options.Region, cancellationToken).ConfigureAwait(false);
-        return entry is { Value: { } value } && Decode(value) is { } owner
-            && owner.Node == request.Source && owner.Epoch == request.Epoch
-            && (owner.Transfer is { Phase: Preparing } transfer && transfer.Id == request.Operation
+        if (entry is not { Value: { } value })
+        {
+            return false;
+        }
+        var owner = Decode(value);
+        if (owner.Node != request.Source || owner.Epoch != request.Epoch
+            || !(owner.Transfer is { Phase: Preparing } transfer && transfer.Id == request.Operation
                 || request.Operation is null && (owner.Version == 0 && owner.Transfer is null
-                    || owner.Transfer is { Phase: Recovering, Source: var restored } && restored == request.Source));
+                    || owner.Transfer is { Phase: Recovering, Source: var restored } && restored == request.Source)))
+        {
+            return false;
+        }
+        // This request read the authoritative owner under the same change gate
+        // as Refresh. Observe it now: the background loop may still cache the
+        // abandoned activation, which otherwise leaves prior copies suspended.
+        Observe(owner);
+        return true;
     }
 
     internal async Task<bool> VerifyAsync(RegionalPrepare request, CancellationToken cancellationToken)
@@ -451,14 +467,14 @@ internal sealed partial class RegionalHandoff(
         var kv = _kv;
         if (kv is null)
         {
-            return false;
+            return Refuse("owner store unavailable");
         }
 
         var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
         var peer = nodes.FirstOrDefault(node => node.Region == options.Region && node.Name == target && target != options.MachineId);
         if (peer is null)
         {
-            return false;
+            return Refuse("target is outside admitted regional peers");
         }
 
         IDisposable? admission = null;
@@ -468,7 +484,7 @@ internal sealed partial class RegionalHandoff(
             var entry = await BeginDrainAsync(kv, target, cancellationToken).ConfigureAwait(false);
             if (entry is null)
             {
-                return false;
+                return Refuse("stop reservation unavailable");
             }
 
             var owner = Decode(entry.Value.Value!);
@@ -476,13 +492,13 @@ internal sealed partial class RegionalHandoff(
             var promoting = owner.Node == options.MachineId;
             if (!promoting && owner.Node != target)
             {
-                return false;
+                return Refuse("regional owner changed");
             }
 
             using var reservation = services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Bulk, 16L * 1024 * 1024, tenant: null);
             if (reservation is null)
             {
-                return false;
+                return Refuse("bulk-memory reservation unavailable");
             }
             admission = await services.GetRequiredService<RegionalIngress>().HoldAsync(cancellationToken).ConfigureAwait(false);
             owners.Drain();
@@ -499,14 +515,14 @@ internal sealed partial class RegionalHandoff(
                 {
                     if (await catalog.ListHomedAsync(region, after, cancellationToken).ConfigureAwait(false) is not TenantDatabasePage page)
                     {
-                        return false;
+                        return Refuse("regional catalog unavailable");
                     }
 
                     foreach (var database in page.Databases)
                     {
                         if (positions.Count >= 10_000)
                         {
-                            return false;
+                            return Refuse("regional database bound reached");
                         }
 
                         DatabaseRevision? position;
@@ -526,7 +542,7 @@ internal sealed partial class RegionalHandoff(
 
                         if (region == options.Region && position is null)
                         {
-                            return false;
+                            return Refuse("source applied position unavailable");
                         }
 
                         if (position is { } applied)
@@ -545,14 +561,14 @@ internal sealed partial class RegionalHandoff(
                 ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null, transfer.Id), TerraBaseJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
             {
-                return false;
+                return Refuse("preparation payload bound reached");
             }
             using var body = new ByteArrayContent(payload);
             body.Headers.ContentType = new MediaTypeHeaderValue("application/json");
             using var response = await _http.PostAsync(new Uri(address, promoting ? "/v1/rollout/prepare" : "/v1/rollout/verify"), body, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return false;
+                return Refuse("target rejected applied-position preparation");
             }
 
             if (!promoting)
@@ -618,6 +634,12 @@ internal sealed partial class RegionalHandoff(
                 _changing.Release();
             }
         }
+    }
+
+    private bool Refuse(string reason)
+    {
+        logger.ZLogWarning($"Regional handoff refused: {reason:@Reason}");
+        return false;
     }
 
     private static TenantContext Database(RegionalPosition position) => new(position.Organization, PlanTier.Hobby, position.Project, position.Database);

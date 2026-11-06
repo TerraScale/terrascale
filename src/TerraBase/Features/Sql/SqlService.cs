@@ -15,7 +15,7 @@ internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime,
     IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options, IHomeApply apply,
-    Routing.WriteRouter router, DatabaseFences fences) : ISqlService
+    Routing.WriteRouter router, DatabaseFences fences, RegionalOwners owners) : ISqlService
 {
     private const int MaxTables = 10_000;
 
@@ -28,6 +28,10 @@ internal sealed class SqlService(
             ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, transactionTime, database, canWrite, Local)
             : Local();
     }
+
+    internal async ValueTask<bool> UsePrimaryAsync(TenantContext database, CancellationToken cancellationToken) =>
+        owners.Writer && await placements.FindAsync(database, cancellationToken).ConfigureAwait(false)
+            is TenantDatabaseRecord { Placement.Home: var home } && home == options.Region;
 
     public ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
         TenantContext database, IReplicaReader reader, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements, CancellationToken cancellationToken)
@@ -127,7 +131,7 @@ internal sealed class SqlService(
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
-        if (replicas.Holds(database))
+        if (replicas.Holds(database) && !await UsePrimaryAsync(database, cancellationToken).ConfigureAwait(false))
         {
             // A replica region lists its replica's tables.
             var reader = await replicas.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);

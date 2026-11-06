@@ -1,5 +1,11 @@
 # Regional writer admission and recovery qualification: 2026-11-06
 
+**Superseded qualification:** independent re-review rejected this candidate.
+Per-database activation isolation, a certified connected-source manual-CAS
+drill, and post-acquisition target-failure coverage were missing. The figures
+below are historical evidence only and do not authorize release. The expanded
+replacement qualification is pending.
+
 All six critical Slow drills passed five consecutive times against the complete
 candidate: **30/30**, with no skipped tests. This is local protocol qualification;
 no live rollout or latency acceptance pass is claimed.

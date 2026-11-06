@@ -59,24 +59,41 @@ this decision. Platform IDs and known regional-only placements never participate
 in these global lease operations.
 
 New controllers refuse to promote a peer that lacks a process-session status:
-that legacy peer cannot persist protocol-2 activation. For the first
-replacement of the currently deployed legacy binary, the existing legacy
-handoff leaves the other old process serving; the upgraded process starts as its
-follower. The surviving legacy writer can then hand off to the upgraded peer
-before it is replaced. The upgraded candidate accepts the legacy preparation
-payload and persists a certificate before acknowledging it. This transition still
-needs a separately
-approved, coordinated release window; a local drill pass grants no deployment
-permission. Existing legacy processes cannot implement the new rollback protocol
-until replaced, so the mixed-version transition is not counted among the three
-protocol-2 acceptance rollouts. Its first handoff still lacks protocol-2 automatic
-recovery and durable stop exclusion; passing the new-only drills does not qualify
-those old binaries. Keep the release hold until that transition plan is approved.
+that legacy peer cannot persist protocol-2 activation. Legacy writers do not
+consult the new exclusive lease at all. An empty lease key therefore does not
+fence an old process, and an ordinary mixed-version handoff is unsafe.
+
+The approved bootstrap design replaces the follower first, then restarts the
+same pinned owner in place with unchanged node, epoch and retained primary data.
+The executor must physically fence the old owner before starting its replacement.
+The regional maintenance target is 15–30 seconds, with a 60-second recovery
+budget per region, in SJC → FRA → GRU order. This requires a qualified scoped
+executor driver, independent review and final release GO. No local drill grants
+production permission. The bootstrap maintenance window does not count toward
+zero-downtime acceptance.
+
+`Version: 0` denotes an owner record written by a pre-protocol-2 process, rather
+than protocol-2 admission or preparation. At startup, only the node already named
+in that exact legacy owner record may adopt its retained primary files. Adoption
+is allowed once, while the region's protocol marker is absent; it publishes the
+protocol-2 marker and durable activation before admitting writes. A later
+Version:0 manual CAS without a valid preparation certificate is deliberately
+refused and is not automatically interpreted as a recoverable transfer. It needs
+operator diagnosis; do not write legacy owner records after bootstrap.
+
+A conflicting per-database home lease fences that database only. Activation
+continues for healthy databases. Confirmation and automatic claims cannot
+silently overwrite the isolated revision. After a failed owner CAS, persisted
+recovery retries admission; a dead source is not selected while a certified live
+target can finish activation. The activation marker and recovery CAS race on the
+same revision, so recovery cannot undo a writer that acknowledged requests.
 
 Qualification requires five repeats of each critical drill: foreign lease replay;
 target failure after owner CAS before admission; controller disconnection before
 reservation, before CAS, after CAS and after activation; quorum partition during
 rollback; both processes killed with a native write open; and manual owner CAS
-while writes run. Every drill reconciles acknowledged rows. Three later live
+with a certified target and connected source holding admission; target failure
+after admission acquisition; foreign/third-node DB isolation; dead-source recovery;
+and retained Version:0 bootstrap. Every drill reconciles acknowledged rows. Three later live
 rollouts must separately meet the request-error, latency and bounded-recovery
 criteria under the agreed regional load.

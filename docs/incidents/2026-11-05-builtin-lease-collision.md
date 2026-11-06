@@ -104,19 +104,17 @@ process restart and retains progress across bounded attempts. A durable retiring
 intent prevents stopping the surviving writer until its peer has restarted and
 caught up. Legitimate foreign-held replicated databases fence only that database.
 
-All six requested Slow drills passed five consecutive repeats (30/30). In the
-strong target-failure drill, the source handler and target are both killed after
-the owner CAS while no target admission exists. Restarting only the retained
-source restores a writer automatically in 11.539–11.802 seconds, below the stated
-30-second bound with reachable quorum. Every acknowledged row remains and a new
-write succeeds. Fast checks passed 66/66 TerraBase and 4/4 driver within budgets.
-Exact source hashes, timings, limitations and commands are in [the recovery
-qualification report](../../benchmark/bench/2026-11-06-zdt-control.md).
+The original six-drill qualification was rejected by independent re-review:
+it did not cover a conflicting per-DB lease, an admitted target that fails
+activation, or a certified target competing with a connected source. The old
+[recovery report](../../benchmark/bench/2026-11-06-zdt-control.md) is explicitly
+superseded and does not authorize release.
 
-These results qualify the new protocol locally; they do not qualify old b443
-processes during the initial transition. That first legacy handoff still lacks
-new recovery and stop exclusion and needs a coordinated, explicitly approved
-window. No candidate has been pushed or deployed.
+Old b443 processes admit writes without the exclusive lease. The approved
+bootstrap approach retains each owner node and epoch, replaces the follower
+first, then replaces that owner in place during declared regional maintenance.
+It still requires the reviewed executor fence/driver, independent re-review and
+final GO. No candidate has been pushed or deployed.
 Restore CI/Images only after the collision regressions pass and explicit release
 approval. No live rollout, deployment or manual CAS is authorized during this
 hold. Three measured live rollouts and the independent acceptance handoff remain
@@ -125,3 +123,37 @@ outstanding. Durable notice replay (#1104) is outside this incident proof.
 The owned `rollout-zdt-proof-20261105` synthetic account was deleted after its
 databases were cleaned up. The independent acceptance account is not owned by
 this worker and was retained.
+
+## Re-review corrections, locally qualified
+
+The first exclusive-admission candidate was rejected: one conflicting database
+lease could still block every regional activation, and the manual-CAS drill did
+not exercise a certified target competing with a connected source. The corrected
+candidate isolates that database/revision, retries persisted recovery, chooses
+epoch-one owners independently of peers-file order, and avoids recovering to a
+dead source when the certified target can retry. New drills cover those paths
+and a target that acquired the exclusive key before failing activation.
+
+Expanded repeats also found two real lifecycle problems. Promotion could close a
+primary while its continuous-backup tap still reported itself live; ended taps
+now recognize closed stores and retire safely when a pending read races closure.
+A restarted source could keep a same-region replica in memory before recovery;
+after admission it wrote the retained primary but could read the older replica.
+The recovered writer's SQL reads, descriptions and table listing now select its
+primary, preserving active transaction snapshots, follower reads and R10 holds.
+Preparation retry after an abandoned activation could also use stale cached
+ownership and leave its previous follower suspended. It now observes the validated
+owner under the change gate and reconciles the imported catalog before catch-up.
+The backup and recovered-read problems have deterministic negative controls; failed and superseded runs
+remain recorded in issue #1124 and the re-review benchmark report.
+
+The corrected source passed all ten Slow drills five consecutive times (50/50),
+with exact acknowledged-row checks; both target-failure recoveries took
+11.947–12.721 seconds against a 30-second bound. Fast passed 66/66 TerraBase
+and 4/4 native driver. See the [re-review proof](../../benchmark/bench/2026-11-06-zdt-rereview.md)
+for source hashes, every repeat, negative controls and failed-attempt history.
+
+These local changes do not authorize deploying, restarting production watchers,
+deleting global keys, re-enabling workflows, or counting the maintenance bootstrap
+as a successful zero-downtime rollout. The executor installation gate and final
+GO remain outstanding.

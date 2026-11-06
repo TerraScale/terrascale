@@ -47,6 +47,7 @@ internal sealed class HomeLeases(
     private const int WrongLastSequence = 10071;
 
     private readonly ConcurrentDictionary<string, (HomeLease Lease, ulong Revision)> _homes = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ulong> _isolated = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, NodeLease> _nodes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, bool> _claiming = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _confirming = new(1, 1);
@@ -228,7 +229,8 @@ internal sealed class HomeLeases(
         if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
             || placement.Home != options.Region)
         {
-            return false;
+            leaseGate.Lease(database.DatabaseId!, held: false);
+            return true;
         }
         // Region-only builtins intentionally reuse IDs across regions. Their
         // regional writer fence suffices; a global home lease would collide
@@ -263,7 +265,8 @@ internal sealed class HomeLeases(
                 if (previous.OrganizationId != database.OrganizationId || previous.ProjectId != database.ProjectId
                     || previous.DatabaseId != database.DatabaseId || previous.Epoch < placement.Version)
                 {
-                    return false;
+                    Isolate(previous, current!.Value.Revision);
+                    return true;
                 }
                 // A legitimate cross-region move may precede this regional
                 // catalog's refresh. Fence just that database and follow its
@@ -277,7 +280,8 @@ internal sealed class HomeLeases(
             }
             if (previous is not null && previous.Node != source && previous.Node != options.MachineId)
             {
-                return false;
+                Isolate(previous, current!.Value.Revision);
+                return true;
             }
 
             var next = new HomeLease(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region,
@@ -290,9 +294,26 @@ internal sealed class HomeLeases(
             leaseGate.Lease(next.DatabaseId, held: true);
             return true;
         }
+        catch (Exception error) when (error is NatsKVWrongLastRevisionException or NatsKVCreateException)
+        {
+            // A single database lost its lease CAS. Keep it fenced; its normal
+            // confirmation/watch path retries without blocking regional admission.
+            _homes.TryRemove(database.DatabaseId!, out _);
+            leaseGate.Lease(database.DatabaseId!, held: false);
+            return true;
+        }
         finally
         {
             _confirming.Release();
+        }
+
+        void Isolate(HomeLease conflicting, ulong revision)
+        {
+            _isolated[database.DatabaseId!] = revision;
+            _ = _homes.AddOrUpdate(database.DatabaseId!, (conflicting, revision),
+                (_, known) => known.Revision < revision ? (conflicting, revision) : known);
+            leaseGate.Lease(database.DatabaseId!, held: false);
+            logger.ZLogWarning($"A conflicting database home lease is isolated; other regional databases may activate");
         }
     }
 
@@ -496,7 +517,7 @@ internal sealed class HomeLeases(
         }
 
         var id = database.DatabaseId!;
-        if (_homes.TryGetValue(id, out var known) && known.Lease is { Node: var node, Session: var session } && node == options.MachineId && session == _session)
+        if (!_isolated.ContainsKey(id) && _homes.TryGetValue(id, out var known) && known.Lease is { Node: var node, Session: var session } && node == options.MachineId && session == _session)
         {
             leaseGate.Lease(id, held: true);
             return;
@@ -515,6 +536,16 @@ internal sealed class HomeLeases(
         catch (Exception error) when (error is NatsKVKeyNotFoundException or NatsKVKeyDeletedException)
         {
             current = null;
+        }
+
+        if (_isolated.TryGetValue(id, out var conflict))
+        {
+            if (current?.Revision == conflict)
+            {
+                leaseGate.Lease(id, held: false);
+                return;
+            }
+            _isolated.TryRemove(id, out _);
         }
 
         var existing = current?.Value is { } bytes ? Decode(bytes) : null;
@@ -631,7 +662,7 @@ internal sealed class HomeLeases(
     {
         foreach (var (id, (lease, _)) in _homes)
         {
-            if (lease.Node != gone.Node || PlatformDatabase(id))
+            if (lease.Node != gone.Node || PlatformDatabase(id) || _isolated.ContainsKey(id))
             {
                 continue;
             }

@@ -779,6 +779,13 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             }
             (file.LastError, file.Failures) = (file.SnapshotError, 0);
         }
+        catch (ObjectDisposedException) when (file.Tap.Ended)
+        {
+            // The primary may be replaced after the Ended check above. Retire
+            // only that ended tap; discovery opens the new physical copy.
+            file.Removed = true;
+            await file.Tap.DisposeAsync().ConfigureAwait(false);
+        }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
             Failed(file, error);

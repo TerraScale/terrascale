@@ -4,12 +4,12 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed record RegionalTransfer(string Id, string Source, string Target, string SourceSession, string Phase, DateTimeOffset Deadline);
+internal sealed record RegionalTransfer(string Id, string Source, string Target, string SourceSession, string Phase, DateTimeOffset Deadline, long PreparedEpoch = 0);
 
 internal sealed record RegionalPrepared(string Source, string Target, long Epoch, string? Operation);
 
 internal sealed record RegionalOwner(string Region, string Node, long Epoch, string? Previous = null,
-    bool Activated = false, RegionalTransfer? Transfer = null, int Version = 0);
+    bool Activated = false, RegionalTransfer? Transfer = null, int Version = 0, RegionalPrepared? Prepared = null);
 
 /// <summary>Observed ownership, independent of reachability and peers-file ordering.</summary>
 internal sealed class RegionalOwners(TerraBaseOptions options)

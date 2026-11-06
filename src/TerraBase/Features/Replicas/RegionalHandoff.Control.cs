@@ -18,7 +18,7 @@ internal sealed partial class RegionalHandoff
     private static readonly TimeSpan AttemptBudget = TimeSpan.FromSeconds(2);
 
     // With a working quorum and a healthy retained source, an activation that
-    // never acquired admission recovers within 30 seconds of the owner CAS:
+    // failed before publishing activation recovers within 30 seconds of the owner CAS:
     // 10 s activation deadline + <=6 s old lease + bounded refresh/activation.
     internal static readonly TimeSpan RecoveryBound = TimeSpan.FromSeconds(30);
 
@@ -110,42 +110,113 @@ internal sealed partial class RegionalHandoff
         // recorded source, a preparation seen here has no live drain handler.
         // Recover immediately after quorum returns, including after restart.
         var abandonedHere = transfer.Phase == Preparing && transfer.Source == options.MachineId;
-        if (!abandonedHere && transfer.Deadline > DateTimeOffset.UtcNow || transfer.Phase is Retiring or Recovering)
+        if ((!abandonedHere && transfer.Deadline > DateTimeOffset.UtcNow) || transfer.Phase == Retiring)
         {
             return false;
+        }
+        if (transfer.Phase == Recovering)
+        {
+            // The selected source keeps retrying activation on every refresh.
+            // If it died before admission, either live process can instead
+            // activate the already certified target; never choose a stale copy.
+            if (owner.Activated || await NodeReadyAsync(owner.Node, token).ConfigureAwait(false))
+            {
+                return false;
+            }
+            var targetProof = await ReadAsync(kv, PreparedKey(transfer.Target), token).ConfigureAwait(false);
+            if (targetProof?.Value is not { } proofBytes
+                || JsonSerializer.Deserialize(proofBytes, TerraBaseJsonContext.Default.RegionalPrepared) is not { } proof
+                || proof.Source != transfer.Source || proof.Target != transfer.Target
+                || proof.Operation != transfer.Id || proof.Epoch != transfer.PreparedEpoch
+                || !await NodeReadyAsync(transfer.Target, token).ConfigureAwait(false))
+            {
+                return false;
+            }
+            var fallback = new RegionalOwner(options.Region, transfer.Target, owner.Epoch + 1, owner.Node,
+                Transfer: transfer with { Phase = Activating, Deadline = DateTimeOffset.UtcNow + ActivationBudget },
+                Version: ProtocolVersion,
+                Prepared: new RegionalPrepared(owner.Node, transfer.Target, owner.Epoch, transfer.Id));
+            // Embed the derived certificate in this same owner CAS. A failed
+            // CAS must not leave a reusable proof if the source activated first.
+            return await CommitRecoveryAsync(kv, entry, fallback, transfer.Id, token).ConfigureAwait(false);
         }
 
         RegionalOwner recovered;
         if (transfer.Phase == Activating && !owner.Activated)
         {
+            if (!await NodeReadyAsync(transfer.Source, token).ConfigureAwait(false))
+            {
+                // Do not hand ownership to a dead source. The certified target
+                // may retry its activation; its exclusive lease still fences it.
+                if (await HasPreparedAsync(kv, owner, token).ConfigureAwait(false)
+                    && await NodeReadyAsync(owner.Node, token).ConfigureAwait(false))
+                {
+                    return await CommitRecoveryAsync(kv, entry,
+                        owner with { Transfer = transfer with { Deadline = DateTimeOffset.UtcNow + ActivationBudget } },
+                        transfer.Id, token).ConfigureAwait(false);
+                }
+                return false;
+            }
             // Either live node can undo an unactivated owner CAS. Partial
             // per-database lease acquisitions are reclaimed from Previous.
             recovered = new RegionalOwner(options.Region, transfer.Source, owner.Epoch + 1, owner.Node,
-                Transfer: transfer with { Phase = Recovering }, Version: ProtocolVersion);
+                Transfer: transfer with { Phase = Recovering, Deadline = DateTimeOffset.UtcNow + ActivationBudget }, Version: ProtocolVersion);
         }
         else if (transfer.Phase == Preparing && (owner.Node == transfer.Source || owner.Node == transfer.Target))
         {
             recovered = owner.Node != transfer.Source ? owner with { Transfer = null }
                 : new RegionalOwner(options.Region, owner.Node, owner.Epoch + 1, owner.Node,
-                    Transfer: transfer with { Phase = Recovering, Source = owner.Node }, Version: ProtocolVersion);
+                    Transfer: transfer with { Phase = Recovering, Source = owner.Node, Deadline = DateTimeOffset.UtcNow + ActivationBudget }, Version: ProtocolVersion);
         }
         else
         {
             return false;
         }
 
+        return await CommitRecoveryAsync(kv, entry, recovered, transfer.Id, token).ConfigureAwait(false);
+    }
+
+    private async Task<bool> CommitRecoveryAsync(INatsKVStore kv, NatsKVEntry<byte[]> entry, RegionalOwner recovered, string operation, CancellationToken token)
+    {
         try
         {
             _ = await kv.UpdateAsync(options.Region, Encode(recovered), entry.Revision, cancellationToken: token).ConfigureAwait(false);
             Observe(recovered);
-            logger.ZLogWarning($"Expired regional transfer recovered automatically: {transfer.Id:@Operation}, writer {recovered.Node:@Node}, epoch {recovered.Epoch:@Epoch}");
+            logger.ZLogWarning($"Regional transfer recovery selected {recovered.Node:@Node}, epoch {recovered.Epoch:@Epoch}, operation {operation:@Operation}");
         }
         catch (NatsKVWrongLastRevisionException)
         {
-            // Activation or another recovery won. Read the durable winner on
-            // the next refresh rather than using a stale decision.
+            // Activation or another recovery won the same record revision.
         }
         return true;
+    }
+
+    private async Task<bool> NodeReadyAsync(string node, CancellationToken token)
+    {
+        if (node == options.MachineId)
+        {
+            return await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(token).ConfigureAwait(false);
+        }
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
+        attempt.CancelAfter(AttemptBudget);
+        try
+        {
+            var peers = await new PeersFile(options).ListAsync(attempt.Token).ConfigureAwait(false);
+            var peer = peers.FirstOrDefault(peer => peer.Name == node && peer.Region == options.Region);
+            if (peer is null)
+            {
+                return false;
+            }
+            var address = new UriBuilder(Uri.UriSchemeHttp, peer.Address.ToString(), options.InternalPort).Uri;
+            using var response = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), attempt.Token).ConfigureAwait(false);
+            return response.IsSuccessStatusCode
+                && await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, attempt.Token).ConfigureAwait(false)
+                    is { Ready: true, Node: var actual } && actual == node;
+        }
+        catch (Exception error) when (error is HttpRequestException || error is OperationCanceledException && !token.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     private async Task RecoverUncommittedAsync(INatsKVStore kv)
@@ -166,10 +237,10 @@ internal sealed partial class RegionalHandoff
                 RegionalOwner? resumed = transfer.Phase == Preparing
                     ? owner.Node != transfer.Source ? owner with { Transfer = null }
                         : new RegionalOwner(options.Region, owner.Node, owner.Epoch + 1, owner.Node,
-                            Transfer: transfer with { Phase = Recovering, Source = owner.Node }, Version: ProtocolVersion)
+                            Transfer: transfer with { Phase = Recovering, Source = owner.Node, Deadline = DateTimeOffset.UtcNow + ActivationBudget }, Version: ProtocolVersion)
                     : transfer.Phase == Activating && !owner.Activated
                         ? new RegionalOwner(options.Region, options.MachineId, owner.Epoch + 1, owner.Node,
-                            Transfer: transfer with { Phase = Recovering }, Version: ProtocolVersion)
+                            Transfer: transfer with { Phase = Recovering, Deadline = DateTimeOffset.UtcNow + ActivationBudget }, Version: ProtocolVersion)
                         : null;
                 if (resumed is not null)
                 {
@@ -201,9 +272,9 @@ internal sealed partial class RegionalHandoff
     private async Task<bool> HasPreparedAsync(INatsKVStore kv, RegionalOwner owner, CancellationToken token)
     {
         var entry = await ReadAsync(kv, PreparedKey(owner.Node), token).ConfigureAwait(false);
-        return entry?.Value is { } bytes
-            && JsonSerializer.Deserialize(bytes, TerraBaseJsonContext.Default.RegionalPrepared) is { } prepared
-            && prepared.Target == owner.Node && prepared.Source == owner.Previous && prepared.Epoch == owner.Epoch - 1
+        var prepared = owner.Prepared ?? (entry?.Value is { } bytes
+            ? JsonSerializer.Deserialize(bytes, TerraBaseJsonContext.Default.RegionalPrepared) : null);
+        return prepared is not null && prepared.Target == owner.Node && prepared.Source == owner.Previous && prepared.Epoch == owner.Epoch - 1
             && (owner.Transfer is not { Phase: Activating } transfer || transfer.Id == prepared.Operation);
     }
 
@@ -211,8 +282,9 @@ internal sealed partial class RegionalHandoff
     {
         if (owner is { Epoch: 1, Previous: null })
         {
-            var peers = await new PeersFile(options).ListAsync(token).ConfigureAwait(false);
-            return peers.First(peer => peer.Region == options.Region).Name == owner.Node;
+            // The committed deterministic owner is authority; local peer-file
+            // enumeration order must not revoke its epoch-one admission.
+            return true;
         }
         if (owner.Transfer is { Phase: Recovering } recovered && recovered.Source == owner.Node)
         {
@@ -287,7 +359,7 @@ internal sealed partial class RegionalHandoff
             return null;
         }
         var transfer = new RegionalTransfer(Guid.NewGuid().ToString("N"), options.MachineId, target, _session, Preparing,
-            DateTimeOffset.UtcNow + DrainBudget);
+            DateTimeOffset.UtcNow + DrainBudget, owner.Epoch);
         var reserved = owner with { Transfer = transfer };
         var revision = await kv.UpdateAsync(options.Region, Encode(reserved), entry.Value.Revision, cancellationToken: token).ConfigureAwait(false);
         entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
