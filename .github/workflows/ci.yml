@@ -429,7 +429,8 @@ jobs:
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
-      group: production-terrabase
+      # A build-only dispatch releases nothing: it never waits on or cancels a pending release.
+      group: ${{ inputs.publication == 'build-only' && format('build-{0}', github.run_id) || 'production-terrabase' }}
       cancel-in-progress: false
     env:
       AREA: terrabase
@@ -484,12 +485,6 @@ jobs:
           IMAGE: ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}@${{ steps.image.outputs.digest }}
         run: |
           { echo '```'; docker buildx imagetools inspect "$IMAGE"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-      # Every region's ts-orch swaps to the linux/arm64 digest, waits for readiness and rolls back on failure. Both
-      # services release; the production-<area> concurrency group keeps one release of each in flight.
-      # Releases converge on the latest main. A run superseded by a newer signed run has nothing left to do. Any other
-      # failure of a push run's release (bake, rollback, a rerun's rebuilt digest under its already-approved run id)
-      # dispatches one fresh main run, a newer signed run that releases the latest main; dispatched runs never
-      # dispatch again.
       - name: Record the build-only digest (no release)
         if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
         env:
@@ -500,9 +495,16 @@ jobs:
           image="ghcr.io/terrascale/${SERVICE}"
           arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
             jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
+          test -n "$arm64"
           docker buildx imagetools inspect "${image}@${arm64}" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${arm64}" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Every region's ts-orch swaps to the linux/arm64 digest, waits for readiness and rolls back on failure. Both
+      # services release; the production-<area> concurrency group keeps one release of each in flight.
+      # Releases converge on the latest main. A run superseded by a newer signed run has nothing left to do. Any other
+      # failure of a push run's release (bake, rollback, a rerun's rebuilt digest under its already-approved run id)
+      # dispatches one fresh main run, a newer signed run that releases the latest main; dispatched runs never
+      # dispatch again.
       - name: Release to every region
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publication != 'build-only')
         env:
@@ -576,8 +578,11 @@ jobs:
           for i in $(jq -r 'keys[]' "${RUNNER_TEMP}/regions.json"); do
             jq -c "[.[$i]]" "${RUNNER_TEMP}/regions.json" > "${RUNNER_TEMP}/region.json"
             echo "Region $(jq -r '.[0].region' "${RUNNER_TEMP}/region.json")" | tee -a "$GITHUB_STEP_SUMMARY"
-            "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service terrabase \
-              --image "$image" --regions "${RUNNER_TEMP}/region.json" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+            out=$("${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service terrabase \
+              --image "$image" --regions "${RUNNER_TEMP}/region.json" 2>&1) || status=1
+            tee -a "$GITHUB_STEP_SUMMARY" <<< "$out"
+            # A superseded release exits 0 without this digest: require this region's own done state.
+            tail -1 <<< "$out" | jq -e '.state == "done" and (.error // "") == ""' > /dev/null || status=1
           done
           exit "$status"
 
