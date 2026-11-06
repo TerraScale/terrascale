@@ -13,6 +13,7 @@ internal sealed partial class RegionalHandoff
     private const string Recovering = "recovering";
     private const int ProtocolVersion = 2;
     private RegionalOwner? _startupOwner;
+    private bool _protocolPublished;
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ActivationBudget = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AttemptBudget = TimeSpan.FromSeconds(2);
@@ -73,11 +74,18 @@ internal sealed partial class RegionalHandoff
                     Transfer = owner.Transfer is { Phase: Activating } pending ? pending with { Phase = Retiring }
                         : owner.Transfer is { Phase: Recovering } ? null : owner.Transfer,
                 };
-                _ = await kv.PutAsync("protocol." + options.Region, "2"u8.ToArray(), cancellationToken: attempt.Token).ConfigureAwait(false);
                 // This CAS races the rollback CAS. Only one can win; the source
                 // never rolls back an activation that might acknowledge writes.
                 _ = await kv.UpdateAsync(options.Region, Encode(active), entry.Revision, cancellationToken: attempt.Token).ConfigureAwait(false);
                 Observe(active);
+            }
+            // Commit authority first. A crash before this advisory marker now
+            // leaves an activated owner whose retained certificate can resume.
+            // Reassert once per process, including a restart after that crash.
+            if (!_protocolPublished)
+            {
+                _ = await kv.PutAsync("protocol." + options.Region, "2"u8.ToArray(), cancellationToken: attempt.Token).ConfigureAwait(false);
+                _protocolPublished = true;
             }
             owners.Resume();
             owners.Renew(until);
@@ -277,7 +285,11 @@ internal sealed partial class RegionalHandoff
         var entry = await ReadAsync(kv, PreparedKey(owner.Node), token).ConfigureAwait(false);
         var prepared = owner.Prepared ?? (entry?.Value is { } bytes
             ? JsonSerializer.Deserialize(bytes, TerraBaseJsonContext.Default.RegionalPrepared) : null);
-        return prepared is not null && prepared.Target == owner.Node && prepared.Source == owner.Previous && prepared.Epoch == owner.Epoch - 1
+        // A retained legacy owner can have Previous=null. Its in-place proof
+        // names itself as Source. Accept that exact proof even if an older
+        // attempt published the protocol marker then died before the owner CAS.
+        var source = owner.Previous ?? (owner.Version == 0 ? owner.Node : null);
+        return prepared is not null && prepared.Target == owner.Node && prepared.Source == source && prepared.Epoch == owner.Epoch - 1
             && (owner.Transfer is not { Phase: Activating } transfer || transfer.Id == prepared.Operation);
     }
 
