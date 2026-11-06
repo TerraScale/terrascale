@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Icon from '@/components/Icon.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict } from '@/lib/i18n'
   import { reveal } from '@/lib/reveal'
@@ -8,18 +7,10 @@
 
 <section class="cta" use:reveal>
   <div class="cta__inner">
-    <div class="cta__card">
-      <h2 class="cta__headline">
-        {$dict.cta.headlineLead} <span class="cta__accent">{$dict.cta.headlineAccent}</span>
-      </h2>
-
-      <div class="cta__actions">
-        <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta__primary">
-          {$dict.cta.ctaPrimary}
-          <Icon name="arrowRight" className="cta__icon" />
-        </ExternalLink>
-      </div>
-    </div>
+    <h2 class="cta__headline">{$dict.cta.title}</h2>
+    <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta__primary">
+      {$dict.cta.ctaPrimary}
+    </ExternalLink>
   </div>
 </section>
 
@@ -29,24 +20,13 @@
     border-top: 1px solid var(--ts-divider);
   }
 
-  .cta__accent {
-    color: var(--ts-link);
-  }
-
   .cta__inner {
-    padding: 0 clamp(16px, 2.5vw, 40px);
-  }
-
-  .cta__card {
     display: grid;
     justify-items: center;
-    gap: 20px;
+    gap: var(--ts-space-6);
     max-width: 960px;
     margin: 0 auto;
-    padding: 64px 32px;
-    border: 1px solid var(--ts-divider);
-    border-radius: 14px;
-    background: var(--ts-bg-surface);
+    padding: 0 clamp(16px, 2.5vw, 40px);
     text-align: center;
   }
 
@@ -57,42 +37,23 @@
     line-height: 1.08;
     letter-spacing: -0.035em;
     margin: 0;
+    text-wrap: balance;
   }
 
-  .cta__actions {
-    display: flex;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-
-  :global(.cta__primary),
-  :global(.cta__secondary) {
-    height: 40px;
-    padding: 0 clamp(16px, 2.5vw, 40px);
-    font-size: 14px;
-  }
-
-  :global(.cta__icon) {
-    width: 14px;
-    height: 14px;
+  :global(.cta__primary) {
+    min-height: 44px;
+    height: auto;
+    max-width: 100%;
+    padding: var(--ts-space-3) var(--ts-space-6);
+    font-size: 16px;
+    white-space: normal;
   }
 
   @media (max-width: 640px) {
     .cta {
       padding: 64px 0;
     }
-    .cta__inner {
-      padding: 0 clamp(16px, 2.5vw, 40px);
-    }
-    .cta__card {
-      padding: 40px 20px;
-    }
-    .cta__actions {
-      width: 100%;
-    }
-    :global(.cta__primary),
-    :global(.cta__secondary) {
+    :global(.cta__primary) {
       width: 100%;
     }
   }
