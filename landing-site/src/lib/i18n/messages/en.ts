@@ -373,19 +373,18 @@ export const en = {
   },
 
   about: {
-    titleLead: 'SQL databases',
-    titleAccent: 'in three regions.',
-    ctaPricing: 'View Pricing',
-    regionsAria: 'Serving regions',
-    missionTitle: 'One platform for databases, keys, and billing.',
-    pillars: [
-      { title: 'SQL databases' },
-      { title: 'One write region, encrypted read replicas' },
-      { title: 'Plan write caps' },
-    ],
-    bandTitle: 'Flat regional pricing, metered by real use.',
-    bandText:
-      'Storage usage counts the bytes each database stores in its home region. Estimated network distance and measured API latency remain separate values.',
+    title: 'About TerraScale',
+    introduction:
+      'TerraScale builds TerraBase, a SQL database service. The dashboard brings together databases, access management and usage.',
+    databaseTitle: 'TerraBase',
+    databaseText:
+      'Each database has one home region for writes and can have encrypted read replicas in other regions. Replicas are eventually consistent.',
+    integrationText:
+      'Use the SQLite SQL dialect through PostgreSQL-compatible clients, the HTTP API or the SDKs. Manage databases and API keys in the dashboard.',
+    alphaTitle: 'Public Alpha',
+    alphaText:
+      'TerraScale is in Public Alpha. Features, limits and APIs may change. No SLA applies during Alpha.',
+    ctaDocs: 'Read the documentation',
   },
 
   notFound: {

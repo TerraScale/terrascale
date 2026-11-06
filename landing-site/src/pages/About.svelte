@@ -1,158 +1,107 @@
 <script lang="ts">
+  import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
-  import RouteLink from '@/components/RouteLink.svelte'
-  import type { AppIconName } from '@/lib/icons'
   import { dict } from '@/lib/i18n'
-  import { launchRegions } from '@/lib/site'
-
-  const pillarIcons: AppIconName[] = ['database', 'shield', 'dollarSign']
-  $: pillars = $dict.about.pillars.map((pillar, i) => ({
-    icon: pillarIcons[i] ?? 'database',
-    ...pillar,
-  }))
-  const regions = launchRegions.map((region) => ({ id: region.id, name: region.name }))
+  import { docsLink } from '@/lib/site'
 </script>
 
-<section class="ts-section about-hero">
-  <div class="ts-container about-hero__inner">
-    <h1 class="about-hero__title">
-      {$dict.about.titleLead}
-      <span class="ts-h-muted">{$dict.about.titleAccent}</span>
-    </h1>
-    <div class="ts-actions">
-      <RouteLink href="/pricing" class="ts-btn ts-btn-primary ts-btn-lg">
-        {$dict.about.ctaPricing}
-        <Icon name="arrowRight" className="about__icon" />
-      </RouteLink>
-    </div>
-  </div>
-</section>
+<article class="ts-container about-page" aria-labelledby="about-title">
+  <h1 id="about-title">{$dict.about.title}</h1>
 
-<section class="ts-section about-section">
-  <div class="ts-container about-section__inner">
-    <div class="about-section__intro">
-      <h2 class="about-section__title">{$dict.about.missionTitle}</h2>
-    </div>
+  <div class="about-content">
+    <p class="about-introduction">{$dict.about.introduction}</p>
 
-    <div class="about-pillars">
-      {#each pillars as pillar (pillar.title)}
-        <article class="about-pillar">
-          <span class="ts-icon-tile"><Icon name={pillar.icon} /></span>
-          <div>
-            <h3 class="about-pillar__title">{pillar.title}</h3>
-          </div>
-        </article>
-      {/each}
-    </div>
-  </div>
-</section>
+    <section aria-labelledby="about-database-title">
+      <h2 id="about-database-title">{$dict.about.databaseTitle}</h2>
+      <p>{$dict.about.databaseText}</p>
+      <p>{$dict.about.integrationText}</p>
+    </section>
 
-<section class="ts-section about-band">
-  <div class="ts-container about-section__inner">
-    <div class="about-section__intro">
-      <h2 class="about-section__title">{$dict.about.bandTitle}</h2>
-      <p class="about-section__text">{$dict.about.bandText}</p>
-    </div>
-    <ul class="about-regions" aria-label={$dict.about.regionsAria}>
-      {#each regions as region (region.id)}
-        <li class="about-region">
-          <span class="ts-badge ts-badge-outline about-region__code">{region.id}</span>
-          {region.name}
-        </li>
-      {/each}
-    </ul>
+    <section aria-labelledby="about-alpha-title">
+      <h2 id="about-alpha-title">{$dict.about.alphaTitle}</h2>
+      <p>{$dict.about.alphaText}</p>
+    </section>
+
+    <ExternalLink href={docsLink.href} class="ts-btn ts-btn-primary ts-btn-lg about-action">
+      {$dict.about.ctaDocs}
+      <Icon name="arrowRight" className="about-action-icon" />
+    </ExternalLink>
   </div>
-</section>
+</article>
 
 <style>
-  .about-hero__inner {
+  .about-page {
     display: grid;
-    gap: var(--ts-s5);
-    justify-items: start;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+    gap: var(--ts-s16);
+    max-width: calc(var(--ts-content-max) + 2 * var(--ts-gutter));
+    padding-block: var(--ts-s16);
   }
 
-  .about-hero__title {
-    max-width: 820px;
+  h1 {
+    align-self: start;
+    max-width: 10ch;
     font-size: var(--ts-fs-5xl);
     font-weight: var(--ts-display-weight);
     letter-spacing: var(--ts-display-tracking);
-    line-height: 1.04;
+    line-height: var(--ts-lh-tight);
+    text-wrap: balance;
   }
 
-  .about-hero :global(.about__icon) {
-    width: var(--ts-icon);
-    height: var(--ts-icon);
-  }
-
-  .about-section__inner {
+  .about-content {
     display: grid;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    gap: var(--ts-s12);
-    align-items: start;
+    gap: var(--ts-s8);
+    min-width: 0;
+    max-width: 62ch;
   }
 
-  .about-section__intro {
-    display: grid;
-    gap: var(--ts-s4);
-    justify-items: start;
-  }
-
-  .about-section__title {
-    font-size: var(--ts-fs-3xl);
-  }
-
-  .about-section__text {
+  p {
     color: var(--ts-ink-2);
     line-height: var(--ts-lh-prose);
   }
 
-  .about-pillar {
-    display: flex;
-    gap: var(--ts-s4);
-    padding: var(--ts-s5) 0;
-    border-top: 1px solid var(--ts-line);
-  }
-
-  .about-pillar:last-child {
-    border-bottom: 1px solid var(--ts-line);
-  }
-
-  /* Title centred on the 32px icon tile. */
-  .about-pillar__title {
-    display: flex;
-    align-items: center;
-    min-height: 32px;
-    font-size: var(--ts-fs-lg);
-  }
-
-
-  .about-regions {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--ts-line);
-  }
-
-  .about-region {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-s3);
-    height: 48px;
-    border-bottom: 1px solid var(--ts-line);
+  .about-introduction {
+    font-size: var(--ts-fs-xl);
     color: var(--ts-ink);
   }
 
-  .about-region__code {
-    font-family: var(--ts-font-mono);
+  section {
+    display: grid;
+    gap: var(--ts-s4);
+    padding-top: var(--ts-s6);
+    border-top: 1px solid var(--ts-line);
   }
 
-  @media (max-width: 860px) {
-    .about-hero__title {
-      font-size: var(--ts-fs-4xl);
-    }
-    .about-section__inner {
+  h2 {
+    font-size: var(--ts-fs-xl);
+  }
+
+  .about-content :global(.about-action) {
+    justify-self: start;
+    max-width: 100%;
+    min-height: 44px;
+    height: auto;
+    padding-block: var(--ts-s3);
+    white-space: normal;
+    line-height: var(--ts-lh);
+  }
+
+  .about-content :global(.about-action-icon) {
+    flex: none;
+    width: var(--ts-icon);
+    height: var(--ts-icon);
+  }
+
+  @media (max-width: 760px) {
+    .about-page {
       grid-template-columns: minmax(0, 1fr);
       gap: var(--ts-s8);
+      padding-block: var(--ts-s10);
+    }
+
+    h1 {
+      max-width: none;
+      font-size: var(--ts-fs-4xl);
     }
   }
 </style>

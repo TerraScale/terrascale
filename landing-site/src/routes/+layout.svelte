@@ -21,7 +21,7 @@
     '/about': {
       title: 'About TerraScale',
       description:
-        'SQL databases with one write region and encrypted regional read replicas.',
+        'Learn about TerraScale, the TerraBase SQL database service and its Public Alpha.',
     },
     '/contact': {
       title: 'Contact TerraScale',

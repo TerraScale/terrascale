@@ -375,19 +375,18 @@ export const es: Messages = {
   },
 
   about: {
-    titleLead: 'Bases de datos SQL',
-    titleAccent: 'en tres regiones.',
-    ctaPricing: 'Ver precios',
-    regionsAria: 'Regiones en servicio',
-    missionTitle: 'Una plataforma para bases de datos, claves y facturación.',
-    pillars: [
-      { title: 'Bases de datos SQL' },
-      { title: 'Una región de escritura y réplicas cifradas' },
-      { title: 'Topes de escritura por plan' },
-    ],
-    bandTitle: 'Precios regionales planos, medidos por el uso real.',
-    bandText:
-      'El almacenamiento cuenta los bytes que cada base de datos guarda en su región principal. Distancia de red estimada y latencia medida de API siguen separadas.',
+    title: 'Acerca de TerraScale',
+    introduction:
+      'TerraScale desarrolla TerraBase, un servicio de bases de datos SQL. El panel reúne bases de datos, gestión de acceso y uso.',
+    databaseTitle: 'TerraBase',
+    databaseText:
+      'Cada base de datos tiene una región principal para las escrituras y puede tener réplicas de lectura cifradas en otras regiones. Las réplicas tienen consistencia eventual.',
+    integrationText:
+      'Usa el dialecto SQL de SQLite con clientes compatibles con PostgreSQL, la API HTTP o los SDKs. Gestiona las bases de datos y las claves de API en el panel.',
+    alphaTitle: 'Alfa pública',
+    alphaText:
+      'TerraScale está en alfa pública. Las funciones, los límites y las APIs pueden cambiar. No se aplica un SLA durante la alfa.',
+    ctaDocs: 'Leer la documentación',
   },
 
   notFound: {
