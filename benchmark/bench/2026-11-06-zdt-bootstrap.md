@@ -93,14 +93,22 @@ and the raw outputs are retained on delta under
 
 The separately qualified orchestrator fence uses real Swarm dispatch and OS
 process exit, with HTTP/container-runtime contract fixtures. Its report is
-`ts-orchestrator/docs/rollout-bootstrap-qualification.md`. Installing that fence
-on old orchestrators without restarting vulnerable watchers is still an explicit
-deployment gate; no tested hot installation or offline arming is claimed.
+`ts-orchestrator/docs/rollout-bootstrap-qualification.md`. A coordinated cold
+installation now replaces the former hot-install proposal;
+its offline arming action has separate orchestrator qualification. Production
+systemd/containerd ordering and retained-state rollback remain review gates.
 There is also no automatic fence removal: final desired-state reconciliation
 must be qualified before normal rollouts resume.
 
-The engine branch is based on `5fd89c3e7`; origin/main has advanced. Rebase and
-affected qualification are required before any later ts-ship. The independent
+The engine branch has been rebased onto current main `a811367bd` with all five
+patch contents unchanged. Tested candidate `69aa93255` passes affected Fast again:
+66/66 TerraBase (10.938 s wrapper wall time) and 4/4 native (5.551 s), on delta
+through ts-heavy-any. The prior Slow proof above was not rerun or relabeled.
+Exact new source/log hashes and commands are retained on delta in
+`.cos/zdt-20261105/qualification/v2-fast.{md,json}`. The orchestrator
+`7897a49ea` cold-arm addition passes five race repeats and all affected Fast.
+The coordinated plan is `.cos/zdt-20261105/deploy-plan-v2.md` on delta;
+no production mutation or shipping is authorized before review and GO. Independent
 review must cover the additional Version:0 guard and driver patch. A successful
 local test does not authorize production execution. The three live zero-error,
 p99 <500 ms rollout proofs, recovery-tail measurement and acceptance HANDOFF remain

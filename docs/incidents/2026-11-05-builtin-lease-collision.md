@@ -167,3 +167,23 @@ These local changes do not authorize deploying, restarting production watchers,
 deleting global keys, re-enabling workflows, or counting the maintenance bootstrap
 as a successful zero-downtime rollout. The executor installation gate and final
 GO remain outstanding.
+
+## Cold-maintenance installation plan, held for review
+
+The user replaced the hot mixed-version installation with one announced 10–15
+minute whole-fleet maintenance. The v2 plan on delta at
+`.cos/zdt-20261105/deploy-plan-v2.md` requires physical exit of all six b443
+processes, full cold DB checksums/backups, then conditional deletion of only the
+two audited stale platform keys while old embedded NATS remains available. New
+orchestrators are armed offline before startup; new engines retain the same owner
+nodes and epochs through Version:0 adoption. Data reconciliation, regional
+canaries, token issuance and operational public status precede completion.
+Every step includes an abort and b443 rollback on retained data.
+
+Both branches are rebased on fetched main. Engine patches remain identical and
+affected Fast passes 66/66 plus 4/4 native. The new cold offline fence action passes
+five race repeats plus the orchestrator's seven affected Fast packages. Exact
+source/log hashes are in delta's `qualification/v2-fast.{md,json}` under the same
+ZDT directory. The previous 55/55 Slow proof is retained without claiming a rerun.
+Independent review of Version:0 adoption, the cold fence and plan, then explicit
+user GO, are outstanding. Production, stale keys and workflows remain untouched.
