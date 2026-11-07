@@ -21,10 +21,8 @@ assert "mode=max" not in workflow, "Published binaries and source snapshots must
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache@", workflow), "Use explicit restore/save to restrict writers"
-assert workflow.count("uses: actions/cache/save@") == 1
-nuget_writer = workflow.split("      - name: Save locked NuGet packages\n", 1)[1].split("\n      - ", 1)[0]
-assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in nuget_writer
-assert "steps.nuget.outputs.cache-primary-key" in nuget_writer
+# Each publish restores only its own project from nuget.org, faster than downloading a monorepo package cache.
+assert "uses: actions/cache/" not in workflow, "No CI job reads or writes a GHA package cache"
 assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures need their real source path"
 assert "ContinuousIntegrationBuild: false" not in workflow
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
@@ -80,7 +78,7 @@ assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore
 # Imported areas qualify on dev hosts; the existing hosted jobs format their own service graphs.
 imported_projects = {p for p in all_projects if p.startswith(('sdk/', 'src/TerraScale.Dashboard', 'tests/TerraScale.Dashboard.'))}
 assert all_projects <= formatted | {build_check} | imported_projects, all_projects - formatted - {build_check} - imported_projects
-assert "needs: [changes, libs, auth, terrabase]" in workflow, "Fast must gate required test; Slow must not delay it"
+assert "needs: [changes, checks, libs, auth, terrabase]" in workflow, "Fast must gate required test; Slow must not delay it"
 assert "merge_group" not in workflow, "Merge queue checks are gone: pull requests and main are the only gates"
 for job in ("libs", "auth", "terrabase"):
     block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]

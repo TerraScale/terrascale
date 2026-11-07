@@ -60,7 +60,7 @@ jobs:
       ordered: ${{ steps.areas.outputs.ordered }}
       sha: ${{ steps.source.outputs.sha }}
     steps:
-      # Pull requests list files through the API; the checkout also runs cheap checks before any build.
+      # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
@@ -151,6 +151,19 @@ jobs:
           [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
           echo "fast=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
+  # Cheap policy checks run beside changes instead of before the Fast receipts; test (and so every release) requires
+  # them.
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
       - name: Scan for legacy terms (fail)
         run: |
           python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log
@@ -163,7 +176,6 @@ jobs:
           path: |
             legacy-hits.md
             legacy-scan.log
-
       - name: Check out the path-filter matcher for regression fixtures
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -190,7 +202,7 @@ jobs:
           python3 scripts/vendor/turso-native-pipeline-test.py
           bash scripts/terrabase/storage-format-check-test.sh
           bash scripts/terrabase/e2e-summary-test.sh
-      # Reads the labels live: after labelling, re-run changes (docs/terrabase/ci.md, storage train).
+      # Reads the labels live: after labelling, re-run checks (docs/terrabase/ci.md, storage train).
       - name: Storage train
         if: github.event_name == 'pull_request'
         env:
@@ -353,29 +365,17 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: terrascale/global.json
-      - name: Restore locked NuGet packages
-        id: nuget
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.nuget/packages
-          restore-keys: ${{ runner.os }}-nuget-monorepo-
-          key: ${{ runner.os }}-nuget-monorepo-${{ hashFiles('terrascale/Makefile', 'terrascale/global.json', 'terrascale/NuGet.config', 'terrascale/Directory.*', 'terrascale/**/packages.lock.json') }}
-      - name: Locked restore
-        working-directory: terrascale
-        run: make restore
-      - name: Save locked NuGet packages
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (env.AREA == 'terrabase' || !contains(fromJSON(needs.changes.outputs.main), 'terrabase')) && steps.nuget.outputs.cache-hit != 'true'
-        with:
-          path: ~/.nuget/packages
-          key: ${{ steps.nuget.outputs.cache-primary-key }}
       # Production runs linux/arm64 only: publish that runtime once, then wrap it in the image without another build.
+      # The publish restores only its own project, locked, from nuget.org (8-12 s cold; the monorepo package cache took
+      # 25 s to download plus 7 s to restore). The image builder boots meanwhile.
       - name: Publish the linux/arm64 runtime payload
         working-directory: terrascale
         run: |
+          docker buildx create --use --driver docker-container --bootstrap > "$RUNNER_TEMP/builder.log" 2>&1 &
+          builder=$!
           bash scripts/ci/image-payloads.sh publish "$AREA"
           bash scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
-      - *setup-builder
+          wait "$builder" || { cat "$RUNNER_TEMP/builder.log"; exit 1; }
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -539,10 +539,11 @@ jobs:
   # reaches test, so the rollup stays red.
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
-    needs: [changes, libs, auth, terrabase]
+    needs: [changes, checks, libs, auth, terrabase]
     if: >-
       ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
-      && (needs.changes.result != 'success' || needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]') }}
+      && (needs.changes.result != 'success' || needs.checks.result != 'success'
+      || needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
