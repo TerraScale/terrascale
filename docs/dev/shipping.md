@@ -1,11 +1,29 @@
 # Shipping from a worktree
 
-On the TerraScale development hosts, commit the change and run `ts-ship` from
-its repository worktree. The command fetches and rebases onto `origin/main`,
-runs only the affected Fast suites on the least-loaded dev host, and pushes
-main. If main advances, it rebases and validates the new candidate again.
+On the TerraScale development hosts, commit the change and run
+`scripts/dev/ts-ship` from its repository worktree. The command fetches and
+rebases onto `origin/main`, runs only the affected Fast suites on the
+least-loaded dev host, and pushes main. If main advances, it rebases and
+validates the new candidate again.
 
-During live proofs, the COS can run `ts-ship freeze terrascale 5 "live proof"`; validation continues, but main pushes wait until expiry or `ts-ship unfreeze terrascale`.
+Run that wrapper, not `ts-ship | tail` (or another pager or filter). A stopped
+shell pipeline cannot reap: OpenCode session `ses_e548d2e3dffeiaQEQtC7ilEDQt`
+left `ts-ship 2>&1 | tail` SIGSTOPped for about 12 hours, and its exited
+children stayed zombies until the process was continued. `scripts/dev/ts-ship`
+keeps a waiter in the shell's process group and runs the ship in a new session.
+The ship ignores terminal stop signals (`SIGTSTP`, `SIGTTIN`, `SIGTTOU`) and is
+a child subreaper, so it waits on descendants whose parents have exited.
+SIGSTOP cannot be caught; leaving the stopped group is what keeps the ship
+running. Killing the waiter delivers SIGTERM to the ship. When stdout or stderr
+is a pipe, the wrapper writes one line naming the log under
+`~/.local/state/ts-ship/` and the ship appends there instead of blocking on
+the pipe. A pipeline's exit status is still the last stage.
+
+The host binary is the same program. Move `~/.local/bin/ts-ship` to
+`~/.local/bin/ts-ship.impl`, then `install scripts/dev/ts-ship ~/.local/bin/ts-ship`.
+Do that on delta, beta and mariogk-dev so a direct `ts-ship` is covered too.
+
+During live proofs, the COS can run `scripts/dev/ts-ship freeze terrascale 5 "live proof"`; validation continues, but main pushes wait until expiry or `scripts/dev/ts-ship unfreeze terrascale`.
 
 Candidates travel through temporary `refs/ts-ship/` refs, which the command
 removes after validation. No temporary branch needs to be published or deleted.

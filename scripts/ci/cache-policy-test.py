@@ -102,7 +102,8 @@ assert "AREA: ${{ github.job }}" not in workflow, "github.job is unavailable in 
 # Cheap policy failures stop native downloads and every expensive area; Slow runs independently of publication.
 changes = workflow.split("\n  changes:\n", 1)[1].split("\n  native:\n", 1)[0]
 for check in ("path-filter-test.py", "slow-report-test.py", "cache-policy-test.py",
-              "turso-native-pipeline-test.py", "storage-format-check-test.sh", "e2e-summary-test.sh",
+              "turso-native-pipeline-test.py", "ship_supervisor_test.py",
+              "storage-format-check-test.sh", "e2e-summary-test.sh",
               "storage-format-check.sh"):
     assert check in changes, f"{check} must run before builds"
 for area in ("auth", "terrabase"):

@@ -62,7 +62,7 @@ nice -n 19 make -f scripts/dashboard/Makefile perf
 
 `test-fast` runs the HTTP, MCP, CLI and customer-SDK journeys; `test-slow` runs the
 browser journeys and the internal-billing policy suites (`[Category("Slow")]`);
-`test-e2e` runs both for local investigation. Ship with `ts-ship` from the monorepo root;
+`test-e2e` runs both for local investigation. Ship with `scripts/dev/ts-ship` from the monorepo root; do not pipe it through `tail`.
 its dashboard Fast command runs on a dev host and must finish in under 30 s wall time; each single test must finish in under 10 s.
 A Fast suite over 30 s or a test over 10 s is a bug. Keep only happy-path and
 critical-path tests in Fast, move heavy critical tests to Slow and delete everything

@@ -177,6 +177,7 @@ jobs:
           python3 scripts/ci/fast-budget-test.py
           python3 scripts/ci/qualified-build-test.py
           python3 scripts/vendor/turso-native-pipeline-test.py
+          python3 scripts/dev/ship_supervisor_test.py
           bash scripts/terrabase/storage-format-check-test.sh
           bash scripts/terrabase/e2e-summary-test.sh
       # Reads the labels live: after labelling, re-run changes (docs/terrabase/ci.md, storage train).

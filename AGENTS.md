@@ -6,7 +6,7 @@
 
 - No PRs, reviews or merge queue. Push to `main`. Ignore outside contributors' PRs unless asked.
 - Fetch `origin` first. Branch from fresh `origin/main` in your own worktree or clone, outside shared checkouts. Commit small changes; no AI attribution.
-- Ship with `ts-ship` (fetch, rebase, affected Fast suites on a dev host, push `main`, retry on races). Docs-only, `.cos`-only and `AGENTS.md`-only changes skip tests. Never force-push or delete `main`.
+- Ship with `scripts/dev/ts-ship` from the repository root (fetch, rebase, affected Fast suites on a dev host, push `main`, retry on races). It detaches from the shell job-control group and reaps orphaned children; do not pipe it through `tail`. Docs-only, `.cos`-only and `AGENTS.md`-only changes skip tests. Never force-push or delete `main`.
 - CI runs on every main push; deploy only green main. If your push makes main red, fix or revert within about 30 minutes. For a red main you did not cause, wait for its owner's fix and rebase.
 - Heavy builds, tests, benchmarks and stress repeats use `ts-heavy-any`, never GitHub Actions. Use delta, mariogk-dev or beta (ts-heavy-any balances them); never run anything on or SSH to mariogk-desktop.
 - Fast tests run fully parallel. Each area's Fast suite finishes in under 30 s wall time; each single test finishes in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug.
