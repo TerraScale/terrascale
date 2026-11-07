@@ -10,6 +10,7 @@ internal sealed partial class TursoStorageEngine : IRecoverySnapshotReader
         var store = new TursoDatabaseStore(source.DatabaseId!, file, Pool, Io, _pragmas, source, Time, committed: null,
             schemaMemory: _schemaMemory, storageReads: _storageReads, encryption: Encryption)
         {
+            HostTime = HostTime,
             QueryBudget = QueryBudget,
         };
         Io.Admit();

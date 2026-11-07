@@ -822,6 +822,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     openingSystem = new TursoDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
                         RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
                     {
+                        HostTime = HostTime,
 
                         QueryBudget = QueryBudget,
                         Checkpoint = _checkpoint,
@@ -1581,6 +1582,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         var store = new TursoDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
             RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
         {
+            HostTime = HostTime,
             Fences = Fences,
             QueryBudget = QueryBudget,
             Checkpoint = _checkpoint,

@@ -35,6 +35,7 @@ internal sealed partial class TursoStorageEngine
         var store = new TursoDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
             RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
         {
+            HostTime = HostTime,
             QueryBudget = QueryBudget,
             Checkpoint = _checkpoint,
             Ledger = Ledger,

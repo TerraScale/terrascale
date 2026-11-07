@@ -159,6 +159,8 @@ internal sealed partial class TursoDatabaseStore(
 
     internal TimeProvider Time => time ?? TimeProvider.System;
 
+    internal TimeProvider HostTime { get; init; } = TimeProvider.System;
+
     internal static readonly TimeSpan DefaultQueryBudget = TimeSpan.FromSeconds(TerraBaseOptions.DefaultQueryBudgetSeconds);
 
     internal TimeSpan QueryBudget { get; init; } = DefaultQueryBudget;

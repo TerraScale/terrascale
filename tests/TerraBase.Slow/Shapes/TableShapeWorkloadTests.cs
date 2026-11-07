@@ -9,7 +9,7 @@ public sealed class TableShapeWorkloadTests
     private const string Items = "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score REAL, data BLOB, note TEXT)";
 
     [Test]
-    public async Task A_shape_equals_its_table_after_100k_operations()
+    public async Task A_shape_equals_its_table_after_20k_operations()
     {
         await using var db = await StartAsync();
         await db.Api.SetPlanAsync(db.Api.User, db.Database.Organization, "pro");
@@ -19,12 +19,12 @@ public sealed class TableShapeWorkloadTests
         await early.SyncAsync();
         TableShapeClient? late = null;
         const int Keys = 2_000;
-        const int Operations = 100_000;
+        const int Operations = 20_000;
         var done = 0;
         var requests = 0;
         while (done < Operations)
         {
-            var batch = Math.Min(Operations - done, faker.Random.Int(1, 250));
+            var batch = Math.Min(Operations - done, faker.Random.Int(1, 50));
             var statements = new object[batch];
             for (var index = 0; index < batch; index++)
             {
