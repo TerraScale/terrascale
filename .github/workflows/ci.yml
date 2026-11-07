@@ -83,24 +83,26 @@ jobs:
               - .editorconfig
               - BannedSymbols.txt
               - TerraScale.slnx
+              # Both services reference the libraries; their tests and benchmarks build only in libs.slnf.
               - src/TerraScale.Endpoints*/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
-              - tests/TerraScale.Endpoints.Tests/**/!(AGENTS.md|CLAUDE.md)
-              - tests/TerraScale.Logging.Tests/**/!(AGENTS.md|CLAUDE.md)
-              # TerraBase's vendored driver also backs auth integration tests and vendor audits.
+            # Each area lists only inputs its own projects build, matching the proofs ts-ship posts.
+            dotnet-sdk: &dotnet-sdk
+              # The auth store and TerraBase E2E reference the .NET SDK from this revision.
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
-              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
-              - tests/Turso.Data.Sqlite.Tests/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/vendor/**/!(AGENTS.md|CLAUDE.md)
             libs:
               - *shared
               - libs.slnf
-              - benchmark/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - tests/TerraScale.Endpoints.Tests/**/!(AGENTS.md|CLAUDE.md)
+              - tests/TerraScale.Logging.Tests/**/!(AGENTS.md|CLAUDE.md)
+              - benchmark/dotnet/TerraScale.Endpoints.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
+              - benchmark/dotnet/TerraScale.Logging.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
               # Self-check changes run in changes; executor changes still qualify both native Fast areas.
               - scripts/ci/image-payloads.sh
               - scripts/ci/test-area.sh
             auth:
               - *shared
+              - *dotnet-sdk
               - scripts/ci/image-payloads.sh
               - auth.slnf
               - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
@@ -113,8 +115,14 @@ jobs:
               - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
               # TerraBase's RPC surface and the contracts it implements.
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
+              # The vendored driver TerraBase embeds; auth integration tests start that TerraBase.
+              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
             terrabase:
               - *shared
+              - *dotnet-sdk
+              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
+              - tests/Turso.Data.Sqlite.Tests/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/vendor/**/!(AGENTS.md|CLAUDE.md)
               - scripts/ci/terrabase-*
               - terrabase.slnf
               - scripts/ci/image-payloads.sh

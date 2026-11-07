@@ -175,9 +175,11 @@ terrabase = {"auth-server", "terrabase"}
 sdks = {f"sdk-{lang}-ci.yml" for lang in ("dotnet", "go", "js", "python", "rust")}
 go = {"sdk-go-ci.yml", "sdk-go-release.yml"}
 landing = {"landing-ci.yml", "landing-secret-scan.yml"}
-vendor_paths = ("src/vendor/Turso.Data.Sqlite/Connection.cs", "tests/Turso.Data.Sqlite.Tests/ConnectionTests.cs", "scripts/vendor/audit/check.sh")
-cases = [(path, status, all_areas) for path in vendor_paths for status in ("added", "modified", "deleted")]
-cases += [("src/vendor/Turso.Data.Sqlite/.editorconfig", "modified", all_areas),
+# The vendored driver is built into TerraBase, which auth's integration tests start; libs never builds it.
+vendor_paths = (("src/vendor/Turso.Data.Sqlite/Connection.cs", terrabase), ("tests/Turso.Data.Sqlite.Tests/ConnectionTests.cs", {"terrabase"}),
+                ("scripts/vendor/audit/check.sh", {"terrabase"}))
+cases = [(path, status, expected) for path, expected in vendor_paths for status in ("added", "modified", "deleted")]
+cases += [("src/vendor/Turso.Data.Sqlite/.editorconfig", "modified", terrabase),
           ("scripts/ci/path-filter-test.py", "modified", set()),
           ("scripts/ci/cache-policy-test.py", "modified", set()),
           ("scripts/ci/test-area.sh", "modified", {"libs", "terrabase"}),
@@ -205,8 +207,8 @@ cases += [(path, "modified", ci, started) for path, ci, started in [
     ("tests/TerraBase.Fast/HealthTests.cs", {"terrabase"}, set()),
     ("tests/TerraScale.Authentication.Fast/Tests.cs", {"auth"}, set()),
     ("tests/TerraScale.Dashboard.E2E/Tests.cs", set(), {"images-ghcr.yml"}),
-    ("tests/TerraScale.Endpoints.Tests/Tests.cs", all_areas, set()),
-    ("sdk/dotnet/src/TerraScale.DotNet/Client.cs", all_areas, {"sdk-dotnet-ci.yml", "images-ghcr.yml"}),
+    ("tests/TerraScale.Endpoints.Tests/Tests.cs", {"libs"}, set()),
+    ("sdk/dotnet/src/TerraScale.DotNet/Client.cs", {"auth", "terrabase"}, {"sdk-dotnet-ci.yml", "images-ghcr.yml"}),
     ("sdk/go/v1/client.go", set(), go),
     ("sdk/go/contracts/terrabase/sql/error-codes.json", set(), go),
     ("sdk/js/src/index.ts", set(), {"sdk-js-ci.yml"}),
@@ -219,6 +221,7 @@ cases += [(path, "modified", ci, started) for path, ci, started in [
     ("aspire/apphost.ts", set(), set()),
     ("benchmark/go/main.go", set(), set()),
     ("benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Program.cs", {"libs"}, set()),
+    ("benchmark/dotnet/DatabaseEncryption/Program.cs", set(), set()),
     ("ops/runbook.sh", set(), set()),
     ("scripts/sdk/check-proof.py", set(), sdks | go),
     ("scripts/docs/check-proof.py", set(), {"docs-ci.yml"}),
