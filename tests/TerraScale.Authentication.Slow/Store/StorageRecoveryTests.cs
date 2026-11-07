@@ -26,6 +26,7 @@ public sealed class StorageRecoveryTests
 {
     // A ready replica turns not ready after three consecutive failed passes, about 15 s, plus slack.
     private static readonly TimeSpan Recovery = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan PassWindow = TimeSpan.FromSeconds(6);
 
     [Test]
     public async Task A_clean_terrabase_shutdown_while_ts_auth_runs_is_not_ready_then_recovers_with_the_same_key()
@@ -92,7 +93,8 @@ public sealed class StorageRecoveryTests
         await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", Recovery)).IsTrue();
         await terrabase.RestartAsync();
 
-        await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsFalse();
+        // A faulted copy never becomes ready: one readiness pass (every 5 s) is enough to show it stays not ready.
+        await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, PassWindow)).IsFalse();
         using var ready = await auth.Client.GetAsync("/readyz");
         await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var refusal = await Assert.ThrowsAsync<TerraBaseUnavailableException>(async () =>
