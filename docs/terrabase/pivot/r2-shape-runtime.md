@@ -63,14 +63,10 @@ After `DELETE …/databases/{database}` (204) the CDN still served the same ciph
 epoch keys derive from the database's own data key (`ShapeCrypto.Scope` is `BackupLayout.KeyScope`), so the
 [crypto-shredding](../crypto-shredding.md) of that key also covers every shape object of the database and its tenant.
 
-The Slow test `ShapeCdnTests` repeats this against the dedicated private `ts-terrabase-shapes-test` bucket (ENAM,
-one-day lifecycle on `v1/shapes/`) and its `shapes-ts-terrabase-shapes-test.terrascale.tech` domain, which share the
-zone's shape WAF, cache rule and Smart Tiered Cache: one non-`HIT` per object per Cloudflare location across 17
-readers, then deletion leaves the cached chunks unopenable (`DatabaseShreddedException`). Its S3 keys come from the
-user API token `ts-terrabase-shapes-test-ci` (id `e59210916e1283caead0d2609913fe70`): Workers R2 Storage Bucket
-Item Read and Write on that bucket only, expiring 2027-02-02; other buckets answer `AccessDenied`. The GitHub Actions
-secret `R2_SHAPES_CI_CREDENTIALS` holds `R2_CI_ENDPOINT`, `R2_CI_ACCESS_KEY_ID` and `R2_CI_SECRET_ACCESS_KEY`, which
-the Slow workflow appends to its credential file.
+The Slow test `ShapeKeyShreddingTests` checks that a deleted database's shape objects cannot be opened: before deletion
+each mirrored object opens with its released key, and after deletion no key is released and `DataKeys` throws
+`DatabaseShreddedException`. CDN fill-once behavior is no longer tested. The `ts-terrabase-shapes-test` bucket and the
+`R2_SHAPES_CI_CREDENTIALS` secret are unused.
 
 Still open: the durable purge outbox and account-wide purge budget above; deleting a database does not yet remove
 its R2 objects or queue their prefix purge (the eight-day lifecycle removes them, and crypto-shredding makes cached
