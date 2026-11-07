@@ -43,13 +43,18 @@ def main():
         content = "" if b"\0" in data else data.decode("utf-8", errors="replace")
         scoped = [(r, match) for r, pattern, match in rules if pattern.search(name)
                   and ("context" not in r or re.search(r["context"], content))]
+        # No term pattern spans lines or anchors on them, so a term absent from the name and the whole content
+        # cannot match any single line: only terms present in the file are checked line by line.
+        active = []
+        for term, pattern in terms:
+            allowed = [allow for r, allow in scoped if term["id"] in r.get("terms", [term["id"]])]
+            if None not in allowed and (pattern.search(name) or pattern.search(content)):
+                active.append((term, pattern, allowed))
+        if not active:
+            continue
         for number, line in [(0, name), *enumerate(content.splitlines(), 1)]:
-            for term, pattern in terms:
-                allowed = [(r, m) for r, m in scoped
-                           if term["id"] in r.get("terms", [term["id"]])]
-                if any(m is None for _, m in allowed):
-                    continue
-                spans = [m.span() for _, allow in allowed for m in allow.finditer(line)]
+            for term, pattern, allowed in active:
+                spans = [m.span() for allow in allowed for m in allow.finditer(line)]
                 for match in pattern.finditer(line):
                     if any(start <= match.start() and match.end() <= end for start, end in spans):
                         continue
