@@ -32,6 +32,8 @@ cargo fmt --all -- --check
 cargo test --locked --all-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo publish --dry-run --locked --all-features --registry crates-io
+# The dry run verifies the package; cargo package writes the .crate to target/package on every cargo version.
+cargo package --locked --all-features --no-verify
 package=$(python3 - <<'PYTHON'
 import tomllib
 from pathlib import Path
