@@ -422,7 +422,9 @@ public sealed partial class RegionalWriterCrashTests
             }
             var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet")
             {
-                RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
             };
             start.ArgumentList.Add(binary);
             start.ArgumentList.Add("--environment=Development");
