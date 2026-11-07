@@ -31,12 +31,8 @@ pub const TERRASCALE_ISSUER: &str = "https://auth.terrascale.tech/terrascale";
 /// The exact TerraBase resource audience; a trailing slash is a different audience.
 pub const TERRABASE_AUDIENCE: &str = "https://api.terrascale.tech";
 /// The only TerraBase scopes. Send a subset joined by single spaces.
-pub const TERRABASE_SCOPES: [&str; 4] = [
-    "databases:read",
-    "databases:write",
-    "sql:read",
-    "sql:write",
-];
+pub const TERRABASE_SCOPES: [&str; 4] =
+    ["databases:read", "databases:write", "sql:read", "sql:write"];
 
 const MAX_USER_PAGE_SIZE: u32 = 100;
 const MAX_AUDIT_PAGE_SIZE: u32 = 100;

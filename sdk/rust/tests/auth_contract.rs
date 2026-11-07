@@ -70,12 +70,7 @@ fn constants_equal_the_contract() {
     assert_eq!(TERRABASE_AUDIENCE, "https://api.terrascale.tech");
     assert_eq!(
         TERRABASE_SCOPES,
-        [
-            "databases:read",
-            "databases:write",
-            "sql:read",
-            "sql:write"
-        ]
+        ["databases:read", "databases:write", "sql:read", "sql:write"]
     );
 }
 
