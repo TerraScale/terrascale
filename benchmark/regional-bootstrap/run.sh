@@ -7,7 +7,7 @@ mkdir -p "$legacy_root"
 git archive "$legacy_revision" | tar -x -C "$legacy_root"
 (
   cd "$legacy_root"
-  make restore turso-native
+  make build
   TERRABASE_REVISION="$legacy_revision" dotnet build src/TerraBase --configuration Debug --no-restore
 )
 legacy_binary="$legacy_root/src/TerraBase/bin/Debug/net11.0/terrabase.dll"
