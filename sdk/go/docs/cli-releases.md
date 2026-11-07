@@ -42,29 +42,30 @@ The original `0.0.2`–`0.0.10` CLI downloads retain the `history/ts-go/v0.0.X` 
 
 ## Release
 
-Every green main push that touches `sdk/go/**`, `scripts/sdk/**` or this release
-workflow releases the CLI automatically; there is no manual tag step and no
+Every green main push that touches `sdk/go/**`, `scripts/sdk/**` or the Go release
+and publish workflows releases the CLI automatically; there is no manual tag step and no
 deploy switch. The path is:
 
 1. `ts-ship` lands the change on main. On the dev host, run
    `python3 scripts/sdk/qualify-release.py go` for the exact main revision: it
    re-runs the Fast gates, packages all six targets with GoReleaser (version =
    highest existing `sdk/go/v0.0.X` tag + 1), validates them with
-   `python3 scripts/test-release.py`, and publishes the immutable
-   `sdk/go/qualified-<sha>` release plus the `sdk-release/sdk-go` success status.
+   `python3 scripts/test-release.py`, and publishes the immutable `sdk-go-*`
+   assets of the `ci/qualified-<sha>` release plus the `sdk-release/sdk-go` success status.
 2. The `SDK Go Release` workflow's `autorelease` job fires on every main push
    that touches the Go SDK paths. It waits for a qualified green main revision —
    the pushed commit, or the newest unreleased ancestor since the last
    `sdk/go/v0.0.X` tag — reuses the qualified version, and creates the
    `sdk/go/v0.0.X` tag on that exact revision. Queue delays and busy main
    sections heal on the next trigger; an already-released version is skipped.
-   Its own workflow diffs and sdk/go documentation do not trigger it.
-3. The tag push runs the dedicated `SDK Go Publish` workflow (a tag trigger
-   without path filters, so tag pushes are never suppressed by path rules): it
-   verifies the tag points into main, downloads the exact qualified bytes
-   (hash-checked against `qualification.json`) and publishes them as the
-   release assets with the workflow's `GITHUB_TOKEN`. This requires no paid
-   GoReleaser monorepo support.
+3. A tag created with the job token starts no workflow, so the same run then
+   calls `SDK Go Publish` for the new tag. Publish also runs on a pushed
+   `sdk/go/v0.0.X` tag and by dispatch with a `tag` input. It verifies the tag
+   points into main, downloads the exact qualified bytes through
+   `scripts/sdk/download-qualified.py` (which requires `sdk-release/sdk-go` and
+   checks every hash in `qualification.json`) and publishes them as the release
+   assets with the workflow's `GITHUB_TOKEN`. A failed publish is rerun from its
+   job or dispatched for the tag. This requires no paid GoReleaser monorepo support.
 4. Confirm the release assets, checksums and installed `ts --version`. The
    homebrew-tap syncs the new `ts.rb` on its own 15-minute schedule.
 

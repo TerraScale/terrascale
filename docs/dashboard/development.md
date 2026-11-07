@@ -70,9 +70,10 @@ else. Delete at least 80% of tests against the 2026-11-04 workspace policy basel
 New features add at most one happy-path and one critical-failure test.
 GitHub Actions verifies that exact revision's Fast proof. Heavy validation runs through
 `ts-heavy-any`. A green dashboard Fast also runs `scripts/dashboard/prepare-deployment.sh`
-on the dev host, publishing the `dashboard/qualified-<sha>` release and the
-`dashboard-release/dashboard` status; the Images (GHCR) push run then waits for that
-commit's CI, publishes the image and releases it to every region automatically, with
+on the dev host, publishing the `dashboard-*` assets of the `ci/qualified-<sha>` release and the
+`dashboard-release/dashboard` status. Images (GHCR) is the dashboard's only main workflow: every
+push and dispatch runs Dashboard Fast (`dashboard-ci.yml`, which checks the `ts-ship/dashboard`
+proof), and the push run waits for that commit's CI, publishes the image and releases it to every region automatically, with
 no manual step and no deploy switch. The release token's sha must equal the image's
 revision, so each qualified commit is released by its own push run, even after later
 pushes outside the dashboard move main: `scripts/dashboard/ci/release-gate.py` admits
