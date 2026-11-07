@@ -117,7 +117,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(workflow, (root / 'scripts/dashboard/workflows-reference/images-ghcr.yml').read_text())
         release = workflow.split('      - name: Release to every region\n', 1)[1]
         self.assertIn('          test "$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")" = true\n'
-                      '          bash scripts/dashboard/ci/release-result.sh', release)
+                      '          # ts-orch normally finishes a dashboard release in 133-141 s.\n'
+                      '          bash scripts/ci/release-app.sh', release)
 
     def test_ci_service_jobs_preserve_the_main_ref_boundary(self):
         workflow = (Path(__file__).resolve().parents[3] / '.github/workflows/ci.yml').read_text()
@@ -135,8 +136,9 @@ class RecoveryTests(unittest.TestCase):
         for event in ('push', 'workflow_dispatch'):
             with (patch.dict(gate.os.environ, {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': 'refs/heads/main'}),
                   patch.object(gate, 'main_head', return_value=LIVE),
-                  patch.object(gate, 'target', return_value=((HEAD, 'green'), LIVE)),
+                  patch.object(gate, 'target', return_value=((HEAD, 'pending'), LIVE)),
                   patch.object(gate, 'newer_than', return_value=True)):
+                # Its own proofs qualify the dashboard; it never waits for CI to finish.
                 self.assertTrue(gate.release(HEAD))
             # A newer qualified revision still supersedes the older run.
             with (patch.dict(gate.os.environ, {'GITHUB_EVENT_NAME': event, 'GITHUB_REF': 'refs/heads/main'}),

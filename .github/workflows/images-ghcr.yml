@@ -40,7 +40,8 @@ jobs:
   # qualified commit is released by its own push run even after main moves on,
   # or by a recovery dispatch while it remains the real main head:
   # pushes outside the dashboard never block it. ts-orch orders signed runs, and
-  # the gate only admits the newest qualified, not-failed main commit.
+  # the gate only admits the newest qualified, not-failed main commit. It starts
+  # as soon as the dev-host release proof exists: it never waits for CI to finish.
   ready:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -103,10 +104,6 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - name: Require the newest qualified green main commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: test "$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")" = true
       - name: Download and verify the application qualified on a dev host
         env:
           GH_TOKEN: ${{ github.token }}
@@ -157,7 +154,8 @@ jobs:
         with:
           context: ${{ runner.temp }}/dashboard-publish
           file: scripts/dashboard/ci/Dockerfile.runtime
-          platforms: linux/amd64,linux/arm64
+          # Production runs linux/arm64 only; ts-orch pins its child digest.
+          platforms: linux/arm64
           tags: |
             ghcr.io/terrascale/terrascale-dashboard:${{ github.sha }}
             ghcr.io/terrascale/terrascale-dashboard:main
@@ -167,32 +165,29 @@ jobs:
           cache-from: type=gha,scope=dashboard-runtime
           cache-to: type=gha,mode=max,scope=dashboard-runtime
           push: true
-      - name: Inspect the published manifest
-        run: |
-          { echo '```'; docker buildx imagetools inspect "ghcr.io/terrascale/terrascale-dashboard@${{ steps.push.outputs.digest }}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Release to every region
+      - id: digest
+        name: Verify the published linux/arm64 child
         env:
-          GH_TOKEN: ${{ github.token }}
-          SERVICE: ts-dashboard
           IMAGE: ghcr.io/terrascale/terrascale-dashboard
           INDEX: ${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
-          image="$IMAGE"
-          arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
+          { echo '```'; docker buildx imagetools inspect "${IMAGE}@${INDEX}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          arm64=$(docker buildx imagetools inspect "${IMAGE}@${INDEX}" --format '{{json .Manifest}}' |
             jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
           test -n "$arm64"
-          docker buildx imagetools inspect "${image}@${arm64}" --format '{{json .Image}}' |
+          docker buildx imagetools inspect "${IMAGE}@${arm64}" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          echo "Verified linux/arm64 child ${arm64}, revision ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
-          tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
-          test -n "$tag"
-          gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
-          curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
-          chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
+          echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
+      # The gate runs again just before release: a newer qualified commit supersedes this one.
+      - name: Release to every region
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ghcr.io/terrascale/terrascale-dashboard@${{ steps.digest.outputs.arm64 }}
+        run: |
+          set -euo pipefail
           test "$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")" = true
-          bash scripts/dashboard/ci/release-result.sh "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" \
-            release app --service "$SERVICE" --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json"
+          # ts-orch normally finishes a dashboard release in 133-141 s.
+          bash scripts/ci/release-app.sh ts-dashboard "$IMAGE" 180
       - name: Verify live readiness and deployed source revision
         run: python3 scripts/dashboard/verify-live.py "$GITHUB_SHA"

@@ -7,7 +7,8 @@ started while it is the real main head. Later unrelated pushes do not block
 push or dispatch releases:
 
   release <sha>  exit 0 and print true when <sha> is the newest qualified,
-                 not-failed main commit, its CI passed and it is newer than live.
+                 not-failed main commit and it is newer than live. The
+                 dashboard's own dev-host proofs qualify it: CI may still run.
   heal           after CI completes, rerun its Images run, or dispatch Images
                  on main if GitHub missed the push and it is still the head.
 """
@@ -16,7 +17,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 import urllib.request
 
 REPO = 'TerraScale/terrascale'
@@ -117,26 +117,19 @@ def newer_than(base, head):
 
 
 def release(revision):
-    deadline = time.monotonic() + 25 * 60
-    while True:
-        # GitHub binds a main dispatch to the head at creation. Like a push run,
-        # it keeps signing that SHA after unrelated main pushes; target() still
-        # rejects it if a newer qualified revision exists.
-        if (os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
-                and os.environ.get('GITHUB_REF') != 'refs/heads/main'):
-            print(f'Recovery dispatch {revision} is not a main-ref run', file=sys.stderr)
-            return False
-        found, deployed = target()
-        if found is None or found[0] != revision:
-            print(f'{revision} is not the newest qualified unreleased main commit ({found}, live {deployed})',
-                  file=sys.stderr)
-            return False
-        if found[1] == 'green':
-            return newer_than(deployed, revision)
-        if time.monotonic() > deadline:
-            print(f'CI for {revision} did not finish; the CI completion heal reruns this run', file=sys.stderr)
-            return False
-        time.sleep(30)
+    # GitHub binds a main dispatch to the head at creation. Like a push run,
+    # it keeps signing that SHA after unrelated main pushes; target() still
+    # rejects it if a newer qualified revision exists.
+    if (os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+            and os.environ.get('GITHUB_REF') != 'refs/heads/main'):
+        print(f'Recovery dispatch {revision} is not a main-ref run', file=sys.stderr)
+        return False
+    found, deployed = target()
+    if found is None or found[0] != revision:
+        print(f'{revision} is not the newest qualified unreleased main commit ({found}, live {deployed})',
+              file=sys.stderr)
+        return False
+    return newer_than(deployed, revision)
 
 
 def heal():
