@@ -7,6 +7,8 @@ namespace TerraBase.Features.HomePush;
 
 internal interface ITransactionCrypto
 {
+    bool Seals { get; }
+
     Task PrepareAsync(TenantContext database, CancellationToken cancellationToken);
     Task<byte[]> SealAsync(TenantContext database, byte[] packed, CancellationToken cancellationToken);
     Task<byte[]?> OpenAsync(TenantContext database, byte[] sealedBody, CancellationToken cancellationToken);
@@ -18,6 +20,8 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
 {
     internal const int Overhead = 78;
     private const int Header = 62;
+
+    public bool Seals => keys is not null;
 
     public async Task PrepareAsync(TenantContext database, CancellationToken cancellationToken)
     {

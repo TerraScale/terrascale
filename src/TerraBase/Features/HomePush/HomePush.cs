@@ -113,7 +113,7 @@ internal sealed class HomePush(
         // Every node rebuilds its overlay; only the fenced regional writer consumes and commits.
         if (options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
         {
-            if (services.GetService<Backup.DataKeys>() is null)
+            if (!Crypto.Seals)
             {
                 throw new TerraBaseConfigurationException("TS_NATS_URL requires backup: durable local writes seal under the database key store");
             }

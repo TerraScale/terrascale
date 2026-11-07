@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -23,11 +24,11 @@ public sealed class ReplicaSessionTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         using var issuer = new TestIssuer();
-        var regions = new List<RegionPeer>();
+        var regions = new ConcurrentQueue<RegionPeer>();
         await using var gru = await StartAsync("gru", issuer, regions);
-        regions.Add(new RegionPeer("gru", gru.Server.BaseAddress));
+        regions.Enqueue(new RegionPeer("gru", gru.Server.BaseAddress));
         await using var sjc = await StartAsync("sjc", issuer, regions);
-        regions.Add(new RegionPeer("sjc", sjc.Server.BaseAddress));
+        regions.Enqueue(new RegionPeer("sjc", sjc.Server.BaseAddress));
 
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         await gru.SetPlanAsync(gru.User, organization, "hobby", token);
@@ -91,7 +92,7 @@ public sealed class ReplicaSessionTests
         await Assert.That(refused!.MessageText).Contains("gru");
     }
 
-    private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions) => ManagementApi.StartAsync(
+    private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, ConcurrentQueue<RegionPeer> regions) => ManagementApi.StartAsync(
         settings => settings["region"] = region,
         services =>
         {
@@ -120,13 +121,13 @@ public sealed class ReplicaSessionTests
         public ValueTask<IReadOnlyList<string>> ServingAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IReadOnlyList<string>>(["gru", "sjc"]);
     }
 
-    private sealed class RegionView(string region, List<RegionPeer> regions) : IRegionPeers
+    private sealed class RegionView(string region, ConcurrentQueue<RegionPeer> regions) : IRegionPeers
     {
         public ValueTask<IReadOnlyList<RegionPeer>> OtherRegionsAsync(CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyList<RegionPeer>>([.. regions.Where(peer => peer.Region != region)]);
     }
 
-    private sealed class ReplicaView(string region, List<RegionPeer> regions) : IReplicaPeers
+    private sealed class ReplicaView(string region, ConcurrentQueue<RegionPeer> regions) : IReplicaPeers
     {
         public ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyList<ReplicaPeer>>([.. regions.Where(peer => peer.Region != region).Select(peer => new ReplicaPeer(peer.Region, peer.Region + "-1", peer.Address))]);

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
@@ -31,13 +32,13 @@ public sealed class RegionShapeTailTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         using var issuer = new TestIssuer();
-        var regions = new List<RegionPeer>();
+        var regions = new ConcurrentQueue<RegionPeer>();
         var backupTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var backups = new FakeS3();
         await using var gru = await StartAsync("gru", issuer, regions, backups, backupTime);
-        regions.Add(new RegionPeer("gru", gru.Server.BaseAddress));
+        regions.Enqueue(new RegionPeer("gru", gru.Server.BaseAddress));
         await using var sjc = await StartAsync("sjc", issuer, regions);
-        regions.Add(new RegionPeer("sjc", sjc.Server.BaseAddress));
+        regions.Enqueue(new RegionPeer("sjc", sjc.Server.BaseAddress));
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         await gru.SetPlanAsync(gru.User, organization, "enterprise", token);
         var project = await gru.CreateProjectAsync(organization, "Project");
@@ -200,11 +201,11 @@ public sealed class RegionShapeTailTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         using var issuer = new TestIssuer();
-        var regions = new List<RegionPeer>();
+        var regions = new ConcurrentQueue<RegionPeer>();
         await using var gru = await StartAsync("gru", issuer, regions);
-        regions.Add(new RegionPeer("gru", gru.Server.BaseAddress));
+        regions.Enqueue(new RegionPeer("gru", gru.Server.BaseAddress));
         await using var sjc = await StartAsync("sjc", issuer, regions);
-        regions.Add(new RegionPeer("sjc", sjc.Server.BaseAddress));
+        regions.Enqueue(new RegionPeer("sjc", sjc.Server.BaseAddress));
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         await gru.SetPlanAsync(gru.User, organization, "hobby", token);
         var project = await gru.CreateProjectAsync(organization, "Project");
@@ -260,7 +261,7 @@ public sealed class RegionShapeTailTests
         await Assert.That(ops.Single().GetProperty("row").TryGetProperty("secret", out _)).IsFalse();
     }
 
-    private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions, FakeS3? backups = null, TimeProvider? time = null) => ManagementApi.StartAsync(
+    private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, ConcurrentQueue<RegionPeer> regions, FakeS3? backups = null, TimeProvider? time = null) => ManagementApi.StartAsync(
         settings =>
         {
             settings["region"] = region;
@@ -285,13 +286,13 @@ public sealed class RegionShapeTailTests
         public ValueTask<IReadOnlyList<string>> ServingAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IReadOnlyList<string>>(["gru", "sjc"]);
     }
 
-    private sealed class RegionView(string region, List<RegionPeer> regions) : IRegionPeers
+    private sealed class RegionView(string region, ConcurrentQueue<RegionPeer> regions) : IRegionPeers
     {
         public ValueTask<IReadOnlyList<RegionPeer>> OtherRegionsAsync(CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyList<RegionPeer>>([.. regions.Where(peer => peer.Region != region)]);
     }
 
-    private sealed class ReplicaView(string region, List<RegionPeer> regions) : IReplicaPeers
+    private sealed class ReplicaView(string region, ConcurrentQueue<RegionPeer> regions) : IReplicaPeers
     {
         public ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyList<ReplicaPeer>>([.. regions.Where(peer => peer.Region != region).Select(peer => new ReplicaPeer(peer.Region, peer.Region + "-1", peer.Address))]);

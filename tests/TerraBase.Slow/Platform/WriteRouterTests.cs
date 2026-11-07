@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -200,11 +201,11 @@ public sealed class WriteRouterTests
         {
             var issuer = new TestIssuer();
             var keys = new FakeS3();
-            var regions = new List<RegionPeer>();
+            var regions = new ConcurrentQueue<RegionPeer>();
             var gru = await StartAsync("gru", issuer, regions, nats, keys);
-            regions.Add(new RegionPeer("gru", gru.Server.BaseAddress));
+            regions.Enqueue(new RegionPeer("gru", gru.Server.BaseAddress));
             var sjc = await StartAsync("sjc", issuer, regions, nats, keys);
-            regions.Add(new RegionPeer("sjc", sjc.Server.BaseAddress));
+            regions.Enqueue(new RegionPeer("sjc", sjc.Server.BaseAddress));
             var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
             await gru.SetPlanAsync(gru.User, organization, "hobby", token);
             var project = await gru.CreateProjectAsync(organization, "Project");
@@ -248,7 +249,7 @@ public sealed class WriteRouterTests
             _issuer.Dispose();
         }
 
-        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions, JetStreamServer? nats, FakeS3 keys) => ManagementApi.StartAsync(
+        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, ConcurrentQueue<RegionPeer> regions, JetStreamServer? nats, FakeS3 keys) => ManagementApi.StartAsync(
             settings =>
             {
                 settings["region"] = region;
@@ -297,13 +298,13 @@ public sealed class WriteRouterTests
         public ValueTask<IReadOnlyList<string>> ServingAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IReadOnlyList<string>>(["gru", "sjc"]);
     }
 
-    private sealed class RegionView(string region, List<RegionPeer> regions) : IRegionPeers
+    private sealed class RegionView(string region, ConcurrentQueue<RegionPeer> regions) : IRegionPeers
     {
         public ValueTask<IReadOnlyList<RegionPeer>> OtherRegionsAsync(CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyList<RegionPeer>>([.. regions.Where(peer => peer.Region != region)]);
     }
 
-    private sealed class ReplicaView(string region, List<RegionPeer> regions) : IReplicaPeers
+    private sealed class ReplicaView(string region, ConcurrentQueue<RegionPeer> regions) : IReplicaPeers
     {
         public ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken) =>
             ValueTask.FromResult<IReadOnlyList<ReplicaPeer>>([.. regions.Where(peer => peer.Region != region).Select(peer => new ReplicaPeer(peer.Region, peer.Region + "-1", peer.Address))]);
