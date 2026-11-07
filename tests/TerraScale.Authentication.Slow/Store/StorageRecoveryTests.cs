@@ -137,17 +137,17 @@ public sealed class StorageRecoveryTests
         write.CommandText = "PRAGMA synchronous = FULL;";
         _ = await write.ExecuteNonQueryAsync();
         write.CommandText = """
-            INSERT INTO _tb_write_intent (organization, project, database, incarnation, replica)
-            VALUES ($organization, $project, $database, $incarnation, $replica)
+            INSERT INTO _tb_write_intent (organization, project, database, incarnation, run)
+            VALUES ($organization, $project, $database, $incarnation, $run)
             ON CONFLICT (organization, project, database) DO UPDATE
-                SET incarnation = excluded.incarnation, replica = excluded.replica;
+                SET incarnation = excluded.incarnation, run = excluded.run;
             """;
         write.Parameters.AddWithValue("$organization", organization);
         write.Parameters.AddWithValue("$project", project);
         write.Parameters.AddWithValue("$database", database);
         write.Parameters.AddWithValue("$incarnation", incarnation);
-        // Replica 0, which no replica id uses, is the Faulting mark: the next start faults the copy instead of proving it.
-        write.Parameters.AddWithValue("$replica", 0L);
+        // Run 0 is the Faulting mark (StorageFaultLedger.Faulting): the next start faults the copy instead of proving it.
+        write.Parameters.AddWithValue("$run", 0L);
         _ = await write.ExecuteNonQueryAsync();
     }
 
