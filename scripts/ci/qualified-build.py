@@ -44,12 +44,15 @@ def digest(path):
 
 def statuses(sha):
     if os.environ.get('GITHUB_ACTIONS') == 'true':
-        # Commit statuses are public. Preserve the existing anonymous lookup so
-        # verification jobs need no additional token permission.
+        # Commit statuses are public: the job token needs no extra permission. Anonymous calls share 60 per hour
+        # with every job on the runner's IP and failed main with HTTP 403 (run 42423063468).
         pages = []
+        headers = {'Accept': 'application/vnd.github+json'}
+        if os.environ.get('GH_TOKEN'):
+            headers['Authorization'] = 'Bearer ' + os.environ['GH_TOKEN']
         url = f'https://api.github.com/repos/{REPO}/commits/{sha}/statuses?per_page=100'
         while url:
-            request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json'})
+            request = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(request, timeout=20) as response:
                 pages.append(json.load(response))
                 link = response.headers.get('Link', '')
