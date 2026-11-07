@@ -1,8 +1,15 @@
 name: SDK Go Publish
 
+# sdk-go-release.yml calls this after tagging: tags created with the job token trigger no push event.
 on:
   push:
     tags: ['sdk/go/v0.0.*']
+  workflow_call:
+    inputs:
+      tag:
+        description: 'sdk/go/v0.0.X tag to publish'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
