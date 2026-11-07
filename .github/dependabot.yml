@@ -7,7 +7,7 @@ updates:
       - /tests/**
       - /benchmark/**
       - /aspire/**
-      - /tools/**
+      - /sdk/dotnet/**
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
@@ -16,7 +16,9 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: gomod
-    directory: /benchmark
+    directories:
+      - /benchmark
+      - /sdk/go
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
@@ -25,7 +27,31 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: npm
-    directory: /aspire
+    directories:
+      - /aspire
+      - /docs-site
+      - /docs-site/create-terrascale-app
+      - /docs-site/examples/server-token-provider
+      - /landing-site
+      - /sdk/js
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /sdk/python
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /sdk/rust
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
