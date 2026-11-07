@@ -1,10 +1,13 @@
 name: Dashboard Fast
 
+# Main pushes run this through images-ghcr.yml, the dashboard's single main entry point.
 on:
-  push:
+  pull_request:
     branches: [main]
-    paths: &dashboard-paths
+    paths:
       - 'src/TerraScale.Dashboard*/**'
+      # The dashboard calls TerraBase through these MagicOnion contracts.
+      - 'src/TerraScale.TerraBase.Contracts/**'
       - 'tests/TerraScale.Dashboard*/**'
       - 'scripts/dashboard/**'
       - 'sdk/dotnet/**'
@@ -16,13 +19,9 @@ on:
       - 'Makefile'
       - '.github/workflows/dashboard-ci.yml'
       - '.github/workflows/images-ghcr.yml'
-      - 'scripts/dashboard/check-proof.py'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
       - '!.cos/**'
-  pull_request:
-    branches: [main]
-    paths: *dashboard-paths
   workflow_call:
   workflow_dispatch:
 

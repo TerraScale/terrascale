@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - 'src/TerraScale.Dashboard*/**'
+      # The dashboard calls TerraBase through these MagicOnion contracts.
+      - 'src/TerraScale.TerraBase.Contracts/**'
       - 'tests/TerraScale.Dashboard*/**'
       - 'scripts/dashboard/**'
       - 'sdk/dotnet/**'
@@ -17,7 +19,6 @@ on:
       - 'Makefile'
       - '.github/workflows/dashboard-ci.yml'
       - '.github/workflows/images-ghcr.yml'
-      - 'scripts/dashboard/check-proof.py'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
       - '!.cos/**'
@@ -72,19 +73,21 @@ jobs:
             exit 1
           fi
           echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+  # Dashboard Fast: every push and dispatch requires its exact-commit dev-host proof, released or not.
   test:
-    needs: ready
-    if: needs.ready.outputs.deploy == 'true'
+    if: github.event_name != 'workflow_run'
     uses: ./.github/workflows/dashboard-ci.yml
 
   image:
-    needs: test
+    needs: [ready, test]
     name: Publish and release
     # One release at a time; a newer pending run replaces an older one.
     concurrency:
       group: dashboard-release
       cancel-in-progress: false
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run')
+    if: >-
+      needs.ready.outputs.deploy == 'true' && github.ref == 'refs/heads/main'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
