@@ -60,7 +60,8 @@ eventual consistency.
    replica deleted and pulled again from the new home. The peers file is read again on every sweep, so a region that
    joins is replicated without a restart.
 2. **Notices.** After each commit that advances a database's revision, its home publishes one notice per replica region on
-   core NATS (`TS_NATS_URL`, token from `TERRABASE_NATS_TOKEN_FILE`), subject
+   core NATS (`TS_NATS_URL`, token from `TERRABASE_NATS_TOKEN_FILE`; a node with NATS and no backup refuses to start,
+   because durable local writes seal under the database key store), subject
    `terrabase.revision.<replica-region>.<home>.<database>`. Notices are coalesced per database and never delay the commit.
    A notice carries the organization, project, database, commit time and the home's revision. When the changed pages fit
    in 768 KiB, it also carries the home's page-pull answer from the revision it last announced (`base`) to that revision:
