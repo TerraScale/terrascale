@@ -511,8 +511,10 @@ jobs:
       # failure of a push run's release (bake, rollback, a rerun's rebuilt digest under its already-approved run id)
       # dispatches one fresh main run, a newer signed run that releases the latest main; dispatched runs never
       # dispatch again.
+      # Temporary (zdt cold window, remove at cienable): a push run must not release TerraBase while the fleet
+      # still runs b443-era executors with no fence; ts-auth releases as before. Dispatches stay explicit.
       - name: Release to every region
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publication != 'build-only')
+        if: (github.event_name == 'push' && env.AREA != 'terrabase') || (github.event_name == 'workflow_dispatch' && inputs.publication != 'build-only')
         env:
           GH_TOKEN: ${{ github.token }}
           SERVICE: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
