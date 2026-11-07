@@ -23,13 +23,17 @@ public sealed class TigrisBackupTests
         var faker = new Faker();
         var prefix = $"ci/{EntityIds.New()}/";
         using var s3 = TigrisCiBucket.Client();
+        var keys = new FakeS3();
         ManagementApi? api = null;
         var failedStartCleanup = Task.CompletedTask;
         try
         {
             api = await ManagementApi.StartAsync(TigrisCiBucket.Configure,
-                services: services => services.AddSingleton<IObjectStore>(provider =>
-                    new PrefixedStore(provider.GetRequiredService<S3ObjectStore>(), prefix)),
+                services: services =>
+                {
+                    keys.RouteShapes(services);
+                    services.AddSingleton<IObjectStore>(provider => new PrefixedStore(provider.GetRequiredService<S3ObjectStore>(), prefix));
+                },
                 cancellationToken: cancellationToken, failedStartCleanup: cleanup => failedStartCleanup = cleanup);
             var database = await api.CreateManagedDatabaseAsync("main");
             using var data = await api.CreateClientAsync(database.Organization, "sql:read", "sql:write");
