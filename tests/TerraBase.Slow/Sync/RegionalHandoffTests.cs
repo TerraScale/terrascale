@@ -121,7 +121,7 @@ public sealed class RegionalHandoffTests
             await second.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(token);
             // Bound a failed activation so the negative control cannot hang the drill.
             using var activation = CancellationTokenSource.CreateLinkedTokenSource(token);
-            activation.CancelAfter(TimeSpan.FromSeconds(8));
+            activation.CancelAfter(RegionalHandoff.RecoveryBound);
             var handoff = first.Server.Services.GetRequiredService<RegionalHandoff>();
             await Assert.That(await handoff.DrainAsync("gru-2", activation.Token)).IsTrue();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(second.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));
