@@ -9,13 +9,15 @@ dev-host Fast proof, `ci-build/<area>` the checked build, and `<area>-release/<a
 `sdk-release/<sdk>` the dev-host release qualification. Qualified bytes live as `<area>-*` assets of
 the `ci/qualified-<sha>` release (`scripts/ci/proof_release.py`). Production runs linux/arm64 only, so each service
 release job publishes only that runtime (`scripts/ci/image-payloads.sh publish`) and every image is built for that
-platform alone. Each
+platform alone. Release jobs run on `ubuntu-latest` (x64; the free arm64 runner builds slower) and restore only their own
+project, locked, from nuget.org: no GHA package cache. TerraBase publishes ReadyToRun per assembly, not as SDK 11's
+default framework composite (see Release timing). Each
 `ts-orch release app` runs through `scripts/ci/release-app.sh`: a heartbeat while ts-orch works, a hard limit (TerraBase
 240 s, ts-auth and dashboard 180 s), then NATS reachability and public health on failure.
 
 | Project | Trigger paths (main push) | Workflow chain | Gate status context | Deploy target | How verified locally |
 | --- | --- | --- | --- | --- | --- |
-| TerraBase | `ci.yml` runs on every push; its `terrabase` area: `src/TerraBase*`, `src/TerraScale.TerraBase.*`, `tests/TerraBase*`, `scripts/terrabase/**`, `scripts/ci/terrabase-*`, `terrabase.slnf`, `src/vendor/**`, the vendored driver tests, `scripts/vendor/**`, `sdk/dotnet/**`, library sources and shared build files | `ci.yml`: `changes` → `terrabase` (verify) → `test` → `main` (arm64 publish, arm64 image, `ts-orch release app`; push runs skip the release until the ZDT window's cienable) | `ts-ship/terrabase`, `ci-build/terrabase` | `ghcr.io/terrascale/terrabase:<sha>`; OCI regions through ts-orch; `api.terrascale.tech` | actionlint; routing fixtures; arm64 payload and runtime image built (see Builds) |
+| TerraBase | `ci.yml` runs on every push; its `terrabase` area: `src/TerraBase*`, `src/TerraScale.TerraBase.*`, `tests/TerraBase*`, `scripts/terrabase/**`, `scripts/ci/terrabase-*`, `terrabase.slnf`, `src/vendor/**`, the vendored driver tests, `scripts/vendor/**`, `sdk/dotnet/**`, library sources and shared build files | `ci.yml`: `changes` → `terrabase` (verify) → `test` (also requires `checks`, which runs beside `changes`: legacy scan, path-filter fixtures, workflow self-checks) → `main` (arm64 publish, arm64 image, `ts-orch release app`; push runs skip the release until the ZDT window's cienable) | `ts-ship/terrabase`, `ci-build/terrabase` | `ghcr.io/terrascale/terrabase:<sha>`; OCI regions through ts-orch; `api.terrascale.tech` | actionlint; routing fixtures; arm64 payload and runtime image built (see Builds) |
 | ts-auth | `ci.yml` `auth` area: `src/TerraScale.Authentication*`, `tests/TerraScale.Authentication*`, `scripts/auth/**`, `docs/auth/*.yaml`, `auth.slnf`, `scripts/ci/auth-build.sh`, `sdk/dotnet/**`, library sources and shared build files; TerraBase/vendor changes (`auth-server`) re-verify auth Fast | `ci.yml`: `auth` (verify) → `test` → `main-auth` (arm64 publish, arm64 image, release), in parallel with `main`; `main-auth-ordered` instead, after `main`, when one push changes both `auth-server` (TerraBase's server) and `auth-client` (`src/TerraScale.Authentication*`, `sdk/dotnet`), and on dispatches | `ts-ship/auth`, `ci-build/auth` | `ghcr.io/terrascale/ts-auth:<sha>`; OCI regions through ts-orch; `auth.terrascale.tech` | actionlint; routing fixtures; `make auth-publish` arm64 payload and runtime image built (see Builds) |
 | Dashboard | `images-ghcr.yml`: `src/TerraScale.Dashboard*`, `tests/TerraScale.Dashboard*`, `scripts/dashboard/**`, `src/TerraScale.TerraBase.Contracts/**`, `src/TerraScale.Endpoints/**`, `src/TerraScale.Endpoints.Generators/**`, `sdk/dotnet/**`, shared build files, `dashboard-ci.yml`, `images-ghcr.yml` | `images-ghcr.yml`: `ready` (`release-gate.py`: newest qualified, not-failed main commit; never waits for CI) ∥ `test` (`dashboard-ci.yml`) → `image` (verify qualified tarball, arm64 image, gate again, `ts-orch release app`, `verify-live.py`); `workflow_run` after CI heals missed runs | `ts-ship/dashboard`, `dashboard-release/dashboard`, no failed CI run for the commit | `ghcr.io/terrascale/terrascale-dashboard:<sha>`; OCI regions through ts-orch; `dash.terrascale.tech` | actionlint; release-gate tests; `dotnet publish` + `Dockerfile.runtime` image built (see Builds) |
 | Docs site | `docs-ci.yml`: `docs-site/**`, `scripts/docs/**`, `Makefile`, `docs-*.yml` | `docs-ci.yml`: `fast` → `deploy` (`docs-deploy.yml`: `eligible` → `deploy`, `cf deploy --prebuilt`, `check-hosted.mjs`) | `ts-ship/docs`, `docs-release/docs`; dispatch also `check-main.py` | Cloudflare Workers; `docs.terrascale.tech` | actionlint; `check-main.test.py`; `npm ci && npm run build` (see Builds) |
@@ -26,7 +28,7 @@ platform alone. Each
 | Rust SDK | Fast: `sdk-rust-ci.yml`; release: tag `sdk/rust/v0.0.*` at main head | `sdk-rust-release.yml`: `tests` → `publish` (`cargo publish --no-verify` of the qualified crate) | `ts-ship/sdk-rust`, `sdk-release/sdk-rust` | crates.io (go-live) | actionlint; `qualify-release.sh` packaging (see Builds) |
 | Go SDK and CLI | Fast: `sdk-go-ci.yml`; release: `sdk-go-release.yml` on `sdk/go/**`, `scripts/sdk/**`, `sdk-go-release.yml`, `sdk-go-publish.yml` | `sdk-go-release.yml`: `tests` (newest qualified green main) → `autorelease` (`download-qualified.py go`, create `sdk/go/v<version>`) → `publish` (calls `sdk-go-publish.yml`: GitHub release with archives, `checksums.txt`, `ts.rb`, `install.sh`) | `ts-ship/sdk-go`, `sdk-release/sdk-go` | GitHub release `sdk/go/v0.0.X`; Go module tag; homebrew-tap syncs `ts.rb` | actionlint; reusable call inputs checked; `qualify-release.sh` packaging with GoReleaser snapshot (see Builds) |
 
-Every other main push that selects no area runs only the CI `changes` job: `docs/` Markdown,
+Every other main push that selects no area runs only the CI `changes` and `checks` jobs: `docs/` Markdown,
 `aspire/`, `ops/`, `benchmark/` outside the two library benchmarks, `.cos/`, instruction files and
 root files outside the shared build set.
 
@@ -47,7 +49,7 @@ change applied on top for the SDK rows. Nothing was published.
 
 | Artifact | Command | Exit |
 | --- | --- | --- |
-| TerraBase payload | `make terrabase-publish RUNTIME=linux-arm64` (283 MB; 441 s cold in a 3-CPU dev-host slot) | 0 |
+| TerraBase payload | `make terrabase-publish RUNTIME=linux-arm64` (283 MB; 441 s cold in a 3-CPU dev-host slot; 198 MB since per-assembly ReadyToRun, 2026-11-07) | 0 |
 | TerraBase image | runtime Dockerfile from `image-payloads.sh runtime-dockerfile terrabase`, `docker build --platform linux/arm64` (linux/arm64, 312 MB) | 0 |
 | ts-auth payload | `make auth-publish RUNTIME=linux-arm64` (150 MB; 116 s cold in a 3-CPU dev-host slot) | 0 |
 | ts-auth image | `docker build --platform linux/arm64` of the runtime Dockerfile (linux/arm64, 172 MB) | 0 |

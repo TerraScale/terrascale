@@ -9,7 +9,8 @@ case $area in
 esac
 case ${1:-} in
   publish)
-    # Production runs linux/arm64 only. Keep ReadyToRun and all normal compiler/analyzer checks enabled.
+    # Production runs linux/arm64 only. Keep ReadyToRun (per assembly; see TerraBase.csproj) and all normal
+    # compiler/analyzer checks enabled.
     output=$RUNNER_TEMP/image-payloads/arm64
     # TerraBase's pinned native download and the locked restore are independent: overlap them.
     native=
