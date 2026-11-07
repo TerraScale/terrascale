@@ -21,7 +21,7 @@ assert 'cmp "native-builds/turso-native-build-$arch-1/router-parser/runtimes/$ri
 assert "Dockerfile.router-parser" in (root / "scripts/vendor/build-turso-native.sh").read_text()
 aggregate = workflow.split("\n  test:\n", 1)[1]
 assert "name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}" in aggregate
-assert "if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}" in aggregate
+assert "${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)\n" in aggregate.split("\n  budget:\n", 1)[0]
 assert "needs: [changes, native, libs, auth, auth-package, terrabase, terrabase-package]" in aggregate
 assert "name: turso-native-verified" in workflow
 recipe = (root / "scripts/vendor/Dockerfile.turso-native").read_text()

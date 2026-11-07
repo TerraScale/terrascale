@@ -50,6 +50,10 @@ class RecoveryTests(unittest.TestCase):
         runs = [self.run_fixture(event='push', conclusion='failure'), self.run_fixture()]
         self.assertEqual('failed', self.state(runs, [{'name': 'test', 'conclusion': 'success'}]))
         self.assertEqual('failed', self.state([self.run_fixture(event='push')], []))
+        # A push without core changes skips test but must still have succeeded overall.
+        skipped = [{'name': 'test', 'conclusion': 'skipped'}]
+        self.assertEqual('green', self.state([self.run_fixture(event='push')], skipped))
+        self.assertEqual('failed', self.state([self.run_fixture(event='push', conclusion='failure')], skipped))
 
     def test_heal_dispatches_images_only_for_qualified_green_head_without_a_push(self):
         with (patch.object(gate, 'target', return_value=((HEAD, 'green'), LIVE)),

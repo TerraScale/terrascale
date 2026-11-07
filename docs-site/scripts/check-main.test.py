@@ -20,9 +20,14 @@ class MainQualificationTests(unittest.TestCase):
 
     def test_failed_or_missing_test_rollup_blocks_deployment(self):
         for jobs in ([], [{'name': 'test', 'conclusion': 'failure'}],
-                     [{'name': 'test', 'conclusion': ''}]):
+                     [{'name': 'test', 'conclusion': ''}], [{'name': 'test', 'conclusion': 'skipped'}]):
             with self.subTest(jobs=jobs), self.assertRaises(ValueError):
                 policy.validate(self.runs(), {1: jobs})
+
+    def test_successful_run_without_core_changes_skips_the_rollup(self):
+        runs = self.runs()
+        runs[0]['conclusion'] = 'success'
+        self.assertEqual(policy.validate(runs, {1: [{'name': 'test', 'conclusion': 'skipped'}]}), [])
 
     def test_blocking_ci_failure_blocks_even_with_successful_rollup(self):
         with self.assertRaises(ValueError):

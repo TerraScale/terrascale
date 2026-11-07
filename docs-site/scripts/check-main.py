@@ -20,7 +20,9 @@ def validate(runs, jobs_by_run):
         ci = True
         jobs = jobs_by_run[run['databaseId']]
         rollup = [job for job in jobs if job['name'] == 'test']
-        if len(rollup) != 1 or rollup[0]['conclusion'] != 'success':
+        # A push that selects no core area runs only changes and skips test; the run conclusion still gates it.
+        skipped = run['conclusion'] == 'success' and [job['conclusion'] for job in rollup] == ['skipped']
+        if len(rollup) != 1 or (rollup[0]['conclusion'] != 'success' and not skipped):
             raise ValueError('The required main test rollup must succeed')
         failed = [job['name'] for job in jobs if job['conclusion'] == 'failure']
         if any(name not in SLOW_JOBS for name in failed):

@@ -607,10 +607,14 @@ jobs:
       actions: write
     steps: *production-steps
 
+  # A run that selects no core area (docs, SDKs, sites, dashboard) runs only changes. A failed changes job still
+  # reaches test, so the rollup stays red.
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
     needs: [changes, native, libs, auth, auth-package, terrabase, terrabase-package]
-    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}
+    if: >-
+      ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
+      && (needs.changes.result != 'success' || needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -636,7 +640,9 @@ jobs:
   budget:
     name: Fast timing budget
     needs: [changes, native, libs, auth, auth-package, terrabase, terrabase-package, test, main, main-auth]
-    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}
+    if: >-
+      ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
+      && (needs.changes.result != 'success' || needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:

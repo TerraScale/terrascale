@@ -52,7 +52,9 @@ def ci(sha):
             # Native maintenance deliberately has no qualifying test job. It cannot turn CI green.
             if run['event'] == 'workflow_dispatch' and test is None:
                 continue
-            if run['conclusion'] != 'success' or test != 'success':
+            # A push that selects no core area runs only changes and skips test; the run conclusion still gates it.
+            passed = {'success', 'skipped'} if run['event'] == 'push' else {'success'}
+            if run['conclusion'] != 'success' or test not in passed:
                 return 'failed'
             # Normal recovery selects both core services. Their jobs can succeed only
             # for refs/heads/main, so a branch/tag dispatch cannot qualify as main CI.
