@@ -143,6 +143,7 @@ public sealed partial class RegionalWriterCrashTests
         var config = JsonNode.Parse(await File.ReadAllTextAsync(path, token))!;
         var directory = config["directory"]!.GetValue<string>();
         var node = config["node"]!.GetValue<string>();
+        var hosting = Stopwatch.StartNew();
         var storage = new FakeS3();
         var objects = directory + ".objects";
         if (File.Exists(objects))
@@ -197,7 +198,8 @@ public sealed partial class RegionalWriterCrashTests
             }));
         }, lifetimeCancellationToken: token);
         var nativeRows = ExportNativeRowsAsync(api.Server.Services, directory, token);
-        await File.WriteAllTextAsync(directory + ".ready", "started", token);
+        await File.WriteAllTextAsync(directory + ".ready.new", $"server_ms={hosting.Elapsed.TotalMilliseconds:F0}", token);
+        File.Move(directory + ".ready.new", directory + ".ready", overwrite: true);
         // Fixture-only IPC exports an actual source snapshot without changing
         // runtime admission. The manual-CAS drill sends it through real Prepare.
         var requestPath = directory + ".snapshot-request";
@@ -396,19 +398,29 @@ public sealed partial class RegionalWriterCrashTests
                     }
                 }
             };
+            var launched = Stopwatch.StartNew();
+            using var watcher = new FileSystemWatcher(Path.GetDirectoryName(ready)!, Path.GetFileName(ready));
+            var signalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            watcher.Created += (_, _) => signalled.TrySetResult();
+            watcher.Renamed += (_, _) => signalled.TrySetResult();
+            watcher.EnableRaisingEvents = true;
             _process.BeginOutputReadLine();
             _process.BeginErrorReadLine();
-            await TerraBaseTestServer.EventuallyAsync(_ =>
+            if (File.Exists(ready))
             {
-                if (_process.HasExited)
+                signalled.TrySetResult();
+            }
+
+            await Task.WhenAny(signalled.Task, _process.WaitForExitAsync(token)).WaitAsync(token);
+            if (!File.Exists(ready))
+            {
+                lock (_errors)
                 {
-                    lock (_errors)
-                    {
-                        throw new IOException("regional process exited: " + string.Join('\n', _errors));
-                    }
+                    throw new IOException("regional process exited before it was ready: " + string.Join('\n', _errors));
                 }
-                return Task.FromResult(File.Exists(ready));
-            }, TimeSpan.FromSeconds(30));
+            }
+
+            Console.WriteLine($"DRILL {name} ready process_ms={launched.Elapsed.TotalMilliseconds:F0} {await File.ReadAllTextAsync(ready, token)}");
         }
 
         internal async Task StartLegacyAsync(CancellationToken token)
