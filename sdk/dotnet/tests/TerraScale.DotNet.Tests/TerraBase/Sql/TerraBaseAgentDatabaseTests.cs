@@ -57,7 +57,8 @@ public sealed class TerraBaseAgentDatabaseTests
         using var providerHttp = new HttpClient(providerHandler);
         var providerClient = new TerraBaseSqlClient(providerHttp, new TerraBaseSqlClientOptions
         {
-            Region = "gru", AccessTokenProvider = _ => ValueTask.FromResult("agent-project-token"),
+            Region = "gru",
+            AccessTokenProvider = _ => ValueTask.FromResult("agent-project-token"),
         });
         await Assert.That((await providerClient.CreateDatabaseAsync(Project, "agent", ttlSeconds: 3600)).Id).IsEqualTo(Database);
     }

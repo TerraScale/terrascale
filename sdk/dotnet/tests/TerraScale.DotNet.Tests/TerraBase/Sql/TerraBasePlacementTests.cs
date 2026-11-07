@@ -58,7 +58,8 @@ public sealed class TerraBasePlacementTests
 
     private static TerraBaseSqlClient Client(HttpClient http) => new(http, new TerraBaseSqlClientOptions
     {
-        Region = "gru", AccessTokenProvider = _ => ValueTask.FromResult("placement-token"),
+        Region = "gru",
+        AccessTokenProvider = _ => ValueTask.FromResult("placement-token"),
     });
 
     private static async Task<HttpResponseMessage> ReplayAsync(string fixture, HttpRequestMessage request, CancellationToken token)
