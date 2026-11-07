@@ -22,19 +22,25 @@ public sealed class CrossRegionDatabaseListTests
             services.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new FixedRegionPeers(peers)));
         });
 
+        var organization = EntityIds.New().ToString();
         var project = EntityIds.New().ToString();
-        var local = home.WithToken(Token(home, project));
-        var remote = away.WithToken(Token(away, project));
+        using (var published = await home.Server.Client.PutAsJsonAsync(ManagementApi.Uri($"/admin/organizations/{organization}/plan"), new { plan = "pro" }))
+        {
+            await Assert.That(published.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var local = home.WithToken(Token(home, organization, project));
+        var remote = away.WithToken(Token(away, organization, project));
         var path = $"/v1/projects/{project}/databases";
 
         using (var created = await local.PostAsJsonAsync(ManagementApi.Uri(path), new { name = "athome" }))
         {
-            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
         }
 
         using (var created = await remote.PostAsJsonAsync(ManagementApi.Uri(path), new { name = "away" }))
         {
-            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
         }
 
         using var listed = await local.GetAsync(ManagementApi.Uri(path));
@@ -61,12 +67,17 @@ public sealed class CrossRegionDatabaseListTests
         await Assert.That(merged.GetProperty("homeRegion").GetString()).IsEqualTo("sjc");
     }
 
-    private static string Token(ManagementApi api, string project) =>
-        api.Issuer.Mint(EntityIds.New().ToString(), token =>
+    private static string Token(ManagementApi api, string organization, string project)
+    {
+        var token = api.Issuer.Mint(EntityIds.New().ToString(), descriptor =>
         {
-            token.Claims["project_id"] = project;
-            token.Claims["scope"] = Scopes;
+            descriptor.Claims["project_id"] = project;
+            descriptor.Claims["org_id"] = organization;
+            descriptor.Claims["scope"] = Scopes;
         });
+        api.Issuer.GrantProject(token, organization, project);
+        return token;
+    }
 
     private sealed class FixedRegionPeers(Uri peer) : IRegionPeers
     {

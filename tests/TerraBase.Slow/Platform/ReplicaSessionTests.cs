@@ -30,6 +30,7 @@ public sealed class ReplicaSessionTests
         regions.Add(new RegionPeer("sjc", sjc.Server.BaseAddress));
 
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
+        await gru.SetPlanAsync(gru.User, organization, "hobby", token);
         var project = await gru.CreateProjectAsync(organization, "Project");
         using var created = await gru.Client.PostAsJsonAsync(
             ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = Sjc }, token);

@@ -199,12 +199,14 @@ public sealed class WriteRouterTests
         public static async Task<Cluster> StartAsync(CancellationToken token, JetStreamServer? nats = null)
         {
             var issuer = new TestIssuer();
+            var keys = new FakeS3();
             var regions = new List<RegionPeer>();
-            var gru = await StartAsync("gru", issuer, regions, nats);
+            var gru = await StartAsync("gru", issuer, regions, nats, keys);
             regions.Add(new RegionPeer("gru", gru.Server.BaseAddress));
-            var sjc = await StartAsync("sjc", issuer, regions, nats);
+            var sjc = await StartAsync("sjc", issuer, regions, nats, keys);
             regions.Add(new RegionPeer("sjc", sjc.Server.BaseAddress));
             var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
+            await gru.SetPlanAsync(gru.User, organization, "hobby", token);
             var project = await gru.CreateProjectAsync(organization, "Project");
             using var created = await gru.Client.PostAsJsonAsync(
                 ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = SjcRegion }, token);
@@ -246,18 +248,23 @@ public sealed class WriteRouterTests
             _issuer.Dispose();
         }
 
-        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions, JetStreamServer? nats) => ManagementApi.StartAsync(
-            settings => settings["region"] = region,
+        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, List<RegionPeer> regions, JetStreamServer? nats, FakeS3 keys) => ManagementApi.StartAsync(
+            settings =>
+            {
+                settings["region"] = region;
+                keys.Configure(settings);
+            },
             services =>
             {
+                keys.Route(services);
                 services.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new RegionView(region, regions)));
                 services.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new Serving()));
                 services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new ReplicaView(region, regions)));
+                var registered = services.Single(service => service.ServiceType == typeof(TerraBaseOptions));
+                var options = (TerraBaseOptions)registered.ImplementationInstance! with { MachineId = region + "-1" };
+                services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(nats is null ? options : options with { NatsUrl = nats.Url, NatsToken = nats.Token });
                 if (nats is not null)
                 {
-                    var registered = services.Single(service => service.ServiceType == typeof(TerraBaseOptions));
-                    services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(
-                        (TerraBaseOptions)registered.ImplementationInstance! with { NatsUrl = nats.Url, NatsToken = nats.Token });
                     services.AddSingleton<ILocalWriteClock>(new Admitted());
                 }
             },

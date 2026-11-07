@@ -167,10 +167,11 @@ public sealed class RouterDifferentialTests
         public static async Task<Cluster> StartAsync(JetStreamServer nats, CancellationToken token)
         {
             var issuer = new TestIssuer();
+            var keys = new FakeS3();
             var regions = new ConcurrentDictionary<string, Uri>(StringComparer.Ordinal);
-            var gru = await StartAsync("gru", issuer, regions, nats);
+            var gru = await StartAsync("gru", issuer, regions, nats, keys);
             regions["gru"] = gru.Server.BaseAddress;
-            var sjc = await StartAsync("sjc", issuer, regions, nats);
+            var sjc = await StartAsync("sjc", issuer, regions, nats, keys);
             regions["sjc"] = sjc.Server.BaseAddress;
             var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
             await gru.SetPlanAsync(gru.User, organization, "enterprise", token);
@@ -284,13 +285,19 @@ public sealed class RouterDifferentialTests
             _issuer.Dispose();
         }
 
-        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, ConcurrentDictionary<string, Uri> regions, JetStreamServer nats) => ManagementApi.StartAsync(
-            settings => settings["region"] = region,
+        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, ConcurrentDictionary<string, Uri> regions, JetStreamServer nats, FakeS3 keys) => ManagementApi.StartAsync(
+            settings =>
+            {
+                settings["region"] = region;
+                keys.Configure(settings);
+            },
             services =>
             {
+                keys.Route(services);
                 var registered = services.Single(service => service.ServiceType == typeof(TerraBaseOptions));
                 services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(((TerraBaseOptions)registered.ImplementationInstance!) with
                 {
+                    MachineId = region + "-1",
                     NatsUrl = nats.Url,
                     NatsToken = nats.Token,
                 });

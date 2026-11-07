@@ -22,6 +22,7 @@ public sealed class CrossRegionMeteringTests
         await using var fra = await StartAsync("fra", issuer, mesh);
         mesh.Peers = [new("gru", gru.Server.BaseAddress), new("sjc", sjc.Server.BaseAddress), new("fra", fra.Server.BaseAddress)];
         var database = await gru.CreateManagedDatabaseAsync();
+        await gru.SetPlanAsync(gru.User, database.Organization, "hobby");
         var token = issuer.Mint(gru.User, descriptor =>
         {
             descriptor.Claims["project_id"] = database.Project;
