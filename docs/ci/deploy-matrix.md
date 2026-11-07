@@ -63,3 +63,17 @@ change applied on top for the SDK rows. Nothing was published.
 | Rust SDK | `sdk/rust/scripts/qualify-release.sh` (fmt, tests, clippy, publish dry run, audit, `terrascale-0.0.5.crate`) | 0 (was 1 on main: rustfmt, missing `.crate`) |
 
 Each SDK's outputs match the files its release workflow downloads and publishes.
+
+## Release timing
+
+Push to image pushed (the `main`/`main-auth` build-push step) on real main push runs; TerraBase's ts-orch release is
+still held on push runs. Details and per-runner publish measurements: `benchmark/bench/2026-11-07-terrabase-ci-publish.md`.
+
+| Run | Commit | TerraBase publish | TerraBase image | ts-auth image | ts-auth released |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 42418535998 (before) | `7f43011fa` | 233 s | 371 s | 174 s | 228 s |
+| 42425979354 (after) | `8741019f2` | 76 s | 140 s | 151 s | 204 s |
+| 42426957542 (after) | `3d23b5484` | 115 s | 186 s | 120 s | 169 s |
+
+`ubuntu-latest` lands on CPUs about 1.7x apart; the TerraBase compile, about half of it analyzers, is most of the
+remaining spread.

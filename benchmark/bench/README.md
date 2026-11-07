@@ -5,6 +5,7 @@ Every measured run has a Markdown table, raw client JSONL and aggregate JSON in
 
 | Date | Evidence | Status |
 | --- | --- | --- |
+| 2026-11-07 | [TerraBase release build on hosted runners](2026-11-07-terrabase-ci-publish.md) | Push to TerraBase image 371 s to 140 s and 186 s; per-assembly ReadyToRun, 198 MB payload |
 | 2026-11-05 | [Deleted shape CDN deadline (#1107)](2026-11-05-cdn1107.md) | 21/21 regional URLs 404 by 43.299 s; healthy-provider bound 420 s |
 | 2026-11-05 | [Milestone B public-product acceptance](2026-11-05-milestone-b-acceptance.md) | **PASS pooled / FAIL SJC repeat 1**: independent regional latency, free reads, corrected home moves, CDN deletion, screenshots and full account cleanup |
 | 2026-11-05 | [Fast suite budgets (#1084)](2026-11-05-fast-suite-budgets-1084.md) | All 12 admitted suites under 30 s; every case under 10 s |
