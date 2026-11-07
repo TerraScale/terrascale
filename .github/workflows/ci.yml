@@ -95,15 +95,10 @@ jobs:
             libs:
               - *shared
               - libs.slnf
-              - src/TerraScale.CLI/**/!(AGENTS.md|CLAUDE.md)
               - benchmark/dotnet/**/!(AGENTS.md|CLAUDE.md)
               # Self-check changes run in changes; executor changes still qualify both native Fast areas.
               - scripts/ci/image-payloads.sh
               - scripts/ci/test-area.sh
-              # The credential entry point and the scripts it runs (make handoff-test).
-              - scripts/handoff/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/e2e/**/!(AGENTS.md|CLAUDE.md)
-              - benchmark/scripts/repl-*-tenant.sh
             auth:
               - *shared
               - scripts/ci/image-payloads.sh
@@ -116,6 +111,8 @@ jobs:
               - scripts/ci/auth-build.sh
             auth-server:
               - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
+              # TerraBase's RPC surface and the contracts it implements.
+              - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
             terrabase:
               - *shared
               - scripts/ci/terrabase-*
@@ -123,6 +120,7 @@ jobs:
               - scripts/ci/image-payloads.sh
               - scripts/ci/test-area.sh
               - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
               - tests/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - scripts/terrabase/!(AGENTS.md|CLAUDE.md)
               - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
