@@ -414,7 +414,7 @@ public sealed partial class RegionalWriterCrashTests
         internal async Task StartLegacyAsync(CancellationToken token)
         {
             var binary = Environment.GetEnvironmentVariable("TERRABASE_TEST_LEGACY_BINARY")
-                ?? throw new IOException("real b443 binary required: run benchmark/regional-bootstrap/run.sh on a dev host");
+                ?? throw new IOException("real b443 binary required: run scripts/terrabase/regional-bootstrap.sh on a dev host");
             const string revision = "b443b6ea83f519018c0d9f9d8f04e65c3df12724";
             if (await File.ReadAllTextAsync(binary + ".revision", token) != revision + "\n")
             {
