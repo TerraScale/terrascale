@@ -121,8 +121,17 @@ FROM source AS slow-terrabase-build
 ARG TERRABASE_REVISION
 RUN make -o restore terrabase-build CONFIGURATION=Release
 
+# The JetStream test server the regional-replication Slow tests launch from PATH (tests/TerraBase.TestHarness/JetStreamServer.cs).
+# ADD verifies the pinned upstream archive's SHA-256 before anything is extracted.
+FROM sdk AS nats-server
+ADD --checksum=sha256:67cb8e10bc6f0c4b47f75a728529a20953dbae2a4f9a4a52ae8517d65ae303ff \
+    https://github.com/nats-io/nats-server/releases/download/v2.15.2/nats-server-v2.15.2-linux-amd64.tar.gz /nats-server.tar.gz
+RUN tar -xzf /nats-server.tar.gz --strip-components=1 -C /usr/local/bin nats-server-v2.15.2-linux-amd64/nats-server \
+    && nats-server --version
+
 FROM slow-terrabase-build AS slow-terrabase-run
 ARG TERRABASE_REVISION
+COPY --from=nats-server /usr/local/bin/nats-server /usr/local/bin/nats-server
 # BuildKit secret mounts never enter a layer or build arg. No org-level provisioning credential reaches CI.
 RUN --mount=type=secret,id=tigris-ci,required=true \
     mkdir /slow && { set -a; . /run/secrets/tigris-ci; set +a; \
