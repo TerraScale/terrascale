@@ -48,7 +48,9 @@ def ci(sha):
             pages = gh('api', '--paginate', '--slurp',
                        f'repos/{REPO}/actions/runs/{run["databaseId"]}/jobs?filter=latest&per_page=100')
             jobs = {job['name']: job['conclusion'] for page in pages for job in page['jobs']}
-            test = jobs.get('test')
+            # A skipped job keeps its unevaluated name expression (`... || 'test'`).
+            test = next((conclusion for name, conclusion in jobs.items()
+                         if name == 'test' or name.endswith("|| 'test'")), None)
             # Native maintenance deliberately has no qualifying test job. It cannot turn CI green.
             if run['event'] == 'workflow_dispatch' and test is None:
                 continue

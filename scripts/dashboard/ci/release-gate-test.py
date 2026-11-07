@@ -50,8 +50,10 @@ class RecoveryTests(unittest.TestCase):
         runs = [self.run_fixture(event='push', conclusion='failure'), self.run_fixture()]
         self.assertEqual('failed', self.state(runs, [{'name': 'test', 'conclusion': 'success'}]))
         self.assertEqual('failed', self.state([self.run_fixture(event='push')], []))
-        # A push without core changes skips test but must still have succeeded overall.
-        skipped = [{'name': 'test', 'conclusion': 'skipped'}]
+        # A push without core changes skips test but must still have succeeded overall. GitHub then reports
+        # the job under its unevaluated name expression.
+        skipped = [{'name': "github.event_name == 'workflow_dispatch' && inputs.native_artifacts"
+                            " && 'native-maintenance-unqualified' || 'test'", 'conclusion': 'skipped'}]
         self.assertEqual('green', self.state([self.run_fixture(event='push')], skipped))
         self.assertEqual('failed', self.state([self.run_fixture(event='push', conclusion='failure')], skipped))
 
