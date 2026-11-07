@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -21,6 +22,18 @@ def run(*command, cwd=ROOT, env=None, capture=False, data=None):
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def stamp_entries(package, timestamp):
+    """dotnet pack stamps zip entries with the build clock; give every entry the commit time instead."""
+    date_time = time.gmtime(max(int(timestamp), 315532800))[:6]
+    with zipfile.ZipFile(package) as source:
+        entries = [(entry, source.read(entry)) for entry in source.infolist()]
+    with zipfile.ZipFile(package, "w") as target:
+        for entry, data in entries:
+            stamped = zipfile.ZipInfo(entry.filename, date_time=date_time)
+            stamped.create_system, stamped.external_attr = entry.create_system, entry.external_attr
+            target.writestr(stamped, data, compress_type=entry.compress_type)
 
 
 def main(destination):
@@ -51,6 +64,7 @@ def main(destination):
                 "-p:ContinuousIntegrationBuild=true", f"-p:SourceRevisionId={revision}",
                 f"-p:RepositoryCommit={revision}", f"-p:PathMap={source}=/_/", "--output", "package",
                 cwd=source, env=env)
+            stamp_entries(source / "package" / name, timestamp)
             packages.append(source / "package" / name)
         first, second = [package.read_bytes() for package in packages]
         if first != second:
