@@ -24,7 +24,7 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
     public static async Task<BackupShippingHost> StartAsync(Action<IServiceCollection>? services = null)
     {
         var s3 = new FakeS3();
-        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var api = await ManagementApi.StartAsync(s3.Configure, registrations =>
         {
             s3.Route(registrations);

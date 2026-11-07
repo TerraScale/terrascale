@@ -15,6 +15,7 @@ internal sealed class ShreddedDatabaseSweep(KeyCustody custody, KeyRevocationLoc
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), time);
         do
         {
+            await Task.Yield();
             try
             {
                 await RunOnceAsync(stoppingToken).ConfigureAwait(false);

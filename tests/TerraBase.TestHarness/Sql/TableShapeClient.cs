@@ -40,17 +40,27 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
 
     public async Task<ShapeReply> CatchUpAsync()
     {
-        ShapeReply reply;
-        do
+        for (var round = 0; round < 10_000; round++)
         {
-            reply = await ReadAsync(NextOffset);
+            var offset = NextOffset;
+            var reply = await ReadAsync(offset);
             if (reply.Status != HttpStatusCode.OK)
             {
-                throw new InvalidOperationException($"offset {NextOffset} answered {reply.Status}: {System.Text.Encoding.UTF8.GetString(reply.Body)}");
+                throw new InvalidOperationException($"offset {offset} answered {reply.Status}: {System.Text.Encoding.UTF8.GetString(reply.Body)}");
+            }
+
+            if (reply.UpToDate == "true")
+            {
+                return reply;
+            }
+
+            if (NextOffset == offset)
+            {
+                throw new InvalidOperationException($"offset {offset} answered a page that is not up to date and does not advance");
             }
         }
-        while (reply.UpToDate != "true");
-        return reply;
+
+        throw new InvalidOperationException($"the shape did not reach up-to-date within 10000 pages; offset {NextOffset}");
     }
 
     public async Task<ShapeReply> ReadAsync(string offset)
