@@ -232,7 +232,8 @@ public sealed partial class RegionalWriterCrashTests
         while (after is not null);
         var snapshot = new RegionalPrepare(node, positions, 0,
             await RegionalCatalog.ExportAsync(api.Server.Services.GetRequiredService<IStorageEngine>(), token));
-        await File.WriteAllBytesAsync(directory + ".snapshot", JsonSerializer.SerializeToUtf8Bytes(snapshot, TerraBaseJsonContext.Default.RegionalPrepare), token);
+        await File.WriteAllBytesAsync(directory + ".snapshot.new", JsonSerializer.SerializeToUtf8Bytes(snapshot, TerraBaseJsonContext.Default.RegionalPrepare), token);
+        File.Move(directory + ".snapshot.new", directory + ".snapshot", overwrite: true);
         await nativeRows;
     }
 
@@ -252,7 +253,8 @@ public sealed partial class RegionalWriterCrashTests
         await using var transaction = await store.BeginTransactionAsync(write: false, token);
         var result = await transaction.ExecuteStatementAsync(new SqlStatement("SELECT id FROM acked ORDER BY id", [],
             new Dictionary<string, object?>(), 100, 8192, TimeSpan.FromSeconds(5)), token);
-        await File.WriteAllTextAsync(directory + ".native-rows", JsonSerializer.Serialize(result.Rows.Select(row => (string)row[0]!).ToArray()), token);
+        await File.WriteAllTextAsync(directory + ".native-rows.new", JsonSerializer.Serialize(result.Rows.Select(row => (string)row[0]!).ToArray()), token);
+        File.Move(directory + ".native-rows.new", directory + ".native-rows", overwrite: true);
         await Task.Delay(Timeout.Infinite, token);
     }
 
