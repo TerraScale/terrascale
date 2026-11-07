@@ -78,13 +78,13 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - name: Require green Fast proof for this exact main commit
+      # Only landing's own proof gates it: other areas' statuses on the same commit belong to their workflows.
+      - name: Require this exact main commit's landing Fast proof
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/status" --jq .state)" = success
-          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses" > "$RUNNER_TEMP/landing-status.json"
-          jq -e 'any(.[]; .context == "ts-ship/landing" and .state == "success" and ((.creator.login // "") | ascii_downcase) == "mariogk")' "$RUNNER_TEMP/landing-status.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/statuses?per_page=100" > "$RUNNER_TEMP/landing-status.json"
+          jq -e '[.[][] | select(.context == "ts-ship/landing")] | max_by(.id) // {} | .state == "success" and ((.creator.login // "") | ascii_downcase) == "mariogk"' "$RUNNER_TEMP/landing-status.json"
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
