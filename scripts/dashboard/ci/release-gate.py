@@ -61,7 +61,7 @@ def ci(sha):
             # Normal recovery selects both core services. Their jobs can succeed only
             # for refs/heads/main, so a branch/tag dispatch cannot qualify as main CI.
             if run['event'] == 'workflow_dispatch' and any(
-                    jobs.get(name) != 'success' for name in ('main', 'main-auth')):
+                    jobs.get(name) != 'success' for name in ('main', 'main-auth-ordered')):
                 return 'failed'
         qualifying.append(run)
     if qualifying and all(item['status'] == 'completed' for item in qualifying):

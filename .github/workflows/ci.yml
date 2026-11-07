@@ -57,6 +57,7 @@ jobs:
     outputs:
       fast: ${{ steps.areas.outputs.fast }}
       main: ${{ steps.areas.outputs.main }}
+      ordered: ${{ steps.areas.outputs.ordered }}
       sha: ${{ steps.source.outputs.sha }}
     steps:
       # Pull requests list files through the API; the checkout also runs cheap checks before any build.
@@ -117,6 +118,10 @@ jobs:
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
               # The vendored driver TerraBase embeds; auth integration tests start that TerraBase.
               - src/vendor/**/!(AGENTS.md|CLAUDE.md)
+            # What ts-auth runs against TerraBase: its own code and the SDK it calls TerraBase with.
+            auth-client:
+              - *dotnet-sdk
+              - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
             terrabase:
               - *shared
               - *dotnet-sdk
@@ -138,6 +143,11 @@ jobs:
         run: |
           # The ts-auth image does not contain TerraBase: main publishes and Slow-tests auth only for its own changes.
           echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
+          # A push changing both TerraBase's server and what ts-auth calls it with releases TerraBase first (scope
+          # skew, 2026-11-04); every other push releases both services in parallel. Dispatches keep the order.
+          ordered=$(jq 'index("auth-server") != null and index("auth-client") != null' <<< "$CHANGES")
+          [[ $GITHUB_EVENT_NAME != workflow_dispatch ]] || ordered=true
+          echo "ordered=$ordered" >> "$GITHUB_OUTPUT"
           [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
           echo "fast=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
@@ -176,6 +186,7 @@ jobs:
           python3 scripts/ci/cache-policy-test.py
           python3 scripts/ci/fast-budget-test.py
           python3 scripts/ci/qualified-build-test.py
+          bash scripts/ci/release-app-test.sh
           python3 scripts/vendor/turso-native-pipeline-test.py
           bash scripts/terrabase/storage-format-check-test.sh
           bash scripts/terrabase/e2e-summary-test.sh
@@ -186,25 +197,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/terrabase/storage-format-check.sh "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
 
-  # Normal runs verify prebuilt release bytes; native Rust builds stay in explicit maintenance dispatches.
-  native:
-    needs: changes
-    if: needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-          ref: ${{ needs.changes.outputs.sha }}
-      - name: Download and verify the pinned FTS + contract1 + SQL parser release
-        run: scripts/vendor/download-turso-native.sh native-output
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: turso-native-verified
-          path: native-output/
-          if-no-files-found: error
-
+  # Native Rust builds stay in explicit maintenance dispatches; dev hosts verify the pinned release bytes.
   native-build:
     if: github.event_name == 'workflow_dispatch' && inputs.native_artifacts
     strategy:
@@ -318,65 +311,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci/qualified-build.py verify auth
 
-  auth-package:
-    needs: [changes, native]
-    if: >-
-      contains(fromJSON(needs.changes.outputs.fast), 'auth')
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    env:
-      AREA: auth
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - *checkout
-      - &native-artifacts
-        name: Download this run's verified pinned release cores
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: turso-native-verified
-          path: terrascale/src/vendor/Turso.Data.Sqlite/native
-      - &setup-dotnet
-        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          global-json-file: terrascale/global.json
-      - &nuget-cache
-        name: Restore locked NuGet packages
-        id: nuget
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.nuget/packages
-          restore-keys: ${{ runner.os }}-nuget-monorepo-
-          key: ${{ runner.os }}-nuget-monorepo-${{ hashFiles('terrascale/Makefile', 'terrascale/global.json', 'terrascale/NuGet.config', 'terrascale/Directory.*', 'terrascale/**/packages.lock.json') }}
-      - &locked-restore
-        name: Locked restore
-        working-directory: terrascale
-        run: make restore
-      - &save-nuget
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (env.AREA == 'terrabase' || !contains(fromJSON(needs.changes.outputs.main), 'terrabase')) && steps.nuget.outputs.cache-hit != 'true'
-        with:
-          path: ~/.nuget/packages
-          key: ${{ steps.nuget.outputs.cache-primary-key }}
-      - name: Auth single-file packaging proof
-        working-directory: terrascale
-        run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make auth-publish RUNTIME=linux-x64 PUBLISH_DIR="$RUNNER_TEMP/auth-publish"
-      - name: Retain both architectures from the required Auth packaging proof
-        if: github.event_name != 'pull_request'
-        working-directory: terrascale
-        run: |
-          bash scripts/ci/image-payloads.sh auth
-          bash scripts/ci/image-payloads.sh pack auth
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: github.event_name != 'pull_request'
-        with:
-          name: image-payloads-auth
-          path: ${{ runner.temp }}/image-payloads-auth.tar
-          compression-level: 1
-          retention-days: 1
-          if-no-files-found: error
-
   terrabase:
     needs: changes
     if: contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
@@ -390,48 +324,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci/qualified-build.py verify terrabase
 
-  # Publish once per architecture, in parallel with Fast compilation. The image
-  # job wraps these exact checked single-file outputs without another build.
-  terrabase-package:
-    needs: [changes, native]
-    if: >-
-      contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
-      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: ${{ fromJSON(github.event_name == 'pull_request' && '["amd64"]' || '["amd64","arm64"]') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - *checkout
-      - *native-artifacts
-      - *setup-dotnet
-      - *nuget-cache
-      - *locked-restore
-      - *save-nuget
-      - name: Check production single-file packaging and retain its output
-        working-directory: terrascale
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          bash scripts/ci/image-payloads.sh terrabase "$ARCH"
-          bash scripts/ci/image-payloads.sh pack terrabase "$ARCH"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: github.event_name != 'pull_request'
-        with:
-          name: image-payloads-terrabase-${{ matrix.arch }}
-          path: ${{ runner.temp }}/image-payloads-terrabase-${{ matrix.arch }}.tar
-          compression-level: 1
-          retention-days: 1
-          if-no-files-found: error
-
   main:
-    needs: [changes, native, terrabase, terrabase-package, test]
+    needs: [changes, terrabase, test]
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success' && needs.terrabase-package.result == 'success'
+      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
@@ -440,6 +336,9 @@ jobs:
       cancel-in-progress: false
     env:
       AREA: terrabase
+      SERVICE: terrabase
+      # ts-orch normally finishes a TerraBase release in 181-195 s.
+      RELEASE_LIMIT: 240
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -451,19 +350,30 @@ jobs:
       actions: write
     steps: &production-steps
       - *checkout
-      - name: Download this area's checked runtime payloads
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
-          pattern: image-payloads-${{ env.AREA }}*
-          merge-multiple: true
-          path: ${{ runner.temp }}
-      - name: Prepare the runtime-only image context
+          global-json-file: terrascale/global.json
+      - name: Restore locked NuGet packages
+        id: nuget
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.nuget/packages
+          restore-keys: ${{ runner.os }}-nuget-monorepo-
+          key: ${{ runner.os }}-nuget-monorepo-${{ hashFiles('terrascale/Makefile', 'terrascale/global.json', 'terrascale/NuGet.config', 'terrascale/Directory.*', 'terrascale/**/packages.lock.json') }}
+      - name: Locked restore
+        working-directory: terrascale
+        run: make restore
+      - name: Save locked NuGet packages
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (env.AREA == 'terrabase' || !contains(fromJSON(needs.changes.outputs.main), 'terrabase')) && steps.nuget.outputs.cache-hit != 'true'
+        with:
+          path: ~/.nuget/packages
+          key: ${{ steps.nuget.outputs.cache-primary-key }}
+      # Production runs linux/arm64 only: publish that runtime once, then wrap it in the image without another build.
+      - name: Publish the linux/arm64 runtime payload
         working-directory: terrascale
         run: |
-          mkdir -p "$RUNNER_TEMP/image-payloads"
-          for payload in "$RUNNER_TEMP"/image-payloads-"$AREA"*.tar; do
-            tar -C "$RUNNER_TEMP/image-payloads" -xf "$payload"
-          done
+          bash scripts/ci/image-payloads.sh publish "$AREA"
           bash scripts/ci/image-payloads.sh runtime-dockerfile "$AREA" > "$RUNNER_TEMP/image-payloads/Dockerfile"
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -471,70 +381,60 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      # Public multi-arch images ts-orch runs: ghcr.io/terrascale/{terrabase,ts-auth}:<sha> and :main, linux/amd64 +
-      # linux/arm64 (both architectures cross-published from the build platform, Dockerfile publish-* stages).
+      # Public images ts-orch runs: ghcr.io/terrascale/{terrabase,ts-auth}:<sha> and :main. Production runs linux/arm64
+      # only, so that is the only platform built; ts-orch pins its child digest.
       - id: image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ runner.temp }}/image-payloads
           file: ${{ runner.temp }}/image-payloads/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           tags: |
-            ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}:${{ github.sha }}
-            ${{ github.ref == 'refs/heads/main' && inputs.publication != 'build-only' && format('ghcr.io/terrascale/{0}:main', env.AREA == 'auth' && 'ts-auth' || 'terrabase') || '' }}
+            ghcr.io/terrascale/${{ env.SERVICE }}:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && inputs.publication != 'build-only' && format('ghcr.io/terrascale/{0}:main', env.SERVICE) || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           push: true
-      # Index digest plus each platform's child digest (ts-orch specs pin the linux/arm64 child).
-      - env:
-          IMAGE: ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}@${{ steps.image.outputs.digest }}
-        run: |
-          { echo '```'; docker buildx imagetools inspect "$IMAGE"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Record the build-only digest (no release)
-        if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
+      - id: digest
+        name: Verify the published linux/arm64 child
         env:
-          SERVICE: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
           INDEX: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
           image="ghcr.io/terrascale/${SERVICE}"
+          { echo '```'; docker buildx imagetools inspect "${image}@${INDEX}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
           arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
             jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
           test -n "$arm64"
           docker buildx imagetools inspect "${image}@${arm64}" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${arm64}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "arm64=${arm64}" >> "$GITHUB_OUTPUT"
+      - name: Record the build-only digest (no release)
+        if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
+        env:
+          INDEX: ${{ steps.image.outputs.digest }}
+          ARM64: ${{ steps.digest.outputs.arm64 }}
+        run: echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${ARM64}" | tee -a "$GITHUB_STEP_SUMMARY"
       # Every region's ts-orch swaps to the linux/arm64 digest, waits for readiness and rolls back on failure. Both
       # services release; the production-<area> concurrency group keeps one release of each in flight.
       # Releases converge on the latest main. A run superseded by a newer signed run has nothing left to do. Any other
-      # failure of a push run's release (bake, rollback, a rerun's rebuilt digest under its already-approved run id)
-      # dispatches one fresh main run, a newer signed run that releases the latest main; dispatched runs never
+      # failure of a push run's release (bake, rollback, timeout, a rerun's rebuilt digest under its already-approved
+      # run id) dispatches one fresh main run, a newer signed run that releases the latest main; dispatched runs never
       # dispatch again.
       # Temporary (zdt cold window, remove at cienable): a push run must not release TerraBase while the fleet
       # still runs b443-era executors with no fence; ts-auth releases as before. Dispatches stay explicit.
       - name: Release to every region
         if: (github.event_name == 'push' && env.AREA != 'terrabase') || (github.event_name == 'workflow_dispatch' && inputs.publication != 'build-only')
+        working-directory: terrascale
         env:
           GH_TOKEN: ${{ github.token }}
-          SERVICE: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
-          INDEX: ${{ steps.image.outputs.digest }}
+          IMAGE: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
         run: |
           set -euo pipefail
-          image="ghcr.io/terrascale/${SERVICE}"
-          arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
-            jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
-          test -n "$arm64"
-          tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
-          test -n "$tag"
-          gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
-          curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
-          chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
           set +e
-          "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service "$SERVICE" \
-            --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" "${RUNNER_TEMP}/release.log"
-          status=${PIPESTATUS[0]}
+          bash scripts/ci/release-app.sh "$SERVICE" "$IMAGE" "$RELEASE_LIMIT"
+          status=$?
           set -e
           [ "$status" -eq 0 ] && exit 0
           # Regions not yet on ts-orch #194 answer an older run with "deployment is stale"; a first attempt never
@@ -594,34 +494,52 @@ jobs:
           done
           exit "$status"
 
-  # Shared scope and contract changes must reach TerraBase before their issuer.
-  # Auth-only runs may proceed when TerraBase was intentionally not selected.
+  # ts-auth releases in parallel with TerraBase, except after it when one push changes both TerraBase's server and
+  # what ts-auth calls it with (changes.outputs.ordered): shared scope and contract changes reach TerraBase first.
   main-auth:
-    needs: [changes, native, auth, auth-package, test, main]
+    needs: [changes, auth, test]
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success' && needs.auth-package.result == 'success'
+      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'auth')
-      && (!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')
+      && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered != 'true'
     concurrency:
       group: production-auth
       cancel-in-progress: false
-    env:
+    env: &auth-env
       AREA: auth
+      SERVICE: ts-auth
+      # ts-orch normally finishes a ts-auth release in 45-47 s.
+      RELEASE_LIMIT: 180
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
+    permissions: &release-permissions
       contents: read
       packages: write
       id-token: write
       actions: write
     steps: *production-steps
 
+  main-auth-ordered:
+    needs: [changes, auth, test, main]
+    if: >-
+      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered == 'true'
+      && (!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')
+    concurrency:
+      group: production-auth
+      cancel-in-progress: false
+    env: *auth-env
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions: *release-permissions
+    steps: *production-steps
+
   # A run that selects no core area (docs, SDKs, sites, dashboard) runs only changes. A failed changes job still
   # reaches test, so the rollup stays red.
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
-    needs: [changes, native, libs, auth, auth-package, terrabase, terrabase-package]
+    needs: [changes, libs, auth, terrabase]
     if: >-
       ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
       && (needs.changes.result != 'success' || needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]') }}
@@ -636,7 +554,7 @@ jobs:
         run: |
           echo 'Fast qualification currently runs for branches in this repository. Qualify these changes on a repository branch.' >&2
           exit 1
-      - name: Native and every affected Fast area passed
+      - name: Every affected Fast area passed
         env:
           FAST_AREAS: ${{ needs.changes.outputs.fast }}
           RESULTS: ${{ toJSON(needs) }}
@@ -644,12 +562,11 @@ jobs:
           if grep -qE 'failure|cancelled' <<< '${{ join(needs.*.result, ' ') }}'; then exit 1; fi
           for area in $(jq -r '.[]' <<< "$FAST_AREAS"); do
             [[ $(jq -r --arg area "$area" '.[$area].result' <<< "$RESULTS") == success ]] || exit 1
-            [[ $area != auth || $(jq -r '.["auth-package"].result' <<< "$RESULTS") == success ]] || exit 1
           done
 
   budget:
     name: Fast timing budget
-    needs: [changes, native, libs, auth, auth-package, terrabase, terrabase-package, test, main, main-auth]
+    needs: [changes, libs, auth, terrabase, test, main, main-auth, main-auth-ordered]
     if: >-
       ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
       && (needs.changes.result != 'success' || needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]') }}

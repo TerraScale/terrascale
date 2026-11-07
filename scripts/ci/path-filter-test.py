@@ -17,7 +17,7 @@ root = workflow.parents[2]
 match = re.search(r"^          filters: \|\n((?:^            .*\n|^\s*\n)+)", workflow.read_text(), re.MULTILINE)
 assert match, "CI filters block was not found"
 filters = textwrap.dedent(match[1])
-areas = ("libs", "auth", "auth-server", "terrabase")
+areas = ("libs", "auth", "auth-server", "auth-client", "terrabase")
 tracked = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], check=True, capture_output=True,
                          text=True).stdout.rstrip("\0").split("\0")
 tracked = [path for path in tracked if (root / path).is_file()]
@@ -194,13 +194,16 @@ instructions = ["AGENTS.md", "CLAUDE.md", "sdk/dotnet/AGENTS.md",
                 "src/TerraScale.Endpoints/AGENTS.md", "scripts/terrabase/CLAUDE.md",
                 "docs/dev/testing.md", ".cos/brief.md"]
 cases += [(instructions, "modified", set()),
-          (instructions + ["src/TerraBase/Program.cs"], "modified", terrabase)]
+          (instructions + ["src/TerraBase/Program.cs"], "modified", terrabase),
+          # auth-server and auth-client together release ts-auth after TerraBase.
+          (["src/TerraBase/Program.cs", "src/TerraScale.Authentication/Program.cs"], "modified",
+           terrabase | {"auth", "auth-client"})]
 # One change under every top-level folder and root file: the CI areas and every other workflow a main push starts.
 cases += [(path, "modified", ci, started) for path, ci, started in [
     ("src/TerraBase/Program.cs", terrabase, set()),
     ("src/TerraScale.TerraBase.Contracts/Contract.cs", terrabase, {"images-ghcr.yml"}),
     ("src/TerraScale.TerraBase.Rpc/Service.cs", terrabase, set()),
-    ("src/TerraScale.Authentication/Program.cs", {"auth"}, set()),
+    ("src/TerraScale.Authentication/Program.cs", {"auth", "auth-client"}, set()),
     ("src/TerraScale.Endpoints/Endpoint.cs", all_areas, {"images-ghcr.yml"}),
     ("src/TerraScale.Endpoints.Generators/Generator.cs", all_areas, {"images-ghcr.yml"}),
     ("src/TerraScale.Endpoints.Example/Program.cs", all_areas, set()),
@@ -210,7 +213,7 @@ cases += [(path, "modified", ci, started) for path, ci, started in [
     ("tests/TerraScale.Authentication.Fast/Tests.cs", {"auth"}, set()),
     ("tests/TerraScale.Dashboard.E2E/Tests.cs", set(), {"images-ghcr.yml"}),
     ("tests/TerraScale.Endpoints.Tests/Tests.cs", {"libs"}, set()),
-    ("sdk/dotnet/src/TerraScale.DotNet/Client.cs", {"auth", "terrabase"}, {"sdk-dotnet-ci.yml", "images-ghcr.yml"}),
+    ("sdk/dotnet/src/TerraScale.DotNet/Client.cs", {"auth", "auth-client", "terrabase"}, {"sdk-dotnet-ci.yml", "images-ghcr.yml"}),
     ("sdk/go/v1/client.go", set(), go),
     ("sdk/go/contracts/terrabase/sql/error-codes.json", set(), go),
     ("sdk/js/src/index.ts", set(), {"sdk-js-ci.yml"}),

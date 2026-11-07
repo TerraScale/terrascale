@@ -31,15 +31,15 @@ class RecoveryTests(unittest.TestCase):
     def test_dispatch_without_push_qualifies_only_after_test_passes(self):
         run = self.run_fixture()
         self.assertEqual('green', self.state([run], [
-            {'name': name, 'conclusion': 'success'} for name in ('test', 'main', 'main-auth')]))
+            {'name': name, 'conclusion': 'success'} for name in ('test', 'main', 'main-auth-ordered')]))
         self.assertEqual('failed', self.state([run], [{'name': 'test', 'conclusion': 'skipped'}]))
         self.assertEqual('pending', self.state([self.run_fixture(status='in_progress')], []))
         # Branch/tag runs can pass Fast but skip the main-ref-only service jobs.
         self.assertEqual('failed', self.state([run], [{'name': 'test', 'conclusion': 'success'}]))
-        for skipped in ('main', 'main-auth'):
+        for skipped in ('main', 'main-auth-ordered'):
             self.assertEqual('failed', self.state([run], [
                 {'name': name, 'conclusion': 'skipped' if name == skipped else 'success'}
-                for name in ('test', 'main', 'main-auth')]))
+                for name in ('test', 'main', 'main-auth-ordered')]))
 
     def test_maintenance_and_untrusted_events_cannot_qualify(self):
         self.assertEqual('pending', self.state([self.run_fixture()], [
@@ -124,7 +124,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_ci_service_jobs_preserve_the_main_ref_boundary(self):
         workflow = (Path(__file__).resolve().parents[3] / '.github/workflows/ci.yml').read_text()
-        for name in ('main', 'main-auth'):
+        for name in ('main', 'main-auth', 'main-auth-ordered'):
             job = workflow.split(f'\n  {name}:\n', 1)[1].split('    concurrency:', 1)[0]
             self.assertIn("github.ref == 'refs/heads/main'", job)
             self.assertIn("github.event_name == 'workflow_dispatch'", job)

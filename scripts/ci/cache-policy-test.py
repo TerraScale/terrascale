@@ -22,7 +22,7 @@ assert "mode=max" not in workflow, "Published binaries and source snapshots must
 assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache@", workflow), "Use explicit restore/save to restrict writers"
 assert workflow.count("uses: actions/cache/save@") == 1
-nuget_writer = workflow.split("      - &save-nuget\n", 1)[1].split("\n      - ", 1)[0]
+nuget_writer = workflow.split("      - name: Save locked NuGet packages\n", 1)[1].split("\n      - ", 1)[0]
 assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in nuget_writer
 assert "steps.nuget.outputs.cache-primary-key" in nuget_writer
 assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures need their real source path"
@@ -34,6 +34,7 @@ assert "qualified-build.py" in workflow
 assert "run-budget.py" in workflow
 assert "docker/build-push-action" in workflow
 assert "runner.temp }}/image-payloads" in workflow, "CI wraps the checked runtime payload without compilation"
+assert "image-payloads.sh publish" in workflow and "platforms: linux/arm64\n" in workflow
 assert "no-cache-filters: slow-${{ env.AREA }}-run" in slow_workflow
 assert "steps: *slow-steps" in slow_workflow
 qualified = (root / "scripts/ci/qualified-build.py").read_text()
@@ -55,7 +56,7 @@ for area in ("libs", "auth", "terrabase"):
     assert "timeout-minutes: 2" in block
     assert f"qualified-build.py verify {area}" in block
     assert "dotnet build" not in block
-    assert "needs: changes" in block, "Receipt checks run alongside native verification; aggregate test still gates both"
+    assert "needs: changes" in block, "Receipt checks run right after changes; aggregate test gates releases"
     assert "needs.changes.outputs.fast" in block
 
 # Guard behavior at the build graph boundary: publishing and Slow must never rerun checked Fast stages.
@@ -79,28 +80,29 @@ assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore
 # Imported areas qualify on dev hosts; the existing hosted jobs format their own service graphs.
 imported_projects = {p for p in all_projects if p.startswith(('sdk/', 'src/TerraScale.Dashboard', 'tests/TerraScale.Dashboard.'))}
 assert all_projects <= formatted | {build_check} | imported_projects, all_projects - formatted - {build_check} - imported_projects
-assert "needs: [changes, native, libs, auth, auth-package, terrabase, terrabase-package]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
+assert "needs: [changes, libs, auth, terrabase]" in workflow, "Fast must gate required test; Slow must not delay it"
 assert "merge_group" not in workflow, "Merge queue checks are gone: pull requests and main are the only gates"
 for job in ("libs", "auth", "terrabase"):
     block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
     assert "event_name != 'push'" not in block, f"{job} must run on pushes to main"
 test_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  test:\n", 1)[1], maxsplit=1)[0]
 main_job = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main:\n", 1)[1], maxsplit=1)[0]
-assert "    needs: [changes, native, terrabase, terrabase-package, test]\n" in main_job, "TerraBase releases must wait for their own Fast shards and production packaging"
+assert "    needs: [changes, terrabase, test]\n" in main_job, "TerraBase releases must wait for their own Fast proof"
 assert "!cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'" in main_job
 main_auth = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main-auth:\n", 1)[1], maxsplit=1)[0]
-assert "    needs: [changes, native, auth, auth-package, test, main]\n" in main_auth, "Auth releases must wait for Auth Fast"
-assert "!cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'" in main_auth
-assert "(!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')" in main_auth, "When both services change, Auth must follow a successful TerraBase rollout"
-for release in (main_job, main_auth):
+ordered = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split("\n  main-auth-ordered:\n", 1)[1], maxsplit=1)[0]
+assert "    needs: [changes, auth, test]\n" in main_auth and "needs.changes.outputs.ordered != 'true'" in main_auth
+assert "    needs: [changes, auth, test, main]\n" in ordered and "needs.changes.outputs.ordered == 'true'" in ordered
+assert "(!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')" in ordered, "A push changing TerraBase's server and its ts-auth client releases ts-auth after a successful TerraBase rollout"
+for release in (main_job, main_auth, ordered):
     assert "cancel-in-progress: false" in release, "A running release must finish"
-    assert "pattern: image-payloads-" in workflow, "Runtime payloads stay in this CI run's artifacts"
+    assert "!cancelled() && needs.test.result == 'success'" in release
 for job in (test_job, main_job):
     assert not re.search(r"^    needs: .*slow", job, re.M), "Slow results must not gate test or main"
 assert "AREA: ${{ github.job }}" not in workflow, "github.job is unavailable in job-level env"
 
-# Cheap policy failures stop native downloads and every expensive area; Slow runs independently of publication.
-changes = workflow.split("\n  changes:\n", 1)[1].split("\n  native:\n", 1)[0]
+# Cheap policy failures stop every area before release; Slow runs independently of publication.
+changes = workflow.split("\n  changes:\n", 1)[1].split("\n  native-build:\n", 1)[0]
 for check in ("path-filter-test.py", "slow-report-test.py", "cache-policy-test.py",
               "turso-native-pipeline-test.py", "storage-format-check-test.sh", "e2e-summary-test.sh",
               "storage-format-check.sh"):

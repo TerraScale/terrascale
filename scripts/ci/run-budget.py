@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject slow Fast jobs; report the no-runtime-cache end-to-end CI baseline."""
+"""Reject slow Fast jobs; report end-to-end CI time against the 360 s target."""
 from datetime import datetime, timezone
 import json
 import os
@@ -28,11 +28,10 @@ def check(run, jobs, now):
                 errors.append(f'{job["name"]} did not pass within 120s')
         if job['status'] == 'completed' and job['conclusion'] not in {'success', 'skipped'}:
             errors.append(f'{job["name"]}: {job["conclusion"]}')
-    lines.append(f'CI including packaging and rollout: {elapsed:.0f}s / 360s')
-    # User-authorized no-cache fallback: record the best measured green baseline.
-    # Make this hard once private R2 reads can remove CI's repeated runtime builds.
+    lines.append(f'CI including rollout: {elapsed:.0f}s / 360s')
+    # ts-orch's rollout time is outside CI's control: warn rather than fail.
     if elapsed > 360:
-        lines.append('::warning::CI exceeded 360s; runtime packaging remains uncached pending an R2 read token')
+        lines.append('::warning::CI including rollout exceeded 360s')
     return errors, lines
 
 
