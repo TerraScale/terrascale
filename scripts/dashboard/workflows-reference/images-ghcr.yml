@@ -8,6 +8,9 @@ on:
       - 'src/TerraScale.Dashboard*/**'
       # The dashboard calls TerraBase through these MagicOnion contracts.
       - 'src/TerraScale.TerraBase.Contracts/**'
+      # The dashboard's endpoints and their source generator.
+      - 'src/TerraScale.Endpoints/**'
+      - 'src/TerraScale.Endpoints.Generators/**'
       - 'tests/TerraScale.Dashboard*/**'
       - 'scripts/dashboard/**'
       - 'sdk/dotnet/**'
