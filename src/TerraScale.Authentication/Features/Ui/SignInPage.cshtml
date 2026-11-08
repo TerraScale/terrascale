@@ -290,6 +290,10 @@ else
 <div class="row"><a href="@Model.Link("reset")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a></div>
 break;
 case SignInStep.ResetDone:
+@if (Model.AccountUrl is { } accountUrl)
+{
+<a class="btn secondary" href="@accountUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Back to account</a>
+}
 <a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.DeviceEnter:
@@ -344,9 +348,14 @@ case SignInStep.Security:
 <div><dt>Recovery codes left</dt><dd>@Model.RecoveryRemaining</dd></div>
 }
 </dl>
+@if (Model.AccountUrl is { } securityUrl)
+{
+<a class="btn secondary" href="@securityUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Back to account</a>
+}
 @if (Model.MfaEnabled)
 {
 <form method="post" action="/ui/@Model.Slug/security/recovery/regenerate">
+<input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="regenerate-code">Authenticator or recovery code</label>
 <input id="regenerate-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
@@ -355,6 +364,7 @@ case SignInStep.Security:
 <button type="submit" class="secondary">Regenerate recovery codes</button>
 </form>
 <form method="post" action="/ui/@Model.Slug/security/totp/disable">
+<input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="disable-code">Authenticator or recovery code</label>
 <input id="disable-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
@@ -366,6 +376,7 @@ case SignInStep.Security:
 else
 {
 <form method="post" action="/ui/@Model.Slug/security/totp">
+<input type="hidden" name="next" value="@Model.Next">
 <button type="submit"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>Set up an authenticator app</button>
 </form>
 }
@@ -374,6 +385,7 @@ case SignInStep.TotpSetup:
 <img src="@Model.QrCode" alt="QR code to add TerraScale to your authenticator app" width="240" height="240">
 <dl class="facts"><div><dt>Setup key</dt><dd><code>@Model.Secret</code></dd></div></dl>
 <form method="post" action="/ui/@Model.Slug/security/totp/confirm">
+<input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="totp-code">Code from the app</label>
 <input id="totp-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
@@ -391,6 +403,10 @@ case SignInStep.RecoveryCodes:
 }
 </ul>
 <a class="btn" href="/ui/@Model.Slug/security">I saved them<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+@if (Model.AccountUrl is { } savedUrl)
+{
+<a class="btn secondary" href="@savedUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Back to account</a>
+}
 break;
 case SignInStep.Reauthenticate:
 <a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>

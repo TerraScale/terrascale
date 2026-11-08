@@ -80,6 +80,12 @@ public sealed partial record AuthOptions
     public DashboardClientOptions? DashboardClient { get; init; }
 
     /// <summary>
+    /// The dashboard's public origin, <c>https://dash.terrascale.tech</c>: the one ts-auth URL a hosted page may send
+    /// the browser to besides its own, in code like the allowance and alert emails, not configuration.
+    /// </summary>
+    public const string DashboardOrigin = "https://dash.terrascale.tech";
+
+    /// <summary>
     /// TerraBase's audience: every access token carries it, in every region, so TerraBase trusts exactly one
     /// issuer/audience pair (<c>https://auth.terrascale.tech/terrascale</c>, this). Code, not configuration.
     /// </summary>
