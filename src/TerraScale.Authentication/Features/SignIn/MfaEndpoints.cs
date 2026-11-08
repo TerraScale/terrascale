@@ -308,14 +308,9 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
     }
 }
 
-/// <summary>
-/// <c>POST /ui/{slug}/security/recovery/regenerate</c>: replaces the recovery-code set after a TOTP or recovery code,
-/// leaving the authenticator enabled.
-/// </summary>
 public sealed class RecoveryRegenerateEndpoint(Sessions sessions, TotpCredentials mfa, PlatformDirectory platform, AuthOptions options, ILogger<RecoveryRegenerateEndpoint> logger)
     : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/security/recovery/regenerate");
@@ -332,7 +327,6 @@ public sealed class RecoveryRegenerateEndpoint(Sessions sessions, TotpCredential
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)

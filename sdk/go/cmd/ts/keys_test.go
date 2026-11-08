@@ -17,10 +17,6 @@ import (
 
 const stepUpKeyID = "01M5N9000000000000000000AB"
 
-// stepUpSession serves the auth API from one httptest server: the step-up
-// request, its pending refusals and the proof-carrying key creation. The first
-// approveAfter proof-carrying attempts still answer step_up_required: the
-// approval has not landed yet.
 func stepUpSession(t *testing.T, refusals *atomic.Int32, approveAfter int32, expiry time.Duration) *session {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

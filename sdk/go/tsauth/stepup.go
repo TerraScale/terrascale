@@ -9,37 +9,27 @@ import (
 	"time"
 )
 
-// StepUpProofHeader carries an approved purpose-bound proof at the sensitive
-// mutation itself (contract: step-up-proof.md).
 const StepUpProofHeader = "X-TerraScale-Step-Up-Proof"
 
-// StepUpRequest starts a pending proof bound to one operation.
 type StepUpRequest struct {
 	Purpose   string `json:"purpose"`
 	Audience  string `json:"audience"`
 	ReturnURI string `json:"return_uri"`
 }
 
-// StepUpBody is the answer of POST /v1/terrascale/step-up: the backend-only
-// proof, the hosted verification URL and the five-minute deadline.
 type StepUpBody struct {
 	Proof     string    `json:"proof"`
 	StepUpURL string    `json:"step_up_url"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// Step-up purposes of the ts-auth audience the CLI drives.
 const (
 	StepUpCreateAPIKey = "create_api_key"
 	StepUpRotateAPIKey = "rotate_api_key"
 )
 
-// stepUpCallback is the registered dashboard origin's fixed callback; the
-// hosted confirmation returns there once it approves.
 const stepUpCallback = "https://dash.terrascale.tech/auth/step-up/callback"
 
-// RequestStepUp starts a pending purpose-bound proof as the signed-in user.
-// The proof stays in this process; only StepUpURL goes to the user.
 func (u *User) RequestStepUp(ctx context.Context, purpose string) (*StepUpBody, error) {
 	if purpose != StepUpCreateAPIKey && purpose != StepUpRotateAPIKey {
 		return nil, fmt.Errorf("tsauth: unsupported step-up purpose %q", purpose)
@@ -60,8 +50,6 @@ func (u *User) RequestStepUp(ctx context.Context, purpose string) (*StepUpBody, 
 	return &out, nil
 }
 
-// WithStepUpProof returns the user's requests with one approved proof, so a
-// sensitive mutation consumes it in X-TerraScale-Step-Up-Proof.
 func (u *User) WithStepUpProof(proof string) *User {
 	return &User{c: u.c, token: u.token, proof: proof}
 }

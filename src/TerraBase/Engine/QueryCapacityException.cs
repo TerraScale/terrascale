@@ -6,7 +6,6 @@ public sealed class QueryCapacityException : Exception
     /// <summary>Whether candidate sort admission, rather than execution, exceeded its budget.</summary>
     public bool SortBudget { get; init; }
 
-    /// <summary>Whether a deterministic limit refused the query, rather than a time budget overrun.</summary>
     public bool Deterministic { get; init; }
 
     /// <summary>Creates a query capacity error.</summary>
