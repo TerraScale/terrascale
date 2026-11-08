@@ -43,8 +43,15 @@ func bucketClient(t *testing.T, fixtures []bucketFixture) *tb.Client {
 			}
 			data = string(raw)
 		}
-		if r.Method != want.method || r.URL.Path != want.path || data != want.body || r.Header.Get("Authorization") != "Bearer fixture.jwt.sig" {
+		if r.Method != want.method || r.URL.Path != want.path || data != want.body {
 			t.Errorf("%s: request %s %s %q, want %s %s %q", want.name, r.Method, r.URL.Path, data, want.method, want.path, want.body)
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/") {
+			if r.Header.Get("Authorization") != "Bearer fixture.jwt.sig" {
+				t.Errorf("%s: api request missing bearer token", want.name)
+			}
+		} else if r.Header.Get("Authorization") != "" {
+			t.Errorf("%s: storage request must not carry authorization", want.name)
 		}
 		header := http.Header{"Content-Type": {"application/json"}}
 		return &http.Response{StatusCode: want.status, Header: header, Body: io.NopCloser(strings.NewReader(want.reply)), Request: r}, nil
