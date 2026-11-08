@@ -23,8 +23,6 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthUserOrganization))]
 [JsonSerializable(typeof(IReadOnlyList<TerraScaleAuthUserOrganization>))]
 [JsonSerializable(typeof(TerraScaleAuthOrganization))]
-[JsonSerializable(typeof(TerraScaleAuthAuditEvent))]
-[JsonSerializable(typeof(IReadOnlyList<TerraScaleAuthAuditEvent>))]
 [JsonSerializable(typeof(TerraScaleAuthOidcDiscovery))]
 [JsonSerializable(typeof(TerraScaleAuthJwkSet))]
 [JsonSerializable(typeof(TerraScaleAuthJwk))]
