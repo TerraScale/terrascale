@@ -1009,6 +1009,7 @@ namespace TerraScale.Dashboard.E2E
                     [_, _, _, _] or [_, _, _, _, _] when method == "GET" => "databases:read",
                     [_, _, _, _, _, "sql", "execute"] => "sql:read",
                     [_, _, _, _, _, "backups" or "backup-policy" or "restores"] when method == "GET" => "databases:read",
+                    [_, _, _, _, _, "restores", _] when method == "GET" => "databases:read",
                     _ => "databases:write"
                 };
                 if (Authorize(http, project, scope) is { } denied)
@@ -1126,9 +1127,8 @@ namespace TerraScale.Dashboard.E2E
                     lock (gate)
                     {
                         return restoreOperations.TryGetValue(parts[6], out var operation) && operation.Source == current.Id
-                            ? Results.Json(heldRestores == 1
-                                ? new { operationId = parts[6], status = "running", kind = operation.Kind, database = (string?)null, errorCode = (string?)null, errorMessage = (string?)null }
-                                : new { operationId = parts[6], status = "completed", kind = operation.Kind, database = operation.Database, errorCode = (string?)null, errorMessage = (string?)null })
+                            ? Results.Json(new { operationId = parts[6], status = heldRestores == 1 ? "running" : "completed", kind = operation.Kind,
+                                database = heldRestores == 1 ? null : operation.Database, errorCode = (string?)null, errorMessage = (string?)null })
                             : Error(404, "not_found");
                     }
                 }
