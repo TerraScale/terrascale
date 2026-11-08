@@ -474,42 +474,6 @@ internal sealed partial class EngineManagementService(
         return new Done();
     }
 
-    internal async ValueTask<bool> DeleteAbandonedRestoreTargetAsync(ManagedDatabase database, CancellationToken cancellationToken)
-    {
-        var storage = await ReadAsync<TenantContext?>(async transaction =>
-            await CatalogTables.ProjectOrganizationAsync(transaction, database.ProjectId, cancellationToken).ConfigureAwait(false) is { } organization
-                ? new TenantContext(organization, await PlanUncheckedAsync(transaction, organization, cancellationToken).ConfigureAwait(false), database.ProjectId, database.Id)
-                : null,
-            static _ => null, cancellationToken).ConfigureAwait(false);
-        if (storage is null)
-        {
-            return false;
-        }
-
-        var deleted = await DeleteRecordedAsync(
-            storage,
-            async (transaction, token) =>
-            {
-                if (await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.Id, token).ConfigureAwait(false) is not { } current
-                    || current.Home(options.Region) != options.Region
-                    || await HomeMovePendingAsync(transaction, database.Id, token).ConfigureAwait(false))
-                {
-                    return false;
-                }
-
-                _ = await UnregisterRecordAsync(transaction, storage, current, token, customerDeletion: true).ConfigureAwait(false);
-                return true;
-            },
-            cancellationToken).ConfigureAwait(false);
-        if (deleted is not bool ok || !ok)
-        {
-            return false;
-        }
-
-        _ = Shredded(storage);
-        return true;
-    }
-
     private async ValueTask<RecordedDeletion> DeleteRecordedAsync(
         TenantContext storage, Func<IStorageTransaction, CancellationToken, ValueTask<bool>> unregister, CancellationToken cancellationToken)
     {

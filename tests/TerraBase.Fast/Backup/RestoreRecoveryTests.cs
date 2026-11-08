@@ -15,13 +15,13 @@ namespace TerraBase.Fast.Backup;
 public sealed class RestoreRecoveryTests
 {
     [Test]
-    public async Task A_restore_left_running_by_a_stopped_process_fails_interrupted_and_its_half_created_target_is_deleted(CancellationToken cancellationToken)
+    public async Task A_restore_left_running_by_a_stopped_process_fails_interrupted_and_names_its_half_created_target(CancellationToken cancellationToken)
     {
         await using var host = await SqlBackupHost.StartAsync(cancellationToken);
         var server = host.Api.Server;
         var region = server.Services.GetRequiredService<TerraBaseOptions>().Region;
         var source = host.Database;
-        var started = DateTimeOffset.UtcNow;
+        var started = server.Services.GetRequiredService<TimeProvider>().GetUtcNow().AddHours(-1);
 
         var operation = new RestoreOperationRecord(
             EntityIds.New().ToString(), source.Organization, source.Project, source.Id, null,
@@ -43,8 +43,10 @@ public sealed class RestoreRecoveryTests
         await Assert.That(status.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(settled.GetProperty("status").GetString()).IsEqualTo("failed");
         await Assert.That(settled.GetProperty("errorCode").GetString()).IsEqualTo("interrupted");
+        await Assert.That(settled.GetProperty("errorMessage").GetString())
+            .IsEqualTo($"the process stopped while the restore was running; database stranded ({target.Id}) may hold a partial or complete restore — check it and delete it if unwanted");
 
         await using var read = await store.BeginTransactionAsync(write: false, cancellationToken);
-        await Assert.That(await CatalogTables.DatabaseAsync(read, source.Project, target.Id, cancellationToken)).IsNull();
+        await Assert.That(await CatalogTables.DatabaseAsync(read, source.Project, target.Id, cancellationToken)).IsNotNull();
     }
 }

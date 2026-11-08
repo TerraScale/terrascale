@@ -119,6 +119,6 @@ public interface IManagedBackupService
     /// </summary>
     ValueTask RunScheduleAsync(CancellationToken cancellationToken);
 
-    /// <summary>Settles restore operations a stopped process left running in this region, deleting their stranded targets.</summary>
+    /// <summary>Settles restore operations a stopped process left running in this region, naming any database they may have left behind.</summary>
     ValueTask RecoverInterruptedRestoresAsync(CancellationToken cancellationToken);
 }

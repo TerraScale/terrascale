@@ -33,7 +33,7 @@ namespace TerraBase.Features.Management.Backups;
 /// <see cref="MaxScheduledBackupsPerPass"/> scheduled backups in turn order.
 /// </remarks>
 internal sealed class EngineManagedBackupService(
-    EngineManagementService management, IStorageEngine engine, SystemCatalog catalog, IPointInTimeRestore pointInTime, IDatabaseRewind rewind, TimeProvider time,
+    IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, IDatabaseRewind rewind, TimeProvider time,
     ILogger<EngineManagedBackupService> logger, TerraBaseOptions options, Lazy<IBackupKeyShredding> shredding, IHostApplicationLifetime lifetime, IMemoryBudget memoryBudget)
     : IManagedBackupService
 {
@@ -67,9 +67,9 @@ internal sealed class EngineManagedBackupService(
     // Where the next pass resumes the sweep; passes run one at a time (BackupScheduler).
     private string? _sweepCursor;
 
-    // The restores this process is running, from before their record commits until their attempt has settled. One
-    // process owns the data directory, so a Running record of this region not in here was left by a stopped process.
     private readonly ConcurrentDictionary<string, byte> _runningRestores = new();
+
+    private readonly DateTimeOffset _startedAt = time.GetUtcNow();
 
     public static BackupPolicy DefaultPolicy { get; } = new("0 2 * * *", 7, false, null);
 
@@ -472,8 +472,8 @@ internal sealed class EngineManagedBackupService(
     }
 
     /// <summary>
-    /// Settles the restore records a stopped process left Running in this region, deleting the half-written target a
-    /// stranded restore provably created; a target that cannot be proven is left and named in the record.
+    /// Settles the restore records a stopped process left Running in this region to failed/interrupted, naming the
+    /// database a stranded restore may have left behind without touching it.
     /// </summary>
     public async ValueTask RecoverInterruptedRestoresAsync(CancellationToken cancellationToken)
     {
@@ -483,7 +483,8 @@ internal sealed class EngineManagedBackupService(
             static _ => null, cancellationToken).ConfigureAwait(false);
         foreach (var record in running ?? [])
         {
-            if (record.State != RestoreOperationState.Running || record.Region != options.Region || _runningRestores.ContainsKey(record.Id))
+            if (record.State != RestoreOperationState.Running || record.Region != options.Region
+                || record.CreatedAt >= _startedAt || _runningRestores.ContainsKey(record.Id))
             {
                 continue;
             }
@@ -505,31 +506,10 @@ internal sealed class EngineManagedBackupService(
 
     private async ValueTask RecoverInterruptedAsync(RestoreOperationRecord record, CancellationToken cancellationToken)
     {
-        var message = "the process stopped while the restore was running";
         var target = await FindStrandedTargetAsync(record, cancellationToken).ConfigureAwait(false);
-        if (target is ManagedDatabase created)
-        {
-            if (await management.DeleteAbandonedRestoreTargetAsync(created, cancellationToken).ConfigureAwait(false))
-            {
-                await SettleAsync(record, record with
-                {
-                    State = RestoreOperationState.Failed,
-                    ErrorCode = "interrupted",
-                    ErrorMessage = message,
-                    FinishedAt = time.GetUtcNow(),
-                }, cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            logger.ZLogWarning($"Deleting the stranded restore target {created.Id:@Database} of operation {record.Id:@OperationId} failed; the next pass tries again");
-            return;
-        }
-
-        if (target is string unproven)
-        {
-            message = $"the process stopped while the restore was running; target database {unproven} may be incomplete";
-        }
-
+        var message = target is { } found
+            ? $"the process stopped while the restore was running; database {found.Name} ({found.Id}) may hold a partial or complete restore — check it and delete it if unwanted"
+            : "the process stopped while the restore was running";
         await SettleAsync(record, record with
         {
             State = RestoreOperationState.Failed,
@@ -539,10 +519,7 @@ internal sealed class EngineManagedBackupService(
         }, cancellationToken).ConfigureAwait(false);
     }
 
-    // The target a stranded restore created: a database of the record's project branched from the restore's source at
-    // or after the record started. A caller-named target must carry that name; an automatically named one is proven
-    // only while exactly one candidate exists.
-    private async ValueTask<object?> FindStrandedTargetAsync(RestoreOperationRecord record, CancellationToken cancellationToken)
+    private async ValueTask<ManagedDatabase?> FindStrandedTargetAsync(RestoreOperationRecord record, CancellationToken cancellationToken)
     {
         var candidates = await catalog.ReadAsync<List<ManagedDatabase>?>(
             async transaction =>
@@ -568,16 +545,10 @@ internal sealed class EngineManagedBackupService(
             },
             static _ => null, cancellationToken).ConfigureAwait(false) ?? [];
 
-        var branched = candidates.Where(database => database.ProjectId == record.ProjectId
-                && database.BranchedFrom == record.SourceDatabaseId
-                && database.CreatedAt >= record.CreatedAt)
-            .ToList();
-        if (branched.Count == 0)
-        {
-            return record.TargetName is { } named && candidates.Count > 0 ? named : null;
-        }
-
-        return branched.Count == 1 ? branched[0] : record.TargetName ?? branched[0].Id;
+        return candidates.FirstOrDefault(database => database.ProjectId == record.ProjectId
+            && database.BranchedFrom == record.SourceDatabaseId
+            && database.CreatedAt >= record.CreatedAt
+            && (record.TargetName is null || database.Name == record.TargetName));
     }
 
     public ValueTask<RestoreBackupResult> RewindPointInTimeAsync(
