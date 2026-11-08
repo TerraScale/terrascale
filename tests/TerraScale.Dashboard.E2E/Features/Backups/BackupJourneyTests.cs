@@ -130,6 +130,18 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                     "The backups page shows the completed restore with a link to the restored database");
                 await CallAsync(client, secret, "delete_database", new { databaseId = htmlId, confirmName = "backup-html-restored" });
             }
+            using (var unpolled = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
+            { ["_csrf"] = csrf, ["databaseId"] = id, ["backupId"] = backupId, ["name"] = "backup-unpolled" }))
+            {
+                Check(unpolled.StatusCode == HttpStatusCode.Accepted && TerraScaleIds.IsValid((await JsonAsync(unpolled)).GetProperty("operationId").GetString()!),
+                    "A restore started without a watching browser still answers with a pollable operation");
+                var listed = await ReadAsync(client, "/api/v1/dashboard/databases?limit=100");
+                var unpolledRow = listed.GetProperty("items").EnumerateArray()
+                    .SingleOrDefault(database => database.GetProperty("name").GetString() == "backup-unpolled");
+                Check(unpolledRow.ValueKind != JsonValueKind.Undefined && TerraScaleIds.IsValid(unpolledRow.GetProperty("id").GetString()!),
+                    "Loading the databases list settles an unwatched completed restore into the project");
+                await CallAsync(client, secret, "delete_database", new { databaseId = unpolledRow.GetProperty("id").GetString()!, confirmName = "backup-unpolled" });
+            }
 
             Check(await ScoreAsync(restoredId) == 1 && await ScoreAsync(id) == 2, "The restored database reads the captured snapshot through SQL; the source retains its later write");
             var defaultRestore = await CallAsync(replica, secret, "restore_backup", new { databaseId = id });

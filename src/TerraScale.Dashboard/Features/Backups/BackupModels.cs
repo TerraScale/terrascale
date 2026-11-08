@@ -29,6 +29,7 @@ namespace TerraScale.Dashboard.Features.Backups
     }
     public sealed record BackupRestoreResult(string DatabaseId, string Name, string Status);
     public sealed record BackupRestoreStart(string OperationId, string Status);
+    public sealed record PendingRestore(string OperationId, string OrganizationId, string ProjectId, string SourceDatabaseId);
     public sealed record ProducerRestoreOperation(string OperationId, string Status, string? Database, string? ErrorCode, string? ErrorMessage);
     public sealed record RestoreStatusResponse(string OperationId, string Status, string? TargetDatabaseId, string? TargetName,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ErrorCode = null,

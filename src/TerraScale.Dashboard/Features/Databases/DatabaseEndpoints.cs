@@ -28,10 +28,16 @@ namespace TerraScale.Dashboard.Features.Databases
         public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)
         {
             endpoints.MapWholeDatabaseRecovery();
-            endpoints.MapGet("/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) =>
+            endpoints.MapGet("/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases, TerraScale.Dashboard.Features.Backups.BackupService backups) =>
             {
                 var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                return context is null ? AccountRequest.LoginRedirect(http) : await ListPageAsync(http, context, backend, databases);
+                if (context is null)
+                {
+                    return AccountRequest.LoginRedirect(http);
+                }
+
+                context = await backups.SettleRestoresAsync(context, http.RequestAborted);
+                return await ListPageAsync(http, context, backend, databases);
             });
             endpoints.MapGet("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases) =>
             {
@@ -44,6 +50,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 try
                 {
                     var (limit, after) = CursorPaging.Read(http.Request);
+                    context = await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Backups.BackupService>().SettleRestoresAsync(context, http.RequestAborted);
                     await databases.SyncAsync(context, http.RequestAborted);
                     var page = CursorPaging.Page(context.Project?.Databases.Values ?? Enumerable.Empty<DatabaseRecord>(),
                         db => db.Id, CursorPaging.Scope(context, "databases"), limit, after);
@@ -208,6 +215,11 @@ namespace TerraScale.Dashboard.Features.Databases
             DatabaseRecord database;
             try
             {
+                if (tab is "overview" or "backups")
+                {
+                    context = await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Backups.BackupService>().SettleRestoresAsync(context, http.RequestAborted);
+                }
+
                 if (HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsHead(http.Request.Method))
                 {
                     (context, database) = await databases.LookupAsync(context, id, http.RequestAborted);
