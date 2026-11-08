@@ -68,6 +68,9 @@ A settles an unresolved move by asking B (`POST …/promote/abort` with the move
 did, A demotes; if not, B refuses that move id from then on and A lifts the fence. While B is unreachable A stays fenced,
 so two regions never accept writes for one database. A retries every 5 seconds and at startup.
 
+A delete and a move cannot both win: while A holds the move marker it still owns the record, so `deleteDatabase` (and a
+TTL expiry) at A answers `409 move_in_progress`; once the move settles, the delete follows the database to its new home.
+
 ### Timings
 
 The pause lasts from step 2 to step 4: one incremental pull, an empty pull, the copy of the database into its new file and
