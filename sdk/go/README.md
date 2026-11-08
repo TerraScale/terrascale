@@ -157,7 +157,19 @@ keys, making retained encrypted backups unreadable; physical cleanup is separate
 `c.DeleteBucket(ctx, project, bucketID)` manage a project's file buckets with the project
 access token (`sql:read` lists, `sql:write` creates and deletes). `FileAccessRules` carries the
 end-user policy; missing grants deny access. Lists page in ID order with `PageOptions.After`
-only. Objects and signed URLs are not implemented yet.
+only.
+
+### File objects
+
+`c.PutObject(ctx, project, bucketID, key, body, contentType)`, `c.GetObject(ctx, project,
+bucketID, key)`, `c.ListObjects(ctx, project, bucketID, page)` and `c.DeleteObject(ctx, project,
+bucketID, key)` address a bucket's immutable files by key (the file name) with the project access
+token (`sql:read` reads and lists, `sql:write` uploads and deletes). `PutObject` streams the body
+through a disk spill so a whole object is never held in memory, and follows the producer's
+reservation flow: create the upload, PUT the exact bytes with every returned header to the
+short-lived capability URL, then complete. `GetObject` returns the raw response body; the caller
+closes it. `c.SignURL(ctx, project, bucketID, fileID)` issues a 60-second download capability for
+a file ID, like the JS `downloadUrl`. Files are immutable; size is 1-100 MiB per object.
 
 ### Relational SQL
 
