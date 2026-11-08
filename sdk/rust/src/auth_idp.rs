@@ -35,7 +35,6 @@ pub const TERRABASE_SCOPES: [&str; 4] =
     ["databases:read", "databases:write", "sql:read", "sql:write"];
 
 const MAX_USER_PAGE_SIZE: u32 = 100;
-const MAX_AUDIT_PAGE_SIZE: u32 = 100;
 const MAX_JWT_TEMPLATE_NAME_BYTES: usize = 48;
 /// Per-request deadline for every ts-auth send; the shared pipeline has no
 /// per-request timeout of its own.
@@ -151,14 +150,6 @@ impl AuthIdpClient {
     #[must_use]
     pub fn jwt_templates(&self) -> AuthIdpJwtTemplates {
         AuthIdpJwtTemplates {
-            client: self.clone(),
-        }
-    }
-
-    /// Hash-chained audit event log.
-    #[must_use]
-    pub fn audit_events(&self) -> AuthIdpAuditEvents {
-        AuthIdpAuditEvents {
             client: self.clone(),
         }
     }
@@ -2444,68 +2435,6 @@ impl AuthIdpJwtTemplates {
                 &Body {
                     user_id: user_id.trim(),
                 },
-            )
-            .await
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Audit events
-// ---------------------------------------------------------------------------
-
-/// A hash-chained audit event (snake_case wire; `actor_id` is omitted when
-/// null).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AuthIdpAuditEvent {
-    /// Event id.
-    pub id: String,
-    /// Emitting instance.
-    pub instance_id: String,
-    /// Event type.
-    #[serde(rename = "type")]
-    pub event_type: String,
-    /// Acting key id, when the event has one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor_id: Option<String>,
-    /// Event payload.
-    pub data: Value,
-    /// Creation time (unix seconds).
-    pub created_at: i64,
-    /// Integrity chain position.
-    pub integrity_version: u64,
-    /// Hash bound to the chain; null when the audit signing key is unset.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub integrity_hash: Option<String>,
-    /// Signature over the hash; null when the audit signing key is unset.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub integrity_signature: Option<String>,
-    /// Fingerprint of the signing key; null when the audit signing key is unset.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub integrity_key_fingerprint: Option<String>,
-}
-
-/// The hash-chained audit event log.
-#[derive(Debug, Clone)]
-pub struct AuthIdpAuditEvents {
-    client: AuthIdpClient,
-}
-
-impl AuthIdpAuditEvents {
-    /// List audit events newest first (bare array envelope; `limit` 1-100,
-    /// default 50).
-    pub async fn list(&self, limit: Option<u32>) -> Result<Vec<AuthIdpAuditEvent>> {
-        let suffix = match limit {
-            None => String::new(),
-            Some(limit) => {
-                validate_page_limit(limit, MAX_AUDIT_PAGE_SIZE, "audit event")?;
-                format!("?limit={limit}")
-            }
-        };
-        self.client
-            .management_no_body(
-                "auth_idp.audit_events.list",
-                Method::Get,
-                &format!("/audit-events{suffix}"),
             )
             .await
     }
