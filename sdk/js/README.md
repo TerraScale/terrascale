@@ -166,6 +166,7 @@ release qualification remain open gates.
 | Live table shapes | `db.shape(table)` |
 | Databases | `client.databases.create/list/get/rename/delete/branch`, plus `deleteIfId`/`branchIfId` guarded by the database's immutable ID |
 | Backups and usage | `db.backups`, `db.metrics`, `client.metrics`, `client.backupDestination` |
+| Functions | `db.functions.deploy/list/get/invoke/logs/delete` |
 | File buckets | `client.storage` |
 
 `client.metrics.usage()` includes the current month’s `readUnits`, `writeUnits` and billed `units` in `month`. Billed `units` equals `writeUnits`; SQL reads count against fair use. Database usage reports stored bytes and operation counts.

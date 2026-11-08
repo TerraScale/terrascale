@@ -4,7 +4,7 @@ import { isValidId, requireId } from "../ids.js";
 const namePattern = /^[a-z][a-z0-9_-]{0,62}$/u;
 
 /**
- * @param {"database"} kind
+ * @param {"database" | "function"} kind
  * @param {unknown} name
  * @returns {string}
  */
