@@ -54,13 +54,13 @@ public sealed class PostgresNumericTests
         {
             await select.PrepareAsync();
             await using var reader = await select.ExecuteReaderAsync();
-            var found = new List<decimal>();
+            var found = new List<string>();
             while (await reader.ReadAsync())
             {
-                found.Add(reader.GetDecimal(0));
+                found.Add(reader.GetString(0));
             }
 
-            await Assert.That(found).IsEquivalentTo([12345678901234567890.123456789m]);
+            await Assert.That(found).IsEquivalentTo(["12345678901234567890.123456789"]);
         }
     }
 
