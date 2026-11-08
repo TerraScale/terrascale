@@ -13,7 +13,7 @@ Create an API key in the dashboard for the exact project and database your appli
 
 ## API keys and access tokens
 
-A dashboard API key has the form `<key ID>_<secret>` and is an OAuth 2.0 client credential. Exchange it at the token endpoint with the client credentials grant; the client ID is the key ID (the part before `_`) and the client secret is the whole key:
+A dashboard API key has the form `<key ID>_<secret>` and is an OAuth 2.0 client credential. The key ID is a 26-character canonical ULID, followed by `_` and 52 lowercase Crockford base32 characters (79 characters in total); the key ID is the part before `_`. Exchange it at the token endpoint with the client credentials grant; the client ID is the key ID and the client secret is the whole key:
 
 Use Bash, `curl` and `jq`, with the key already supplied privately as `TERRASCALE_API_KEY` and shell tracing off. This keeps the key out of process arguments and captures the token without printing it:
 
@@ -34,7 +34,16 @@ The response holds `access_token` (a JWT), `token_type: Bearer`, `expires_in` (a
 | Issuer and token endpoint | `https://auth.terrascale.tech/terrascale`, `…/oauth/token` |
 | Audience | `https://api.terrascale.tech` |
 
-A key limited to one database works only for that database. The scopes that gate SQL access are being updated; the access token's `scope` field lists the scopes it grants.
+A key limited to one database works only for that database. A key's scopes are a non-empty set drawn from the four scopes below, and a project key's scopes must be within its creator's role.
+
+| Scope | Allows |
+| --- | --- |
+| `sql:read` | Run SQL reads; read shapes and files. |
+| `sql:write` | Run SQL writes and schema changes; write files. |
+| `databases:read` | Read databases, schema, indexes, backups, policies, usage and saved queries; read-only SQL. |
+| `databases:write` | Create, branch and delete databases; backups, restores, policies, indexes and saved queries. |
+
+The access token's `scope` field lists the scopes it grants.
 
 ## Key expiry and IP allowlists
 
