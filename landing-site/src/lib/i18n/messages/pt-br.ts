@@ -186,6 +186,7 @@ export const ptBr: Messages = {
   },
 
   pricing: {
+    recommended: 'Recomendado',
     titleLead: 'Preços',
     suffixMonthly: '/mês',
     suffixAnnual: '/ano',
