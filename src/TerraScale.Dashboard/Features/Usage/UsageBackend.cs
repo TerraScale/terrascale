@@ -95,7 +95,7 @@ namespace TerraScale.Dashboard.Features.Usage
 
                     return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.StorageBytes),
                         Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
-                        [.. totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true))], totals.Month is { } monthUsage ? new UsageMonth(monthUsage.Month is { Length: 7 } monthName ? monthName : throw new JsonException("Usage month is invalid."), Count(monthUsage.ReadUnits), Count(monthUsage.WriteUnits), Count(monthUsage.Units), monthUsage.OrganizationUnits is { } organizationUnits ? Count(organizationUnits) : null, monthUsage.OrganizationReadUnits is { } organizationReads ? Count(organizationReads) : null) : null));
+                        [.. totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true))], totals.Month is { } monthUsage ? new UsageMonth(monthUsage.Month is { Length: 7 } monthName ? monthName : throw new JsonException("Usage month is invalid."), Count(monthUsage.ReadUnits), Count(monthUsage.WriteUnits), Count(monthUsage.Units), selection.Member && monthUsage.OrganizationUnits is { } organizationUnits ? Count(organizationUnits) : null, selection.Member && monthUsage.OrganizationReadUnits is { } organizationReads ? Count(organizationReads) : null) : null));
                 }
                 catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 { return new(UsageSourceState.Unauthorized); }

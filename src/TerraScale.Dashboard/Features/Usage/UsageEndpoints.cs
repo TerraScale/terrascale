@@ -31,6 +31,10 @@ namespace TerraScale.Dashboard.Features.Usage
                 {
                     var selection = UsageSelection.For(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString());
                     var tab = http.Request.Query["tab"] == "settings" ? "settings" : "overview";
+                    if (!selection.Member && tab == "settings")
+                    {
+                        return Results.Text("Organization membership is required.", statusCode: 403);
+                    }
                     if (selection.Context.Project is null && tab == "overview")
                     {
                         return HttpRedirects.SeeOther("/");
