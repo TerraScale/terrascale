@@ -34,17 +34,8 @@ namespace TerraScale.Dashboard.Features.Databases
                     """),
                 new("js", "JavaScript", $$"""
                     import { createTerraBaseV1Client } from "@terrascale/sdk";
-                    import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
 
-                    const apiKey = process.env.TERRASCALE_API_KEY;
-                    const auth = createTsAuthClient({ apiBaseUrl: "https://auth.terrascale.tech", instanceSlug: "terrascale" });
-                    const keyId = apiKey.slice(0, apiKey.indexOf("_"));
-                    async function getAccessToken() {
-                      const result = await auth.oidc.token(keyId, apiKey, { grant_type: "client_credentials", project: "{{projectId}}", scope: "sql:read sql:write" });
-                      if (!result.ok) throw new Error("Token exchange failed");
-                      return result.value.access_token;
-                    }
-                    const db = createTerraBaseV1Client({ baseUrl: "{{ApiUrl}}", project: "{{projectId}}", token: getAccessToken }).database("{{database}}");
+                    const db = createTerraBaseV1Client({ baseUrl: "{{ApiUrl}}", project: "{{projectId}}", apiKey: process.env.TERRASCALE_API_KEY }).database("{{database}}");
                     const rows = await db.query("SELECT 1");
                     """),
                 new("go", "Go", $$"""

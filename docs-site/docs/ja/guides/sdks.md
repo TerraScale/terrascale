@@ -14,9 +14,9 @@ Official SDKs for the TerraBase SQL API at `https://api.terrascale.tech`. Every 
 
 | Language | Package | Install | Quickstart |
 | --- | --- | --- | --- |
-| JavaScript / TypeScript | `@terrascale/sdk` on npm | `npm install @terrascale/sdk@0.0.17` | [JavaScript quickstart](/ja/getting-started/javascript) |
+| JavaScript / TypeScript | `@terrascale/sdk` on npm | `npm install @terrascale/sdk@0.0.19` | [JavaScript quickstart](/ja/getting-started/javascript) |
 | C# / .NET | `TerraScale.DotNet` (source; NuGet pending) | `dotnet pack` from the monorepo into a local package folder | [C# quickstart](/ja/getting-started/csharp) |
-| Go | `terrascale.tech/sdk` | `go get terrascale.tech/sdk@v0.0.20` | [Go quickstart](/ja/getting-started/go) |
+| Go | `terrascale.tech/sdk` | `go get terrascale.tech/sdk@v0.0.22` | [Go quickstart](/ja/getting-started/go) |
 | Python | `terrascale` (source; PyPI pending) | `pip install "git+https://github.com/TerraScale/terrascale@main#subdirectory=sdk/python"` | [Python quickstart](/ja/getting-started/python) |
 | Rust | `terrascale` (source; crates.io pending) | `terrascale = { git = "https://github.com/TerraScale/terrascale.git" }` in `Cargo.toml` | [Rust quickstart](/ja/getting-started/rust) |
 
@@ -29,7 +29,7 @@ Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `
 ## Which entry do I call?
 
 - **SQL** goes through the SDK's database handle against `https://api.terrascale.tech`, with a project access token.
-- **Key exchange** happens against `https://auth.terrascale.tech/terrascale/oauth/token` with the client credentials grant. Go, Python and Rust SDKs do it for you; the JavaScript and .NET SDKs expose the token call and a token-provider hook (each quickstart shows the exact code). See [authentication](/ja/guides/authentication).
+- **Key exchange** happens against `https://auth.terrascale.tech/terrascale/oauth/token` with the client credentials grant. Every SDK does it for you from the dashboard API key (JavaScript and .NET also accept a token-provider hook for custom credentials; each quickstart shows the exact code). See [authentication](/ja/guides/authentication).
 - **SQL over plain HTTP** (any HTTP client) is documented in [SQL over HTTP](/ja/guides/sql-http); PostgreSQL-compatible clients work too ([PostgreSQL clients](/ja/guides/postgres-clients)).
 
 ## Versioning

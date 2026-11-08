@@ -29,16 +29,15 @@ export TERRASCALE_DATABASE_NAME=main                       # your database's nam
 ```bash
 mkdir quickstart && cd quickstart
 npm init -y
-npm install @terrascale/sdk@0.0.17
+npm install @terrascale/sdk@0.0.19
 ```
 
 ## Run the quickstart
 
-Save this as `quickstart.mjs`. The program exchanges the key for a short-lived access token itself; every other operation goes through the client.
+Save this as `quickstart.mjs`. The client exchanges the key for a short-lived project access token and refreshes it on its own.
 
 ```js
 import { createTerraBaseV1Client, generateId, SqlError } from "@terrascale/sdk";
-import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
 
 const required = (name) => {
   const value = process.env[name];
@@ -50,34 +49,10 @@ const project = required("TERRASCALE_PROJECT_ID");
 const apiKey = required("TERRASCALE_API_KEY");
 const databaseName = required("TERRASCALE_DATABASE_NAME");
 
-// The SDK ships no key exchange: exchange the dashboard key for a short-lived
-// project access token (60 seconds) here and hand the client a token provider.
-const auth = createTsAuthClient({
-  apiBaseUrl: "https://auth.terrascale.tech",
-  instanceSlug: "terrascale",
-});
-const separator = apiKey.indexOf("_");
-if (separator < 1) throw new Error("Expected a dashboard API key.");
-const keyId = apiKey.slice(0, separator);
-let cached;
-let expiresAt = 0;
-async function getAccessToken() {
-  if (cached !== undefined && expiresAt - performance.now() > 5000) return cached;
-  const result = await auth.oidc.token(keyId, apiKey, {
-    grant_type: "client_credentials",
-    project,
-    scope: "sql:read sql:write",
-  });
-  if (!result.ok) throw new Error("Token exchange failed; check the key's permissions.");
-  cached = result.value.access_token;
-  expiresAt = performance.now() + result.value.expires_in * 1000;
-  return cached;
-}
-
 const client = createTerraBaseV1Client({
   baseUrl: "https://api.terrascale.tech",
   project,
-  token: getAccessToken,
+  apiKey,
 });
 const db = client.database(databaseName);
 
@@ -140,9 +115,8 @@ npx tsc --noEmit
 }
 ```
 
-The quickstart is valid TypeScript as written; `strict` mode needs two annotations:
-annotate the token cache (`let cached;` becomes `let cached: string | undefined;`)
-and the helper parameter (`const required = (name: string) => {`).
+The quickstart is valid TypeScript as written; `strict` mode needs one annotation:
+the helper parameter (`const required = (name: string) => {`).
 
 Expected output (ids vary):
 
@@ -154,7 +128,7 @@ refused: primary_key_violation statement 0 sqlstate 23505
 
 ## How it works
 
-- **The key never reaches TerraBase.** The program exchanges it with ts-auth for a 60-second project access token; `token: getAccessToken` hands the client a fresh one whenever it needs it. Keep the key on your server; see [authentication](/de/guides/authentication).
+- **The key never reaches TerraBase.** The client exchanges it with ts-auth for a 60-second project access token and refreshes it before it expires. Keep the key on your server; see [authentication](/de/guides/authentication).
 - **Every call is one request and one transaction.** `execute`, `query` and `batch` each post to `/sql/execute`; a batch commits all of its statements or none, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. See [SQL over HTTP](/de/guides/sql-http).
 - **Arguments are parameters, not string interpolation.** Positional (`?`) arrays and named objects are sent as typed JSON. Integers above 2^53 decode as an `ExactDecimal`; pass large integers as `bigint`.
 - **Refused statements throw `SqlError`.** It carries `code` (a TerraScale code such as `primary_key_violation`), `sqlstate`, the failing `statement` (zero-based) and `retryable`; the whole request rolled back and nothing is retried automatically.
