@@ -26,17 +26,11 @@ export TERRASCALE_DATABASE_NAME=main                       # your database's nam
 
 ## Install the SDK
 
-The SQL methods on the database handle are newer than the latest npm release (`0.0.17` lacks blobs, `shape(table)` and later fixes), so install the package from a monorepo checkout for now:
-
 ```bash
-git clone --depth 1 https://github.com/TerraScale/terrascale.git
-cd terrascale/sdk/js && npm ci --ignore-scripts && npm run build && npm pack
 mkdir quickstart && cd quickstart
 npm init -y
-npm install ../path/to/terrascale/sdk/js/terrascale-sdk-0.0.19.tgz
+npm install @terrascale/sdk@0.0.17
 ```
-
-`npm pack` writes a tarball (`terrascale-sdk-<version>.tgz`) you can install from anywhere; it carries the SDK's `ulid` dependency with it.
 
 ## Run the quickstart
 
@@ -162,7 +156,7 @@ refused: primary_key_violation statement 0 sqlstate 23505
 
 - **The key never reaches TerraBase.** The program exchanges it with ts-auth for a 60-second project access token; `token: getAccessToken` hands the client a fresh one whenever it needs it. Keep the key on your server; see [authentication](/es/guides/authentication).
 - **Every call is one request and one transaction.** `execute`, `query` and `batch` each post to `/sql/execute`; a batch commits all of its statements or none, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. See [SQL over HTTP](/es/guides/sql-http).
-- **Arguments are parameters, not string interpolation.** Positional (`?`) arrays and named objects are sent as typed JSON; `Uint8Array` blobs travel as base64 and come back as `Uint8Array`. Integers above 2^53 decode as an `ExactDecimal`; pass large integers as `bigint`.
+- **Arguments are parameters, not string interpolation.** Positional (`?`) arrays and named objects are sent as typed JSON. Integers above 2^53 decode as an `ExactDecimal`; pass large integers as `bigint`.
 - **Refused statements throw `SqlError`.** It carries `code` (a TerraScale code such as `primary_key_violation`), `sqlstate`, the failing `statement` (zero-based) and `retryable`; the whole request rolled back and nothing is retried automatically.
 
 ## Next steps

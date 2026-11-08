@@ -6,7 +6,7 @@ export const SDK_SAMPLES = {
 // your dashboard API key. Keep both out of browser bundles.
 const client = createTerraBaseV1Client({
   baseUrl: "https://api.terrascale.tech",
-  project: process.env.TERRASCALE_PROJECT,
+  project: process.env.TERRASCALE_PROJECT_ID,
   token: process.env.TERRASCALE_ACCESS_TOKEN,
 });
 const db = client.database("app");
