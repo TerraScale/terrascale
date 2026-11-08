@@ -232,7 +232,7 @@ run. Read your API key from the environment, not from source code.
 ```js
 import { createTerraBaseClient } from "@terrascale/sdk";
 
-const project = process.env.TERRASCALE_PROJECT;
+const project = process.env.TERRASCALE_PROJECT_ID;
 const client = createTerraBaseClient({
   baseUrl: "https://api.terrascale.tech",
   project,
