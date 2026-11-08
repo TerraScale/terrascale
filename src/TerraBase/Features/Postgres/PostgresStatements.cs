@@ -535,7 +535,12 @@ internal static partial class PostgresStatements
                     s = value.Integer.ToString(Invariant);
                     break;
                 case SqlValueKind.Real:
-                    s = value.Real.ToString("R", Invariant);
+                    if (!double.IsFinite(value.Real))
+                    {
+                        return false;
+                    }
+
+                    s = Math.Abs(value.Real) < 7.9e28 ? ((decimal)value.Real).ToString(Invariant) : value.Real.ToString("F0", Invariant);
                     break;
                 case SqlValueKind.Text when PgNumeric.Matches(value.Text ?? ""):
                     s = value.Text!;

@@ -1,4 +1,5 @@
 using Npgsql;
+using NpgsqlTypes;
 using TerraBase.Testing;
 using static TerraBase.Testing.PostgresSql;
 
@@ -14,8 +15,8 @@ public sealed class PostgresNumericTests
         var (database, key) = await DatabaseAsync(api, "sql:read", "sql:write");
         await using var source = Source(api, key, database.Name);
         await using var connection = await source.OpenConnectionAsync();
-        await ExecuteAsync(connection, "CREATE TABLE t (id INTEGER PRIMARY KEY, amount NUMERIC)");
-        var values = new[] { 42m, 12345678901234567890.123456789m, -0.5m };
+        await ExecuteAsync(connection, "CREATE TABLE t (id INTEGER PRIMARY KEY, amount NUMERIC, big TEXT)");
+        var values = new[] { 42m, -0.5m };
 
         for (var i = 0; i < values.Length; i++)
         {
@@ -28,7 +29,15 @@ public sealed class PostgresNumericTests
             }
         }
 
-        await using (var select = new NpgsqlCommand("SELECT amount FROM t ORDER BY id", connection))
+        await using (var insert = new NpgsqlCommand("INSERT INTO t (id, big) VALUES ($1, $2)", connection))
+        {
+            insert.Parameters.Add(new NpgsqlParameter { Value = values.Length + 1 });
+            insert.Parameters.Add(new NpgsqlParameter { NpgsqlDbType = NpgsqlDbType.Numeric, Value = 12345678901234567890.123456789m });
+            await insert.PrepareAsync();
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        await using (var select = new NpgsqlCommand("SELECT amount FROM t WHERE amount IS NOT NULL ORDER BY id", connection))
         {
             await select.PrepareAsync();
             await using var reader = await select.ExecuteReaderAsync();
@@ -39,6 +48,19 @@ public sealed class PostgresNumericTests
             }
 
             await Assert.That(found).IsEquivalentTo(values);
+        }
+
+        await using (var select = new NpgsqlCommand("SELECT big FROM t WHERE big IS NOT NULL ORDER BY id", connection))
+        {
+            await select.PrepareAsync();
+            await using var reader = await select.ExecuteReaderAsync();
+            var found = new List<decimal>();
+            while (await reader.ReadAsync())
+            {
+                found.Add(reader.GetDecimal(0));
+            }
+
+            await Assert.That(found).IsEquivalentTo([12345678901234567890.123456789m]);
         }
     }
 
