@@ -142,7 +142,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(Normalize(strangerPage)).IsEqualTo(Normalize(accountPage.Replace("alice@example.test", Stranger)));
         await Assert.That(accountPage).Contains("requested several codes. Use the latest code you received, or try again in");
         await Assert.That(accountPage).Contains("No new code was sent");
-        await Assert.That(accountPage).Contains("disabled>Send a new code in");
+        await Assert.That(accountPage).Contains("disabled data-wait-seconds=");
         await Assert.That(accountPage).DoesNotContain(">Send a new code</button>");
         await Assert.That(limited.Headers.TryGetValues("Retry-After", out var retry) && long.TryParse(retry.First(), out var seconds) && seconds >= 60).IsTrue();
         await Assert.That(oidc.Email.HasPending).IsFalse();

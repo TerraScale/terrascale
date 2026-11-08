@@ -212,3 +212,21 @@ function passkeyDecode(text) {
       });
   });
 })();
+(function () {
+  document.querySelectorAll('button[data-wait-seconds]').forEach(function (button) {
+    var remaining = parseInt(button.getAttribute('data-wait-seconds'), 10);
+    var label = button.getAttribute('data-label') || button.textContent;
+    function tick() {
+      if (remaining > 0) {
+        button.textContent = label + ' in ' + remaining + 's';
+        remaining -= 1;
+        setTimeout(tick, 1000);
+      } else {
+        button.textContent = label;
+        button.disabled = false;
+        button.removeAttribute('data-wait-seconds');
+      }
+    }
+    tick();
+  });
+})();

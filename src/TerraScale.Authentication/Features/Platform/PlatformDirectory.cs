@@ -225,7 +225,6 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
         }
     }
 
-    // A member of an organization that requires a second factor reaches it with an active factor of its own; a user-verified passkey counts.
     private async Task RequireMfaAsync(OrganizationRecord organization, string userId, CancellationToken cancellationToken)
     {
         if (organization.RequireMfa && !(await mfa.StatusAsync(Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled

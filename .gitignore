@@ -36,3 +36,5 @@ __pycache__/
 
 # Dashboard test artifacts, as ignored in the source repository.
 /test-results/
+
+.nuget-cache/
