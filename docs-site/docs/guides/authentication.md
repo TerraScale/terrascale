@@ -22,7 +22,7 @@ TERRASCALE_ACCESS_TOKEN="$(
 )" && export TERRASCALE_ACCESS_TOKEN
 ```
 
-The response holds `access_token` (a JWT), `token_type: Bearer`, `expires_in` (at most 60 seconds) and the granted `scope`. Send the token to `https://api.terrascale.tech` as `Authorization: Bearer <token>`. Token expiry is capped at the key's expiry. Request a new token before it expires; a revoked or expired key needs a replacement, as described under [Failed authorization](#failed-authorization). Sending the key itself as a bearer token answers `401`.
+The response holds `access_token` (a JWT), `token_type: Bearer`, `expires_in` (at most 60 seconds) and the granted `scope`. Send the token to `https://api.terrascale.tech` as `Authorization: Bearer <token>`. Token expiry is capped at the key's expiry. Request a new token before it expires; a revoked or expired key needs a replacement, as described under [Failed authorization](#failed-authorization). Sending the key itself as a bearer token answers `401` `invalid_token` with the message "This is an API key; exchange it at the token endpoint and send the short-lived access token instead."
 
 | Item | Value |
 | --- | --- |

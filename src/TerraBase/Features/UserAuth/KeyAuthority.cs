@@ -181,6 +181,8 @@ public static class KeyAuthorityMessages
 
     /// <summary>ts-auth did not answer: the key is refused until it does.</summary>
     public const string Unavailable = "API key status cannot be verified right now; retry";
+
+    public const string KeyAsBearer = "This is an API key; exchange it at the token endpoint and send the short-lived access token instead.";
 }
 
 internal sealed record TsAuthKeyStatus([property: JsonPropertyName("key_id")] string? KeyId);
