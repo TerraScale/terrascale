@@ -35,6 +35,8 @@ internal static class BackupState
 /// <param name="SizeBytes">Bytes the snapshot occupies, once registered.</param>
 /// <param name="Order">Its key in the database's backup list, once registered.</param>
 /// <param name="Region">The region holding the snapshot file; absent records cannot be routed for restore.</param>
+/// <param name="LeasedByOperationId">The restore operation whose copy still reads the snapshot, while its lease holds.</param>
+/// <param name="LeasedUntil">When the lease expires at the latest, so it can never pin storage forever.</param>
 internal sealed record BackupRecord(
     string Id,
     string OrganizationId,
@@ -46,7 +48,9 @@ internal sealed record BackupRecord(
     DateTimeOffset? CompletedAt,
     long SizeBytes,
     string? Order,
-    string? Region)
+    string? Region,
+    string? LeasedByOperationId = null,
+    DateTimeOffset? LeasedUntil = null)
 {
     /// <summary>
     /// The engine database that holds the snapshot: in the organization's directory, next to the backed-up database in its
