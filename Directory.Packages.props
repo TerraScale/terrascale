@@ -66,6 +66,11 @@
     <PackageVersion Include="OpenIddict.Server.AspNetCore" Version="7.7.1" />
     <PackageVersion Include="Geralt" Version="4.4.0" />
     <PackageVersion Include="Otp.NET" Version="1.4.1" />
+    <!-- WebAuthn (Fido2NetLib): passkey ceremonies in ts-auth, no hand-rolled crypto.
+         NSec 26.4.0 is the floor that shares Geralt's libsodium 1.0.22 instead of pinning its own 1.0.20.x. -->
+    <PackageVersion Include="Fido2" Version="4.3.2" />
+    <PackageVersion Include="NSec.Cryptography" Version="26.4.0" />
+    <PackageVersion Include="libsodium" Version="1.0.22" />
     <PackageVersion Include="QRCoder" Version="1.8.1" />
   </ItemGroup>
   <ItemGroup Label="Integrations">

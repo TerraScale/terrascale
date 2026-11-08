@@ -13,6 +13,8 @@ using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Ui;
+using Fido2NetLib;
+using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
@@ -92,6 +94,17 @@ public static class App
         builder.Services.AddSingleton<PasswordHasher>();
         builder.Services.AddSingleton<HostedAuth>();
         builder.Services.AddSingleton<TotpCredentials>();
+        builder.Services.AddSingleton<PasskeyCredentials>();
+        builder.Services.AddSingleton(new Fido2NetLib.Fido2(new Fido2Configuration
+        {
+            RPID = options.PublicOrigin.Host,
+            RPName = "TerraScale",
+            Origins = new HashSet<string>(StringComparer.Ordinal)
+            {
+                options.PublicOrigin.AbsoluteUri.TrimEnd('/'),
+                AuthOptions.DashboardOrigin,
+            },
+        }));
         builder.Services.AddSingleton<PlatformDirectory>();
         builder.Services.AddSingleton<AccountDeletion>();
         // Project closure reaches TerraBase through the regional peer transport, acting as no user.

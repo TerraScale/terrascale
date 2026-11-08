@@ -35,3 +35,36 @@ public sealed record IssuedRecoveryCodes(UserRecord User, IReadOnlyList<string> 
     /// <summary>Formatting the result never discloses recovery codes.</summary>
     public override string ToString() => nameof(IssuedRecoveryCodes);
 }
+
+/// <summary>One enrolled passkey in <c>passkey_credentials</c>.</summary>
+/// <param name="CredentialId">Base64url WebAuthn credential id, globally unique per instance.</param>
+/// <param name="PublicKeyCose">The COSE public key the authenticator attested.</param>
+/// <param name="SignCount">The signature counter at enrollment.</param>
+/// <param name="Transports">Transports the authenticator reported.</param>
+/// <param name="Name">Caller-chosen label.</param>
+/// <param name="Aaguid">Authenticator model identifier, display only.</param>
+/// <param name="CreatedAt">Enrollment time.</param>
+/// <param name="LastUsedAt">Last successful assertion, or null before the first one.</param>
+public sealed record PasskeyCredentialEntry(string CredentialId, byte[] PublicKeyCose, uint SignCount, IReadOnlyList<string> Transports,
+    string? Name, string Aaguid, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt)
+{
+    /// <summary>Formatting an entry never discloses its key material.</summary>
+    public override string ToString() => nameof(PasskeyCredentialEntry);
+}
+
+/// <summary>The passkeys of one account in <c>passkey_credentials</c>.</summary>
+/// <param name="InstanceId">The owning instance.</param>
+/// <param name="UserId">The owning account.</param>
+/// <param name="AuthEpoch">The user's authentication epoch at the last credential change.</param>
+/// <param name="Entries">The account's enrolled passkeys.</param>
+public sealed record PasskeyCredentialRecord(string InstanceId, string UserId, long AuthEpoch, IReadOnlyList<PasskeyCredentialEntry> Entries)
+{
+    /// <summary>Identity of the last authentication-state change the record's lineage covers.</summary>
+    public string? AuthStamp { get; init; }
+
+    /// <summary>Proof lineage the last credential change was conditioned on.</summary>
+    public IReadOnlyList<CredentialBinding> IssuanceBindings { get; init; } = [];
+
+    /// <summary>Formatting a record never discloses its credentials.</summary>
+    public override string ToString() => nameof(PasskeyCredentialRecord);
+}
