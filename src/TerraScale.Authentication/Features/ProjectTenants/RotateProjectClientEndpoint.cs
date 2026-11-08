@@ -35,7 +35,8 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         this.HttpContext.Items[Tenancy.ItemKey] = projectId;
         try
         {
-            if (await applications.FindByClientIdAsync(this.RouteId("client_id"), cancellationToken) is not OidcApplication application)
+            if (await applications.FindByClientIdAsync(this.RouteId("client_id"), cancellationToken) is not OidcApplication application
+                || application.InstanceId != projectId)
             {
                 throw PlatformDirectory.NotFound();
             }
@@ -52,6 +53,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             await applications.PopulateAsync(descriptor, application, cancellationToken);
             descriptor.ClientSecret = secret;
             await applications.UpdateAsync(application, descriptor, cancellationToken);
+            await this.Tenants.AuditClientRotationAsync(caller.Id, projectId, application.ClientId!, cancellationToken);
             return Results.Json(new ClientSecretBody(application.ClientId!, secret, application.PreviousSecretExpiresAt), ProjectTenantJson.Default.ClientSecretBody);
         }
         finally
