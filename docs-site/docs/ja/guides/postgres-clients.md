@@ -89,7 +89,7 @@ import pg from "pg";
 const client = new pg.Client({
   host: "pg.terrascale.tech",
   port: 5432,
-  database: `${process.env.TERRASCALE_PROJECT_ID}/${process.env.TERRASCALE_DATABASE}`,
+  database: `${process.env.TERRASCALE_PROJECT_ID}/${process.env.TERRASCALE_DATABASE_NAME}`,
   user: "any",
   password: process.env.TERRASCALE_API_KEY,
   ssl: true, // verifies the certificate against the system roots
@@ -105,7 +105,7 @@ import os, psycopg
 
 with psycopg.connect(
     host="pg.terrascale.tech", port=5432,
-    dbname=f"{os.environ['TERRASCALE_PROJECT_ID']}/{os.environ['TERRASCALE_DATABASE']}",
+    dbname=f"{os.environ['TERRASCALE_PROJECT_ID']}/{os.environ['TERRASCALE_DATABASE_NAME']}",
     user="any", password=os.environ["TERRASCALE_API_KEY"],
     sslmode="verify-full") as conn:
     with conn.cursor() as cur:
