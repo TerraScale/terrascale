@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             }
 
             await StepAsync(new() { ["step"] = "account-information", ["displayName"] = "Customer SDK " + suffix });
-            await StepAsync(new() { ["step"] = "payment-method", ["bypass"] = "1" });
+            await StepAsync(new() { ["step"] = "payment-method", ["plan"] = "free" });
             await StepAsync(new() { ["step"] = "project", ["name"] = "Customer SDK project", ["region"] = "GRU" });
             return (email, password);
 

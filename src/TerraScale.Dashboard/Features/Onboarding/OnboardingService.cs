@@ -5,10 +5,11 @@ namespace TerraScale.Dashboard.Features.Onboarding
 {
     public sealed class OnboardingService(AccountService accounts, StripeBilling payments, IOnboardingProjectProvisioner projects)
     {
+        // Free first, then paid plans by price; the payment step offers Free by default.
         public async Task<IReadOnlyList<BillingPlan>> PlansAsync(CancellationToken cancellationToken)
         {
-            return [.. (await payments.PlansAsync(cancellationToken)).Where(plan => plan.PriceCents > 0)
-                .OrderBy(plan => plan.PriceCents)
+            return [.. (await payments.PlansAsync(cancellationToken)).OrderBy(plan => plan.PriceCents == 0 ? 0 : 1)
+                .ThenBy(plan => plan.PriceCents)
                 .ThenBy(plan => plan.Key, StringComparer.Ordinal)];
         }
 
@@ -65,8 +66,12 @@ namespace TerraScale.Dashboard.Features.Onboarding
                         throw new OnboardingValidationException("Complete the current setup step first.");
                     }
 
-                    if (form["bypass"] == "1")
+                    var plan = form["plan"].ToString();
+                    var selected = (await PlansAsync(cancellationToken)).FirstOrDefault(candidate => candidate.Key == plan)
+                        ?? throw new OnboardingValidationException("Choose an available plan.");
+                    if (selected.PriceCents == 0)
                     {
+                        // Free needs no checkout; the account proceeds to the project step.
                         await accounts.UpdateAccountAsync(session, account =>
                         {
                             if (account.OnboardingStep != "payment-method")
@@ -78,19 +83,19 @@ namespace TerraScale.Dashboard.Features.Onboarding
                         }, cancellationToken);
                         break;
                     }
+
                     if (context.Organization?.Kind != "personal")
                     {
                         throw new OnboardingValidationException("Return to your Personal workspace to finish account setup.");
                     }
 
-                    var plan = form["plan"].ToString();
                     var interval = form["interval"].ToString();
                     if (interval.Length == 0)
                     {
-                        interval = (await PlansAsync(cancellationToken)).FirstOrDefault(candidate => candidate.Key == plan)?.CheckoutInterval ?? "";
+                        interval = selected.CheckoutInterval;
                     }
 
-                    if (interval is not ("monthly" or "annual") || !(await PlansAsync(cancellationToken)).Any(candidate => candidate.Key == plan && candidate.SupportsInterval(interval)))
+                    if (interval is not ("monthly" or "annual") || !selected.SupportsInterval(interval))
                     {
                         throw new OnboardingValidationException("Choose an available plan and billing interval.");
                     }

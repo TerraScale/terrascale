@@ -122,7 +122,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
                 foreach (var form in new Dictionary<string, string>[]
                 {
                     new() { ["step"] = "account-information", ["displayName"] = "Free onboarding" },
-                    new() { ["step"] = "payment-method", ["bypass"] = "1" },
+                    new() { ["step"] = "payment-method", ["plan"] = "free" },
                     new() { ["step"] = "project", ["name"] = "Free project", ["region"] = "GRU" }
                 })
                 {
