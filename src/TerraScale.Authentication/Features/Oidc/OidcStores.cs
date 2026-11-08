@@ -408,7 +408,7 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
 
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
-        var cutoff = JsonSerializer.Serialize(clock.GetUtcNow() - TimeSpan.FromHours(1), OidcJson.Default.DateTimeOffset);
+        var cutoff = clock.GetUtcNow() - TimeSpan.FromHours(1);
         var candidates = new JsonObject
         {
             ["and"] = new JsonArray(
@@ -418,7 +418,7 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
                         new JsonObject { ["eq"] = new JsonArray("/status", Statuses.Revoked) },
                         new JsonObject { ["eq"] = new JsonArray("/type", AuthorizationTypes.AdHoc) }),
                 },
-                new JsonObject { ["lte"] = new JsonArray("/creationDate", cutoff) }),
+                new JsonObject { ["lte"] = new JsonArray("/creationDate", JsonValue.Create(cutoff)) }),
         };
         using var filter = JsonDocument.Parse(candidates.ToJsonString());
         var total = 0;
