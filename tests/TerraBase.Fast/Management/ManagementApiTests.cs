@@ -105,6 +105,9 @@ public sealed class ManagementApiTests
         using var withApiKey = await apiKey.GetAsync(Uri("/v1/management/organizations"));
         using var onAdmin = await api.Server.Client.SendAsync(adminRequest);
         using var noDataAccess = await ManagementApi.SqlAsync(api.Client, $"/v1/projects/{EntityIds.New()}/databases/x", "SELECT 1");
+        var keyShaped = EntityIds.New() + "_" + Faker.Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
+        using var rawKey = api.WithToken(keyShaped);
+        using var withRawKey = await rawKey.GetAsync(Uri("/v1/management/organizations"));
 
         await Assert.That(noToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(notAToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -114,6 +117,15 @@ public sealed class ManagementApiTests
             .IsEqualTo("Bearer realm=\"terrascale\"");
         await Assert.That(notAToken.Headers.WwwAuthenticate.Single().ToString())
             .IsEqualTo("Bearer realm=\"terrascale\", error=\"invalid_token\"");
+        await Assert.That(withRawKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(withRawKey.Headers.WwwAuthenticate.Single().ToString())
+            .IsEqualTo("Bearer realm=\"terrascale\", error=\"invalid_token\"");
+        var keyBody = await withRawKey.Content.ReadAsStringAsync();
+        var keyError = JsonElement.Parse(keyBody).GetProperty("error");
+        await Assert.That(keyError.GetProperty("code").GetString()).IsEqualTo("invalid_token");
+        await Assert.That(keyError.GetProperty("message").GetString())
+            .IsEqualTo("This is an API key; exchange it at the token endpoint and send the short-lived access token instead.");
+        await Assert.That(keyBody).DoesNotContain(keyShaped);
         // The internal listener takes only the platform operator, never a ts-auth token.
         await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(onAdmin.Headers.WwwAuthenticate).IsEmpty();

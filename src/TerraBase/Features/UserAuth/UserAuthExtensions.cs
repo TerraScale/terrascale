@@ -164,6 +164,7 @@ internal static class UserAuthExtensions
         ArgumentNullException.ThrowIfNull(app);
         app.Use(async (context, next) =>
         {
+            var presented = context.Request.Headers.Authorization.ToString();
             context.Response.OnStarting(() =>
             {
                 // The public listener only: internal traffic authenticates differently, and a refused API key
@@ -181,6 +182,15 @@ internal static class UserAuthExtensions
                 return Task.CompletedTask;
             });
             await next(context).ConfigureAwait(false);
+            if (Listeners.ArrivedOn(context) == TerraBaseListener.Client
+                && context.Response.StatusCode == StatusCodes.Status401Unauthorized
+                && !context.Response.HasStarted
+                && presented.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                && TsAuthKeyExchange.IsKey(presented["Bearer ".Length..].Trim()))
+            {
+                await BadRequests.WriteAsync(
+                    context, StatusCodes.Status401Unauthorized, "invalid_token", KeyAuthorityMessages.KeyAsBearer, op: null).ConfigureAwait(false);
+            }
         });
         return app;
     }
