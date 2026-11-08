@@ -19,9 +19,9 @@ internal sealed class ExportDatabaseEndpoint(IStorageEngine engine, ITenantDirec
         Summary("Downloads the database as a SQL dump");
         Description("""
             Streams the database as one SQL script: BEGIN, then every user table's CREATE TABLE and its rows as
-            INSERT INTO "<table>" VALUES (…) in primary key order, then indexes, then COMMIT, taken from one read
-            snapshot. Identifiers are double-quoted, text single-quoted, blobs X'hex'. The same SQL dialect runs it
-            back into a fresh database. Needs sql:read. The database's home region serves the export.
+            INSERT INTO "<table>" VALUES (…) in primary key order, then indexes, views and triggers, then COMMIT,
+            taken from one read snapshot. Identifiers are double-quoted, text single-quoted, blobs X'hex'. The same
+            SQL dialect runs it back into a fresh database. Needs sql:read. The database's home region serves the export.
             """);
         Tags("Queries");
         Produces<byte[]>(StatusCodes.Status200OK, "application/sql");

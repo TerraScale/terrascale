@@ -47,11 +47,29 @@ internal static class SqlDump
             Write(output, Statement(create));
         }
 
+        await WriteSchemaEntriesAsync(transaction, "view", output, cancellationToken).ConfigureAwait(false);
+        await WriteSchemaEntriesAsync(transaction, "trigger", output, cancellationToken).ConfigureAwait(false);
+
         Write(output, "COMMIT;\n");
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static string Statement(string create) => create.TrimEnd(' ', '\r', '\n', '\t', ';') + ";\n";
+
+    private static async ValueTask WriteSchemaEntriesAsync(IStorageTransaction transaction, string type, PipeWriter output, CancellationToken cancellationToken)
+    {
+        var entries = await transaction.ExecuteStatementAsync(SqlSession.Internal(
+            $"SELECT name, sql FROM sqlite_schema WHERE type = '{type}' AND sql IS NOT NULL ORDER BY name"), cancellationToken).ConfigureAwait(false);
+        foreach (var row in entries.Rows)
+        {
+            if (row[0] is not string name || row[1] is not string create || SqlScript.IsReservedName(name))
+            {
+                continue;
+            }
+
+            Write(output, Statement(create));
+        }
+    }
 
     private static async ValueTask<SqlStatementResult> PageAsync(IStorageTransaction transaction, string sql, IReadOnlyList<object?> args, CancellationToken cancellationToken) =>
         await transaction.ExecuteStatementAsync(SqlSession.Internal(sql) with { Args = args, MaxRows = PageRows }, cancellationToken).ConfigureAwait(false);
