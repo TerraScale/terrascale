@@ -18,7 +18,8 @@ namespace TerraScale.Authentication.Features.WebAuthn;
 public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimiter limiter, Fido2NetLib.Fido2 fido2, AuthOptions options, TimeProvider clock)
 {
     public const string CredentialKind = "passkey_credential";
-    public const string ChallengeKind = "passkey-challenge";
+    private const string CredentialClaimKind = "credential:" + CredentialKind;
+    private const string ChallengeKind = "passkey-challenge";
 
     private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(15);
@@ -61,8 +62,13 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
         if (this.OpenChallenge(caller.InstanceId, sealedChallenge) is not { } challenge
             || await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || user.User.AuthEpoch != challenge.AuthEpoch || user.User.AuthStamp != challenge.AuthStamp
-            || !await store.AreCredentialsCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false)
-            || await store.FindUniqueAsync(caller.InstanceId, ChallengeKind, challenge.Id, cancellationToken).ConfigureAwait(false) is not null)
+            || !await store.AreCredentialsCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        var completion = AuthStore.NewCredentialBinding(ChallengeKind, challenge.Id);
+        if (await store.FindUniqueAsync(caller.InstanceId, completion.Kind, completion.Key, cancellationToken).ConfigureAwait(false) is not null)
         {
             return null;
         }
@@ -73,10 +79,6 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
         }
 
         var credentialId = Base64UrlEncode(rawId);
-        if (await store.FindUniqueOwnerAsync(caller.InstanceId, CredentialKind, credentialId, cancellationToken).ConfigureAwait(false) is not null)
-        {
-            throw Taken();
-        }
 
         Fido2NetLib.Objects.RegisteredPublicKeyCredential registered;
         try
@@ -86,8 +88,7 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
                 AttestationResponse = response,
                 OriginalOptions = CredentialCreateOptions.FromJson(challenge.OptionsJson),
                 IsCredentialIdUniqueToUserCallback = async (parameters, token) =>
-                    await store.FindUniqueOwnerAsync(caller.InstanceId, CredentialKind, Base64UrlEncode(parameters.CredentialId), token).ConfigureAwait(false) is not { } holder
-                    || holder == caller.Id,
+                    await store.FindUniqueAsync(caller.InstanceId, CredentialClaimKind, Base64UrlEncode(parameters.CredentialId), token).ConfigureAwait(false) is null,
             }, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (error is Fido2VerificationException or ArgumentException or InvalidOperationException or FormatException or JsonException)
@@ -100,7 +101,6 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
         {
             AuthEpoch = user.User.AuthEpoch,
             AuthStamp = user.User.AuthStamp,
-            IssuanceBindings = [.. caller.AuthenticationBindings, AuthStore.NewCredentialBinding(CredentialKind, credentialId)],
             Entries =
             [
                 .. current?.Record.Entries.Where(entry => entry.CredentialId != credentialId) ?? [],
@@ -123,18 +123,13 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
             current is { } existing
                 ? AuthStore.Replace(AuthStore.PasskeyTable, user.User.InstanceId, user.User.Id, serialized, existing.Version)
                 : AuthStore.Create(AuthStore.PasskeyTable, user.User.InstanceId, user.User.Id, serialized),
-            AuthStore.Claim(user.User.InstanceId, CredentialKind, credentialId, user.User.Id),
-            AuthStore.Claim(user.User.InstanceId, ChallengeKind, challenge.Id, user.User.Id),
+            AuthStore.CredentialClaim(user.User.InstanceId, AuthStore.NewCredentialBinding(CredentialKind, credentialId)),
+            AuthStore.CredentialClaim(user.User.InstanceId, completion),
         };
-        if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is not null)
-        {
-            throw Taken();
-        }
-
-        return record.Entries[^1];
+        return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null
+            ? record.Entries[^1]
+            : null;
     }
-
-    public static ApiException Taken() => new(409, "passkey_taken", "That passkey is already enrolled.");
 
     private PasskeyChallenge? OpenChallenge(string instanceId, string? sealedChallenge)
     {

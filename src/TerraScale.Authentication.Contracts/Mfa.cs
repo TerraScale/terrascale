@@ -59,11 +59,8 @@ public sealed record PasskeyCredentialEntry(string CredentialId, byte[] PublicKe
 /// <param name="Entries">The account's enrolled passkeys.</param>
 public sealed record PasskeyCredentialRecord(string InstanceId, string UserId, long AuthEpoch, IReadOnlyList<PasskeyCredentialEntry> Entries)
 {
-    /// <summary>Identity of the last authentication-state change the record's lineage covers.</summary>
+    /// <summary>Identity of the last authentication-state change the record covers.</summary>
     public string? AuthStamp { get; init; }
-
-    /// <summary>Proof lineage the last credential change was conditioned on.</summary>
-    public IReadOnlyList<CredentialBinding> IssuanceBindings { get; init; } = [];
 
     /// <summary>Formatting a record never discloses its credentials.</summary>
     public override string ToString() => nameof(PasskeyCredentialRecord);

@@ -80,7 +80,7 @@ public sealed class PasskeyEnrollTests(TerraBaseFixture fixture)
         cose.AddRange([0x22, 0x58, 0x20]);
         cose.AddRange(parameters.Q.Y!);
         var authData = new List<byte>();
-        authData.AddRange(SHA256.HashData(Encoding.ASCII.GetBytes("auth.test.invalid")));
+        authData.AddRange(SHA256.HashData(Encoding.ASCII.GetBytes("test.invalid")));
         authData.Add(0x45);
         authData.AddRange([(byte)0, (byte)0, (byte)0, (byte)0]);
         authData.AddRange(new byte[16]);
