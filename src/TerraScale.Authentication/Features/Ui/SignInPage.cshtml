@@ -156,7 +156,7 @@ case SignInStep.Code:
 <input type="hidden" name="email" value="@Model.Email">
 @if (Model.CodeBudgetExhausted)
 {
-<button type="submit" class="secondary" disabled>Send a new code in @Model.WaitText</button>
+<button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-label="Send a new code">Send a new code in @Model.WaitSeconds s</button>
 }
 else
 {
@@ -207,8 +207,7 @@ case SignInStep.SignUp:
 </div>
 <div class="field">
 <label for="sign-up-password">Password</label>
-<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="15" placeholder="15+ characters" required aria-describedby="sign-up-password-help@(string.IsNullOrEmpty(Model.ErrorId) ? string.Empty : " " + Model.ErrorId)">
-<p class="hint" id="sign-up-password-help">15 to 256 characters. A passphrase of a few words works well.</p>
+<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="15" placeholder="15+ characters" required aria-describedby="@Model.ErrorId">
 </div>
 <button type="submit">Create account</button>
 </form>
@@ -240,7 +239,7 @@ case SignInStep.SignUpCode:
 <input type="hidden" name="pending_token" value="@Model.PendingToken">
 @if (Model.CodeBudgetExhausted)
 {
-<button type="submit" class="secondary" disabled>Resend code in @Model.WaitText</button>
+<button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-label="Resend code">Resend code in @Model.WaitSeconds s</button>
 }
 else
 {
@@ -270,8 +269,7 @@ case SignInStep.ResetCode:
 </div>
 <div class="field">
 <label for="reset-password">New password</label>
-<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="15" placeholder="15+ characters" required aria-describedby="reset-password-help@(string.IsNullOrEmpty(Model.ErrorId) ? string.Empty : " " + Model.ErrorId)">
-<p class="hint" id="reset-password-help">15 to 256 characters. A passphrase of a few words works well.</p>
+<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="15" placeholder="15+ characters" required aria-describedby="@Model.ErrorId">
 </div>
 <p class="hint">Setting it signs out every session.</p>
 <button type="submit">Set new password</button>
@@ -281,7 +279,7 @@ case SignInStep.ResetCode:
 <input type="hidden" name="email" value="@Model.Email">
 @if (Model.CodeBudgetExhausted)
 {
-<button type="submit" class="secondary" disabled>Send a new code in @Model.WaitText</button>
+<button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-label="Send a new code">Send a new code in @Model.WaitSeconds s</button>
 }
 else
 {

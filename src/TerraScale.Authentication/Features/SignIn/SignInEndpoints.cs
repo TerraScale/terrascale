@@ -653,7 +653,7 @@ internal static class SignInFlow
             {
                 ErrorTitle = "Too many codes this hour",
                 CodeBudgetExhausted = true,
-                WaitText = RetryWait(seconds),
+                WaitSeconds = seconds,
                 PendingToken = pendingToken,
             },
             StatusCodes.Status429TooManyRequests);

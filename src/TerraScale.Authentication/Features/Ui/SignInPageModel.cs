@@ -106,8 +106,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>Whether this hour's code budget is spent; the page says so instead of implying a code was sent.</summary>
     public bool CodeBudgetExhausted { get; init; }
 
-    /// <summary>The wait a disabled resend control repeats when <see cref="CodeBudgetExhausted"/>.</summary>
-    public string? WaitText { get; init; }
+    /// <summary>Whole seconds until the disabled resend control re-enables when <see cref="CodeBudgetExhausted"/>.</summary>
+    public long? WaitSeconds { get; init; }
 
     public string? ErrorId => this.Error is null ? null : "sign-in-error";
 
