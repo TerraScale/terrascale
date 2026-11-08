@@ -39,7 +39,7 @@ internal static class SqlDump
             "SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL ORDER BY name"), cancellationToken).ConfigureAwait(false);
         foreach (var row in indexes.Rows)
         {
-            if (row[0] is not string name || row[1] is not string table || row[2] is not string create || SqlScript.IsReservedName(name) || SqlScript.IsReservedName(table))
+            if (row[0] is not string name || row[1] is not string table || row[2] is not string create || SqlScript.IsReservedName(name) || SqlScript.IsReservedName(table) || ContainsHiddenToken(create))
             {
                 continue;
             }
@@ -67,9 +67,25 @@ internal static class SqlDump
                 continue;
             }
 
+            if (type == "trigger")
+            {
+                create = create
+                    .Replace($"WHEN {SqlSandbox.TriggerGuard} AND (", "WHEN (", StringComparison.OrdinalIgnoreCase)
+                    .Replace($" WHEN {SqlSandbox.TriggerGuard} BEGIN", " BEGIN", StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (ContainsHiddenToken(create))
+            {
+                continue;
+            }
+
             Write(output, Statement(create));
         }
     }
+
+    private static bool ContainsHiddenToken(string sql) =>
+        !SqlText.TryTokenize(sql, out var tokens)
+            || tokens.Exists(token => token.Kind is SqlTokenKind.Word or SqlTokenKind.Quoted or SqlTokenKind.String && SqlSandbox.IsHidden(token.Value));
 
     private static async ValueTask<SqlStatementResult> PageAsync(IStorageTransaction transaction, string sql, IReadOnlyList<object?> args, CancellationToken cancellationToken) =>
         await transaction.ExecuteStatementAsync(SqlSession.Internal(sql) with { Args = args, MaxRows = PageRows }, cancellationToken).ConfigureAwait(false);

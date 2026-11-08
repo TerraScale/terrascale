@@ -121,8 +121,8 @@ public sealed class ExportDatabaseTests
         await Assert.That(nullBack).IsNull();
         await Assert.That(indexBack).IsTrue();
         var schema = await target.OkAsync("SELECT type || ':' || name FROM sqlite_schema WHERE type IN ('view','trigger') ORDER BY name");
-        await Assert.That(schema[0].GetProperty("rows")[0][0].GetString()).IsEqualTo("trigger:items_touch");
-        await Assert.That(schema[0].GetProperty("rows")[1][0].GetString()).IsEqualTo("view:items_hot");
+        await Assert.That(schema[0].GetProperty("rows")[0][0].GetString()).IsEqualTo("view:items_hot");
+        await Assert.That(schema[0].GetProperty("rows")[1][0].GetString()).IsEqualTo("trigger:items_touch");
         return;
 
         async Task<(string? Text, byte[]? Blob, double? Real, string? Null, bool Index)> Rows(SqlNativeDatabase database)
