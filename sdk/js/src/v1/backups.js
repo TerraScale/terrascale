@@ -3,6 +3,7 @@ import { requireDatabaseSelector, requireName } from "./ids.js";
 import { flag, list, nullable, numeric, optional, record, text } from "./management-decode.js";
 import { members, mutationOptions, pageQuery } from "./management-validation.js";
 import { malformed, object } from "./decode.js";
+import { TerraBaseV1Error } from "./errors.js";
 import { stringifyExactJson } from "./json.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
@@ -13,6 +14,9 @@ const window = record({ earliest: text, latest: text });
 const plan = record({ window, pointInTime: text, snapshotAt: text, latestSegmentAt: nullable(text), segmentCount: numeric, historyCheck: text });
 const restored = record({ id: requireId, projectId: requireId, name: text, branchedFrom: nullable(requireId), createdAt: text,
   homeRegion: optional(nullable(text)) });
+const restoreOperation = record({ id: requireId, operationId: requireId, status: text, kind: text, database: text,
+  errorCode: nullable(text), errorMessage: nullable(text), createdAt: text, finishedAt: nullable(text) });
+export { restoreOperation };
 const destination = record({ endpoint: text, region: text, bucket: text, mode: text, updatedAt: text });
 /** @typedef {ReturnType<typeof backup>} V1Backup */
 /** @typedef {ReturnType<typeof backupPage>} V1BackupPage */
@@ -20,6 +24,7 @@ const destination = record({ endpoint: text, region: text, bucket: text, mode: t
 /** @typedef {ReturnType<typeof window>} V1RestoreWindow */
 /** @typedef {ReturnType<typeof plan>} V1PointInTimePlan */
 /** @typedef {ReturnType<typeof restored>} V1RestoredDatabase */
+/** @typedef {ReturnType<typeof restoreOperation>} V1RestoreOperation */
 /** @typedef {ReturnType<typeof destination>} V1BackupDestination */
 /** @typedef {{ readonly fullBackupCron?: string | null; readonly retentionDays?: number | null; readonly disabled?: boolean | null }} V1BackupPolicyRequest */
 /** @typedef {{ readonly pointInTime: string; readonly destination?: "platform" | "customer" | null }} V1PointInTimeRequest */
@@ -34,6 +39,34 @@ function source(value) {
 function pointInTime(request) {
   if (typeof request.pointInTime !== "string" || !Number.isFinite(Date.parse(request.pointInTime))) throw new TypeError("pointInTime must be an RFC 3339 instant.");
   if (request.destination !== undefined && request.destination !== null) source(request.destination);
+}
+/** @param {number} ms @param {AbortSignal | undefined} signal @returns {Promise<void>} */
+function delay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(signal?.reason ?? new Error("aborted")); };
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, ms);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+const restorePollIntervalMs = 250;
+const restoreDeadlineMs = 600_000;
+/** @param {string} code @param {string} message @param {number} status @returns {TerraBaseV1Error} */
+function restoreError(code, message, status) {
+  return new TerraBaseV1Error({ status, code, message });
+}
+/** @param {V1Transport} transport @param {Readonly<Record<string, string>>} params @param {V1RestoreOperation} operation @param {V1RequestOptions} options @returns {Promise<V1RestoreOperation>} */
+export async function awaitRestoreOperation(transport, params, operation, options) {
+  const deadline = Date.now() + restoreDeadlineMs;
+  while (operation.status === "running") {
+    if (Date.now() >= deadline) throw restoreError("restore_timeout", "The restore operation did not finish within ten minutes.", 504);
+    await delay(restorePollIntervalMs, options.signal);
+    operation = restoreOperation((await transport.call("getRestoreOperation", { ...params, operation: requireId(operation.id) },
+      { signal: options.signal })).value);
+  }
+  if (operation.status !== "completed")
+    throw restoreError(operation.errorCode ?? "restore_failed", operation.errorMessage ?? "The restore operation failed.", 200);
+  return operation;
 }
 
 /** Backups and explicit point-in-time restore sources for one database. */
@@ -56,9 +89,21 @@ export class V1Backups {
     members(request, ["name"]);
     if (request.name !== undefined && request.name !== null) requireName("database", request.name);
     mutationOptions(options);
-    return restored((await this.#transport.call("restoreBackup", { ...this.#params, backup: requireId(id) }, {
+    const operation = restoreOperation((await this.#transport.call("restoreBackup", { ...this.#params, backup: requireId(id) }, {
       body: stringifyExactJson(request, "restore"), signal: options.signal,
     })).value);
+    return this.#awaitRestore(operation, options);
+  }
+  /** @param {string} operation @param {V1RequestOptions} [options] @returns {Promise<V1RestoreOperation>} */
+  async getRestoreOperation(operation, options = {}) {
+    return restoreOperation((await this.#transport.call("getRestoreOperation", { ...this.#params, operation: requireId(operation) },
+      { signal: options.signal })).value);
+  }
+  /** @param {V1RestoreOperation} operation @param {V1RequestOptions} options @returns {Promise<V1RestoredDatabase>} */
+  async #awaitRestore(operation, options) {
+    const done = await awaitRestoreOperation(this.#transport, this.#params, operation, options);
+    return restored((await this.#transport.call("getDatabase", { database: requireDatabaseSelector(done.database) },
+      { signal: options.signal })).value);
   }
   /** @param {V1RequestOptions} [options] @returns {Promise<V1BackupPolicy>} */
   async getPolicy(options = {}) { return policy((await this.#transport.call("getBackupPolicy", this.#params, { signal: options.signal })).value); }
@@ -87,7 +132,8 @@ export class V1Backups {
     pointInTime(request);
     if (request.name !== undefined && request.name !== null) requireName("database", request.name);
     mutationOptions(options);
-    return restored((await this.#transport.call("restorePointInTime", this.#params, { body: stringifyExactJson(request, "point-in-time restore"), signal: options.signal })).value);
+    const operation = restoreOperation((await this.#transport.call("restorePointInTime", this.#params, { body: stringifyExactJson(request, "point-in-time restore"), signal: options.signal })).value);
+    return this.#awaitRestore(operation, options);
   }
 }
 /** Write-only destination credentials are sent only to the configured API, never retained in the client. */

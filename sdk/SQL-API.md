@@ -21,7 +21,7 @@ only that database. Server contract: `docs/terrabase/agent-databases.md`; record
 | Method | Request | Returns |
 |---|---|---|
 | `createDatabase(project, name, { ttlSeconds? })` | `POST /v1/projects/{project}/databases` `{"name","ttlSeconds"}` | `ManagedDatabase` (201) |
-| `forkDatabase(project, source, name, { pointInTime?, ttlSeconds? })` | without `pointInTime`: `POST …/databases/{source}/branches` `{"name","ttlSeconds"}`; with it: `POST …/databases/{source}/point-in-time/restore` `{"name","pointInTime","ttlSeconds"}` | `ManagedDatabase` (201) |
+| `forkDatabase(project, source, name, { pointInTime?, ttlSeconds? })` | without `pointInTime`: `POST …/databases/{source}/branches` `{"name","ttlSeconds"}`; with it: `POST …/databases/{source}/point-in-time/restore` `{"name","pointInTime","ttlSeconds"}`, then poll `GET …/databases/{source}/restores/{operation}` until terminal and read the database | `ManagedDatabase` (201 branches; 202 + poll restore) |
 | `setDatabaseTtl(project, database, ttlSeconds)` | `PUT …/databases/{database}/ttl` `{"ttlSeconds"}` | `ManagedDatabase` (200) |
 | `clearDatabaseTtl(project, database)` | `DELETE …/databases/{database}/ttl` | `ManagedDatabase` (200) |
 | `deleteDatabase(project, database)` | `DELETE …/databases/{database}` | nothing (204) |

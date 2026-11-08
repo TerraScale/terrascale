@@ -1,4 +1,4 @@
-/** @typedef {"executeSql" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"executeSql" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
@@ -14,12 +14,13 @@ export const managementV1Routes = Object.freeze([
   route("listPlatformDatabases", "GET", "/v1/platform/databases"),
   route("createBackup", "POST", "/v1/projects/{project}/databases/{database}/backups", 201),
   route("listBackups", "GET", "/v1/projects/{project}/databases/{database}/backups", 200),
-  route("restoreBackup", "POST", "/v1/projects/{project}/databases/{database}/backups/{backup}/restore", 201),
+  route("restoreBackup", "POST", "/v1/projects/{project}/databases/{database}/backups/{backup}/restore", 202),
+  route("getRestoreOperation", "GET", "/v1/projects/{project}/databases/{database}/restores/{operation}", 200),
   route("getBackupPolicy", "GET", "/v1/projects/{project}/databases/{database}/backup-policy", 200),
   route("setBackupPolicy", "PUT", "/v1/projects/{project}/databases/{database}/backup-policy", 200),
   route("getRestoreWindow", "GET", "/v1/projects/{project}/databases/{database}/point-in-time", 200),
   route("planPointInTime", "POST", "/v1/projects/{project}/databases/{database}/point-in-time/plan", 200),
-  route("restorePointInTime", "POST", "/v1/projects/{project}/databases/{database}/point-in-time/restore", 201),
+  route("restorePointInTime", "POST", "/v1/projects/{project}/databases/{database}/point-in-time/restore", 202),
   route("getBackupDestination", "GET", "/v1/projects/{project}/backup-destination", 200),
   route("setBackupDestination", "PUT", "/v1/projects/{project}/backup-destination", 200),
   route("deleteBackupDestination", "DELETE", "/v1/projects/{project}/backup-destination", 204),

@@ -8,7 +8,10 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Platform;
+using TerraBase.Features.Qos;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -31,7 +34,7 @@ namespace TerraBase.Features.Management.Backups;
 /// </remarks>
 internal sealed class EngineManagedBackupService(
     IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, IDatabaseRewind rewind, TimeProvider time,
-    ILogger<EngineManagedBackupService> logger, TerraBaseOptions options, Lazy<IBackupKeyShredding> shredding)
+    ILogger<EngineManagedBackupService> logger, TerraBaseOptions options, Lazy<IBackupKeyShredding> shredding, IHostApplicationLifetime lifetime, IMemoryBudget memoryBudget)
     : IManagedBackupService
 {
     /// <summary>Catalog kind: database id → <see cref="DatabaseOwner"/>, deleted with the database.</summary>
@@ -150,7 +153,7 @@ internal sealed class EngineManagedBackupService(
     /// ponytail: a backup that expires while it is being restored can have its snapshot swept mid-copy, which fails the
     /// restore cleanly; hold a restore lease on the record if restores of nearly expired backups must always succeed.
     /// </remarks>
-    public async ValueTask<RestoreBackupResult> RestoreAsync(
+    public async ValueTask<StartRestoreResult> StartRestoreAsync(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken)
     {
         if (PlatformDatabases.IsPlatform(database.OrganizationId))
@@ -172,32 +175,37 @@ internal sealed class EngineManagedBackupService(
             RestoreSource { Region: null } => new Unavailable("the snapshot's region is unknown; take a new snapshot", "backup_region_unknown"),
             RestoreSource source when source.Region != options.Region => new BackupElsewhere(source.Region!, source.Database),
             RestoreSource source when !source.Database.PlacedIn(options.Region) => new Conflict("the snapshot's region is outside the database's current placement", "backup_region_not_placed"),
-            RestoreSource source => await CopyRestoredAsync(userId, organizationId, owner, source.Database.Name, source.StorageId, name, cancellationToken).ConfigureAwait(false),
+            RestoreSource source => await AdmitBackupRestoreAsync(userId, organizationId, owner, source, name, cancellationToken),
             NotFound error => error,
             Unavailable error => error,
         };
     }
 
-    /// <remarks>
-    /// ponytail: the restored state is staged as an engine database of the project and copied like a backup snapshot; a
-    /// process that stops between the two leaves the staging file, which startup reports as unknown and keeps.
-    /// </remarks>
-    public ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
+    private async ValueTask<StartRestoreResult> AdmitBackupRestoreAsync(
+        string userId, string organizationId, DatabaseOwner owner, RestoreSource source, string? name, CancellationToken cancellationToken)
+    {
+        var prechecked = await management.PrecheckRestoreAsync(userId, organizationId, owner.ProjectId, name, cancellationToken).ConfigureAwait(false);
+        if (prechecked is not Done)
+        {
+            return prechecked switch
+            {
+                NotFound error => error,
+                Forbidden error => error,
+                Conflict error => error,
+                Unavailable error => error,
+                Done => throw new UnreachableException(),
+            };
+        }
+
+        return await StartOperationAsync(
+            organizationId, owner, RestoreKind.Backup, name,
+            stopping => CopyRestoredAsync(userId, organizationId, owner, source.Database.Name, source.StorageId, name, stopping),
+            cancellationToken);
+    }
+
+    public async ValueTask<StartRestoreResult> StartRestorePointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform,
-        long? ttlSeconds = null) =>
-        FromStagingAsync(userId, organizationId, database, at, destination, name, intoNewDatabase: true,
-            (source, staging) => CopyRestoredAsync(userId, organizationId, DatabaseOwner.Of(database), source.Name, staging.DatabaseId!, name, cancellationToken, ttlSeconds),
-            cancellationToken);
-
-    public ValueTask<RestoreBackupResult> RewindPointInTimeAsync(
-        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, CancellationToken cancellationToken) =>
-        FromStagingAsync(userId, organizationId, database, at, destination, name: null, intoNewDatabase: false,
-            async (source, staging) => await rewind.RewindAsync(database, staging, cancellationToken).ConfigureAwait(false) ? source : new NotFound(),
-            cancellationToken);
-
-    private async ValueTask<RestoreBackupResult> FromStagingAsync(
-        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, string? name, bool intoNewDatabase,
-        Func<ManagedDatabase, TenantContext, ValueTask<RestoreBackupResult>> restored, CancellationToken cancellationToken)
+        long? ttlSeconds = null)
     {
         if (PlatformDatabases.IsPlatform(database.OrganizationId))
         {
@@ -224,32 +232,247 @@ internal sealed class EngineManagedBackupService(
             return new BackupElsewhere(source.Home(options.Region), source);
         }
 
-        // Before the replay spends its work, the same checks the registration after it makes: the organization's
-        // database allowance and, for a chosen name, that the name is free (an automatic name is picked after the
-        // replay). Rewind overwrites the database in place, so it creates nothing and checks nothing. The registration
-        // re-checks both when it commits, so a concurrent taker still refuses there.
-        if (intoNewDatabase)
+        var prechecked = await management.PrecheckRestoreAsync(userId, organizationId, owner.ProjectId, name, cancellationToken).ConfigureAwait(false);
+        if (prechecked is not Done)
         {
-            var prechecked = await management.PrecheckRestoreAsync(userId, organizationId, owner.ProjectId, name, cancellationToken).ConfigureAwait(false);
-            if (prechecked is not Done)
+            return prechecked switch
             {
-                return prechecked switch
-                {
-                    NotFound error => error,
-                    Forbidden error => error,
-                    Conflict error => error,
-                    Unavailable error => error,
-                    Done => throw new UnreachableException(),
-                };
-            }
+                NotFound error => error,
+                Forbidden error => error,
+                Conflict error => error,
+                Unavailable error => error,
+                Done => throw new UnreachableException(),
+            };
         }
 
+        if (await pointInTime.PlanAsync(database, at, cancellationToken, destination).ConfigureAwait(false) is Validation outside)
+        {
+            return outside;
+        }
+
+        return await StartOperationAsync(
+            organizationId, owner, RestoreKind.PointInTime, name,
+            stopping => FromStagingRestoredAsync(userId, organizationId, database, at, destination, source.Name, name, ttlSeconds, stopping),
+            cancellationToken);
+    }
+
+    private async ValueTask<RestoreBackupResult> FromStagingRestoredAsync(
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, string sourceName, string? name, long? ttlSeconds, CancellationToken cancellationToken)
+    {
         var staging = database with { DatabaseId = EntityIds.New().ToString() };
         try
         {
             return await pointInTime.RestoreAsync(database, at, staging, cancellationToken, destination).ConfigureAwait(false) switch
             {
-                Done => await restored(source, staging).ConfigureAwait(false),
+                Done => await CopyRestoredAsync(userId, organizationId, DatabaseOwner.Of(database), sourceName, staging.DatabaseId!, name, cancellationToken, ttlSeconds).ConfigureAwait(false),
+                NotFound error => error,
+                Conflict error => error,
+                Validation error => error,
+                Unavailable error => error,
+            };
+        }
+        finally
+        {
+            await engine.DeleteDatabaseAsync(staging, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask<GetRestoreOperationResult> GetRestoreOperationAsync(
+        string organizationId, string databaseId, string operationId, CancellationToken cancellationToken) =>
+        await catalog.ReadAsync<GetRestoreOperationResult>(
+            async transaction => await GetRestoreOperationRecordAsync(transaction, organizationId, databaseId, operationId, cancellationToken).ConfigureAwait(false) is { } record
+                ? record
+                : new NotFound(),
+            static error => error, cancellationToken).ConfigureAwait(false);
+
+    private static async ValueTask<RestoreOperationRecord?> GetRestoreOperationRecordAsync(
+        IStorageTransaction transaction, string organizationId, string databaseId, string operationId, CancellationToken cancellationToken)
+    {
+        var record = await GetAsync(transaction, RestoreCatalog.Kind, operationId, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken).ConfigureAwait(false);
+        return record is { OrganizationId: var organization, SourceDatabaseId: var source } && organization == organizationId && source == databaseId
+            ? record
+            : null;
+    }
+
+    private static ValueTask PutRestoreOperationAsync(IStorageTransaction transaction, RestoreOperationRecord record, CancellationToken cancellationToken) =>
+        PutAsync(transaction, RestoreCatalog.Kind, record.Id, record, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken);
+
+    private async ValueTask<StartRestoreResult> StartOperationAsync(
+        string organizationId, DatabaseOwner owner, string kind, string? name,
+        Func<CancellationToken, ValueTask<RestoreBackupResult>> copy, CancellationToken cancellationToken)
+    {
+        var admitted = await catalog.WriteAsync<StartRestoreResult>(async transaction =>
+        {
+            var running = await SystemCatalog.ListAllAsync(transaction, RestoreCatalog.Kind, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken)
+                .ConfigureAwait(false);
+            if (name is not null && running.Any(current => current.State == RestoreOperationState.Running
+                    && current.Region == options.Region
+                    && current.OrganizationId == organizationId
+                    && current.TargetName == name))
+            {
+                return ManagementErrors.NameTaken;
+            }
+
+            var record = new RestoreOperationRecord(
+                EntityIds.New(time).ToString(), organizationId, owner.ProjectId, owner.DatabaseId, null, kind, RestoreOperationState.Running, name, null, null,
+                time.GetUtcNow(), null, options.Region);
+            await PutRestoreOperationAsync(transaction, record, cancellationToken).ConfigureAwait(false);
+            return record;
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (admitted is not RestoreOperationRecord record)
+        {
+            return admitted;
+        }
+
+        var access = ProjectAccess.Current;
+        _ = Task.Run(
+            async () => await RunRestoreAsync(record, access, copy).ConfigureAwait(false),
+            CancellationToken.None);
+        return record;
+    }
+
+    private async Task RunRestoreAsync(RestoreOperationRecord record, ProjectAccess? access, Func<CancellationToken, ValueTask<RestoreBackupResult>> copy)
+    {
+        using var qos = QosContext.Enter(null, memoryBudget);
+        RestoreBackupResult? result = null;
+        try
+        {
+            await ProjectAccess.RunAsync(access, async () =>
+            {
+                result = await copy(lifetime.ApplicationStopping).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!lifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            logger.ZLogWarning(error, $"Restore operation {record.Id:@OperationId} failed");
+        }
+        catch (Exception) when (lifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            await SettleStoppedAsync(record).ConfigureAwait(false);
+            return;
+        }
+
+        var settled = result switch
+        {
+            ManagedDatabase restored => record with { State = RestoreOperationState.Completed, TargetDatabaseId = restored.Id, TargetName = restored.Name },
+            Conflict error => record with { State = RestoreOperationState.Failed, ErrorCode = error.Code, ErrorMessage = error.Message },
+            NotFound error => record with { State = RestoreOperationState.Failed, ErrorCode = error.Code, ErrorMessage = error.Message ?? "the restore found nothing to restore" },
+            Forbidden error => record with { State = RestoreOperationState.Failed, ErrorCode = error.Code, ErrorMessage = error.Message },
+            Validation error => record with { State = RestoreOperationState.Failed, ErrorCode = error.Code, ErrorMessage = error.Message },
+            QuotaExceeded error => record with { State = RestoreOperationState.Failed, ErrorCode = error.Code, ErrorMessage = error.Message },
+            Unavailable error => record with { State = RestoreOperationState.Failed, ErrorCode = error.Code, ErrorMessage = error.Message },
+            null => record with { State = RestoreOperationState.Failed, ErrorCode = "interrupted", ErrorMessage = "the process stopped while the restore was running" },
+            BackupElsewhere => record with { State = RestoreOperationState.Failed, ErrorCode = "restore_failed", ErrorMessage = "the restore could not be completed" },
+        };
+        await SettleAsync(record, settled with { FinishedAt = time.GetUtcNow() }, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private async Task SettleAsync(RestoreOperationRecord record, RestoreOperationRecord settled, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            if (lifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                return;
+            }
+
+            try
+            {
+                if (await SettleOnceAsync(record, settled, cancellationToken).ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                logger.ZLogWarning($"Restore operation {record.Id:@OperationId} settle failed, attempt {attempt}");
+            }
+            catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested || cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception error)
+            {
+                logger.ZLogWarning(error, $"Restore operation {record.Id:@OperationId} settle failed, attempt {attempt}");
+            }
+
+            var delay = TimeSpan.FromTicks((long)Math.Min(TimeSpan.FromMilliseconds(250).Ticks * Math.Pow(2, attempt - 1), TimeSpan.FromSeconds(5).Ticks));
+            await Task.Delay(delay, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> SettleOnceAsync(RestoreOperationRecord record, RestoreOperationRecord settled, CancellationToken cancellationToken) =>
+        await catalog.WriteAsync<CatalogCheck>(async transaction =>
+        {
+            if (await GetRestoreOperationRecordAsync(transaction, record.OrganizationId, record.SourceDatabaseId, record.Id, CancellationToken.None)
+                .ConfigureAwait(false) is { State: RestoreOperationState.Running })
+            {
+                await PutRestoreOperationAsync(transaction, settled, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            return new Done();
+        }, static error => error, cancellationToken).ConfigureAwait(false) is Done;
+
+    private async Task SettleStoppedAsync(RestoreOperationRecord record)
+    {
+        var interrupted = record with
+        {
+            State = RestoreOperationState.Failed,
+            ErrorCode = "interrupted",
+            ErrorMessage = "the process stopped while the restore was running",
+            FinishedAt = time.GetUtcNow(),
+        };
+        using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            await SettleOnceAsync(record, interrupted, stopping.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception error)
+        {
+            logger.ZLogWarning(error, $"Restore operation {record.Id:@OperationId} settle on stop failed");
+        }
+    }
+
+    public ValueTask<RestoreBackupResult> RewindPointInTimeAsync(
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, CancellationToken cancellationToken) =>
+        RewindFromStagingAsync(userId, organizationId, database, at, destination, cancellationToken);
+
+    private async ValueTask<RestoreBackupResult> RewindFromStagingAsync(
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, CancellationToken cancellationToken)
+    {
+        if (PlatformDatabases.IsPlatform(database.OrganizationId))
+        {
+            return ErasureFenced();
+        }
+
+        var owner = DatabaseOwner.Of(database);
+        var found = await catalog.ReadAsync<GetDatabaseResult>(
+            async transaction => await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken)
+                .ConfigureAwait(false) is { } database ? database : new NotFound(),
+            static error => error, cancellationToken).ConfigureAwait(false);
+        if (found is not ManagedDatabase source)
+        {
+            return found switch
+            {
+                NotFound error => error,
+                Unavailable error => error,
+                ManagedDatabase => throw new UnreachableException(),
+            };
+        }
+
+        if (source.Home(options.Region) != options.Region)
+        {
+            return new BackupElsewhere(source.Home(options.Region), source);
+        }
+
+        // Rewind overwrites the database in place, so it creates nothing and checks nothing.
+        var staging = database with { DatabaseId = EntityIds.New().ToString() };
+        try
+        {
+            return await pointInTime.RestoreAsync(database, at, staging, cancellationToken, destination).ConfigureAwait(false) switch
+            {
+                Done => await rewind.RewindAsync(database, staging, cancellationToken).ConfigureAwait(false) ? source : new NotFound(),
                 NotFound error => error,
                 Conflict error => error,
                 Validation error => error,

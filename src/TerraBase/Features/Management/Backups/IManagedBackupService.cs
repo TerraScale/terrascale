@@ -56,6 +56,10 @@ public readonly union RestoreBackupResult(ManagedDatabase, BackupElsewhere, NotF
 /// <param name="Database">The source database's actual placement.</param>
 public sealed record BackupElsewhere(string Region, ManagedDatabase Database);
 
+public readonly union StartRestoreResult(RestoreOperationRecord, BackupElsewhere, NotFound, Conflict, Forbidden, Validation, QuotaExceeded, Unavailable);
+
+public readonly union GetRestoreOperationResult(RestoreOperationRecord, NotFound, Unavailable);
+
 /// <summary>Backups of managed databases, their policy, and restoring them into new databases.</summary>
 public interface IManagedBackupService
 {
@@ -72,20 +76,14 @@ public interface IManagedBackupService
     ValueTask<SetBackupPolicyResult> SetPolicyAsync(
         string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, bool disabled, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Restores a backup into a new database in the same project, named <paramref name="name"/> or, when
-    /// <see langword="null"/>, <c>&lt;source&gt;-restore</c>, <c>-restore-2</c>, … whichever is free first.
-    /// </summary>
-    ValueTask<RestoreBackupResult> RestoreAsync(
+    ValueTask<StartRestoreResult> StartRestoreAsync(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Restores <paramref name="database"/> as of <paramref name="at"/> from continuous backup into a new database in the same
-    /// project, named like <see cref="RestoreAsync"/>; validates <paramref name="at"/> against its restore window before downloading.
-    /// </summary>
-    ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
+    ValueTask<StartRestoreResult> StartRestorePointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform,
         long? ttlSeconds = null);
+
+    ValueTask<GetRestoreOperationResult> GetRestoreOperationAsync(string organizationId, string databaseId, string operationId, CancellationToken cancellationToken);
 
     /// <summary>Replaces the database's own tables with their state as of <paramref name="at"/>, in place.</summary>
     ValueTask<RestoreBackupResult> RewindPointInTimeAsync(

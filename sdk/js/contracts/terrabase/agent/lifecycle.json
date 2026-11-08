@@ -66,7 +66,51 @@
         }
       },
       "response": {
-        "status": 201,
+        "status": 202,
+        "body": {
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
+          "operationId": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
+          "status": "running",
+          "kind": "point-in-time",
+          "database": "agent_past",
+          "errorCode": null,
+          "errorMessage": null,
+          "createdAt": "2026-11-04T12:00:01Z",
+          "finishedAt": null
+        }
+      }
+    },
+    {
+      "operation": "getRestoreOperation",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_run/restores/01ARZ3NDEKTSV4RRFFQ69G5FA9",
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
+          "operationId": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
+          "status": "completed",
+          "kind": "point-in-time",
+          "database": "agent_past",
+          "errorCode": null,
+          "errorMessage": null,
+          "createdAt": "2026-11-04T12:00:01Z",
+          "finishedAt": "2026-11-04T12:00:05Z"
+        }
+      }
+    },
+    {
+      "operation": "getDatabase",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_past",
+        "body": null
+      },
+      "response": {
+        "status": 200,
         "body": {
           "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
           "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",

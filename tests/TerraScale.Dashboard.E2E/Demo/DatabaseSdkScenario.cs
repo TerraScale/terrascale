@@ -418,6 +418,7 @@ namespace TerraScale.Dashboard.E2E
             private int backupLists;
             private int backupCreates;
             private int backupRestores;
+            private readonly Dictionary<string, (string Kind, string Database, string Source)> restoreOperations = new(StringComparer.Ordinal);
             private int policyWrites;
             private int projectCreates;
             private int projectConflicts;
@@ -518,8 +519,10 @@ namespace TerraScale.Dashboard.E2E
 
                         if (http.Request.Method == "POST")
                         {
-                            var expected = path.EndsWith("/plan", StringComparison.Ordinal) ? new[] { "databases:read" } : new[] { "databases:write" };
-                            Require(grant.Value.Scopes.Order(StringComparer.Ordinal).SequenceEqual(expected), "Point-in-time recovery uses the exact action-scoped project grant");
+                            var expected = path.EndsWith("/plan", StringComparison.Ordinal) ? new[] { "databases:read" }
+                                : path.EndsWith("/restore", StringComparison.Ordinal) ? new[] { "databases:read", "databases:write" }
+                                : new[] { "databases:write" };
+                            Require(grant.Value.Scopes.Order(StringComparer.Ordinal).SequenceEqual(expected.Order(StringComparer.Ordinal)), "Point-in-time recovery uses the exact action-scoped project grant");
                         }
                         lock (gate)
                         {
@@ -980,7 +983,13 @@ namespace TerraScale.Dashboard.E2E
                     await SqlEngine(restored.Id).ExecuteAsync(replay, http.RequestAborted);
                 }
 
-                return Results.Json(restored, statusCode: 201);
+                var restoreOperation = ids.NewId();
+                lock (gate)
+                {
+                    restoreOperations[restoreOperation] = ("backup", restored.Name, source.Id);
+                }
+
+                return Results.Json(new { operationId = restoreOperation, status = "running", kind = "backup", database = restored.Name, errorCode = (string?)null, errorMessage = (string?)null }, statusCode: 202);
             }
 
             // I2 canonical project lifecycle and database operations. {database} is the name; each operation demands the exact
@@ -996,7 +1005,7 @@ namespace TerraScale.Dashboard.E2E
                 {
                     [_, _, _, _] or [_, _, _, _, _] when method == "GET" => "databases:read",
                     [_, _, _, _, _, "sql", "execute"] => "sql:read",
-                    [_, _, _, _, _, "backups" or "backup-policy"] when method == "GET" => "databases:read",
+                    [_, _, _, _, _, "backups" or "backup-policy" or "restores"] when method == "GET" => "databases:read",
                     _ => "databases:write"
                 };
                 if (Authorize(http, project, scope) is { } denied)
@@ -1105,7 +1114,18 @@ namespace TerraScale.Dashboard.E2E
                         replay = snapshot.Statements;
                     }
                     if (replay.Count > 0) { await SqlEngine(fork.Id).ExecuteAsync(replay, http.RequestAborted); }
-                    return Results.Json(Wire(fork, answering), statusCode: 201);
+                    var operation = ids.NewId();
+                    lock (gate) { restoreOperations[operation] = ("point-in-time", fork.Name, current.Id); }
+                    return Results.Json(new { operationId = operation, status = "running", kind = "point-in-time", database = fork.Name, errorCode = (string?)null, errorMessage = (string?)null }, statusCode: 202);
+                }
+                if (parts.Length == 7 && parts[5] == "restores" && method == "GET")
+                {
+                    lock (gate)
+                    {
+                        return restoreOperations.TryGetValue(parts[6], out var operation) && operation.Source == current.Id
+                            ? Results.Json(new { operationId = parts[6], status = "completed", kind = operation.Kind, database = operation.Database, errorCode = (string?)null, errorMessage = (string?)null })
+                            : Error(404, "not_found");
+                    }
                 }
                 switch (parts.Length, method, parts.ElementAtOrDefault(5))
                 {

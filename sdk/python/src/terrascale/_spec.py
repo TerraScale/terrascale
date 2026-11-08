@@ -198,8 +198,15 @@ def fork_database(project: str, source: str, db: str, point_in_time: str | None,
         route = ("point-in-time", "restore")
     if ttl_seconds is not None:
         body["ttlSeconds"] = ttl(ttl_seconds)
+    answer = models.RestoreOperation if point_in_time is not None else models.Database
     return Call("POST", _db(project, database_selector(source), *route),
-                lambda r: models.Database.from_json(r.json()), body=body, success=(201,))
+                lambda r: answer.from_json(r.json()), body=body,
+                success=(202,) if point_in_time is not None else (201,))
+
+
+def get_restore_operation(project: str, db: str, operation: str) -> Call:
+    return Call("GET", _db(project, database_selector(db), "restores", validate_id(operation, "operation")),
+                lambda r: models.RestoreOperation.from_json(r.json()), replay_safe=True)
 
 
 def set_database_ttl(project: str, db: str, ttl_seconds: int) -> Call:

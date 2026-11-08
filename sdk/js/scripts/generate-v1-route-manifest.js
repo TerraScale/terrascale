@@ -12,14 +12,15 @@ const agentManifest = {
   contract: agent.contract, revision: agent.revision, evidence: agent.evidence,
   routes: agent.operations.map(({ operation, request, response }) => {
     const pathTemplate = request.path.replace(/\/projects\/[^/]+/u, "/projects/{project}")
-      .replace(/\/databases\/[^/]+/u, "/databases/{database}");
+      .replace(/\/databases\/[^/]+/u, "/databases/{database}")
+      .replace(/\/restores\/[^/]+/u, "/restores/{operation}");
     const route = operation === "createScopedKey" ? undefined : v1Route(operation === "forkDatabase"
       ? pathTemplate.endsWith("/branches") ? "branchDatabase" : "restorePointInTime" : operation);
     if (route !== undefined) {
       assert.equal(route.pathTemplate, pathTemplate);
       assert.equal(route.method, request.method);
       assert.ok(route.successStatuses.includes(response.status));
-      assert.equal(route.permission, "databases:write");
+      assert.equal(route.permission, request.method === "GET" ? "databases:read" : "databases:write");
     }
     return { operation, method: request.method, pathTemplate, successStatus: response.status,
       authorization: operation === "createScopedKey" ? "Basic keyId:key" : "Bearer project access token" };

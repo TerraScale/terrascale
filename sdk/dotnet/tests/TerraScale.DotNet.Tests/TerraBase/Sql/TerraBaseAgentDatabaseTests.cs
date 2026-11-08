@@ -15,7 +15,7 @@ public sealed class TerraBaseAgentDatabaseTests
     [Test]
     public async Task Agent_database_lifecycle_and_scoped_key_match_recorded_contracts()
     {
-        var fixtures = new Queue<string>(["create-with-ttl", "fork-now", "fork-point-in-time", "set-ttl", "clear-ttl", "delete", "scoped-key"]);
+        var fixtures = new Queue<string>(["create-with-ttl", "fork-now", "fork-point-in-time", "fork-point-in-time-operation", "fork-point-in-time-database", "set-ttl", "clear-ttl", "delete", "scoped-key"]);
         var exchanges = 0;
         using var handler = new TerraBaseTestHandler(async (request, token) =>
         {

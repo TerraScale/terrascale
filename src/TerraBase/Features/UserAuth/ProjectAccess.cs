@@ -24,7 +24,7 @@ public sealed record ProjectAccess(string Actor, string ProjectId, string Organi
     /// <summary>The project grant of the current async request, after authorization.</summary>
     public static ProjectAccess? Current => Access.Value;
 
-    internal static async Task RunAsync(ProjectAccess access, Func<Task> next)
+    internal static async Task RunAsync(ProjectAccess? access, Func<Task> next)
     {
         var previous = Access.Value;
         Access.Value = access;

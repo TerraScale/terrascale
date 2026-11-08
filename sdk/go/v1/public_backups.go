@@ -68,7 +68,73 @@ func (d *Database) Backups(ctx context.Context, opts PageOptions) (*Page[Databas
 	return databaseCall[Page[DatabaseBackup]](ctx, d, http.MethodGet, opts.query(), nil, "backups")
 }
 
-// RestoreBackup creates an independent database from a snapshot.
+// RestoreOperation is a background restore started by a restore route.
+type RestoreOperation struct {
+	ID           string     `json:"id" ulid:"required"`
+	OperationID  string     `json:"operationId" ulid:"required"`
+	Status       string     `json:"status"`
+	Kind         string     `json:"kind"`
+	Database     string     `json:"database"`
+	ErrorCode    *string    `json:"errorCode"`
+	ErrorMessage *string    `json:"errorMessage"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	FinishedAt   *time.Time `json:"finishedAt"`
+}
+
+const restorePollInterval = 250 * time.Millisecond
+const restoreDeadline = 10 * time.Minute
+
+func restoreFailure(code, message string) *APIError {
+	if code == "" {
+		code = "restore_failed"
+	}
+	return &APIError{Status: http.StatusOK, Code: ErrorCode(code), Message: message}
+}
+
+// GetRestoreOperation reads one background restore operation of this database.
+func (d *Database) GetRestoreOperation(ctx context.Context, operationID string) (*RestoreOperation, error) {
+	if err := checkID(operationID); err != nil {
+		return nil, err
+	}
+	return databaseCall[RestoreOperation](ctx, d, http.MethodGet, nil, nil, "restores", operationID)
+}
+
+// awaitRestore polls a background restore to its ten-minute deadline and reads
+// the restored database. A failed operation and the deadline are APIError.
+func (d *Database) awaitRestore(ctx context.Context, operation *RestoreOperation) (*ManagedDatabase, error) {
+	deadline := time.Now().Add(restoreDeadline)
+	var err error
+	for operation.Status == "running" {
+		if !time.Now().Before(deadline) {
+			return nil, restoreFailure("restore_timeout", "the restore operation did not finish within ten minutes")
+		}
+		timer := time.NewTimer(restorePollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+		operation, err = d.GetRestoreOperation(ctx, operation.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if operation.Status != "completed" {
+		code, message := "", "the restore operation failed"
+		if operation.ErrorCode != nil {
+			code = *operation.ErrorCode
+		}
+		if operation.ErrorMessage != nil {
+			message = *operation.ErrorMessage
+		}
+		return nil, restoreFailure(code, message)
+	}
+	return d.c.Database(d.project, operation.Database).Info(ctx)
+}
+
+// RestoreBackup creates an independent database from a snapshot, polling the
+// background operation to its ten-minute deadline before returning the database.
 func (d *Database) RestoreBackup(ctx context.Context, id, name string) (*ManagedDatabase, error) {
 	if err := checkID(id); err != nil {
 		return nil, err
@@ -78,9 +144,13 @@ func (d *Database) RestoreBackup(ctx context.Context, id, name string) (*Managed
 			return nil, err
 		}
 	}
-	return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, struct {
+	operation, err := databaseCall[RestoreOperation](ctx, d, http.MethodPost, nil, struct {
 		Name string `json:"name,omitempty"`
 	}{name}, "backups", id, "restore")
+	if err != nil {
+		return nil, err
+	}
+	return d.awaitRestore(ctx, operation)
 }
 
 // BackupPolicy reads the snapshot policy.
@@ -111,14 +181,19 @@ func (d *Database) PlanPointInTime(ctx context.Context, in PointInTimeRequest) (
 	}{in.PointInTime, in.Destination}, "point-in-time", "plan")
 }
 
-// RestorePointInTime restores a new named database at the selected instant.
+// RestorePointInTime restores a new named database at the selected instant,
+// polling the background operation to its ten-minute deadline before returning.
 func (d *Database) RestorePointInTime(ctx context.Context, in PointInTimeRequest) (*ManagedDatabase, error) {
 	if in.Name != "" {
 		if err := checkName("database", in.Name); err != nil {
 			return nil, err
 		}
 	}
-	return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, in, "point-in-time", "restore")
+	operation, err := databaseCall[RestoreOperation](ctx, d, http.MethodPost, nil, in, "point-in-time", "restore")
+	if err != nil {
+		return nil, err
+	}
+	return d.awaitRestore(ctx, operation)
 }
 
 // RewindPointInTime replaces the database's tables in place with their state at the selected instant.

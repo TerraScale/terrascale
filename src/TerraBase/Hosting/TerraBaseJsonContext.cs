@@ -51,6 +51,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(BackupPolicyRequest))]
 [JsonSerializable(typeof(BackupRecord))]
 [JsonSerializable(typeof(BackupSchedule))]
+[JsonSerializable(typeof(RestoreOperationRecord))]
+[JsonSerializable(typeof(RestoreOperation))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileAccessRules))]
 [JsonSerializable(typeof(CreateApiKeyRequest))]
 [JsonSerializable(typeof(CreatedApiKeyBody))]

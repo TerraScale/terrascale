@@ -7,6 +7,38 @@ use super::{
 };
 use reqwest::{Method, StatusCode};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::time::{Duration, Instant};
+
+/// A background restore started by a restore route; `database` names the
+/// restored database once `status` is `completed`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreOperation {
+    #[serde(deserialize_with = "super::ids::entity_id")]
+    pub id: String,
+    #[serde(deserialize_with = "super::ids::entity_id")]
+    pub operation_id: String,
+    pub status: String,
+    pub kind: String,
+    pub database: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: String,
+    pub finished_at: Option<String>,
+}
+
+const RESTORE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const RESTORE_DEADLINE: Duration = Duration::from_secs(600);
+
+pub(crate) async fn await_restore_on<T: DeserializeOwned>(
+    client: Client,
+    source: &str,
+    operation: RestoreOperation,
+) -> Result<T> {
+    Database::new(client, source.to_string())
+        .await_restore(operation)
+        .await
+}
 
 /// The producer's ManagedDatabase restore body has no serving `region` field.
 #[derive(Debug, Clone, Deserialize)]
@@ -78,6 +110,57 @@ impl Client {
     }
 }
 impl Database {
+    /// `GET D/restores/{operation}`; one background restore's status.
+    pub async fn get_restore_operation(&self, operation: &str) -> Result<RestoreOperation> {
+        if !valid_entity_id(operation) {
+            return Err(Error::InvalidInput(
+                "operation must be a canonical uppercase ULID".into(),
+            ));
+        }
+        self.management(
+            Method::GET,
+            &["restores", operation],
+            &[],
+            None::<&()>,
+            StatusCode::OK,
+        )
+        .await
+    }
+
+    async fn await_restore<T: DeserializeOwned>(&self, operation: RestoreOperation) -> Result<T> {
+        let mut operation = operation;
+        let deadline = Instant::now() + RESTORE_DEADLINE;
+        while operation.status == "running" {
+            if Instant::now() >= deadline {
+                return Err(Error::Api {
+                    status: 504,
+                    code: "restore_timeout".into(),
+                    message: Some("the restore operation did not finish within ten minutes".into()),
+                    details: None,
+                });
+            }
+            tokio::time::sleep(RESTORE_POLL_INTERVAL).await;
+            operation = self.get_restore_operation(&operation.id).await?;
+        }
+        if operation.status != "completed" {
+            return Err(Error::Api {
+                status: 200,
+                code: operation
+                    .error_code
+                    .unwrap_or_else(|| "restore_failed".into()),
+                message: Some(
+                    operation
+                        .error_message
+                        .unwrap_or_else(|| "the restore operation failed".into()),
+                ),
+                details: None,
+            });
+        }
+        Database::new(self.client().clone(), operation.database)
+            .management::<T>(Method::GET, &[], &[], None::<&()>, StatusCode::OK)
+            .await
+    }
+
     /// `POST D/backups`; synchronous ready snapshot.
     pub async fn create_backup<T: DeserializeOwned>(&self) -> Result<T> {
         self.management(
@@ -100,7 +183,8 @@ impl Database {
         )
         .await
     }
-    /// `POST D/backups/{backup}/restore`; optional new database name.
+    /// `POST D/backups/{backup}/restore`; optional new database name. Waits for
+    /// the background operation, then returns the restored database.
     pub async fn restore_backup(
         &self,
         backup: &str,
@@ -114,14 +198,16 @@ impl Database {
         if let Some(name) = name {
             check_name("database", name)?;
         }
-        self.management(
-            Method::POST,
-            &["backups", backup, "restore"],
-            &[],
-            Some(&serde_json::json!({"name":name})),
-            StatusCode::CREATED,
-        )
-        .await
+        let operation = self
+            .management::<RestoreOperation>(
+                Method::POST,
+                &["backups", backup, "restore"],
+                &[],
+                Some(&serde_json::json!({"name":name})),
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        self.await_restore(operation).await
     }
     /// `GET D/backup-policy`.
     pub async fn get_backup_policy<T: DeserializeOwned>(&self) -> Result<T> {
@@ -177,14 +263,17 @@ impl Database {
             .decode_status(&[StatusCode::OK])
     }
     /// `POST D/point-in-time/restore`; pointInTime, optional name/destination.
+    /// Waits for the background operation, then returns the restored database.
     pub async fn restore_point_in_time(&self, body: &impl Serialize) -> Result<RestoredDatabase> {
-        self.management(
-            Method::POST,
-            &["point-in-time", "restore"],
-            &[],
-            Some(body),
-            StatusCode::CREATED,
-        )
-        .await
+        let operation = self
+            .management::<RestoreOperation>(
+                Method::POST,
+                &["point-in-time", "restore"],
+                &[],
+                Some(body),
+                StatusCode::ACCEPTED,
+            )
+            .await?;
+        self.await_restore(operation).await
     }
 }

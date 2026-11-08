@@ -50,9 +50,9 @@ fn scoped_client(data: &Fixture, issuer: &Fixture) -> Client {
 #[tokio::test]
 async fn agent_database_lifecycle_matches_recorded_contract() {
     let exchanges = lifecycle();
-    let data = recorded(&exchanges[..7]).await;
+    let data = recorded(&exchanges[..9]).await;
     let issuer = Fixture::new(|_| ok(grant("access", 900))).await;
-    let scoped = recorded(&exchanges[7..]).await;
+    let scoped = recorded(&exchanges[9..]).await;
     let client = scoped_client(&data, &issuer);
     let ttl = CreateDatabaseOptions {
         ttl_seconds: Some(3600),
@@ -135,7 +135,7 @@ async fn agent_database_lifecycle_matches_recorded_contract() {
             format!("Basic {}", STANDARD.encode(format!("{KEY_ID}:{}", key())))
         );
     }
-    assert_eq!(data.seen.lock().unwrap().len(), 7);
+    assert_eq!(data.seen.lock().unwrap().len(), 9);
     assert_eq!(issuer.seen.lock().unwrap().len(), 1);
 }
 

@@ -127,7 +127,49 @@
         "ttlSeconds": 3600
       },
       "form": null,
-      "status": 201,
+      "status": 202,
+      "response": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "operationId": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "status": "running",
+        "kind": "point-in-time",
+        "database": "agent-restore",
+        "errorCode": null,
+        "errorMessage": null,
+        "createdAt": "2026-11-04T12:00:01Z",
+        "finishedAt": null
+      },
+      "headers": {}
+    },
+    {
+      "name": "restore-operation",
+      "method": "GET",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01ARZ3NDEKTSV4RRFFQ69G5FAX/restores/01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "authorization": "Bearer header.project.signature",
+      "body": null,
+      "form": null,
+      "status": 200,
+      "response": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "operationId": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "status": "completed",
+        "kind": "point-in-time",
+        "database": "agent-restore",
+        "errorCode": null,
+        "errorMessage": null,
+        "createdAt": "2026-11-04T12:00:01Z",
+        "finishedAt": "2026-11-04T12:00:05Z"
+      },
+      "headers": {}
+    },
+    {
+      "name": "restore-database",
+      "method": "GET",
+      "url": "https://api.terrascale.tech/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/agent-restore",
+      "authorization": "Bearer header.project.signature",
+      "body": null,
+      "form": null,
+      "status": 200,
       "response": {
         "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
         "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",

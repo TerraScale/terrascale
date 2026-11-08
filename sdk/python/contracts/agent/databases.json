@@ -86,18 +86,48 @@
         }
       },
       "response": {
-        "status": 201,
+        "status": 202,
         "body": {
-          "id": "01JCCCCCCCCCCCCCCCCCCCCCCC",
-          "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
-          "name": "restored",
-          "branchedFrom": "01JBBBBBBBBBBBBBBBBBBBBBBB",
-          "createdAt": "2026-11-04T00:00:00Z",
-          "region": "gru",
-          "homeRegion": "gru",
-          "expiresAt": "2026-11-04T00:01:00Z"
+          "id": "01JFFFFFFFFFFFFFFFFFFFFFFF",
+          "operationId": "01JFFFFFFFFFFFFFFFFFFFFFFF",
+          "status": "running",
+          "kind": "point-in-time",
+          "database": "restored",
+          "errorCode": null,
+          "errorMessage": null,
+          "createdAt": "2026-11-03T23:59:01Z",
+          "finishedAt": null
         }
-      }
+      },
+      "follow": [
+        {
+          "status": 200,
+          "body": {
+            "id": "01JFFFFFFFFFFFFFFFFFFFFFFF",
+            "operationId": "01JFFFFFFFFFFFFFFFFFFFFFFF",
+            "status": "completed",
+            "kind": "point-in-time",
+            "database": "restored",
+            "errorCode": null,
+            "errorMessage": null,
+            "createdAt": "2026-11-03T23:59:01Z",
+            "finishedAt": "2026-11-03T23:59:05Z"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "id": "01JCCCCCCCCCCCCCCCCCCCCCCC",
+            "projectId": "01JAAAAAAAAAAAAAAAAAAAAAAA",
+            "name": "restored",
+            "branchedFrom": "01JBBBBBBBBBBBBBBBBBBBBBBB",
+            "createdAt": "2026-11-04T00:00:00Z",
+            "region": "gru",
+            "homeRegion": "gru",
+            "expiresAt": "2026-11-04T00:01:00Z"
+          }
+        }
+      ]
     },
     {
       "name": "set_ttl",

@@ -132,20 +132,39 @@ impl Client {
             #[serde(flatten)]
             options: &'a ForkDatabaseOptions,
         }
+        let point_in_time = options.point_in_time.is_some();
         let mut segments = vec!["v1", "databases", source];
-        if options.point_in_time.is_some() {
+        if point_in_time {
             segments.extend(["point-in-time", "restore"]);
         } else {
             segments.push("branches");
         }
-        self.management(
-            Method::POST,
-            segments,
-            &[],
-            Some(&Body { name, options }),
-            StatusCode::CREATED,
-        )
-        .await
+        let status = if point_in_time {
+            StatusCode::ACCEPTED
+        } else {
+            StatusCode::CREATED
+        };
+        if !point_in_time {
+            return self
+                .management(
+                    Method::POST,
+                    segments,
+                    &[],
+                    Some(&Body { name, options }),
+                    status,
+                )
+                .await;
+        }
+        let operation = self
+            .management::<super::backups::RestoreOperation>(
+                Method::POST,
+                segments,
+                &[],
+                Some(&Body { name, options }),
+                status,
+            )
+            .await?;
+        super::backups::await_restore_on(self.clone(), source, operation).await
     }
 
     pub async fn set_database_ttl(

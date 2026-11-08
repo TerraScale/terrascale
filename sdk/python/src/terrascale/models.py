@@ -58,6 +58,33 @@ class Database:
 
 
 @dataclass(frozen=True)
+class RestoreOperation:
+    """A background restore; ``database`` names the restored database once completed."""
+
+    id: str
+    operation_id: str
+    status: str
+    kind: str
+    database: str
+    error_code: str | None
+    error_message: str | None
+    created_at: str
+    finished_at: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> RestoreOperation:
+        fields = ("id", "operationId", "status", "kind", "database", "createdAt")
+        if any(not isinstance(body[k], str) or not body[k] for k in fields):
+            raise ValueError("invalid restore operation")
+        if body["status"] not in ("running", "completed", "failed"):
+            raise ValueError("invalid restore operation status")
+        return cls(id=validate_id(body["id"]), operation_id=validate_id(body["operationId"]), status=body["status"],
+                   kind=body["kind"], database=body["database"], error_code=body.get("errorCode"),
+                   error_message=body.get("errorMessage"), created_at=body["createdAt"],
+                   finished_at=body.get("finishedAt"))
+
+
+@dataclass(frozen=True)
 class ScopedKey:
     key: str = field(repr=False)
     id: str

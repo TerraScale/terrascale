@@ -39,12 +39,12 @@ test("agent database lifecycle matches the recorded contract and reuses a scoped
   const created = await client.createDatabase(contract.project, "agent_run", { ttlSeconds: 3600 });
   expect(created).toMatchObject(contract.operations[0].response.body);
   expect(await client.forkDatabase(contract.project, created.id, "agent_fork", { ttlSeconds: 7200 })).toMatchObject(contract.operations[1].response.body);
-  expect(await client.forkDatabase(contract.project, created.name, "agent_past", { pointInTime: "2026-11-04T12:00:00Z" })).toMatchObject(contract.operations[2].response.body);
-  expect(await client.setDatabaseTtl(contract.project, created.name, 1800)).toMatchObject(contract.operations[3].response.body);
-  expect(await client.clearDatabaseTtl(contract.project, created.id)).toMatchObject(contract.operations[4].response.body);
+  expect(await client.forkDatabase(contract.project, created.name, "agent_past", { pointInTime: "2026-11-04T12:00:00Z" })).toMatchObject(contract.operations[4].response.body);
+  expect(await client.setDatabaseTtl(contract.project, created.name, 1800)).toMatchObject(contract.operations[5].response.body);
+  expect(await client.clearDatabaseTtl(contract.project, created.id)).toMatchObject(contract.operations[6].response.body);
   expect(await client.deleteDatabase(contract.project, created.id)).toBeUndefined();
   const scoped = await client.createScopedKey({ project: contract.project, database: created.id, access: "read_write", ttlSeconds: 600 });
-  const wireKey = contract.operations[6].response.body;
+  const wireKey = contract.operations[8].response.body;
   expect(scoped).toEqual({ key: wireKey.key, id: wireKey.id, projectId: wireKey.project_id,
     database: wireKey.database, access: wireKey.access, expiresAt: wireKey.expires_at });
   const agent = createTerraBaseClient({ project: contract.project, apiKey: scoped.key, baseUrl: "https://database.example.invalid", fetch: clientFetch });

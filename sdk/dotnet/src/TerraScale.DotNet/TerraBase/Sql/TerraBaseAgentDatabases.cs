@@ -71,17 +71,25 @@ public sealed partial class TerraBaseSqlClient
     }
 
     /// <summary>
-    /// Forks a consistent copy now, or restores an RFC 3339 instant inside the source's restore window.
+    /// Forks a consistent copy now, or restores an RFC 3339 instant inside the source's restore window, polling the restore operation to its ten-minute deadline.
     /// Source is a database name or ULID. TTL is 60 to 31,536,000 seconds; omitted TTL is never inherited.
-    /// Requires databases:write.
+    /// Requires databases:write for the copy or restore and databases:read for the poll.
     /// </summary>
-    public Task<TerraBaseManagedDatabase> ForkDatabaseAsync(string project, string source, string name, DateTimeOffset? pointInTime = null,
+    public async Task<TerraBaseManagedDatabase> ForkDatabaseAsync(string project, string source, string name, DateTimeOffset? pointInTime = null,
         int? ttlSeconds = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ValidateDatabaseTtl(ttlSeconds);
         var path = DatabasePath(project, source) + (pointInTime is null ? "/branches" : "/point-in-time/restore");
-        return SendDatabaseAsync(project, HttpMethod.Post, path, new(name, pointInTime, ttlSeconds), cancellationToken);
+        if (pointInTime is null)
+            return await SendDatabaseAsync(project, HttpMethod.Post, path, new(name, pointInTime, ttlSeconds), cancellationToken).ConfigureAwait(false);
+        var json = TerraBaseJsonContext.Wire;
+        var operation = await ProjectConnection(project).SendAsync(HttpMethod.Post, path,
+            TerraBaseConnection.Json(new TerraBaseAgentDatabaseRequest(name, pointInTime, ttlSeconds), json.TerraBaseAgentDatabaseRequest),
+            json.TerraBaseRestoreOperation, null, cancellationToken).ConfigureAwait(false);
+        return await TerraBaseRestore.CompleteAsync(ProjectConnection(project), DatabasePath(project, source),
+            "/v1/projects/" + TerraBaseConnection.Segment(project, nameof(project)),
+            operation.Value, json.TerraBaseManagedDatabase, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Sets a database's TTL to 60 to 31,536,000 seconds from now. Requires databases:write.</summary>

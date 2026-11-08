@@ -54,8 +54,14 @@ async def test_agent_database_lifecycle_matches_contract(sdk: Any) -> None:
         expected, response = case["request"], case["response"]
         responses.append(httpx.Response(response["status"], json=response["body"]) if response["body"] is not None
                          else httpx.Response(response["status"]))
+        for extra in case.get("follow", []):
+            responses.append(httpx.Response(extra["status"], json=extra["body"]))
+        before = len(calls)
         result = await resolve(operation())
-        req = calls[-1]
+        req = calls[before]
+        for seen in calls[before:]:
+            assert _route_ok(seen.method, seen.url.path)
+        terminal = case["follow"][-1]["body"] if case.get("follow") else response["body"]
         assert (req.method, req.url.path) == (expected["method"], expected["path"])
         assert _route_ok(req.method, req.url.path)
         assert (json.loads(req.content) if req.content else None) == expected["body"]
@@ -64,19 +70,19 @@ async def test_agent_database_lifecycle_matches_contract(sdk: Any) -> None:
             assert req.headers["authorization"] == "Basic " + base64.b64encode(f"{API_KEY[:26]}:{API_KEY}".encode()).decode()
             assert not {"cookie", "x-unrelated-credential", "x-terrascale-region-pin"} & set(req.headers)
             assert (result.key, result.id, result.project_id, result.database, result.access, result.expires_at) == (
-                response["body"]["key"], response["body"]["id"], response["body"]["project_id"], DATABASE,
-                response["body"]["access"], response["body"]["expires_at"])
+                terminal["key"], terminal["id"], terminal["project_id"], DATABASE,
+                terminal["access"], terminal["expires_at"])
             assert result.key not in repr(result)
         else:
             assert req.url.host == "api.terrascale.tech"
             assert req.headers["authorization"] == "Bearer fixture-token"
             if result is not None:
                 assert (result.id, result.name, result.branched_from, result.expires_at) == (
-                    response["body"]["id"], response["body"]["name"], response["body"]["branchedFrom"],
-                    response["body"]["expiresAt"])
+                    terminal["id"], terminal["name"], terminal["branchedFrom"],
+                    terminal["expiresAt"])
             else:
                 assert case["name"] == "delete"
-    assert len(calls) == len(operations)
+    assert len(calls) == len(operations) + 2
 
 
 async def test_scoped_key_refusals_and_invalid_agent_requests_are_not_replayed(sdk: Any,
