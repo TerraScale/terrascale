@@ -1,3 +1,4 @@
+using System.Globalization;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -19,6 +20,7 @@ namespace TerraScale.Dashboard.Features.Profile
         public string? InvalidField { get; init; }
         public IReadOnlyList<string>? Providers { get; init; }
         public string? ConfirmProvider { get; init; }
+        public int? CodeWait { get; init; }
         public string[] Permissions
         {
             get
@@ -77,12 +79,16 @@ namespace TerraScale.Dashboard.Features.Profile
                     "language-saved" => tab == "profile" ? "Language preference saved." : "",
                     "token-revoked" => tab == "access-tokens" ? "Access token revoked." : "",
                     "session-revoked" => tab == "sessions" ? "Session revoked." : "",
+                    "code-sent" => tab == "profile" ? $"We emailed a code to {context.Account.Email}. It expires in 30 minutes." : "",
                     _ => ""
                 };
+                var wait = int.TryParse(http.Request.Query["wait"], NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
+                    ? Math.Clamp(seconds, 1, 3600) : (int?)null;
                 return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Status: notice, Tokens: list, Sessions: active, Mfa: status)
                 {
                     Providers = linked,
-                    ConfirmProvider = http.Request.Query["unlink"].ToString() is var selected && TsAuthGateway.IsSignInProvider(selected) ? selected : null
+                    ConfirmProvider = http.Request.Query["unlink"].ToString() is var selected && TsAuthGateway.IsSignInProvider(selected) ? selected : null,
+                    CodeWait = wait
                 });
             });
             endpoints.MapPost("/api/v1/dashboard/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
@@ -96,6 +102,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity) =>
                 AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, billing, identity));
             endpoints.MapPost("/api/v1/dashboard/profile/providers/{provider}/unlink", SignInMethods.UnlinkAsync);
+            endpoints.MapPost("/api/v1/dashboard/profile/providers/{provider}/code", SignInMethods.SendCodeAsync);
             endpoints.MapPost("/api/v1/dashboard/profile/email-change", (HttpContext http, DashboardSessions sessions, AccountService accounts, IAuthEmailChangeGateway gateway) => EmailChange.SubmitAsync(http, sessions, accounts, gateway, false));
             endpoints.MapPost("/api/v1/dashboard/profile/email-change/confirm", (HttpContext http, DashboardSessions sessions, AccountService accounts, IAuthEmailChangeGateway gateway) => EmailChange.SubmitAsync(http, sessions, accounts, gateway, true));
             endpoints.MapPost("/api/v1/dashboard/profile/sign-out-everywhere", SignOutEverywhereAsync);

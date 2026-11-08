@@ -59,5 +59,56 @@ namespace TerraScale.Dashboard.Features.Profile
                 return view;
             }
         }
+
+        public static async Task<IResult> SendCodeAsync(HttpContext http, string provider, DashboardSessions sessions, AccountService accounts, ITsAuthProviders providers)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.StatusCode(403);
+            }
+
+            if (!TsAuthGateway.IsSignInProvider(provider))
+            {
+                return Results.NotFound();
+            }
+
+            try
+            {
+                await providers.SendUnlinkCodeAsync(context.Session, provider, http.RequestAborted);
+            }
+            catch (AccountAccessException error)
+            {
+                if (error.StatusCode == 429 && int.TryParse(error.Code, out var wait))
+                {
+                    return HttpRedirects.SeeOther($"/profile?unlink={provider}&wait={Math.Clamp(wait, 1, 3600)}#profile-sign-in-methods");
+                }
+
+                return await FailureAsync(error.Message, error.StatusCode);
+            }
+            catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+            {
+                return await FailureAsync("Sign-in methods are unavailable right now. Refresh the page before trying again.", 503);
+            }
+            return HttpRedirects.SeeOther($"/profile?unlink={provider}&status=code-sent#profile-sign-in-methods");
+
+            async Task<IResult> FailureAsync(string message, int status)
+            {
+                var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: message,
+                    Sessions: await sessions.ListAsync(http, context.Session))
+                {
+                    Providers = await providers.ListProvidersAsync(context.Session, http.RequestAborted),
+                    ConfirmProvider = provider
+                });
+                view.StatusCode = status;
+                return view;
+            }
+        }
     }
 }
