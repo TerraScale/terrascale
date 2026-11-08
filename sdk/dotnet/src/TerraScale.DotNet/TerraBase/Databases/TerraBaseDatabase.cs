@@ -112,10 +112,10 @@ public sealed partial class TerraBaseDatabase
             null, Json.TerraBaseDatabaseUsage, null, cancellationToken).ConfigureAwait(false)).Value;
 
     /// <summary>getDatabaseRegions: reads the database's home region and home-observed replica pull progress; not application acknowledgements.</summary>
-public async Task<TerraBaseDatabaseRegions> GetRegionsAsync(CancellationToken cancellationToken = default) =>
-    (await connection.SendAsync(HttpMethod.Get, path + "/regions", null, Json.TerraBaseDatabaseRegions, null, cancellationToken).ConfigureAwait(false)).Value;
+    public async Task<TerraBaseDatabaseRegions> GetRegionsAsync(CancellationToken cancellationToken = default) =>
+        (await connection.SendAsync(HttpMethod.Get, path + "/regions", null, Json.TerraBaseDatabaseRegions, null, cancellationToken).ConfigureAwait(false)).Value;
 
-/// <summary>Branches a consistent snapshot in the source database's region. Requires databases:write; sent once.</summary>
+    /// <summary>Branches a consistent snapshot in the source database's region. Requires databases:write; sent once.</summary>
     public async Task<TerraBaseManagedDatabase> BranchAsync(string name, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
