@@ -51,7 +51,7 @@
                 </fieldset>
                 <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling</p>
                 <p><a class="ts-btn ts-btn-secondary" href="https://terrascale.tech/contact" @(ExternalLink.Attributes)>Contact sales@(ExternalLink.Hint)</a></p>
-                <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg ts-onboarding-submit" type="submit" data-plan="free">Continue on @PlanCatalog.For("free").Name <span aria-hidden="true">→</span></button><button class="ts-btn ts-btn-primary ts-btn-lg ts-onboarding-submit" type="submit" data-plan="paid">Continue to checkout <span aria-hidden="true">→</span></button></div>
+                <div class="ts-onboarding-footer"><span></span>@{ var freePlan = Model.Plan is "" or "free"; var checkoutPlanName = Model.Plans?.FirstOrDefault(plan => plan.Key == Model.Plan && plan.Key != "free")?.Name; }<button class="ts-btn @(freePlan ? "ts-btn-primary" : "ts-btn-secondary") ts-btn-lg ts-onboarding-submit" type="submit" data-plan="free">Continue on @PlanCatalog.For("free").Name <span aria-hidden="true">→</span></button><button class="ts-btn @(freePlan ? "ts-btn-secondary" : "ts-btn-primary") ts-btn-lg ts-onboarding-submit" type="submit" data-plan="paid">Continue to checkout@(checkoutPlanName is { Length: > 0 } ? " on " + checkoutPlanName : "") <span aria-hidden="true">→</span></button></div>
             </form>
         }
         else
@@ -63,7 +63,7 @@
                 <div class="ts-field"><label class="ts-label" for="region">Primary region</label>
                     @{ var regions = Model.Regions ?? []; var selectedRegion = Model.Region.Length > 0 ? Model.Region : regions.FirstOrDefault() ?? ""; }
                     @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.RegionPicker, RegionMapField>(new("region", selectedRegion, Available: regions)))
-                    <select class="ts-select" id="region" name="region" required aria-describedby="@(regions.Count == 0 ? "region-error" : null)">@if (selectedRegion.Length > 0 && !regions.Contains(selectedRegion)) { <option value="@selectedRegion" selected>@selectedRegion · Unavailable</option> }@foreach (var code in regions) { <option value="@code" selected="@(code == selectedRegion ? "selected" : null)">@code · @TerraScale.Dashboard.Common.UI.Regions.Name(code)</option> }</select>@if (regions.Count == 0) { <p class="ts-field-error" id="region-error">Serving regions could not be loaded. Reload this page to try again.</p> }
+                    <select class="ts-select" id="region" name="region" required aria-describedby="@(regions.Count == 0 ? "region-error" : null)">@if (selectedRegion.Length > 0 && !regions.Contains(selectedRegion)) { <option value="@selectedRegion" selected>@selectedRegion · @TerraScale.Dashboard.Common.UI.Regions.Name(selectedRegion) · Unavailable</option> }@foreach (var code in regions) { <option value="@code" selected="@(code == selectedRegion ? "selected" : null)">@code · @TerraScale.Dashboard.Common.UI.Regions.Name(code)</option> }</select>@if (regions.Count == 0) { <p class="ts-field-error" id="region-error">Serving regions could not be loaded. <a class="ts-link" href="/onboarding">Try again</a></p> }
                 </div>
                 <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project and open Dashboard <span aria-hidden="true">→</span></button></div>
             </form>

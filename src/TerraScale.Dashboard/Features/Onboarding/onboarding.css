@@ -247,6 +247,17 @@
   display: inline-flex;
 }
 
+.ts-onboarding-plans:has(#plan-free:checked) ~ .ts-onboarding-footer .ts-onboarding-submit[data-plan=free],
+.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-footer .ts-onboarding-submit[data-plan=paid] {
+  background: var(--ts-primary);
+  color: var(--ts-on-primary);
+}
+
+.ts-onboarding-plans:has(#plan-free:checked) ~ .ts-onboarding-footer .ts-onboarding-submit[data-plan=free]:hover,
+.ts-onboarding-plans:has(#plan-free:not(:checked)) ~ .ts-onboarding-footer .ts-onboarding-submit[data-plan=paid]:hover {
+  background: var(--ts-primary-hover);
+}
+
 @media (max-width: 30rem) {
   .ts-onboarding-progress {
     margin-inline: calc(var(--ts-s5) + 1px);

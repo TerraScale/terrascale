@@ -36,7 +36,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 var starter = page.Locator("input[name=plan][value=starter]");
                 await page.Locator("label").Filter(new() { Has = starter }).ClickAsync();
                 await Assert.That(await starter.IsCheckedAsync()).IsTrue();
-                await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue to checkout");
+                await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue to checkout on Starter");
                 await page.Locator("#projectName").FillAsync("Plan project " + suffix);
                 await page.Locator("#region").SelectOptionAsync("GRU");
                 await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard");
