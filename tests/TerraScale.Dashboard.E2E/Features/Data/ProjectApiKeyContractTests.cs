@@ -57,8 +57,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(wire.Methods).IsEquivalentTo(new[] { HttpMethod.Get, HttpMethod.Get, HttpMethod.Delete }, CollectionOrdering.Matching);
         }
 
-        // Repeated revokes succeed (revoke_api_key is Idempotent); ts-auth's 404 is scoped to this
-        // organization and project, so it means "already revoked here" and never leaks other tenants'.
         [Test]
         public async Task RepeatedRevokeSucceedsInsteadOfSurfacingNotFound()
         {
@@ -177,8 +175,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             return app;
         }
 
-        // A refused allowlist edit keeps what the user typed, shows the reason inline next to the field,
-        // and reopens the edited key's dialog (ku TS-1233).
         [Test]
         public async Task InvalidAllowedCidrsEditKeepsTheSubmittedTextAndReopensTheDialog()
         {
@@ -209,14 +205,12 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             {
                 var html = await refused.Content.ReadAsStringAsync();
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-                // Razor encodes the textarea's newline as &#xA;, so assert on the decoded text the user sees.
                 await Assert.That(WebUtility.HtmlDecode(html)).Contains("203.0.113.0/24\n999.999.999.999");
                 await Assert.That(html).Contains("id=\"cidrs-" + keyId + "-error\"");
                 await Assert.That(html).Contains("data-init=\"el.showModal()\"");
             }
         }
 
-        // The browser form journey: a same-origin navigational post the dashboard answers with HTML.
         private static async Task<HttpResponseMessage> PostHtmlFormAsync(HttpClient client, string path, Dictionary<string, string> body)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(body) };

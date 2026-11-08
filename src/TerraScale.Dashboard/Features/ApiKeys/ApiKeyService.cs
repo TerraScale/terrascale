@@ -186,9 +186,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return saved;
         }
 
-        // Idempotent, as revoke_api_key promises: ts-auth answers 404 only for ids outside this caller's
-        // organization and project — already revoked, never issued or another tenant's alike — so that answer
-        // is success and reveals nothing. Returns true only when this call revoked the key.
         public async Task<bool> RevokeAsync(AccountContext context, string keyId, CancellationToken cancellationToken)
         {
             if (!context.CanManage)
@@ -496,7 +493,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     {
         private static readonly string[] FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
         public string Warning { get; init; } = "";
-        // The key whose allowlist dialog reopens with DraftAllowedCidrs after a refused edit.
         public string DraftKeyCidrs { get; init; } = "";
         public static string Lines(IReadOnlyList<string>? cidrs)
         {
