@@ -20,6 +20,7 @@ on:
       - 'global.json'
       - 'NuGet.config'
       - 'Makefile'
+      - '.github/actions/**'
       - '.github/workflows/dashboard-ci.yml'
       - '.github/workflows/images-ghcr.yml'
       - '!**/AGENTS.md'
