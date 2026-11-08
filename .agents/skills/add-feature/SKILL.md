@@ -39,7 +39,7 @@ A feature folder holds its endpoints, records, services, options, storage and re
 2. **Storage.** Application data lives in TerraBase SQL tables: one table per entity type, one row per record; IDs are ULIDs. TerraBase internals go through `Engine/` interfaces. No in-memory or local-file stores.
 3. **Endpoint and service.** Behavior behind DI interfaces; the endpoint stays thin.
 4. **SDKs.** After the producer contract exists, add the operation to every SDK that exposes the area. See the `sdk-parity` skill.
-5. **UI.** Dashboard or auth screens follow `.agents/skills/simple-ui/SKILL.md`. Take before/after screenshots.
+5. **UI.** Dashboard or auth screens follow `.agents/skills/simple-ui/SKILL.md`. Take before/after screenshots and show them in your T3 thread (simple-ui, Proof).
 6. **Docs.** Update the API, storage or auth doc for the behavior you changed. New docs get a new file listed in their area index.
 
 ## 4. Rules that catch most reviews
