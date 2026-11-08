@@ -1,5 +1,6 @@
 using Bogus;
 using Npgsql;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 using static TerraBase.Testing.PostgresSql;
 
@@ -237,6 +238,38 @@ public sealed class PostgresWireTests
 
         await Assert.That(refused!.SqlState).IsEqualTo("22023");
         await Assert.That(shown[0][0]).IsEqualTo("UTC");
+    }
+
+    // An organization key acts in the project its database name carries: its own organization's projects only (TS-1311).
+    [Test]
+    public async Task An_organization_key_connects_to_databases_of_its_own_projects_only()
+    {
+        await using var api = await ManagementApi.StartSharedAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        var other = await api.CreateManagedDatabaseAsync();
+        var key = OrganizationKey(api, database);
+
+        await using var connected = Source(api, key, $"{database.Project}/{database.Name}");
+        await using var connection = await connected.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand("SELECT 1", connection);
+        await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(1L);
+
+        var refused = await OpenFailureAsync(api, key, $"{other.Project}/{other.Name}");
+        await Assert.That(refused!.SqlState).IsEqualTo("28P01");
+    }
+
+    private static string OrganizationKey(ManagementApi api, ManagedDatabaseRef database)
+    {
+        var id = EntityIds.New().ToString();
+        var key = id + "_" + Faker.Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
+        api.Issuer.GrantClient(key, requested => requested == database.Project ? api.Issuer.Mint(id, token =>
+        {
+            token.Claims["key_id"] = id;
+            token.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
+            token.Claims["project_id"] = database.Project;
+            token.Claims["scope"] = "sql:read sql:write";
+        }) : null);
+        return key;
     }
 
     private static async Task<PostgresException?> OpenFailureAsync(ManagementApi api, string key, string database)
