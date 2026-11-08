@@ -1,5 +1,5 @@
 {
-  "serverCommit": "e7fa366ddb289f5612c93d316b316fb92c568151",
+  "serverCommit": "667e7e31c38600b60289a3e82326796ae8cdfb92",
   "scope": "ApiReferenceExtensions.ShouldInclude + docs/terrabase/api.md; mapped public operations only; retained SQL-era subset",
   "operations": [
     {"method": "GET", "path": "/backupz", "operation": "backupz", "source": "src/TerraBase/Features/Backup/BackupHealthEndpoint.cs", "line": 22},
@@ -22,6 +22,7 @@
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/backups", "operation": "createBackup", "source": "src/TerraBase/Features/Management/Backups/CreateBackupEndpoint.cs", "line": 15},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/backups/{backup}/restore", "operation": "restoreBackup", "source": "src/TerraBase/Features/Management/Backups/RestoreBackupEndpoint.cs", "line": 15},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/branches", "operation": "branchDatabase", "source": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs", "line": 15},
+    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/restores/{operation}", "operation": "getRestoreOperation", "source": "src/TerraBase/Features/Management/Backups/GetRestoreOperationEndpoint.cs", "line": 13},
     {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/point-in-time", "operation": "getRestoreWindow", "source": "src/TerraBase/Features/Management/Backups/GetRestoreWindowEndpoint.cs", "line": 18},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/point-in-time/plan", "operation": "planPointInTime", "source": "src/TerraBase/Features/Management/Backups/PlanPointInTimeEndpoint.cs", "line": 22},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/point-in-time/restore", "operation": "restorePointInTime", "source": "src/TerraBase/Features/Management/Backups/RestorePointInTimeEndpoint.cs", "line": 17},

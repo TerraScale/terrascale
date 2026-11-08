@@ -13,16 +13,17 @@
     }
   },
   "response": {
-    "status": 201,
+    "status": 202,
     "body": {
-      "id": "01JA0000000000000000000005",
-      "projectId": "01JA0000000000000000000001",
-      "name": "agent-restore",
-      "branchedFrom": "01JA0000000000000000000004",
-      "createdAt": "2026-11-04T12:00:00+00:00",
-      "region": "gru",
-      "homeRegion": "gru",
-      "expiresAt": "2026-11-04T13:00:00+00:00"
+      "id": "01JA0000000000000000000006",
+      "operationId": "01JA0000000000000000000006",
+      "status": "running",
+      "kind": "point-in-time",
+      "database": "agent-restore",
+      "errorCode": null,
+      "errorMessage": null,
+      "createdAt": "2026-11-04T11:30:01+00:00",
+      "finishedAt": null
     }
   }
 }

@@ -1,0 +1,21 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/v1/projects/01JA0000000000000000000001/databases/agent-restore",
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "01JA0000000000000000000005",
+      "projectId": "01JA0000000000000000000001",
+      "name": "agent-restore",
+      "branchedFrom": "01JA0000000000000000000004",
+      "createdAt": "2026-11-04T12:00:00+00:00",
+      "region": "gru",
+      "homeRegion": "gru",
+      "expiresAt": "2026-11-04T13:00:00+00:00"
+    }
+  }
+}

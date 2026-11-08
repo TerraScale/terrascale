@@ -34,6 +34,7 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseHistoryErasure))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseProject>))]
 [JsonSerializable(typeof(TerraBaseManagedDatabase))]
+[JsonSerializable(typeof(TerraBaseRestoreOperation))]
 [JsonSerializable(typeof(TerraBaseAgentDatabaseRequest))]
 [JsonSerializable(typeof(TerraBaseScopedKeyRequest))]
 [JsonSerializable(typeof(TerraBaseScopedKey))]

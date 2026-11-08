@@ -1,0 +1,22 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/v1/projects/01JA0000000000000000000001/databases/01JA0000000000000000000004/restores/01JA0000000000000000000006",
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "01JA0000000000000000000006",
+      "operationId": "01JA0000000000000000000006",
+      "status": "completed",
+      "kind": "point-in-time",
+      "database": "agent-restore",
+      "errorCode": null,
+      "errorMessage": null,
+      "createdAt": "2026-11-04T11:30:01+00:00",
+      "finishedAt": "2026-11-04T11:30:05+00:00"
+    }
+  }
+}

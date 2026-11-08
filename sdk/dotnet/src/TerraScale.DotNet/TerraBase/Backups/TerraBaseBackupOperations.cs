@@ -1,3 +1,9 @@
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+
 namespace TerraScale.DotNet.TerraBase;
 
 /// <summary>A registered, completed snapshot.</summary>
@@ -41,6 +47,47 @@ public sealed record TerraBasePointInTimePlan(TerraBaseRestoreWindow Window, Dat
 public sealed record TerraBaseRestoredDatabase(string Id, string ProjectId, string Name, string? BranchedFrom,
     DateTimeOffset CreatedAt, string? HomeRegion = null);
 
+/// <summary>A background restore started by a restore route; read it with <see cref="TerraBaseDatabase.GetRestoreOperationAsync"/>.</summary>
+/// <param name="Id">Operation ULID.</param>
+/// <param name="OperationId">Operation ULID, identical to <paramref name="Id"/>.</param>
+/// <param name="Status">running, completed or failed.</param>
+/// <param name="Kind">backup or point-in-time.</param>
+/// <param name="Database">Name of the source (running) or restored (completed) database.</param>
+/// <param name="ErrorCode">Failure code when <paramref name="Status"/> is failed.</param>
+/// <param name="ErrorMessage">Failure explanation when <paramref name="Status"/> is failed.</param>
+/// <param name="CreatedAt">Start time.</param>
+/// <param name="FinishedAt">Terminal time, or null while running.</param>
+public sealed record TerraBaseRestoreOperation(string Id, string OperationId, string Status, string Kind, string Database,
+    string? ErrorCode = null, string? ErrorMessage = null, DateTimeOffset CreatedAt = default, DateTimeOffset? FinishedAt = null);
+
+internal static class TerraBaseRestore
+{
+    private static readonly TimeSpan Deadline = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(250);
+
+    internal static async Task<T> CompleteAsync<T>(TerraBaseConnection connection, string databasePath, string projectPath,
+        TerraBaseRestoreOperation operation, JsonTypeInfo<T> database, CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow.Add(Deadline);
+        while (operation.Status == "running")
+        {
+            if (DateTimeOffset.UtcNow >= deadline)
+                throw new TerraBaseException(HttpStatusCode.GatewayTimeout, "The restore operation did not finish within ten minutes.", "restore_timeout", null);
+            await Task.Delay(Interval, cancellationToken).ConfigureAwait(false);
+            operation = await ReadAsync(connection, databasePath, operation.Id, cancellationToken).ConfigureAwait(false);
+        }
+        if (operation.Status != "completed")
+            throw new TerraBaseException(HttpStatusCode.OK, operation.ErrorMessage ?? "The restore operation failed.", operation.ErrorCode ?? "restore_failed", null);
+        return (await connection.SendAsync(HttpMethod.Get,
+            projectPath + "/databases/" + TerraBaseConnection.Segment(operation.Database, "database"), null, database, null, cancellationToken).ConfigureAwait(false)).Value;
+    }
+
+    internal static async Task<TerraBaseRestoreOperation> ReadAsync(TerraBaseConnection connection, string databasePath,
+        string operationId, CancellationToken cancellationToken) =>
+        (await connection.SendAsync(HttpMethod.Get, databasePath + "/restores/" + TerraScaleIds.Validate(operationId, nameof(operationId)),
+            null, TerraBaseJsonContext.Wire.TerraBaseRestoreOperation, null, cancellationToken).ConfigureAwait(false)).Value;
+}
+
 internal sealed record TerraBaseBackupPolicyRequest(string? FullBackupCron, int RetentionDays, bool Disabled);
 internal sealed record TerraBasePointInTimeRequest(DateTimeOffset PointInTime, string? Name, string? Destination);
 
@@ -55,10 +102,17 @@ public sealed partial class TerraBaseDatabase
         (await connection.SendAsync(HttpMethod.Get, path + "/backups" + TerraBaseConnection.Query(("after", after), ("limit", TerraBaseConnection.Number(limit))),
             null, Json.TerraBasePageTerraBaseBackup, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>Restores a snapshot into a new database; an omitted name selects a free source-restore name. Requires databases:write; sent once.</summary>
-    public async Task<TerraBaseRestoredDatabase> RestoreBackupAsync(string backupId, string? name = null, CancellationToken cancellationToken = default) =>
-        (await connection.SendAsync(HttpMethod.Post, path + "/backups/" + TerraScaleIds.Validate(backupId) + "/restore",
-            TerraBaseConnection.Json(new RequestBody { Name = name }, Json.RequestBody), Json.TerraBaseRestoredDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
+    /// <summary>Starts restoring a snapshot into a new database, polls the operation to its ten-minute deadline and returns the restored database; an omitted name selects a free source-restore name. Requires databases:write for the restore and databases:read for the poll; sent once.</summary>
+    public async Task<TerraBaseRestoredDatabase> RestoreBackupAsync(string backupId, string? name = null, CancellationToken cancellationToken = default)
+    {
+        var operation = await connection.SendAsync(HttpMethod.Post, path + "/backups/" + TerraScaleIds.Validate(backupId) + "/restore",
+            TerraBaseConnection.Json(new RequestBody { Name = name }, Json.RequestBody), Json.TerraBaseRestoreOperation, null, cancellationToken).ConfigureAwait(false);
+        return await TerraBaseRestore.CompleteAsync(connection, path, projectPath, operation.Value, Json.TerraBaseRestoredDatabase, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Reads a background restore operation of this database. Requires databases:read.</summary>
+    public Task<TerraBaseRestoreOperation> GetRestoreOperationAsync(string operationId, CancellationToken cancellationToken = default) =>
+        TerraBaseRestore.ReadAsync(connection, path, operationId, cancellationToken);
 
     /// <summary>Reads the snapshot policy, including the default when unsaved. Requires databases:read.</summary>
     public async Task<TerraBaseBackupPolicy> GetBackupPolicyAsync(CancellationToken cancellationToken = default) =>
@@ -81,9 +135,12 @@ public sealed partial class TerraBaseDatabase
             TerraBaseConnection.Json(new TerraBasePointInTimeRequest(pointInTime, null, destination), Json.TerraBasePointInTimeRequest),
             Json.TerraBasePointInTimePlan, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>Restores platform (default) or customer backup into a new database. Requires databases:write; sent once.</summary>
-    public async Task<TerraBaseRestoredDatabase> RestorePointInTimeAsync(DateTimeOffset pointInTime, string? name = null, string? destination = null, CancellationToken cancellationToken = default) =>
-        (await connection.SendAsync(HttpMethod.Post, path + "/point-in-time/restore",
+    /// <summary>Starts restoring platform (default) or customer backup into a new database, polls the operation to its ten-minute deadline and returns the restored database. Requires databases:write for the restore and databases:read for the poll; sent once.</summary>
+    public async Task<TerraBaseRestoredDatabase> RestorePointInTimeAsync(DateTimeOffset pointInTime, string? name = null, string? destination = null, CancellationToken cancellationToken = default)
+    {
+        var operation = await connection.SendAsync(HttpMethod.Post, path + "/point-in-time/restore",
             TerraBaseConnection.Json(new TerraBasePointInTimeRequest(pointInTime, name, destination), Json.TerraBasePointInTimeRequest),
-            Json.TerraBaseRestoredDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
+            Json.TerraBaseRestoreOperation, null, cancellationToken).ConfigureAwait(false);
+        return await TerraBaseRestore.CompleteAsync(connection, path, projectPath, operation.Value, Json.TerraBaseRestoredDatabase, cancellationToken).ConfigureAwait(false);
+    }
 }

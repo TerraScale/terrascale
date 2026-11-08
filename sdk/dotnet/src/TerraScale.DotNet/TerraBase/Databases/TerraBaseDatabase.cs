@@ -65,7 +65,8 @@ public sealed class TerraBaseDatabaseClient
 
     /// <summary>Addresses one database: <paramref name="databaseName"/> in project <paramref name="projectId"/> of the key's organization.</summary>
     public TerraBaseDatabase Database(string projectId, string databaseName) =>
-        new(connection, $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}/databases/{TerraBaseConnection.Segment(databaseName, nameof(databaseName))}");
+        new(connection, $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}/databases/{TerraBaseConnection.Segment(databaseName, nameof(databaseName))}",
+            $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}");
 }
 
 /// <summary>A database as its idempotent create returns it.</summary>
@@ -81,11 +82,13 @@ public sealed partial class TerraBaseDatabase
 
     private readonly TerraBaseConnection connection;
     private readonly string path;
+    private readonly string projectPath;
 
-    internal TerraBaseDatabase(TerraBaseConnection connection, string path)
+    internal TerraBaseDatabase(TerraBaseConnection connection, string path, string projectPath)
     {
         this.connection = connection;
         this.path = path;
+        this.projectPath = projectPath;
     }
 
     /// <summary>
