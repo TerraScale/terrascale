@@ -90,6 +90,18 @@ Refresh tokens rotate on every use. The initial project refresh token expires at
 
 A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project tokens are for your own application: TerraScale's APIs do not accept them.
 
+### Run the sample app
+
+A runnable browser app implementing this whole flow lives in [`examples/oidc-customer-app`](https://github.com/TerraScale/terrascale/tree/main/docs-site/examples/oidc-customer-app): authorization, callback with `state` and `nonce` checks, PKCE (`S256`), ID token validation against the issuer JWKS, token refresh and sign-out, all discovery-based. To run it:
+
+```sh
+cd docs-site/examples/oidc-customer-app
+npm install
+npm start
+```
+
+Copy `.env.example` to `.env` first and fill in your project issuer and OAuth client ID; see the example's README.
+
 ## Manage users
 
 The dashboard lists your project's users with search. For each user you can see their sessions, end a session, **disable** them or **delete** them. Disabling a user ends every session and stops their refresh tokens at once; access tokens already issued stay valid until they expire, at most 5 minutes. Deleting a user removes the account; the address can sign up again.
