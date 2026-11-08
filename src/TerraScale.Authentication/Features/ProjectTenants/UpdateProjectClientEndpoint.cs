@@ -6,18 +6,15 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary><c>PUT /v1/{project}/clients/{client_id}</c>.</summary>
 public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenIddictApplicationManager applications, PlatformAuthentication authentication,
     ProjectAuthSettings settings, StepUpProofs proofs) : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(Root + "/clients/{client_id}");
         this.Describe("update_project_client", "Update an OAuth client", "Changes a client's display name and redirect URIs; its client_id stays the same and no secret is answered. redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments, and each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty. Needs the admin project role.", "Project tenants", typeof(UpdateClientRequest), StatusCodes.Status200OK, typeof(ClientBody));
     }
 
-    /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);

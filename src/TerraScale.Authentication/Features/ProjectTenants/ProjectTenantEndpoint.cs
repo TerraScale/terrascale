@@ -65,7 +65,6 @@ public sealed record ClientPageBody(IReadOnlyList<ClientBody> Items, string? Nex
 /// <summary><c>POST /v1/{project}/clients</c>.</summary>
 public sealed record CreateClientRequest(string? Name, string? Type, IReadOnlyList<string>? RedirectUris);
 
-/// <summary><c>PUT /v1/{project}/clients/{client_id}</c>.</summary>
 public sealed record UpdateClientRequest(string? Name, IReadOnlyList<string>? RedirectUris);
 
 /// <summary>
@@ -112,7 +111,6 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
     protected static ClientBody Map(OidcApplication client, string? secret = null) => new(client.ClientId!, client.DisplayName ?? string.Empty, client.ClientType!,
         [.. client.RedirectUris], NUlid.Ulid.Parse(client.ClientId).Time, secret);
 
-    /// <summary>An absolute https redirect URI, or http on a loopback host, without userinfo or fragments.</summary>
     protected static Uri? ClientRedirect(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) && string.IsNullOrEmpty(uri.UserInfo) && !value.Contains('#', StringComparison.Ordinal)
         && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback) ? uri : null;
