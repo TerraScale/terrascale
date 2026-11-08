@@ -56,22 +56,39 @@ class Fake:
             if m:
                 return self._clients(request, m.group(1), m.group(2), m.group(3) == "/secret/rotate")
             return self._token(request)
+        path = unquote(request.url.raw_path.split(b"?")[0].decode())
+        path = unquote(request.url.raw_path.split(b"?")[0].decode())
         auth = request.headers.get("authorization", "")
+        if path == "/v1/regions":
+            if request.method != "GET" or auth:
+                return self._err(405, "unknown_route")
+            return httpx.Response(200, json={"regions": ["gru", "sjc"]})
         if not auth.startswith("Bearer ") or auth[7:] in self.reject_tokens or auth[7:] == API_KEY:
             return self._err(401, "invalid_key")
         if self.fail_next:
             status, body, headers = self.fail_next.pop(0)
             return httpx.Response(status, json=body, headers=headers)
-        path = unquote(request.url.raw_path.split(b"?")[0].decode())
         m = re.fullmatch(r"/v1/projects/([^/]+)/databases(?:/([^/]+))?(/.*)?", path)
-        if not m or m.group(1) != PROJECT:
+        if m and m.group(1) != PROJECT:
             return self._err(404, "unknown_route")
+        if m is None:
+            m2 = re.fullmatch(r"/v1/projects/([^/]+)/(analytics|metrics)", path)
+            if not m2 or m2.group(1) != PROJECT or request.method != "GET":
+                return self._err(404, "unknown_route")
+            if m2.group(2) == "metrics":
+                return httpx.Response(200, text="terrabase_requests_total 1\n",
+                                      headers={"content-type": "text/plain; version=0.0.4; charset=utf-8"})
+            return httpx.Response(200, json=self._analytics("01J" + "B" * 23))
         db, rest = m.group(2), m.group(3) or ""
         body = json.loads(request.content) if request.content else None
         if db is None:
             return self._databases(request, body)
         if rest == "":
             return self._database(request, db, body)
+        if rest == "/usage":
+            return httpx.Response(200, json=self._usage("01J" + "C" * 23))
+        if rest == "/analytics":
+            return httpx.Response(200, json=self._analytics("01J" + "C" * 23))
         if rest == "/branches" and db in self.databases:
             source = self.databases[db]
             self.databases[body["name"]] = {**source, "id": new_id(), "name": body["name"], "branchedFrom": source["id"]}
@@ -96,6 +113,25 @@ class Fake:
 
     def _bearer(self, request: httpx.Request) -> bool:
         return request.headers.get("authorization", "").startswith("Bearer tok-")
+
+    @staticmethod
+    def _usage(database_id: str) -> dict[str, Any]:
+        return {"databaseId": database_id, "storageBytes": 1024, "logicalBytes": 1024, "reads": 3, "writes": 1,
+                "period": {"from": "2026-10-07T00:00:00Z", "to": "2026-10-08T00:00:00Z", "granularity": "hour",
+                           "reads": 3, "writes": 1},
+                "series": [{"start": "2026-10-07T00:00:00Z", "reads": 3, "writes": 1}]}
+
+    @staticmethod
+    def _analytics(project_id: str) -> dict[str, Any]:
+        return {"projectId": project_id, "range": "24h", "from": "2026-10-07T00:00:00Z",
+                "to": "2026-10-08T00:00:00Z", "bucketSeconds": 3600,
+                "items": [{"databaseId": "01J" + "C" * 23, "databaseName": "main", "region": "gru",
+                           "series": [{"start": "2026-10-07T00:00:00Z", "requests": {"GET": 2},
+                                       "operations": {"insert": 1}, "errors": 0,
+                                       "latency": {"p50Ms": 1.5, "p95Ms": None, "p99Ms": None},
+                                       "storageBytes": None,
+                                       "clientBandwidth": {"bytesSent": 10, "bytesReceived": 20},
+                                       "replicationBandwidth": {"bytesSent": 0, "bytesReceived": 0}}]}]}
 
     def _api_keys(self, request: httpx.Request, org: str, project: str | None, key: str | None) -> httpx.Response:
         if not self._bearer(request):

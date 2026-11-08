@@ -110,8 +110,10 @@ class AsyncTerraScale:
         resends = 0
         while True:
             direct = "Authorization" in call.headers
-            token = "" if direct else await self._bearer()
-            headers = dict(call.headers) if direct else {**self._headers, **call.headers, "Authorization": f"Bearer {token}"}
+            token = "" if direct or call.anonymous else await self._bearer()
+            headers = dict(call.headers) if direct else {**self._headers, **call.headers}
+            if not direct and not call.anonymous:
+                headers["Authorization"] = f"Bearer {token}"
             if content is not None:
                 headers["Content-Type"] = call.content_type
             try:
@@ -207,6 +209,10 @@ class AsyncTerraScale:
 
     async def list_databases(self, *, limit: int | None = None, cursor: str | None = None) -> models.DatabasePage:
         return await self._send(_spec.list_databases(self.project, limit, cursor))
+
+    async def list_regions(self) -> models.Regions:
+        """The anonymous ordered serving-region catalog, sent without a bearer token."""
+        return await self._send(_spec.list_regions())
 
     async def rename_database(self, database_id: str, name: str) -> models.Database:
         """Rename by immutable ULID or current name with ``databases:write``; return metadata.

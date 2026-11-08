@@ -17,8 +17,25 @@ __all__ = [
     "ProjectClient",
     "ProjectClientPage",
     "ProjectClientSecret",
+    "Regions",
     "ScopedKey",
 ]
+
+
+@dataclass(frozen=True)
+class Regions:
+    """The ordered serving-region catalog; anonymous placement metadata, not a routing policy."""
+
+    regions: list[str]
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> Regions:
+        regions = body.get("regions")
+        if not isinstance(regions, list) or not regions or any(not isinstance(r, str) or not r for r in regions):
+            raise ValueError("invalid region catalog")
+        if any(regions[i - 1] >= regions[i] for i in range(1, len(regions))):
+            raise ValueError("invalid region catalog")
+        return cls(list(regions))
 
 
 @dataclass(frozen=True)

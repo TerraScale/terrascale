@@ -28,5 +28,8 @@ the database report includes its own series. `file_bytes` is `None` if omitted.
 
 Usage reads/writes are best-effort dashboard observations, not billed units.
 `month` contains billed project units and organization units for the current
-UTC month, including databases deleted since. Analytics routes are outside
-this chunk.
+UTC month, including databases deleted since. `AnalyticsQuery` adds project
+and database analytics over a fixed 1h/24h/7d/30d range, and
+`get_project_metrics()` returns the Prometheus text exposition of the same
+observations. `client.list_regions()` reads the anonymous serving-region
+catalog without a bearer token.

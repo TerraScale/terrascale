@@ -12,7 +12,7 @@ import { members } from "./management-validation.js";
 import { object, string } from "./decode.js";
 import { stringifyExactJson } from "./json.js";
 import { V1Transport } from "./transport.js";
-import { V1Health, V1Platform } from "./system.js";
+import { V1Health, V1Platform, V1Regions } from "./system.js";
 import { V1Backups, V1BackupDestinationClient } from "./backups.js";
 import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
 import { V1SavedQueries } from "./saved-queries.js";
@@ -125,6 +125,8 @@ export class TerraBaseV1Client {
   #health;
   /** @type {V1Platform} */
   #platform;
+  /** @type {V1Regions} */
+  #regions;
   /** @type {V1BackupDestinationClient} */
   #backupDestination;
   /** @type {V1ProjectUsageClient} */
@@ -154,6 +156,7 @@ export class TerraBaseV1Client {
     this.#backupDestination = new V1BackupDestinationClient(this.#transport);
     this.#health = new V1Health(this.#transport);
     this.#platform = new V1Platform(this.#transport);
+    this.#regions = new V1Regions(this.#transport);
     Object.freeze(this);
   }
 
@@ -289,6 +292,8 @@ export class TerraBaseV1Client {
   get health() { return this.#health; }
   /** @returns {V1Platform} */
   get platform() { return this.#platform; }
+  /** @returns {V1Regions} */
+  get regions() { return this.#regions; }
 }
 
 /**

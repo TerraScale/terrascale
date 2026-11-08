@@ -51,6 +51,7 @@ class Call:
     base_url: str | None = None
     timeout: httpx.Timeout | None = None
     resend_codes: frozenset[str] = frozenset()
+    anonymous: bool = False
 
     def decode(self, response: httpx.Response) -> Any:
         try:
@@ -59,6 +60,8 @@ class Call:
             if self.parse is _none and response.content:
                 raise ValueError("unexpected body on a bodyless response")
             if self.parse is not _none:
+                if response.headers.get("content-type", "").startswith("text/"):
+                    return self.parse(response)
                 body = response.json()
                 if not isinstance(body, dict) or not body or "error" in body:
                     raise ValueError("expected a nonempty object")
@@ -135,6 +138,10 @@ def _page_params(limit: int | None, cursor: str | None) -> dict[str, str]:
 
 
 # Databases ---------------------------------------------------------------
+
+def list_regions() -> Call:
+    return Call("GET", ["v1", "regions"], lambda r: models.Regions.from_json(r.json()), replay_safe=True,
+                anonymous=True)
 
 def _db(project: str, db: str, *extra: str) -> list[str]:
     return ["v1", "projects", project, "databases", db, *extra]

@@ -1,4 +1,4 @@
-/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery" | "listRegions"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
@@ -35,14 +35,16 @@ export const managementV1Routes = Object.freeze([
   route("getSavedQuery", "GET", `${saved}/{query}`),
   route("updateSavedQuery", "PUT", `${saved}/{query}`),
   route("deleteSavedQuery", "DELETE", `${saved}/{query}`, 204),
+  route("listRegions", "GET", "/v1/regions"),
 ]);
 
 /** @param {ManagementOperation} operation @param {import("./routes.js").V1Route["method"]} method @param {string} pathTemplate @param {number} [status] @returns {import("./routes.js").V1Route} */
 function route(operation, method, pathTemplate, status = 200) {
   const write = method !== "GET" && operation !== "planPointInTime";
+  const anonymous = operation === "listRegions";
   const sql = operation === "executeSql" || operation === "exportDatabase" || operation === "readTableShape" || operation === "getShapeManifest" || operation === "getShapeKey" || operation === "connectSql" || operation === "connectShapeHints";
   return Object.freeze({ operation, method, pathTemplate,
-    permission: sql ? "sql:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
+    permission: sql ? "sql:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : anonymous || !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
     additionalPermissions: Object.freeze([]),
     requestMediaTypes: Object.freeze(operation === "createBackup" ? [] : method === "POST" || method === "PUT" || method === "PATCH" ? ["application/json"] : []),
     responseMediaType: status === 204 || status === 101 ? "" : operation === "exportDatabase" ? "text/plain" : "application/json", successStatuses: Object.freeze(operation === "readTableShape" ? [200, 307] : operation === "readyz" || operation === "backupz" ? [200, 503] : [status]),

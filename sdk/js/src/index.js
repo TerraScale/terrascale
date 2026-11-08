@@ -72,7 +72,7 @@ export { V1Backups, V1BackupDestinationClient } from "./v1/backups.js";
 /** @typedef {import("./v1/backups.js").V1PointInTimeRestoreRequest} V1PointInTimeRestoreRequest */
 /** @typedef {import("./v1/backups.js").V1BackupDestinationRequest} V1BackupDestinationRequest */
 
-export { createTerraBaseSystemClient, V1Health, V1Platform } from "./v1/system.js";
+export { createTerraBaseSystemClient, V1Health, V1Platform, V1Regions } from "./v1/system.js";
 /** @typedef {import("./v1/system.js").TerraBaseSystemClientConfig} TerraBaseSystemClientConfig */
 /** @typedef {import("./v1/system.js").V1ProbeStatus} V1ProbeStatus */
 /** @typedef {import("./v1/system.js").V1PlatformDatabases} V1PlatformDatabases */
