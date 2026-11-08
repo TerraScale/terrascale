@@ -54,6 +54,51 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{root}/clients", token)).GetProperty("items").GetArrayLength()).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task Admins_update_a_clients_name_and_redirects_without_changing_its_client_id()
+    {
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var (_, token, _, root) = await this.ProjectAsync(oidc);
+        var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token,
+            new { name = this.faker.Company.CompanyName(), type = "public", redirect_uris = new[] { "https://app.example.test/callback" } }, HttpStatusCode.Created);
+        var clientId = created.GetProperty("client_id").GetString()!;
+
+        var updated = await oidc.OkAsync(HttpMethod.Put, $"{root}/clients/{clientId}", token,
+            new { name = "Renamed app", redirect_uris = new[] { "https://app.example.test/changed", "http://localhost:3000/cb" } });
+        await Assert.That(updated.GetProperty("client_id").GetString()).IsEqualTo(clientId);
+        await Assert.That(updated.GetProperty("name").GetString()).IsEqualTo("Renamed app");
+        await Assert.That(updated.GetProperty("redirect_uris").EnumerateArray().Select(uri => uri.GetString()!).ToArray())
+            .IsEquivalentTo(["https://app.example.test/changed", "http://localhost:3000/cb"]);
+        await Assert.That(updated.TryGetProperty("client_secret", out _)).IsFalse();
+        var listed = (await oidc.OkAsync(HttpMethod.Get, $"{root}/clients", token)).GetProperty("items");
+        await Assert.That(listed[0].GetProperty("client_id").GetString()).IsEqualTo(clientId);
+        await Assert.That(listed[0].GetProperty("redirect_uris").EnumerateArray().Select(uri => uri.GetString()!).ToArray())
+            .IsEquivalentTo(["https://app.example.test/changed", "http://localhost:3000/cb"]);
+        await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/clients/{clientId}", token,
+            new { name = "Renamed app", redirect_uris = InsecureRedirect })).IsEqualTo((400, "invalid_request"));
+
+        using var deleted = await oidc.CallAsync(HttpMethod.Delete, $"{root}/clients/{clientId}", token);
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
+    [Test]
+    public async Task Another_projects_admin_gets_404_updating_a_clients_project()
+    {
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var (_, token, _, root) = await this.ProjectAsync(oidc);
+        var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token,
+            new { name = this.faker.Company.CompanyName(), type = "public", redirect_uris = new[] { "https://app.example.test/callback" } }, HttpStatusCode.Created);
+        var clientId = created.GetProperty("client_id").GetString()!;
+        var (_, otherToken, _, _) = await this.ProjectAsync(oidc);
+
+        using var denied = await oidc.CallAsync(HttpMethod.Put, $"{root}/clients/{clientId}", otherToken,
+            new { name = "Hostile rename", redirect_uris = new[] { "https://evil.example.test/callback" } });
+        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+
+        using var deleted = await oidc.CallAsync(HttpMethod.Delete, $"{root}/clients/{clientId}", token);
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
     // An owner signed in, with its sign-in token, an organization and a project.
     private async Task<(UserRecord Owner, string Token, string Project, string Root)> ProjectAsync(OidcHarness oidc)
     {
