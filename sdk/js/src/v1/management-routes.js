@@ -1,5 +1,4 @@
-/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery" | "listRegions"} ManagementOperation */
-const saved = "/v1/projects/{project}/saved-queries";
+/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "listRegions"} ManagementOperation */
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
   route("executeSql", "POST", "/v1/projects/{project}/databases/{database}/sql/execute"),
@@ -30,11 +29,6 @@ export const managementV1Routes = Object.freeze([
   route("getProjectAnalytics", "GET", "/v1/projects/{project}/analytics"),
   route("getDatabaseUsage", "GET", "/v1/projects/{project}/databases/{database}/usage"),
   route("getDatabaseAnalytics", "GET", "/v1/projects/{project}/databases/{database}/analytics"),
-  route("createSavedQuery", "POST", saved, 201),
-  route("listSavedQueries", "GET", saved),
-  route("getSavedQuery", "GET", `${saved}/{query}`),
-  route("updateSavedQuery", "PUT", `${saved}/{query}`),
-  route("deleteSavedQuery", "DELETE", `${saved}/{query}`, 204),
   route("listRegions", "GET", "/v1/regions"),
 ]);
 

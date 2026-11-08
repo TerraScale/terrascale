@@ -30,7 +30,6 @@ export function createTerraScaleManagementClient(config) {
     database: (name) => client.database(name),
     metrics: client.metrics,
     backupDestination: client.backupDestination,
-    savedQueries: client.savedQueries,
   });
 }
 

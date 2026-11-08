@@ -26,7 +26,6 @@ Reviewed 2026-10-26 against Database/Authentication `a3cbf8b1c73d304189a489fa803
 | Backup destination | `backupDestination.get/set/delete` | Database project `/backup-destination`; scoped secret handling |
 | Usage/analytics | `metrics.usage/analytics`, `db.metrics.usage/analytics` | Database project/database usage routes; exact numeric counts retained |
 | SQL | `db.execute/query/batch/connect/shape` | Database `/sql/execute`, `/sql/ws`, `/tables/{table}/shape`; per-statement data scopes |
-| Saved queries | `savedQueries.create/list/get/update/delete` | Database project `/saved-queries`; existing opaque pagination |
 | Platform exploration | Admin `databases` | Database `/v1/platform/databases/...`; server requires platform_role=admin; read-only |
 | Billing/administration actions | Omitted | TS-1104 owns missing public role-protected REST contracts; Dashboard cookie/CSRF checkout/admin routes are not bearer SDK routes |
 

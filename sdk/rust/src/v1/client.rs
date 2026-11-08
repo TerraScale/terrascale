@@ -934,7 +934,6 @@ impl Client {
                 Some(
                     "platform"
                         | "databases"
-                        | "saved-queries"
                         | "metrics"
                         | "buckets"
                         | "backup-destination"

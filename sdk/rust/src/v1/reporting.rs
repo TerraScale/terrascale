@@ -1,22 +1,7 @@
-//! Saved SQL and usage reporting. Responses are generic to retain complete JSON.
-use super::{
-    client::{Client, Req},
-    database::Database,
-    errors::{Error, Result},
-    ids::valid_entity_id,
-};
+//! Usage reporting. Responses are generic to retain complete JSON.
+use super::{client::Client, database::Database, errors::Result};
 use reqwest::{Method, StatusCode};
-use serde::{de::DeserializeOwned, Serialize};
-
-fn saved_query_id(id: &str) -> Result<()> {
-    if valid_entity_id(id) {
-        Ok(())
-    } else {
-        Err(Error::InvalidInput(
-            "saved query must be a canonical uppercase ULID".into(),
-        ))
-    }
-}
+use serde::de::DeserializeOwned;
 impl Client {
     /// `GET P/usage`; query accepts granularity, from and to.
     pub async fn get_project_usage<T: DeserializeOwned>(
@@ -45,69 +30,6 @@ impl Client {
             StatusCode::OK,
         )
         .await
-    }
-    /// `POST P/saved-queries`; body contains name and sql.
-    pub async fn create_saved_query<T: DeserializeOwned>(
-        &self,
-        body: &impl Serialize,
-    ) -> Result<T> {
-        self.management(
-            Method::POST,
-            vec!["v1", "saved-queries"],
-            &[],
-            Some(body),
-            StatusCode::CREATED,
-        )
-        .await
-    }
-    /// `GET P/saved-queries`; management after/next pagination.
-    pub async fn list_saved_queries<T: DeserializeOwned>(
-        &self,
-        query: &[(&str, String)],
-    ) -> Result<T> {
-        self.management(
-            Method::GET,
-            vec!["v1", "saved-queries"],
-            query,
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
-    }
-    /// `GET P/saved-queries/{query}`.
-    pub async fn get_saved_query<T: DeserializeOwned>(&self, id: &str) -> Result<T> {
-        saved_query_id(id)?;
-        self.management(
-            Method::GET,
-            vec!["v1", "saved-queries", id],
-            &[],
-            None::<&()>,
-            StatusCode::OK,
-        )
-        .await
-    }
-    /// `PUT P/saved-queries/{query}`; body contains name and sql.
-    pub async fn update_saved_query<T: DeserializeOwned>(
-        &self,
-        id: &str,
-        body: &impl Serialize,
-    ) -> Result<T> {
-        saved_query_id(id)?;
-        self.management(
-            Method::PUT,
-            vec!["v1", "saved-queries", id],
-            &[],
-            Some(body),
-            StatusCode::OK,
-        )
-        .await
-    }
-    /// `DELETE P/saved-queries/{query}`.
-    pub async fn delete_saved_query(&self, id: &str) -> Result<()> {
-        saved_query_id(id)?;
-        self.send_project(Req::new(Method::DELETE, vec!["v1", "saved-queries", id]))
-            .await?
-            .check_status(&[StatusCode::NO_CONTENT])
     }
 }
 impl Database {
