@@ -439,6 +439,23 @@ if _, err := tx.Exec(ctx, sdk.PostgresQuery{Statement: "INSERT INTO items (id) V
 return tx.Commit(ctx)
 ```
 
+`client.QueryRows(ctx, query)` and `tx.QueryRows` stream instead of buffering:
+iterate with `Next`/`Values`, read `Err`, and `Close` (or exhausting `Next`)
+returns the session; `CommandTag` is valid once `Next` returns false.
+
+```go
+rows, err := client.QueryRows(ctx, sdk.PostgresQuery{Statement: "SELECT id FROM items"})
+if err != nil {
+	return err
+}
+defer rows.Close()
+for rows.Next() {
+	id, _ := rows.Values()[0].Int8()
+	fmt.Println(id)
+}
+return rows.Err()
+```
+
 ## Region latency (`client.Status`)
 
 `RegionLatency.PingURL` is a `*string`: nil means the region has no public
