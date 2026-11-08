@@ -1,47 +1,316 @@
 {
-  "serverCommit": "667e7e31c38600b60289a3e82326796ae8cdfb92",
-  "scope": "ApiReferenceExtensions.ShouldInclude + docs/terrabase/api.md; mapped public operations only; retained SQL-era subset",
+  "serverCommit": "d95bbb36b55acfdf90ca0232cea7a80daaf07dd5",
+  "scope": "TerraBase /openapi/v1.json public inventory (ApiReferenceExtensions.ShouldInclude) at serverCommit",
   "operations": [
-    {"method": "GET", "path": "/backupz", "operation": "backupz", "source": "src/TerraBase/Features/Backup/BackupHealthEndpoint.cs", "line": 22},
-    {"method": "GET", "path": "/healthz", "operation": "status", "source": "src/TerraBase/Features/Health/HealthzEndpoint.cs", "line": 32},
-    {"method": "GET", "path": "/readyz", "operation": "readyz", "source": "src/TerraBase/Features/Health/ReadyzEndpoint.cs", "line": 19},
-    {"method": "GET", "path": "/v1/platform/databases", "operation": "listPlatformDatabases", "source": "src/TerraBase/Features/Platform/ListPlatformDatabasesEndpoint.cs", "line": 16},
-    {"method": "GET", "path": "/v1/projects/{project}/analytics", "operation": "getProjectAnalytics", "source": "src/TerraBase/Features/Management/Usage/GetProjectAnalyticsEndpoint.cs", "line": 13},
-    {"method": "DELETE", "path": "/v1/projects/{project}/backup-destination", "operation": "deleteBackupDestination", "source": "src/TerraBase/Features/Management/Backups/DeleteBackupDestinationEndpoint.cs", "line": 16},
-    {"method": "GET", "path": "/v1/projects/{project}/backup-destination", "operation": "getBackupDestination", "source": "src/TerraBase/Features/Management/Backups/GetBackupDestinationEndpoint.cs", "line": 15},
-    {"method": "PUT", "path": "/v1/projects/{project}/backup-destination", "operation": "setBackupDestination", "source": "src/TerraBase/Features/Management/Backups/SetBackupDestinationEndpoint.cs", "line": 15},
-    {"method": "GET", "path": "/v1/projects/{project}/databases", "operation": "listDatabases", "source": "src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs", "line": 14},
-    {"method": "POST", "path": "/v1/projects/{project}/databases", "operation": "createDatabase", "source": "src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs", "line": 21},
-    {"method": "DELETE", "path": "/v1/projects/{project}/databases/{database}", "operation": "deleteDatabase", "source": "src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs", "line": 16},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}", "operation": "getDatabase", "source": "src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs", "line": 14},
-    {"method": "PATCH", "path": "/v1/projects/{project}/databases/{database}", "operation": "updateDatabase", "source": "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs", "line": 16},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/analytics", "operation": "getDatabaseAnalytics", "source": "src/TerraBase/Features/Management/Usage/GetDatabaseAnalyticsEndpoint.cs", "line": 13},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/backup-policy", "operation": "getBackupPolicy", "source": "src/TerraBase/Features/Management/Backups/GetBackupPolicyEndpoint.cs", "line": 15},
-    {"method": "PUT", "path": "/v1/projects/{project}/databases/{database}/backup-policy", "operation": "setBackupPolicy", "source": "src/TerraBase/Features/Management/Backups/SetBackupPolicyEndpoint.cs", "line": 19},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/backups", "operation": "listBackups", "source": "src/TerraBase/Features/Management/Backups/ListBackupsEndpoint.cs", "line": 15},
-    {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/backups", "operation": "createBackup", "source": "src/TerraBase/Features/Management/Backups/CreateBackupEndpoint.cs", "line": 15},
-    {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/backups/{backup}/restore", "operation": "restoreBackup", "source": "src/TerraBase/Features/Management/Backups/RestoreBackupEndpoint.cs", "line": 15},
-    {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/branches", "operation": "branchDatabase", "source": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs", "line": 15},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/restores/{operation}", "operation": "getRestoreOperation", "source": "src/TerraBase/Features/Management/Backups/GetRestoreOperationEndpoint.cs", "line": 13},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/point-in-time", "operation": "getRestoreWindow", "source": "src/TerraBase/Features/Management/Backups/GetRestoreWindowEndpoint.cs", "line": 18},
-    {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/point-in-time/plan", "operation": "planPointInTime", "source": "src/TerraBase/Features/Management/Backups/PlanPointInTimeEndpoint.cs", "line": 22},
-    {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/point-in-time/restore", "operation": "restorePointInTime", "source": "src/TerraBase/Features/Management/Backups/RestorePointInTimeEndpoint.cs", "line": 17},
-    {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/point-in-time/rewind", "operation": "rewindPointInTime", "source": "src/TerraBase/Features/Management/Backups/RewindPointInTimeEndpoint.cs", "line": 14},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/export", "operation": "exportDatabase", "source": "src/TerraBase/Features/Sql/Export/ExportDatabaseEndpoint.cs", "line": 16},
-    {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/sql/execute", "operation": "executeSql", "contract": "sql-execute.md"},
-    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/usage", "operation": "getDatabaseUsage", "source": "src/TerraBase/Features/Management/Usage/GetDatabaseUsageEndpoint.cs", "line": 23},
-    {"method": "GET", "path": "/v1/projects/{project}/saved-queries", "operation": "listSavedQueries", "source": "src/TerraBase/Features/Management/Queries/ListSavedQueriesEndpoint.cs", "line": 14},
-    {"method": "POST", "path": "/v1/projects/{project}/saved-queries", "operation": "createSavedQuery", "source": "src/TerraBase/Features/Management/Queries/CreateSavedQueryEndpoint.cs", "line": 14},
-    {"method": "DELETE", "path": "/v1/projects/{project}/saved-queries/{query}", "operation": "deleteSavedQuery", "source": "src/TerraBase/Features/Management/Queries/DeleteSavedQueryEndpoint.cs", "line": 15},
-    {"method": "GET", "path": "/v1/projects/{project}/saved-queries/{query}", "operation": "getSavedQuery", "source": "src/TerraBase/Features/Management/Queries/GetSavedQueryEndpoint.cs", "line": 14},
-    {"method": "PUT", "path": "/v1/projects/{project}/saved-queries/{query}", "operation": "updateSavedQuery", "source": "src/TerraBase/Features/Management/Queries/UpdateSavedQueryEndpoint.cs", "line": 14},
-    {"method": "GET", "path": "/v1/projects/{project}/usage", "operation": "getProjectUsage", "source": "src/TerraBase/Features/Management/Usage/GetProjectUsageEndpoint.cs", "line": 18},
-    {"operation": "listFunctions", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions", "contract": "functions.json"},
-    {"operation": "deployFunction", "method": "PUT", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"},
-    {"operation": "getFunction", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"},
-    {"operation": "deleteFunction", "method": "DELETE", "path": "/v1/projects/{project}/databases/{database}/functions/{function}", "contract": "functions.json"},
-    {"operation": "invokeFunction", "method": "POST", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/invoke", "contract": "function-invocations.json"},
-    {"operation": "listFunctionLogs", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/functions/{function}/logs", "contract": "function-invocations.json"},
-    {"operation": "getProjectMetrics", "method": "GET", "path": "/v1/projects/{project}/metrics", "contract": "project-metrics.json"}
+    {
+      "method": "GET",
+      "path": "/backupz",
+      "operation": "backupz"
+    },
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "operation": "healthz"
+    },
+    {
+      "method": "GET",
+      "path": "/readyz",
+      "operation": "readyz"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/databases",
+      "operation": "listPlatformDatabases"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/analytics",
+      "operation": "getProjectAnalytics"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/backup-destination",
+      "operation": "deleteBackupDestination"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/backup-destination",
+      "operation": "getBackupDestination"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/projects/{project}/backup-destination",
+      "operation": "setBackupDestination"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/buckets",
+      "operation": "listFileBuckets"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/buckets",
+      "operation": "createFileBucket"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/buckets/{bucket}",
+      "operation": "deleteFileBucket"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/buckets/{bucket}/files",
+      "operation": "listBucketFiles"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/buckets/{bucket}/files/upload",
+      "operation": "createFileUpload"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/buckets/{bucket}/files/{file}",
+      "operation": "deleteBucketFile"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/buckets/{bucket}/files/{file}/complete",
+      "operation": "completeFileUpload"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/buckets/{bucket}/files/{file}/download",
+      "operation": "createFileDownload"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/projects/{project}/buckets/{bucket}/rules",
+      "operation": "setFileBucketRules"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases",
+      "operation": "listDatabases"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases",
+      "operation": "createDatabase"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}",
+      "operation": "deleteDatabase"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}",
+      "operation": "getDatabase"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/projects/{project}/databases/{database}",
+      "operation": "updateDatabase"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/analytics",
+      "operation": "getDatabaseAnalytics"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/backup-policy",
+      "operation": "getBackupPolicy"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/backup-policy",
+      "operation": "setBackupPolicy"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/backups",
+      "operation": "listBackups"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/backups",
+      "operation": "createBackup"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/backups/{backup}/restore",
+      "operation": "restoreBackup"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/branches",
+      "operation": "branchDatabase"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/branches/if-id/{expectedId}",
+      "operation": "branchDatabaseIfId"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/export",
+      "operation": "exportDatabase"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/functions",
+      "operation": "listFunctions"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}/functions/{function}",
+      "operation": "deleteFunction"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/functions/{function}",
+      "operation": "getFunction"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/functions/{function}",
+      "operation": "deployFunction"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/functions/{function}/invoke",
+      "operation": "invokeFunction"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/functions/{function}/logs",
+      "operation": "listFunctionLogs"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}/if-id/{expectedId}",
+      "operation": "deleteDatabaseIfId"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/logs",
+      "operation": "listDatabaseLogs"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/move-home",
+      "operation": "moveDatabaseHome"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/point-in-time",
+      "operation": "getRestoreWindow"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/point-in-time/plan",
+      "operation": "planPointInTime"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/point-in-time/restore",
+      "operation": "restorePointInTime"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/point-in-time/rewind",
+      "operation": "rewindPointInTime"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/read-grants",
+      "operation": "listReadGrants"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/regions",
+      "operation": "getDatabaseRegions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/restores/{operation}",
+      "operation": "getRestoreOperation"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/sql/execute",
+      "operation": "executeSql"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/sql/ws",
+      "operation": "connectSql"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
+      "operation": "deleteReadGrant"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
+      "operation": "getReadGrant"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
+      "operation": "putReadGrant"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape",
+      "operation": "getShape"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape/keys",
+      "operation": "getShapeKey"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest",
+      "operation": "getShapeManifest"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape/ws",
+      "operation": "connectShapeHints"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}/ttl",
+      "operation": "clearDatabaseTtl"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/ttl",
+      "operation": "setDatabaseTtl"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/usage",
+      "operation": "getDatabaseUsage"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/metrics",
+      "operation": "getProjectMetrics"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/usage",
+      "operation": "getProjectUsage"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/regions",
+      "operation": "listRegions"
+    }
   ]
 }
