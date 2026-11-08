@@ -306,14 +306,18 @@ func (client *PostgresClient) abort(ctx context.Context) {
 // Query sends the SQL and typed values separately through PostgreSQL binding.
 // BEGIN, COMMIT and ROLLBACK remain distinct statements; callbacks are never retried.
 func (client *PostgresClient) Query(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
-	values, err := postgresParameters(query)
-	if err != nil {
-		return PostgresResult{}, err
-	}
 	if err := client.acquire(ctx); err != nil {
 		return PostgresResult{}, err
 	}
 	defer func() { <-client.gate }()
+	return client.run(ctx, query)
+}
+
+func (client *PostgresClient) run(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
+	values, err := postgresParameters(query)
+	if err != nil {
+		return PostgresResult{}, err
+	}
 	if client.driver == nil || client.driver.IsClosed() {
 		return PostgresResult{}, &PostgresError{Kind: "connection"}
 	}
