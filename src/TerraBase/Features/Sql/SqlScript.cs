@@ -1,3 +1,4 @@
+using System.Text;
 using TerraBase.Engine;
 using TerraScale.TerraBase.Contracts;
 
@@ -88,9 +89,9 @@ internal static class SqlScript
 
     public static SqlPlanOutcome Classify(string? sql, bool bounded = true)
     {
-        if (string.IsNullOrWhiteSpace(sql) || (bounded && sql.Length > MaxSqlLength))
+        if (string.IsNullOrWhiteSpace(sql) || (bounded && Encoding.UTF8.GetByteCount(sql) > MaxSqlLength))
         {
-            return SqlErrors.Error("sql must be 1 to 16384 characters");
+            return SqlErrors.Error("sql must be 1 to 16384 UTF-8 bytes");
         }
 
         if (!SqlText.TryTokenize(sql, out var all))
