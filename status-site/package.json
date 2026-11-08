@@ -14,6 +14,7 @@
     "deploy:prebuilt": "wrangler deploy -c dist/ts_status_vantage_sfo/wrangler.json --experimental-provision=false --experimental-auto-create=false && wrangler deploy -c dist/ts_status_vantage_gru/wrangler.json --experimental-provision=false --experimental-auto-create=false && wrangler deploy -c dist/ts_status/wrangler.json --experimental-provision=false --experimental-auto-create=false",
     "db:bootstrap:local": "wrangler d1 execute ts-status --local --file schema.sql",
     "db:bootstrap:remote": "wrangler d1 execute ts-status --remote --file schema.sql",
+    "world-map:sync": "node scripts/world-map-sync.mjs",
     "audit:dependencies": "npm audit --ignore-scripts --audit-level=high",
     "prebuild": "npm run audit:dependencies",
     "predeploy:prebuilt": "npm run audit:dependencies"
@@ -25,6 +26,7 @@
     "@cloudflare/vite-plugin": "1.65.0",
     "@cloudflare/workers-types": "5.20261026.1",
     "@types/node": "^26.4.0",
+    "dotted-map": "^3.1.0",
     "typescript": "^7.0.2",
     "vite-plus": "1.3.0",
     "vitest": "5.0.3",
