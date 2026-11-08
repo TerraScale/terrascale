@@ -156,8 +156,12 @@ func TestAgentDatabaseLifecycleContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", step.name, err)
 		}
+		wantName := step.name
+		if step.name == "restore" {
+			wantName = "restore-database"
+		}
 		for _, recording := range f.Happy {
-			if recording.Name == step.name {
+			if recording.Name == wantName {
 				var want tb.ManagedDatabase
 				if err := json.Unmarshal(recording.Response, &want); err != nil {
 					t.Fatal(err)

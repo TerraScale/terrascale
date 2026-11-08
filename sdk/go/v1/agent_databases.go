@@ -82,7 +82,11 @@ func (c *Client) ForkDatabase(ctx context.Context, project, source, name string,
 	}{name, opts}
 	d := c.Database(project, source)
 	if opts.PointInTime != nil {
-		return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, body, "point-in-time", "restore")
+		operation, err := databaseCall[RestoreOperation](ctx, d, http.MethodPost, nil, body, "point-in-time", "restore")
+		if err != nil {
+			return nil, err
+		}
+		return d.awaitRestore(ctx, operation)
 	}
 	return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, body, "branches")
 }
