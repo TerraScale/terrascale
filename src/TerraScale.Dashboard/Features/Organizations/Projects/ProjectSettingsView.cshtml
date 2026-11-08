@@ -2,7 +2,7 @@
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-settings-title">
     <header class="ts-page-header"><h1 id="project-settings-title">Project settings</h1></header>
-    <a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/members", replace: true))">Explicit project grants</a>
+    <a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/members", replace: true))">Members</a>
     @if (Model.CanRename) { <a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/invitations", replace: true))">Project invitations</a> }
     @if (Model.Renamed) { <p class="ts-alert ts-alert-success" role="status">Project renamed.</p> }
     @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" id="project-settings-error" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Reload project settings</a></p> }
