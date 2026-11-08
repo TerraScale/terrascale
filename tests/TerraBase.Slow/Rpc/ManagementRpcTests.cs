@@ -46,8 +46,9 @@ public sealed class ManagementRpcTests
         await management.DeleteDatabaseAsync(project, renamed.Id);
         await management.DeleteDatabaseAsync(project, branch.Id);
         using var restore = JsonDocument.Parse("""{"name":"restored"}""");
-        var restoreOperation = await backups.RestoreBackupAsync(project, DatabaseApi.Database, snapshot.GetProperty("id").GetString()!, restore.RootElement);
-        var restored = await backups.GetRestoreOperationAsync(project, DatabaseApi.Database, restoreOperation.GetProperty("operationId").GetString()!);
+        var restoreOperation = await backups.StartRestoreAsync(project, DatabaseApi.Database, snapshot.GetProperty("id").GetString()!, restore.RootElement);
+        using var owner = api.Management.ProjectClient(project);
+        var restored = await ManagementApi.WaitForRestoreAsync(owner, $"/v1/projects/{project}/databases/{DatabaseApi.Database}", restoreOperation);
         var readback = await management.GetDatabaseAsync(project, "restored");
         await management.DeleteDatabaseAsync(project, readback.Id);
 

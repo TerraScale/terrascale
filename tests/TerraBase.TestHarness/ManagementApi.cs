@@ -220,6 +220,34 @@ public sealed class ManagementApi : IAsyncDisposable
         return [.. body.GetProperty("results")[0].GetProperty("rows").EnumerateArray()];
     }
 
+    public static async Task<JsonElement> WaitForRestoreAsync(HttpClient management, string databasePath, JsonElement operation, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(management);
+        var operationId = operation.GetProperty("operationId").GetString()!;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromMinutes(2));
+        while (true)
+        {
+            using var response = await management.GetAsync(Uri($"{databasePath}/restores/{operationId}"), deadline.Token);
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadAsStringAsync(deadline.Token);
+            using var document = JsonDocument.Parse(payload);
+            var current = document.RootElement.Clone();
+            var status = current.GetProperty("status").GetString();
+            if (status == "completed")
+            {
+                return current;
+            }
+
+            if (status == "failed" || deadline.IsCancellationRequested)
+            {
+                throw new HttpRequestException($"Restore did not complete: {payload}");
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), deadline.Token);
+        }
+    }
+
     /// <summary>Posts one SQL statement to <paramref name="database"/> (see <see cref="SqlAsync(HttpClient, string, string, CancellationToken)"/>).</summary>
     public static Task<HttpResponseMessage> SqlAsync(HttpClient data, ManagedDatabaseRef database, string sql, CancellationToken cancellationToken = default)
     {

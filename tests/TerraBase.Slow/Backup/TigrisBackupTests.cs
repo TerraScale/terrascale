@@ -55,6 +55,7 @@ public sealed class TigrisBackupTests
             await ShippedAsync(api, database, shipped, cancellationToken);
             using var management = api.ProjectClient(database.Project);
             using var restore = await management.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-restored" }, cancellationToken);
+            var operation = await ManagementApi.WaitForRestoreAsync(management, database.Path, await restore.Content.ReadFromJsonAsync<JsonElement>(cancellationToken), cancellationToken);
             var restored = database with { Name = "main-restored" };
             var read = new Dictionary<string, string?>();
             foreach (var row in await ManagementApi.RowsAsync(data, restored.Data, "SELECT id, text FROM people", cancellationToken))
@@ -74,7 +75,7 @@ public sealed class TigrisBackupTests
             }
 
             await Assert.That(wiped.Length).IsEqualTo(0);
-            await Assert.That(restore.StatusCode).IsEqualTo(HttpStatusCode.Created)
+            await Assert.That(restore.StatusCode).IsEqualTo(HttpStatusCode.Accepted)
                 .Because(await restore.Content.ReadAsStringAsync(cancellationToken));
             await Assert.That(read.Count(pair => written.TryGetValue(pair.Key, out var text) && text == pair.Value)).IsEqualTo(written.Count);
             await Assert.That(objects.Any(key => key.Contains("/snapshots/", StringComparison.Ordinal))).IsTrue();
