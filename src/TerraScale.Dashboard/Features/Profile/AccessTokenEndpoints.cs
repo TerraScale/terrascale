@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Profile
 
                 try { await tokens.RevokeAsync(context, id, http.RequestAborted); }
                 catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-                return HttpRedirects.SeeOther("/profile?tab=danger");
+                return HttpRedirects.SeeOther(ReturnTo + "&status=token-revoked");
             });
             return endpoints;
         }

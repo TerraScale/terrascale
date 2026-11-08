@@ -67,16 +67,17 @@ namespace TerraScale.Dashboard.Features.Profile
                     tab = "profile";
                 }
 
-                var list = tab is "access-tokens" or "danger" ? await tokens.ListAsync(context, http.RequestAborted) : null;
+                var list = tab == "access-tokens" ? await tokens.ListAsync(context, http.RequestAborted) : null;
                 var active = await sessions.ListAsync(http, context.Session);
                 var status = tab == "security" ? await mfa.GetAccountMfaAsync(context.Session, http.RequestAborted) : null;
                 var linked = tab == "profile" ? await providers.ListProvidersAsync(context.Session, http.RequestAborted) : null;
-                var notice = tab == "profile" ? http.Request.Query["status"].ToString() switch
+                var notice = http.Request.Query["status"].ToString() switch
                 {
-                    "profile-saved" => "Profile saved.",
-                    "language-saved" => "Language preference saved.",
+                    "profile-saved" => tab == "profile" ? "Profile saved." : "",
+                    "language-saved" => tab == "profile" ? "Language preference saved." : "",
+                    "token-revoked" => tab == "access-tokens" ? "Access token revoked." : "",
                     _ => ""
-                } : "";
+                };
                 return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Status: notice, Tokens: list, Sessions: active, Mfa: status)
                 {
                     Providers = linked,
