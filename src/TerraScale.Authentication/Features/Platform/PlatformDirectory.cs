@@ -7,6 +7,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
@@ -88,7 +89,7 @@ public sealed record Page<T>(IReadOnlyList<T> Items, string? Next);
 /// and every write that gives or takes a project role rewrites or deletes it, so a removal and a grant never both
 /// succeed on stale reads. A lost race is read and checked again, at most four times.
 /// </remarks>
-public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredentials mfa, TimeProvider clock, ILogger<PlatformDirectory> logger)
+public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredentials mfa, PasskeyCredentials passkeys, TimeProvider clock, ILogger<PlatformDirectory> logger)
 {
     /// <summary>The platform tenant; organizations exist only there.</summary>
     public const string Instance = OidcIssuer.InstanceId;
@@ -185,7 +186,8 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
         {
             var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
             RequireRole(access, Roles.Owner);
-            if (require && !(await mfa.StatusAsync(Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled)
+            if (require && !(await mfa.StatusAsync(Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled
+                && !await passkeys.EnrolledAsync(Instance, userId, cancellationToken).ConfigureAwait(false))
             {
                 throw Conflict("mfa_not_enrolled", "Turn on two-factor authentication for your own account first.");
             }
@@ -223,10 +225,11 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
         }
     }
 
-    // A member of an organization that requires a second factor reaches it only with an active factor of its own.
+    // A member of an organization that requires a second factor reaches it with an active factor of its own; a user-verified passkey counts.
     private async Task RequireMfaAsync(OrganizationRecord organization, string userId, CancellationToken cancellationToken)
     {
-        if (organization.RequireMfa && !(await mfa.StatusAsync(Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled)
+        if (organization.RequireMfa && !(await mfa.StatusAsync(Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled
+            && !await passkeys.EnrolledAsync(Instance, userId, cancellationToken).ConfigureAwait(false))
         {
             throw new ApiException(StatusCodes.Status403Forbidden, MfaRequiredCode, "This organization requires two-factor authentication. Turn it on at /ui/terrascale/security.");
         }

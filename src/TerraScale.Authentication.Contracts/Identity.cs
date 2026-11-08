@@ -36,6 +36,10 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     /// <summary>Whether this authentication attempt proved the account's second factor; never written back to the account.</summary>
     [JsonIgnore]
     public bool MultiFactor { get; init; }
+
+    /// <summary>How the second factor was proved (<c>totp</c> or <c>passkey</c>); null when the attempt proved none.</summary>
+    [JsonIgnore]
+    public string? MfaMethod { get; init; }
 }
 
 /// <summary>A browser session (table <c>sessions</c>). Only the SHA-256 of its bearer token is stored.</summary>
@@ -56,6 +60,9 @@ public sealed record SessionRecord(string InstanceId, string UserId, string Toke
 
     /// <summary>Whether the sign-in that opened this session proved the account's second factor.</summary>
     public bool Mfa { get; init; }
+
+    /// <summary>How that sign-in proved it (<c>totp</c> for sessions opened before passkeys, or <c>passkey</c>).</summary>
+    public string? MfaMethod { get; init; }
 }
 
 /// <summary>

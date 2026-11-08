@@ -49,6 +49,16 @@ active-factor account's token only with that claim. Activation and removal
 advance the epoch, so a token's claim always matches the factor state it was
 issued under.
 
+A passkey sign-in (`POST /ui/{slug}/sign-in/passkey/options` with the email,
+then `POST /ui/{slug}/sign-in/passkey` with the browser's assertion) needs no
+second factor: user verification is required at the authenticator, so the
+session it opens is marked `mfa` with method `passkey` and its tokens carry
+`ts_auth_mfa: "passkey"`. The sealed assertion challenge is single-use, lives
+five minutes and dies with the account's authentication state; a replayed
+challenge or a non-increasing sign count is refused with a generic 403 and
+records nothing. A member whose only factor is a passkey satisfies
+organizations that require a second factor, and may turn that policy on.
+
 The device flow (ts CLI) works for two-factor accounts: the approving browser
 session already proved the factor.
 

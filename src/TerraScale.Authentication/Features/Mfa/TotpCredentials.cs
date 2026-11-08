@@ -35,7 +35,7 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     public async Task<bool> AllowsPrimaryAuthenticationAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        return await this.PrimaryUserAsync(caller.InstanceId, caller.Id, caller.AuthEpoch.ToString(CultureInfo.InvariantCulture), caller.AuthStamp, false, cancellationToken)
+        return await this.PrimaryUserAsync(caller.InstanceId, caller.Id, caller.AuthEpoch.ToString(CultureInfo.InvariantCulture), caller.AuthStamp, null, cancellationToken)
             .ConfigureAwait(false) is not null;
     }
 
@@ -120,11 +120,11 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     /// <summary>
     /// The user as TerraBase holds it now, when it still has the authentication epoch <paramref name="authEpoch"/> and
     /// state <paramref name="authStamp"/> (a token's claims) and either has no active factor or <paramref name="multiFactor"/>
-    /// says the token's sign-in proved it; otherwise null. The result's <see cref="UserRecord.MultiFactor"/> carries that proof. The user is read after its factor, never before or alongside it, so an activation or a sign-out
+    /// says the token's sign-in proved it (<c>totp</c> or <c>passkey</c>); otherwise null. The result's <see cref="UserRecord.MultiFactor"/> and <see cref="UserRecord.MfaMethod"/> carry that proof. The user is read after its factor, never before or alongside it, so an activation or a sign-out
     /// everywhere that lands during the factor read is seen. One user read replaces a caller's own read before this
     /// check. Invalid or unavailable factor state fails closed with 503.
     /// </summary>
-    public async Task<UserRecord?> PrimaryUserAsync(string instanceId, string userId, string? authEpoch, string? authStamp, bool multiFactor, CancellationToken cancellationToken = default)
+    public async Task<UserRecord?> PrimaryUserAsync(string instanceId, string userId, string? authEpoch, string? authStamp, string? multiFactorMethod, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentNullException.ThrowIfNull(userId);
@@ -136,10 +136,10 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         try
         {
             var enabled = (await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.Record.Enabled == true;
-            return (!enabled || multiFactor)
+            return (!enabled || multiFactorMethod is not null)
                 && await users.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is { User: var user }
                 && user.AuthEpoch.ToString(CultureInfo.InvariantCulture) == authEpoch && user.AuthStamp == authStamp
-                    ? user with { MultiFactor = enabled }
+                    ? user with { MultiFactor = enabled || multiFactorMethod is not null, MfaMethod = multiFactorMethod }
                     : null;
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)

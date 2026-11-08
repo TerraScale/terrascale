@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Fido2NetLib;
+using Fido2NetLib.Objects;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
@@ -20,6 +21,7 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
     public const string CredentialKind = "passkey_credential";
     private const string CredentialClaimKind = "credential:" + CredentialKind;
     private const string ChallengeKind = "passkey-challenge";
+    private const string SignInChallengeKind = "passkey-signin-challenge";
 
     private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(15);
@@ -137,6 +139,140 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
             : null;
     }
 
+    /// <summary>
+    /// Assertion options for the hosted passkey sign-in step of <paramref name="email"/>: allowCredentials lists that
+    /// user's credential ids and user verification is required. An unknown or empty address gets the same shape with no
+    /// credential ids, so the step never reveals which addresses have accounts; the sealed challenge then fails
+    /// generically at verification.
+    /// </summary>
+    public async Task<(AssertionOptions Options, string Challenge)?> SignInOptionsAsync(string instanceId, string email, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(instanceId);
+        var user = await users.FindByEmailAsync(instanceId, email, cancellationToken).ConfigureAwait(false);
+        var entries = user is null ? [] : (await this.ReadAsync(instanceId, user.Id, cancellationToken).ConfigureAwait(false))?.Record.Entries ?? [];
+        var assertion = fido2.GetAssertionOptions(new GetAssertionOptionsParams
+        {
+            AllowedCredentials = [.. entries.Select(entry => new Fido2NetLib.Objects.PublicKeyCredentialDescriptor(Base64UrlDecode(entry.CredentialId)))],
+            UserVerification = Fido2NetLib.Objects.UserVerificationRequirement.Required,
+        });
+        var challenge = new PasskeySignInChallenge(AuthStore.NewId(), user?.Id ?? string.Empty, user?.AuthEpoch ?? 0, user?.AuthStamp ?? string.Empty,
+            clock.GetUtcNow() + ChallengeLifetime, assertion.ToJson());
+        return (assertion, SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, WebAuthnJson.Default.PasskeySignInChallenge),
+            Context(instanceId)));
+    }
+
+    /// <summary>
+    /// Verifies a hosted sign-in assertion (origin, RP id hash, challenge consumed once, user verification and signature;
+    /// a non-increasing sign count is refused) and updates the credential's sign count and last use in the same
+    /// transaction. The returned user carries the passkey's multi-factor proof for opening the session.
+    /// </summary>
+    public async Task<UserRecord?> VerifySignInAsync(string instanceId, string? sealedChallenge, string email, AuthenticatorAssertionRawResponse response, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(instanceId);
+        ArgumentNullException.ThrowIfNull(response);
+        var address = email.Trim();
+        if (await limiter.AcquireAsync(instanceId, "passkey-signin", Users.NormalizeEmail(address) ?? address, 10, AttemptWindow, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            throw ApiException.RateLimited("Too many passkey sign-in attempts; retry after the Retry-After delay.", wait);
+        }
+
+        if (this.OpenSignInChallenge(instanceId, sealedChallenge) is not { } challenge
+            || response.RawId is not { Length: > 0 and <= 1024 })
+        {
+            return null;
+        }
+
+        var credentialId = Base64UrlEncode(response.RawId);
+        var completion = AuthStore.NewCredentialBinding(SignInChallengeKind, challenge.Id);
+        if (challenge.UserId.Length == 0
+            || await store.FindUniqueAsync(instanceId, completion.Kind, completion.Key, cancellationToken).ConfigureAwait(false) is not null
+            || await users.GetVersionedAsync(instanceId, challenge.UserId, cancellationToken).ConfigureAwait(false) is not { User: { Disabled: false } user }
+            || user.AuthEpoch != challenge.AuthEpoch || user.AuthStamp != challenge.AuthStamp
+            || await this.ReadAsync(instanceId, user.Id, cancellationToken).ConfigureAwait(false) is not { } current
+            || current.Record.Entries.FirstOrDefault(entry => entry.CredentialId == credentialId) is not { } entry)
+        {
+            return null;
+        }
+
+        VerifyAssertionResult verified;
+        try
+        {
+            verified = await fido2.MakeAssertionAsync(new MakeAssertionParams
+            {
+                AssertionResponse = response,
+                OriginalOptions = AssertionOptions.FromJson(challenge.OptionsJson),
+                StoredPublicKey = entry.PublicKeyCose,
+                StoredSignatureCounter = entry.SignCount,
+                IsUserHandleOwnerOfCredentialIdCallback = (parameters, token) =>
+                    Task.FromResult(Base64UrlEncode(parameters.CredentialId) == credentialId
+                        && (parameters.UserHandle is not { Length: > 0 } handle || handle.SequenceEqual(Encoding.UTF8.GetBytes(user.Id)))),
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is Fido2VerificationException or ArgumentException or InvalidOperationException or FormatException or JsonException)
+        {
+            return null;
+        }
+
+        var now = clock.GetUtcNow();
+        var record = current.Record with
+        {
+            Entries = [.. current.Record.Entries.Select(item => item.CredentialId == credentialId ? item with { SignCount = verified.SignCount, LastUsedAt = now } : item)],
+        };
+        var serialized = JsonSerializer.SerializeToElement(record, WebAuthnJson.Default.PasskeyCredentialRecord);
+        var epoch = new JsonObject
+        {
+            ["and"] = new JsonArray(
+                new JsonObject { ["eq"] = new JsonArray("/instanceId", user.InstanceId) },
+                new JsonObject { ["eq"] = new JsonArray("/id", user.Id) },
+                new JsonObject { ["eq"] = new JsonArray("/authEpoch", user.AuthEpoch) }),
+        };
+        using var filter = JsonDocument.Parse(epoch.ToJsonString());
+        var operations = new List<StoreOperation>
+        {
+            AuthStore.Require(AuthStore.UserTable, user.InstanceId, user.Id, filter.RootElement),
+            AuthStore.Replace(AuthStore.PasskeyTable, user.InstanceId, user.Id, serialized, current.Version),
+            AuthStore.CredentialClaim(user.InstanceId, completion),
+        };
+        return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null
+            ? user with { MultiFactor = true, MfaMethod = "passkey", AuthenticationBindings = [completion] }
+            : null;
+    }
+
+    /// <summary>Whether the user has at least one enrolled passkey; unavailable state fails closed with 503.</summary>
+    public async Task<bool> EnrolledAsync(string instanceId, string userId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is { Record.Entries.Count: > 0 };
+        }
+        catch (Exception error) when (error is HttpRequestException or TimeoutException)
+        {
+            throw ApiException.Unavailable(error);
+        }
+    }
+
+    private PasskeySignInChallenge? OpenSignInChallenge(string instanceId, string? sealedChallenge)
+    {
+        PasskeySignInChallenge? challenge;
+        try
+        {
+            challenge = sealedChallenge is { Length: > 0 and <= 16384 }
+                ? JsonSerializer.Deserialize(SecretBox.Open(options.MasterKey, sealedChallenge, Context(instanceId)), WebAuthnJson.Default.PasskeySignInChallenge)
+                : null;
+        }
+        catch (Exception error) when (error is CryptographicException or JsonException or FormatException)
+        {
+            return null;
+        }
+
+        return challenge is not null
+            && challenge.ExpiresAt > clock.GetUtcNow()
+            && TerraScaleIds.IsValid(challenge.Id)
+            && (challenge.UserId.Length == 0 || TerraScaleIds.IsValid(challenge.UserId))
+            && challenge.AuthEpoch >= 0
+            ? challenge : null;
+    }
+
     private PasskeyChallenge? OpenChallenge(string instanceId, string? sealedChallenge)
     {
         PasskeyChallenge? challenge;
@@ -204,14 +340,18 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
 
 internal sealed record PasskeyChallenge(string Id, string UserId, long AuthEpoch, string AuthStamp, DateTimeOffset ExpiresAt, string OptionsJson);
 
+internal sealed record PasskeySignInChallenge(string Id, string UserId, long AuthEpoch, string AuthStamp, DateTimeOffset ExpiresAt, string OptionsJson);
+
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     RespectRequiredConstructorParameters = true)]
 [JsonSerializable(typeof(PasskeyCredentialRecord))]
 [JsonSerializable(typeof(PasskeyChallenge))]
+[JsonSerializable(typeof(PasskeySignInChallenge))]
 [JsonSerializable(typeof(PasskeyOptionsRequest))]
 [JsonSerializable(typeof(PasskeyOptionsBody))]
 [JsonSerializable(typeof(PasskeyVerifyRequest))]
 [JsonSerializable(typeof(PasskeyEnrolledBody))]
+[JsonSerializable(typeof(PasskeySignInRequest))]
 [JsonSerializable(typeof(ErrorBody))]
 internal sealed partial class WebAuthnJson : JsonSerializerContext;
 
@@ -227,5 +367,15 @@ public sealed record PasskeyAttestationInnerRequest(
     [property: JsonPropertyName("clientDataJSON")] string? ClientDataJson,
     string? AttestationObject,
     IReadOnlyList<string>? Transports);
+
+public sealed record PasskeySignInRequest(string? Challenge, string? Email, string? Next = null, PasskeyAssertionRequest? Response = null);
+
+public sealed record PasskeyAssertionRequest(string? Id, string? RawId, string? Type, PasskeyAssertionInnerRequest? Response);
+
+public sealed record PasskeyAssertionInnerRequest(
+    [property: JsonPropertyName("clientDataJSON")] string? ClientDataJson,
+    [property: JsonPropertyName("authenticatorData")] string? AuthenticatorData,
+    string? Signature,
+    [property: JsonPropertyName("userHandle")] string? UserHandle = null);
 
 public sealed record PasskeyEnrolledBody(string Id, string? Name, string Aaguid, DateTimeOffset CreatedAt);
