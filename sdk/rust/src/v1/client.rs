@@ -626,6 +626,120 @@ impl Client {
         self.send(req).await
     }
 
+    /// Sends a replay-safe project database GET and returns the undecoded
+    /// success response; the caller streams its body. Refusals are decoded and
+    /// retried exactly like a buffered read of the same route.
+    pub(crate) async fn send_stream(&self, req: Req<'_>) -> Result<reqwest::Response> {
+        if req.method != Method::GET
+            || req.segments.first() != Some(&"v1")
+            || req.segments.get(1).copied() != Some("databases")
+            || self.inner.project.is_none()
+        {
+            return Err(Error::InvalidInput(
+                "streaming requests are canonical project database reads".into(),
+            ));
+        }
+        let url = self.url(&self.inner.base, &req.segments, &req.query)?;
+        let policy = &self.inner.retry;
+        let mut attempt: u32 = 0;
+        let mut refreshed = false;
+        loop {
+            let mut rb = self
+                .inner
+                .http
+                .request(req.method.clone(), url.clone())
+                .header("Accept", "text/plain");
+            if let Some(timeout) = req.timeout {
+                rb = rb.timeout(timeout);
+            }
+            if let Some(region) = self.inner.region_pin.as_deref() {
+                rb = rb.header("X-TerraScale-Region-Pin", region);
+            }
+            for (name, value) in &req.headers {
+                rb = rb.header(*name, value);
+            }
+            let (mut error, retry_after) = match self
+                .authorized(rb, req.anonymous_probe, &mut refreshed)
+                .await
+            {
+                Ok(response) if response.status().is_success() => return Ok(response),
+                Ok(response) => {
+                    let status = response.status();
+                    let headers = response.headers().clone();
+                    let retry_after = headers
+                        .get(RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
+                    let mut body = Vec::new();
+                    let mut stream = response.bytes_stream();
+                    let failed = loop {
+                        match stream.next().await {
+                            Some(Ok(chunk)) => {
+                                if body.len() + chunk.len() > self.inner.max_response {
+                                    break Some(Error::ResponseTooLarge {
+                                        limit: self.inner.max_response,
+                                        status: status.as_u16(),
+                                        may_have_applied: false,
+                                    });
+                                }
+                                body.extend_from_slice(&chunk);
+                            }
+                            Some(Err(e)) => break Some(Error::Transport(describe(&e))),
+                            None => break None,
+                        }
+                    };
+                    let error = match failed {
+                        Some(error) => self.response_error(error, status, &headers, body),
+                        None => errors::from_project_response(
+                            status.as_u16(),
+                            retry_after,
+                            headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
+                            &body,
+                        ),
+                    };
+                    (error, retry_after)
+                }
+                Err(error) => (error, None),
+            };
+            if matches!(&error, Error::Response { status, error: inner, .. }
+                if !(400..500).contains(status) && matches!(**inner, Error::Transport(_)))
+            {
+                error = Error::Transport("stream failed in transit".into());
+            }
+            let transport = matches!(&error, Error::Transport(_));
+            let refusal = matches!(
+                (error.status(), error.code()),
+                (Some(429), Some("rate_limited" | "tenant_busy" | "http_429"))
+                    | (
+                        Some(503),
+                        Some(
+                            "commit_uncertain"
+                                | "capacity"
+                                | "storage_unavailable"
+                                | "dependencies_unavailable"
+                                | "storage_busy"
+                                | "not_primary"
+                                | "auth_unavailable",
+                        )
+                    )
+            );
+            let gateway = matches!(
+                (error.status(), error.code()),
+                (Some(status @ 502..=504), Some(code))
+                    if code.strip_prefix("http_") == Some(status.to_string().as_str())
+            );
+            let retry = attempt < policy.max_retries && (transport || refusal || gateway);
+            if !retry {
+                return Err(error);
+            }
+            let delay = retry_after
+                .map(|d| d.min(policy.max_retry_after))
+                .unwrap_or_else(|| backoff(policy, attempt));
+            tokio::time::sleep(delay).await;
+            attempt += 1;
+        }
+    }
+
     fn url(&self, base: &Url, segments: &[&str], query: &[(&str, String)]) -> Result<Url> {
         for seg in segments {
             if seg.is_empty() || *seg == "." || *seg == ".." {
@@ -1117,7 +1231,7 @@ fn parse_retry_after(value: &str, now: std::time::SystemTime) -> Option<Duration
     Some(at.duration_since(now).unwrap_or(Duration::ZERO))
 }
 
-fn describe(e: &reqwest::Error) -> String {
+pub(crate) fn describe(e: &reqwest::Error) -> String {
     use std::error::Error as _;
     let mut msg = e.to_string();
     let mut source = e.source();
