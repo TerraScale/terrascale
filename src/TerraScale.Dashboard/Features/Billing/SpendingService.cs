@@ -8,9 +8,11 @@ namespace TerraScale.Dashboard.Features.Billing
 
     public sealed class SpendingService(AccountService accounts, TimeProvider time, IDashboardState state)
     {
-        public async Task<SpendingSnapshot> ReadAsync(AccountContext context, CancellationToken cancellationToken)
+        public async Task<SpendingSnapshot> ReadAsync(AccountContext context, CancellationToken cancellationToken, bool requireProject = false)
         {
-            return Snapshot((await FreshAsync(context, cancellationToken)).Organization!);
+            var fresh = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject);
+            await InternalBillingService.ValidateClaimsAsync(state, fresh.Organization!, cancellationToken);
+            return Snapshot(fresh.Organization!);
         }
 
         public async Task SetInternalCapAsync(AccountContext context, long capCents, CancellationToken cancellationToken)

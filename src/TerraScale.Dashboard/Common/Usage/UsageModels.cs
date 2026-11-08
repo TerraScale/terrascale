@@ -1,20 +1,31 @@
+using TerraScale.Dashboard.Common.Accounts;
+
 namespace TerraScale.Dashboard.Common.Usage
 {
     public sealed record UsageSelection(AccountContext Context, string Range, string DatabaseId, bool ExplicitProjectFilter)
     {
+        public bool Member { get; init; } = true;
         public static UsageSelection For(AccountContext context, string projectId, string databaseId, string range)
         {
-            var org = context.Organization ?? throw new AccountAccessException("Selected organization is unavailable.");
-            if (context.Session.UserId != context.UserId || !org.ContainsMember(context.UserId))
+            if (context.Session.UserId != context.UserId)
             {
                 throw new AccountAccessException("Organization membership is required.");
             }
 
-            var project = projectId.Length == 0 ? context.Project : org.Projects.GetValueOrDefault(projectId)
-                ?? throw new AccountAccessException("Project is unavailable.", 404);
+            var org = projectId.Length > 0
+                ? context.Organizations.FirstOrDefault(item => item.Projects.ContainsKey(projectId))
+                    ?? throw new AccountAccessException("Project is unavailable.", 404)
+                : context.Organization ?? throw new AccountAccessException("Selected organization is unavailable.");
+            var member = org.ContainsMember(context.UserId);
+            var project = projectId.Length == 0 ? context.Project : org.Projects[projectId];
             if (project is not null && (project.OrganizationId != org.Id || !org.Projects.ContainsKey(project.Id)))
             {
                 throw new AccountAccessException("Project is unavailable.", 404);
+            }
+
+            if (!member && (projectId.Length == 0 || !ProjectCollaborator.Allows(org, project)))
+            {
+                throw new AccountAccessException("Organization membership is required.");
             }
 
             if (databaseId.Length > 0 && (project is null || !project.Databases.TryGetValue(databaseId, out var database) || database.ProjectId != project.Id))
@@ -22,7 +33,10 @@ namespace TerraScale.Dashboard.Common.Usage
                 throw new AccountAccessException("Database is unavailable.", 404);
             }
 
-            return new(context with { Project = project }, range is "1h" or "24h" or "30d" ? range : "7d", databaseId, project is not null && project.Id == projectId);
+            return new(context with { Organization = org, Project = project }, range is "1h" or "24h" or "30d" ? range : "7d", databaseId, project is not null && project.Id == projectId)
+            {
+                Member = member
+            };
         }
         public string RangeLabel => Range switch { "1h" => "Current UTC hour", "24h" => "Last 24 hours", "30d" => "Last 30 days", _ => "Last 7 days" };
         public static (string Granularity, DateTimeOffset From) Buckets(string range, DateTimeOffset now)
