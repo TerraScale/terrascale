@@ -87,7 +87,7 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         using var owner = Api.ProjectClient(Database.Project);
         using var response = await owner.PostAsJsonAsync(ManagementApi.Uri($"{Database.Path}/point-in-time/restore"), new { pointInTime = at, name }, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(string.Create(CultureInfo.InvariantCulture, $"restore at {at:O}: {body}"));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted).Because(string.Create(CultureInfo.InvariantCulture, $"restore at {at:O}: {body}"));
     }
 
     public async Task<string> DatabaseIdAsync(string name, CancellationToken cancellationToken)
