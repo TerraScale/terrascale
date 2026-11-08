@@ -216,7 +216,7 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         }
 
         var token = Tokens.RandomToken(48);
-        var session = new SessionRecord(user.InstanceId, user.Id, Tokens.Sha256Hex(token), user.AuthEpoch, createdAt, expiresAt) { Bindings = user.AuthenticationBindings, AuthStamp = user.AuthStamp, Mfa = user.MultiFactor };
+        var session = new SessionRecord(user.InstanceId, user.Id, Tokens.Sha256Hex(token), user.AuthEpoch, createdAt, expiresAt) { Bindings = user.AuthenticationBindings, AuthStamp = user.AuthStamp, Mfa = user.MultiFactor, MfaMethod = user.MfaMethod };
         var epoch = new JsonObject
         {
             ["and"] = new JsonArray(
@@ -279,7 +279,7 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
             return user is not null && !user.Disabled && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp
                 && await store.AreCredentialsCurrentAsync(instanceId, session.Bindings, cancellationToken).ConfigureAwait(false)
                 && (session.Mfa || await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false))
-                && session.ExpiresAt > clock.GetUtcNow() ? (session, version, user with { AuthenticationBindings = session.Bindings, MultiFactor = session.Mfa }) : null;
+                && session.ExpiresAt > clock.GetUtcNow() ? (session, version, user with { AuthenticationBindings = session.Bindings, MultiFactor = session.Mfa, MfaMethod = session.MfaMethod }) : null;
         }
 
         throw ApiException.Unavailable();

@@ -203,7 +203,7 @@ public sealed class SetMfaPolicyEndpoint(PlatformDirectory platform, PlatformAut
     {
         Put($"{Organization}/mfa-policy");
         this.Describe("set_organization_mfa_policy", "Require two-factor authentication",
-            "Needs the owner role. With require_mfa true, members without an active second factor get 403 mfa_required from the organization's endpoints and token exchange until they enrol; turning it on needs the caller's own factor (409 mfa_not_enrolled). Recorded in the audit log.",
+            "Needs the owner role. With require_mfa true, members without an active second factor get 403 mfa_required from the organization's endpoints and token exchange until they enrol an authenticator app or a passkey; turning it on needs the caller's own factor (409 mfa_not_enrolled), which a passkey also satisfies. Recorded in the audit log as organization.mfa_required or organization.mfa_optional.",
             "Organizations", typeof(MfaPolicyRequest), StatusCodes.Status200OK, typeof(OrganizationBody), conflict: true);
     }
 

@@ -335,7 +335,7 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal
             ?? throw new InvalidOperationException("OpenIddict passed a token request without a principal.");
         var user = principal.GetClaim(Claims.Subject) is { } subject
-            ? await mfa.PrimaryUserAsync(tenant, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), principal.GetClaim(OidcIssuer.MfaClaim) is not null, cancellationToken)
+            ? await mfa.PrimaryUserAsync(tenant, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken)
             : null;
         if (user is null || ProjectSessionPolicy.ReadAuthenticationTime(principal, clock) is not { } authenticationTime)
         {
@@ -431,7 +431,7 @@ public abstract class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutReq
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
         if (principal?.GetClaim(Claims.Subject) is not { } subject
             || await mfa.PrimaryUserAsync(Tenancy.Current(this.HttpContext), subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim),
-                principal.GetClaim(OidcIssuer.MfaClaim) is not null, cancellationToken) is not { } user)
+                principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken) is not { } user)
         {
             return Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
@@ -646,7 +646,7 @@ internal static class OidcResults
             .SetClaim(Claims.AuthenticationTime, authenticatedAt.ToUnixTimeSeconds())
             .SetClaim(OidcIssuer.EpochClaim, user.AuthEpoch)
             .SetClaim(OidcIssuer.StateClaim, user.AuthStamp)
-            .SetClaim(OidcIssuer.MfaClaim, user.MultiFactor ? "totp" : null)
+            .SetClaim(OidcIssuer.MfaClaim, user.MultiFactor ? user.MfaMethod ?? "totp" : null)
             .SetScopes(scopes)
             .SetResources(audiences);
         // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
