@@ -174,8 +174,23 @@ public sealed class ManagementApi : IAsyncDisposable
         return project;
     }
 
-    public async Task<string> CreateDatabaseAsync(string organization, string project, string name, HttpClient? client = null) =>
-        await CreateAsync(client, $"/v1/management/organizations/{organization}/projects/{project}/databases", name);
+    /// <summary>Creates a database through the canonical project route, acting with a project token of <paramref name="project"/>.</summary>
+    public async Task<string> CreateDatabaseAsync(string organization, string project, string name, HttpClient? client = null, IReadOnlyList<string>? replicaRegions = null)
+    {
+        using var owner = ProjectClient(project);
+        using var response = await owner.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name, replicaRegions });
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"Create failed: {response.StatusCode}: {await response.Content.ReadAsStringAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)}");
+        }
+        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+    }
+
+    /// <summary>A client of the canonical project routes of <paramref name="project"/>: a project token with both database scopes.</summary>
+    public HttpClient ProjectClient(string project) => WithToken(ProjectToken(project, "databases:read databases:write"));
+
+    /// <summary>Registers a persisted project with this harness's issuer, so its project tokens carry the organization.</summary>
+    public void RegisterProject(string project, string organization) => Issuer.RegisterProject(project, organization);
 
     /// <summary>Creates an organization, a project and a database in it, as <see cref="User"/>.</summary>
     public async Task<ManagedDatabaseRef> CreateManagedDatabaseAsync(string name = "main")
@@ -357,8 +372,8 @@ public sealed record ManagedDatabaseRef(string Organization, string Project, str
     /// <summary><c>/v1/management/organizations/{organization}/projects/{project}</c>.</summary>
     public string ProjectPath => $"/v1/management/organizations/{Organization}/projects/{Project}";
 
-    /// <summary><c>…/projects/{project}/databases/{id}</c>.</summary>
-    public string Path => $"{ProjectPath}/databases/{Id}";
+    /// <summary><c>/v1/projects/{project}/databases/{id}</c>.</summary>
+    public string Path => $"/v1/projects/{Project}/databases/{Id}";
 
     /// <summary>The data API route of the database: <c>/v1/projects/{project}/databases/{name}</c>.</summary>
     public string Data => $"/v1/projects/{Project}/databases/{Name}";

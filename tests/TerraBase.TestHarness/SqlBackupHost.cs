@@ -31,6 +31,11 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvid
 
     public TenantContext Tenant => new(Database.Organization, PlanTier.Pro, Database.Project, Database.Id);
 
+    private HttpClient? _management;
+
+    /// <summary>A client of the canonical project routes of <see cref="Database"/>'s project.</summary>
+    public HttpClient Management => _management ??= Api.ProjectClient(Database.Project);
+
     private IContinuousBackup Backup => Api.Server.Services.GetRequiredService<IContinuousBackup>();
 
     public static async Task<SqlBackupHost> StartAsync(CancellationToken cancellationToken, Action<IServiceCollection>? services = null)
@@ -111,7 +116,8 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvid
 
     public async Task<DateTimeOffset> LatestAsync(CancellationToken cancellationToken)
     {
-        using var window = await Api.Client.GetAsync(ManagementApi.Uri($"{Database.Path}/point-in-time"), cancellationToken);
+        using var owner = Api.ProjectClient(Database.Project);
+        using var window = await owner.GetAsync(ManagementApi.Uri($"{Database.Path}/point-in-time"), cancellationToken);
         var body = await window.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         await Assert.That(window.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body.GetRawText());
         return body.GetProperty("latest").GetDateTimeOffset();
@@ -119,13 +125,14 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvid
 
     public async Task<string> RestoreAsync(DateTimeOffset at, string name, CancellationToken cancellationToken)
     {
-        using var response = await Api.Client.PostAsJsonAsync(ManagementApi.Uri($"{Database.Path}/point-in-time/restore"), new { pointInTime = at, name }, cancellationToken);
+        using var owner = Api.ProjectClient(Database.Project);
+        using var response = await owner.PostAsJsonAsync(ManagementApi.Uri($"{Database.Path}/point-in-time/restore"), new { pointInTime = at, name }, cancellationToken);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted).Because(body.GetRawText());
         var operationId = body.GetProperty("operationId").GetString()!;
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
-            using var status = await Api.Client.GetAsync(ManagementApi.Uri($"{Database.Path}/restores/{operationId}"), token);
+            using var status = await owner.GetAsync(ManagementApi.Uri($"{Database.Path}/restores/{operationId}"), token);
             var current = await status.Content.ReadFromJsonAsync<JsonElement>(token);
             return status.StatusCode == HttpStatusCode.OK && current.GetProperty("status").GetString() == "completed";
         }, timeout: TimeSpan.FromSeconds(60));
@@ -134,7 +141,8 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvid
 
     public async Task<TenantContext> TenantAsync(string name, CancellationToken cancellationToken)
     {
-        using var list = JsonDocument.Parse(await Api.Client.GetStringAsync(ManagementApi.Uri($"{Database.ProjectPath}/databases"), cancellationToken));
+        using var management = Api.ProjectClient(Database.Project);
+        using var list = JsonDocument.Parse(await management.GetStringAsync(ManagementApi.Uri($"/v1/projects/{Database.Project}/databases"), cancellationToken));
         var id = list.RootElement.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == name).GetProperty("id").GetString()!;
         return new TenantContext(Database.Organization, PlanTier.Pro, Database.Project, id);
     }
@@ -165,6 +173,7 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvid
 
     public async ValueTask DisposeAsync()
     {
+        _management?.Dispose();
         data.Dispose();
         await Api.DisposeAsync();
     }

@@ -110,7 +110,7 @@ public sealed class SqlPointInTimeRestoreTests
         var replica = new RevisionReplica();
         var before = await replica.PullAsync(host.Api.Server, host.Tenant);
 
-        using var rewound = await host.Api.Client.PostAsJsonAsync(ManagementApi.Uri($"{host.Database.Path}/point-in-time/rewind"), new { pointInTime = k }, cancellationToken);
+        using var rewound = await host.Management.PostAsJsonAsync(ManagementApi.Uri($"{host.Database.Path}/point-in-time/rewind"), new { pointInTime = k }, cancellationToken);
         var after = await replica.PullAsync(host.Api.Server, host.Tenant);
         var steady = await replica.PullAsync(host.Api.Server, host.Tenant);
 

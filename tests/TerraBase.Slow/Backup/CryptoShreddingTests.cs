@@ -42,7 +42,7 @@ public sealed class CryptoShreddingTests
             await DecryptAsync(keys, scope, key, bytes, cancellationToken); // Readable while the database exists.
         }
 
-        using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), cancellationToken);
+        using var deleted = await api.ProjectClient(database.Project).DeleteAsync(ManagementApi.Uri(database.Path), cancellationToken);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await api.Server.Services.GetRequiredService<DatabaseBackupPurge>().RunOnceAsync(cancellationToken);
 

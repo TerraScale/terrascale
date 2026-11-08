@@ -111,36 +111,6 @@
     },
     {
       "client": "management",
-      "operation": "createManagedDatabase",
-      "method": "POST",
-      "path": "/v1/management/organizations/{organization}/projects/{project}/databases"
-    },
-    {
-      "client": "management",
-      "operation": "listDatabases",
-      "method": "GET",
-      "path": "/v1/management/organizations/{organization}/projects/{project}/databases"
-    },
-    {
-      "client": "management",
-      "operation": "getDatabase",
-      "method": "GET",
-      "path": "/v1/management/organizations/{organization}/projects/{project}/databases/{database}"
-    },
-    {
-      "client": "management",
-      "operation": "deleteManagedDatabase",
-      "method": "DELETE",
-      "path": "/v1/management/organizations/{organization}/projects/{project}/databases/{database}"
-    },
-    {
-      "client": "management",
-      "operation": "branchDatabase",
-      "method": "POST",
-      "path": "/v1/management/organizations/{organization}/projects/{project}/databases/{database}/branches"
-    },
-    {
-      "client": "management",
       "operation": "listMembers",
       "method": "GET",
       "path": "/v1/management/organizations/{organization}/members"

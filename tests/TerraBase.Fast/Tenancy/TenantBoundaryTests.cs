@@ -29,14 +29,15 @@ public sealed class TenantBoundaryTests
             $"/v1/projects/{outsider.ProjectId}/databases/own", "SELECT 1");
         admitted.EnsureSuccessStatusCode();
 
-        var managementPath = ManagementApi.Uri(
-            $"/v1/management/organizations/{owner.OrganizationId}/projects/{owner.ProjectId}/databases/{database}");
-        using var visible = await dashboard.GetAsync(managementPath);
+        var managementPath = ManagementApi.Uri($"{path}");
+        using var ownerManagement = api.WithToken(api.ProjectToken(owner.ProjectId, "databases:read"));
+        using var visible = await ownerManagement.GetAsync(managementPath);
         visible.EnsureSuccessStatusCode();
 
         using var read = await ManagementApi.SqlAsync(outsider.Data, path, "SELECT * FROM notes");
         using var write = await ManagementApi.SqlAsync(outsider.Data, path, "INSERT INTO notes VALUES (99)");
-        using var management = await otherDashboard.GetAsync(managementPath);
+        using var intruderManagement = api.WithToken(api.ProjectToken(outsider.ProjectId, "databases:read"));
+        using var management = await intruderManagement.GetAsync(managementPath);
 
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(write.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

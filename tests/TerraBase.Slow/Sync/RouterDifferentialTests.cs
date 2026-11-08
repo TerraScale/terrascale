@@ -189,8 +189,8 @@ public sealed class RouterDifferentialTests
 
         public async Task<ManagedDatabaseRef> CreateDatabaseAsync(string name, CancellationToken token)
         {
-            using var created = await _gru.Client.PostAsJsonAsync(
-                ManagementApi.Uri($"/v1/management/organizations/{_organization}/projects/{_project}/databases"), new { name, replicaRegions = SjcRegion }, token);
+            using var created = await _gru.ProjectClient(_project).PostAsJsonAsync(
+                ManagementApi.Uri($"/v1/projects/{_project}/databases"), new { name, replicaRegions = SjcRegion }, token);
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync(token));
             var reference = new ManagedDatabaseRef(_organization, _project, (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!, name);
             var (status, body, _) = await ExecuteAsync(_viaGru, reference, [.. Schema.Split(';').Select(sql => sql.Trim())], token);

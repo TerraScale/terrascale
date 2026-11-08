@@ -34,11 +34,11 @@ public sealed class SqlTableBackupTests
         await host.StampAsync(k, cancellationToken);
         await host.ShipAsync(TimeSpan.FromMilliseconds(2500), cancellationToken);
 
-        using var rewound = await host.Api.Client.PostAsJsonAsync(ManagementApi.Uri($"{host.Database.Path}/point-in-time/rewind"), new { pointInTime = k }, cancellationToken);
+        using var rewound = await host.Management.PostAsJsonAsync(ManagementApi.Uri($"{host.Database.Path}/point-in-time/rewind"), new { pointInTime = k }, cancellationToken);
         var body = await rewound.Content.ReadAsStringAsync(cancellationToken);
         await Assert.That(rewound.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body);
         await host.OkAsync(Stmt("INSERT INTO players VALUES ('p3', 'red')"));
-        using var databases = JsonDocument.Parse(await host.Api.Client.GetStringAsync(ManagementApi.Uri($"{host.Database.ProjectPath}/databases"), cancellationToken));
+        using var databases = JsonDocument.Parse(await host.Management.GetStringAsync(ManagementApi.Uri($"/v1/projects/{host.Database.Project}/databases"), cancellationToken));
 
         await Assert.That(JsonElement.Parse(body).GetProperty("id").GetString()).IsEqualTo(host.Database.Id);
         await Assert.That(await host.RowsAsync(host.Database.Name, "SELECT id FROM players ORDER BY id")).IsEquivalentTo(["p1", "p2", "p3"]);

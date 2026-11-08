@@ -39,7 +39,7 @@ public sealed class RestoreRecoveryTests
 
         await server.Services.GetRequiredService<IManagedBackupService>().RecoverInterruptedRestoresAsync(cancellationToken);
 
-        using var status = await host.Api.Client.GetAsync(ManagementApi.Uri($"{source.Path}/restores/{operation.Id}"), cancellationToken);
+        using var status = await host.Management.GetAsync(ManagementApi.Uri($"{source.Path}/restores/{operation.Id}"), cancellationToken);
         var settled = await status.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         await Assert.That(status.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(settled.GetProperty("status").GetString()).IsEqualTo("failed");

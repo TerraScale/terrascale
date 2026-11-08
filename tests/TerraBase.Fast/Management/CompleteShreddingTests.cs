@@ -60,7 +60,7 @@ public sealed class CompleteShreddingTests
             [new RegionChange("insert", "items", null, new Dictionary<string, JsonElement> { ["value"] = JsonSerializer.SerializeToElement(sentinel) })]);
         var packed = HomePush.Encode(transaction);
         var payload = await crypto.SealAsync(tenant, packed, token);
-        using var backup = await api.Client.PostAsync(ManagementApi.Uri(database.Path + "/backups"), null, token);
+        using var backup = await api.ProjectClient(database.Project).PostAsync(ManagementApi.Uri(database.Path + "/backups"), null, token);
         await Assert.That(backup.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var backupBody = JsonDocument.Parse(await backup.Content.ReadAsByteArrayAsync(token));
         var snapshot = tenant with { DatabaseId = backupBody.RootElement.GetProperty("id").GetString()! };
@@ -141,7 +141,7 @@ public sealed class CompleteShreddingTests
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(token);
         await Assert.That(api.Server.Services.GetRequiredService<IContinuousBackup>().Status.Files
             .Any(file => file.File == BackupLayout.File(tenant, "origin"))).IsTrue();
-        using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
+        using var deleted = await api.ProjectClient(database.Project).DeleteAsync(ManagementApi.Uri(database.Path), token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var certificate = await api.Server.Services.GetRequiredService<SystemCatalog>().ReadUncheckedAsync(transaction =>
             SystemCatalog.GetAsync(transaction, DatabaseBackupPurge.ProgressKind, tenant.DatabaseId!,
@@ -176,14 +176,14 @@ public sealed class CompleteShreddingTests
         var scope = BackupLayout.KeyScope(tenant);
         var keys = api.Server.Services.GetRequiredService<DataKeys>();
         _ = await keys.CurrentAsync(scope, token);
-        using var backup = await api.Client.PostAsync(ManagementApi.Uri(database.Path + "/backups"), null, token);
+        using var backup = await api.ProjectClient(database.Project).PostAsync(ManagementApi.Uri(database.Path + "/backups"), null, token);
         await Assert.That(backup.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var backupBody = JsonDocument.Parse(await backup.Content.ReadAsByteArrayAsync(token));
         var snapshot = tenant with { DatabaseId = backupBody.RootElement.GetProperty("id").GetString()! };
         var snapshotScope = BackupLayout.KeyScope(snapshot);
         _ = await keys.CurrentAsync(snapshotScope, token);
         s3.FailPut = key => key == BackupLayout.Shredded(snapshotScope);
-        using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
+        using var deleted = await api.ProjectClient(database.Project).DeleteAsync(ManagementApi.Uri(database.Path), token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await api.Server.Services.GetRequiredService<SystemCatalog>().ListDatabasePurgesAsync(null, 16, token))!.Items.Single().BackupVerifiedAt).IsNull();
         // Reproduce an interrupted legacy progress publication: physical-erasure certification

@@ -59,8 +59,8 @@ public sealed class TenantIsolationTests
         var bSecret = await SeedAsync(api, b, bDashboard);
         // Canonical management addresses database names: this name exists only in B's project.
         var bForeign = await CreateDatabaseAsync(api, b, bDashboard, "foreign");
-        var aTooling = await SeedToolingAsync(a, aDashboard, aSecret);
-        var bTooling = await SeedToolingAsync(b, bDashboard, bSecret);
+        var aTooling = await SeedToolingAsync(api, a, aSecret);
+        var bTooling = await SeedToolingAsync(api, b, bSecret);
 
         var aBefore = await SnapshotAsync(api, a, aDashboard, aSecret);
         var bBefore = await SnapshotAsync(api, b, bDashboard, bSecret);
@@ -127,10 +127,10 @@ public sealed class TenantIsolationTests
             ("database key reads other", HttpStatusCode.NotFound, await StatusAsync(ManagementApi.SqlAsync(database, DataPath(tenant.ProjectId, "other"), "SELECT * FROM c"))),
             ("database key reads app of second project", HttpStatusCode.NotFound, await StatusAsync(ManagementApi.SqlAsync(database, DataPath(second, "app"), "SELECT * FROM c"))),
         ];
-        using var secondDatabases = JsonDocument.Parse(await owner.GetStringAsync(
-            new Uri($"/v1/management/organizations/{tenant.OrganizationId}/projects/{second}/databases", UriKind.Relative)));
-        using var firstDatabases = JsonDocument.Parse(await owner.GetStringAsync(
-            new Uri($"/v1/management/organizations/{tenant.OrganizationId}/projects/{tenant.ProjectId}/databases", UriKind.Relative)));
+        using var secondDatabases = JsonDocument.Parse(await api.ProjectClient(second).GetStringAsync(
+            new Uri($"/v1/projects/{second}/databases", UriKind.Relative)));
+        using var firstDatabases = JsonDocument.Parse(await api.ProjectClient(tenant.ProjectId).GetStringAsync(
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases", UriKind.Relative)));
 
         // Per request: each status is checked against the request that produced it.
         await Assert.That(string.Join("\n", checks.Select(check => $"{check.Request} -> {check.Actual}")))
@@ -239,10 +239,10 @@ public sealed class TenantIsolationTests
     }
 
     // The Management API's tooling of a database: a backup.
-    private static async Task<Tooling> SeedToolingAsync(Tenant tenant, HttpClient dashboard, string database)
+    private static async Task<Tooling> SeedToolingAsync(ManagementApi api, Tenant tenant, string database)
     {
-        var path = $"/v1/management/organizations/{tenant.OrganizationId}/projects/{tenant.ProjectId}/databases/{database}";
-        using var response = await dashboard.PostAsJsonAsync(new Uri($"{path}/backups", UriKind.Relative), (object?)null);
+        using var response = await api.ProjectClient(tenant.ProjectId).PostAsJsonAsync(
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/backups", UriKind.Relative), (object?)null);
         response.EnsureSuccessStatusCode();
         return new Tooling((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!);
     }

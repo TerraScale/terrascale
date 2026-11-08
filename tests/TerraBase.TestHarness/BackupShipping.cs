@@ -84,14 +84,16 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
 
     public async Task RestoreAsync(DateTimeOffset at, string name, CancellationToken cancellationToken)
     {
-        using var response = await Api.Client.PostAsJsonAsync(ManagementApi.Uri($"{Database.Path}/point-in-time/restore"), new { pointInTime = at, name }, cancellationToken);
+        using var owner = Api.ProjectClient(Database.Project);
+        using var response = await owner.PostAsJsonAsync(ManagementApi.Uri($"{Database.Path}/point-in-time/restore"), new { pointInTime = at, name }, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(string.Create(CultureInfo.InvariantCulture, $"restore at {at:O}: {body}"));
     }
 
     public async Task<string> DatabaseIdAsync(string name, CancellationToken cancellationToken)
     {
-        using var response = await Api.Client.GetAsync(ManagementApi.Uri($"/v1/management/organizations/{Database.Organization}/projects/{Database.Project}/databases"), cancellationToken);
+        using var owner = Api.ProjectClient(Database.Project);
+        using var response = await owner.GetAsync(ManagementApi.Uri($"/v1/projects/{Database.Project}/databases"), cancellationToken);
         response.EnsureSuccessStatusCode();
         var listing = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         return listing.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == name).GetProperty("id").GetString()!;

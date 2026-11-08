@@ -42,8 +42,8 @@ public sealed class RegionShapeTailTests
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         await gru.SetPlanAsync(gru.User, organization, "enterprise", token);
         var project = await gru.CreateProjectAsync(organization, "Project");
-        using var created = await gru.Client.PostAsJsonAsync(
-            ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = new List<string> { "sjc" } }, token);
+        using var created = await gru.ProjectClient(project).PostAsJsonAsync(
+            ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name = "main", replicaRegions = new List<string> { "sjc" } }, token);
         created.EnsureSuccessStatusCode();
         var database = new ManagedDatabaseRef(organization, project, (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!, "main");
         var bearer = gru.ProjectToken(project, "databases:read databases:write sql:read sql:write");
@@ -209,8 +209,8 @@ public sealed class RegionShapeTailTests
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         await gru.SetPlanAsync(gru.User, organization, "hobby", token);
         var project = await gru.CreateProjectAsync(organization, "Project");
-        using var created = await gru.Client.PostAsJsonAsync(
-            ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = new List<string> { "sjc" } }, token);
+        using var created = await gru.ProjectClient(project).PostAsJsonAsync(
+            ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name = "main", replicaRegions = new List<string> { "sjc" } }, token);
         created.EnsureSuccessStatusCode();
         var database = new ManagedDatabaseRef(organization, project, (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!, "main");
         using var owner = gru.DataClient(gru.ProjectToken(project, "databases:read databases:write sql:read sql:write"));

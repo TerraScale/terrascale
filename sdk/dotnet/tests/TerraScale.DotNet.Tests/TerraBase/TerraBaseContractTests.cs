@@ -81,11 +81,6 @@ public sealed class TerraBaseContractTests
         yield return ("management", "closeProject", client => M(client).CloseProjectAsync(Project, Organization, User));
         yield return ("management", "closeProject", client => M(client).EraseProjectAsync(Project, Organization, User));
         yield return ("management", "requestHistoryErasure", client => M(client).RequestHistoryErasureAsync(User, DateTimeOffset.UnixEpoch));
-        yield return ("management", "createManagedDatabase", client => M(client).CreateDatabaseAsync(User, Organization, Project, "app"));
-        yield return ("management", "listDatabases", client => M(client).ListDatabasesAsync(User, Organization, Project));
-        yield return ("management", "getDatabase", client => M(client).GetDatabaseAsync(User, Organization, Project, User));
-        yield return ("management", "deleteManagedDatabase", client => M(client).DeleteDatabaseAsync(User, Organization, Project, User));
-        yield return ("management", "branchDatabase", client => M(client).BranchDatabaseAsync(User, Organization, Project, User, "copy"));
         yield return ("management", "listMembers", client => M(client).ListMembersAsync(User, Organization));
         yield return ("management", "changeMemberRole", client => M(client).ChangeMemberRoleAsync(User, Organization, User, TerraBaseRole.Admin));
         yield return ("management", "removeMember", client => M(client).RemoveMemberAsync(User, Organization, User));

@@ -53,7 +53,8 @@ public sealed class TigrisBackupTests
             (await ManagementApi.SqlAsync(data, database, "DELETE FROM people", cancellationToken)).EnsureSuccessStatusCode();
             var wiped = await ManagementApi.RowsAsync(data, database.Data, "SELECT id FROM people", cancellationToken);
             await ShippedAsync(api, database, shipped, cancellationToken);
-            using var restore = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-restored" }, cancellationToken);
+            using var management = api.ProjectClient(database.Project);
+            using var restore = await management.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-restored" }, cancellationToken);
             var restored = database with { Name = "main-restored" };
             var read = new Dictionary<string, string?>();
             foreach (var row in await ManagementApi.RowsAsync(data, restored.Data, "SELECT id, text FROM people", cancellationToken))
@@ -112,10 +113,11 @@ public sealed class TigrisBackupTests
     private static async Task ShippedAsync(ManagementApi api, ManagedDatabaseRef database, DateTimeOffset? at, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var management = api.ProjectClient(database.Project);
         deadline.CancelAfter(ShippingDeadline);
         while (true)
         {
-            using var window = await api.Client.GetAsync(ManagementApi.Uri($"{database.Path}/point-in-time"), deadline.Token);
+            using var window = await management.GetAsync(ManagementApi.Uri($"{database.Path}/point-in-time"), deadline.Token);
             if (window.StatusCode != HttpStatusCode.NotFound)
             {
                 window.EnsureSuccessStatusCode();

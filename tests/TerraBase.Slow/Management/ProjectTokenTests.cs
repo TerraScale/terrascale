@@ -25,7 +25,7 @@ public sealed class ProjectTokenTests
             (await ManagementApi.SqlAsync(legacy, database, $"INSERT INTO people (name) VALUES ('{faker.Name.FirstName()}')")).EnsureSuccessStatusCode();
         }
 
-        using var backupResponse = await api.Client.PostAsync(Uri(first.Path + "/backups"), content: null);
+        using var backupResponse = await api.ProjectClient(first.Project).PostAsync(Uri(first.Path + "/backups"), content: null);
         backupResponse.EnsureSuccessStatusCode();
         var backup = (await backupResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
         using var restricted = api.WithToken(Token(api, EntityIds.New().ToString(), first.Project, AllScopes, database: first.Id));

@@ -20,9 +20,9 @@ public sealed class BackupLeaseTests
         var gate = new CopyGate();
         await using var host = await SqlBackupHost.StartAsync(cancellationToken, gate.Decorate);
         await host.OkAsync("CREATE TABLE items (id TEXT PRIMARY KEY)");
-        using var created = await host.Api.Client.PostAsync(ManagementApi.Uri($"{host.Database.Path}/backups"), content: null, cancellationToken);
+        using var created = await host.Management.PostAsync(ManagementApi.Uri($"{host.Database.Path}/backups"), content: null, cancellationToken);
         var backupId = (await created.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("id").GetString();
-        using var policy = await host.Api.Client.PutAsJsonAsync(
+        using var policy = await host.Management.PutAsJsonAsync(
             ManagementApi.Uri($"{host.Database.Path}/backup-policy"), new { retentionDays = 1 }, cancellationToken);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(policy.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -30,7 +30,7 @@ public sealed class BackupLeaseTests
         var catalog = host.Api.Server.Services.GetRequiredService<SystemCatalog>();
         await AgePastRetentionAsync(host, catalog, backupId!, cancellationToken);
 
-        using var restored = await host.Api.Client.PostAsJsonAsync(
+        using var restored = await host.Management.PostAsJsonAsync(
             ManagementApi.Uri($"{host.Database.Path}/backups/{backupId}/restore"), new { name = "leased" }, cancellationToken);
         var operation = await restored.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
@@ -38,7 +38,7 @@ public sealed class BackupLeaseTests
         await Assert.That(operation.GetProperty("status").GetString()).IsEqualTo("running");
         await gate.Entered.WaitAsync(cancellationToken);
 
-        using var second = await host.Api.Client.PostAsJsonAsync(
+        using var second = await host.Management.PostAsJsonAsync(
             ManagementApi.Uri($"{host.Database.Path}/backups/{backupId}/restore"), new { name = "also-leased" }, cancellationToken);
         await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
         var secondId = (await second.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("operationId").GetString();
@@ -56,7 +56,7 @@ public sealed class BackupLeaseTests
         {
             await TerraBaseTestServer.EventuallyAsync(async token =>
             {
-                using var status = await host.Api.Client.GetAsync(ManagementApi.Uri($"{host.Database.Path}/restores/{id}"), token);
+                using var status = await host.Management.GetAsync(ManagementApi.Uri($"{host.Database.Path}/restores/{id}"), token);
                 return status.StatusCode == HttpStatusCode.OK
                     && (await status.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("status").GetString() == "completed";
             }, timeout: TimeSpan.FromSeconds(30));
