@@ -75,6 +75,7 @@ jobs:
           filters: |
             shared: &shared
               - .github/workflows/ci.yml
+              - .github/actions/**
               - Dockerfile
               - .dockerignore
               - Makefile
@@ -315,6 +316,13 @@ jobs:
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: terrascale/global.json
+      # Restore the pinned native libraries from the Actions cache before make verifies them: with the
+      # pins unchanged the release-CDN download is skipped entirely, so a CDN outage cannot fail every area.
+      - &turso-native-cache
+        name: Cached pinned Turso native libraries
+        uses: ./terrascale/.github/actions/turso-native-cache
+        with:
+          dir: terrascale
       - &locked-restore
         name: Locked restore and pinned native libraries
         working-directory: terrascale
@@ -331,6 +339,7 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
+      - *turso-native-cache
       - *locked-restore
       - name: Install Auth browser dependencies
         working-directory: terrascale
@@ -350,6 +359,7 @@ jobs:
     steps:
       - *checkout
       - *setup-dotnet
+      - *turso-native-cache
       - *locked-restore
       - name: Checked build, integration proofs and TerraBase Fast
         working-directory: terrascale
@@ -384,6 +394,11 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: terrascale/global.json
+      # The publish step's make turso-native verifies these cached bytes (or downloads once on a miss).
+      - name: Cached pinned Turso native libraries
+        uses: ./terrascale/.github/actions/turso-native-cache
+        with:
+          dir: terrascale
       # Production runs linux/arm64 only: publish that runtime once, then wrap it in the image without another build.
       # The publish restores only its own project, locked, from nuget.org (8-12 s cold; the monorepo package cache took
       # 25 s to download plus 7 s to restore). The image builder boots meanwhile.

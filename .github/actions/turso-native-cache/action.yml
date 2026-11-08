@@ -1,0 +1,23 @@
+name: Cached pinned Turso native libraries
+description: >-
+  Restore the pinned turso-native libraries (src/vendor/Turso.Data.Sqlite/native) from the GitHub
+  Actions cache so a release-CDN outage cannot block every build. The cache only skips the download:
+  the Makefile's turso-native target still verifies the pins and downloads only when verification
+  fails, and every consumer re-verifies the restored bytes before use.
+
+inputs:
+  dir:
+    description: The repository's checkout directory inside the workspace (ci.yml checks out into `terrascale`).
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    # Keyed by the pins and the download script itself: unchanged pins reuse the verified bytes and
+    # never touch the release host; any change misses once, downloads, and repopulates the key. No
+    # fallback keys: a stale-key fallback would still fail pin verification and re-download.
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ inputs.dir }}/src/vendor/Turso.Data.Sqlite/native
+        key: turso-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/src/vendor/Turso.Native/SHA256SUMS', inputs.dir), format('{0}/scripts/vendor/download-turso-native.sh', inputs.dir)) }}

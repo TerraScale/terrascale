@@ -408,10 +408,17 @@ internal sealed partial class EngineManagementService(
         // The fan-out must use the placement the commit acted on: a placement change committing in between would
         // otherwise leave the regions it added un-notified until their own sweeps.
         ManagedDatabase? committed = null;
+        Conflict? moveRefusal = null;
         bool Unregistered(ManagedDatabase record)
         {
             committed = record;
             return true;
+        }
+
+        bool MovedDuringCommit(Conflict error)
+        {
+            moveRefusal = error;
+            return false;
         }
 
         return await DeleteRecordedAsync(
@@ -420,11 +427,12 @@ internal sealed partial class EngineManagementService(
                 await UnregisterDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, token).ConfigureAwait(false) switch
                 {
                     DeletableDatabase unregistered => Unregistered(unregistered.Record),
+                    Conflict error => MovedDuringCommit(error),
                     _ => false,
                 },
             cancellationToken).ConfigureAwait(false) switch
         {
-            bool deleted => !deleted ? ManagementErrors.NotFound
+            bool deleted => moveRefusal is { } refused ? refused : !deleted ? ManagementErrors.NotFound
                 : await ForgetReplicaRegionsAsync(deletable.Storage, committed ?? deletable.Record, CancellationToken.None).ConfigureAwait(false),
             Unavailable refused => refused,
         };
@@ -539,7 +547,19 @@ internal sealed partial class EngineManagementService(
             return ManagementErrors.NotFound;
         }
 
-        return CheckDeletionPlacement(database, region) is Conflict refused ? refused : new DeletableDatabase(tenant with { DatabaseId = database.Id }, database);
+        if (CheckDeletionPlacement(database, region) is Conflict refused)
+        {
+            return refused;
+        }
+
+        // A home move and a delete cannot both win: while this region holds the move's marker it still owns the
+        // record, so the delete is refused; once the move settles, the delete follows the database's new home.
+        if (await HomeMovePendingAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false))
+        {
+            return MoveInProgress;
+        }
+
+        return new DeletableDatabase(tenant with { DatabaseId = database.Id }, database);
     }
 
     // Re-reads the database inside the commit transaction, so the record it returns — and its placement — is the one
@@ -655,6 +675,26 @@ internal sealed partial class EngineManagementService(
         };
     }
 
+    /// <inheritdoc />
+    public async ValueTask<RestorePrecheckResult> PrecheckRestoreAsync(
+        string userId, string organizationId, string projectId, string? name, CancellationToken cancellationToken)
+    {
+        // The same checks AddDatabaseAsync makes, before a restore spends its replay: the allowance every copy answers
+        // and, for a caller-chosen name, that the name is free. An automatic name is chosen after the replay, so it is
+        // checked there. The registration re-checks both when it commits.
+        var precheck = await PrecheckAsync(
+            transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken),
+            name, new AllowanceCheck(databaseAllowance.Limit), cancellationToken).ConfigureAwait(false);
+        return precheck switch
+        {
+            TenantContext => new Done(),
+            NotFound error => error,
+            Forbidden error => error,
+            Conflict error => error,
+            Unavailable error => error,
+        };
+    }
+
     private async ValueTask<AddDatabaseResult> AddDatabaseAsync(
         Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
         string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null, long? ttlSeconds = null)
@@ -758,7 +798,7 @@ internal sealed partial class EngineManagementService(
     }
 
     private ValueTask<AddDatabasePrecheck> PrecheckAsync(
-        Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, AllowanceCheck? allowance, CancellationToken cancellationToken) =>
+        Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string? name, AllowanceCheck? allowance, CancellationToken cancellationToken) =>
         ReadAsync<AddDatabasePrecheck>(
             async transaction => await CanAddDatabaseAsync(transaction, project, name, cancellationToken, allowance).ConfigureAwait(false) switch
             {
@@ -893,7 +933,7 @@ internal sealed partial class EngineManagementService(
     }
 
     private static async ValueTask<AddDatabaseCheck> CanAddDatabaseAsync(
-        IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, CancellationToken cancellationToken,
+        IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string? name, CancellationToken cancellationToken,
         AllowanceCheck? allowance = null)
     {
         if (ProjectAccess.Current is { DatabaseName: not null } access && access.DatabaseName != name)
@@ -917,7 +957,9 @@ internal sealed partial class EngineManagementService(
             return ManagementErrors.NotFound;
         }
 
-        if (await CatalogTables.DatabaseNamedAsync(transaction, tenant.ProjectId!, name, cancellationToken).ConfigureAwait(false) is not null)
+        // A restore without a chosen name picks its candidate names only after its replay, so the precheck leaves the
+        // names to the registration, which checks each candidate as it copies.
+        if (name is not null && await CatalogTables.DatabaseNamedAsync(transaction, tenant.ProjectId!, name, cancellationToken).ConfigureAwait(false) is not null)
         {
             return ManagementErrors.NameTaken;
         }

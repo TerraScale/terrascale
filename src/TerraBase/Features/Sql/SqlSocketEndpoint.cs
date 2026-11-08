@@ -20,6 +20,9 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
     public override void Configure()
     {
         Get(DatabaseRoute.Template + "/sql/ws");
+        // CONNECT is the extended CONNECT of a WebSocket relayed from another region (RFC 8441): the same upgrade,
+        // served the same way.
+        Verbs(HttpMethods.Get, "CONNECT");
         Name("connectSql");
         Summary("Runs SQL over a WebSocket");
         Description("""

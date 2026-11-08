@@ -109,8 +109,14 @@ public sealed class ManagementApiTests
         await Assert.That(noToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(notAToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(withApiKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        // RFC 6750 §3: the public listener's 401s tell clients how to authenticate.
+        await Assert.That(noToken.Headers.WwwAuthenticate.Single().ToString())
+            .IsEqualTo("Bearer realm=\"terrascale\"");
+        await Assert.That(notAToken.Headers.WwwAuthenticate.Single().ToString())
+            .IsEqualTo("Bearer realm=\"terrascale\", error=\"invalid_token\"");
         // The internal listener takes only the platform operator, never a ts-auth token.
         await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(onAdmin.Headers.WwwAuthenticate).IsEmpty();
         // A sign-in token without project_id is not a data credential.
         await Assert.That(noDataAccess.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }

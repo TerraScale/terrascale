@@ -94,7 +94,11 @@ reservation, before CAS, after CAS and after activation; quorum partition during
 rollback; both processes killed with a native write open; and manual owner CAS
 with a certified target and connected source holding admission; target failure
 after admission acquisition; foreign/third-node DB isolation; dead-source recovery;
-and retained Version:0 bootstrap. Every drill reconciles acknowledged rows. Three later live
+and retained Version:0 bootstrap. Every drill reconciles acknowledged rows. The
+drills that run an actual b443 process (retained-owner bootstrap and v2 rollback)
+were one-time local qualification on a dev host; the five-repeat evidence is
+recorded under `benchmark/bench/`, and the Slow suite keeps the candidate-side
+Version:0 bootstrap crash-resume drill. Three later live
 rollouts must separately meet the request-error, latency and bounded-recovery
 criteria under the agreed regional load.
 

@@ -268,59 +268,6 @@ public sealed partial class RegionalWriterCrashTests
 
     [Test]
     [Timeout(120_000)]
-    public async Task A_retained_legacy_owner_bootstraps_in_place_without_changing_its_epoch_or_losing_rows(CancellationToken token)
-    {
-        await using var drill = await RecoveryDrill.StartAsync(token);
-        await drill.Source.KillAsync();
-        await drill.Target.KillAsync();
-        var owners = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(RegionalHandoff.Bucket, token);
-        var current = await owners.GetEntryAsync<byte[]>("gru", cancellationToken: token);
-        var legacy = new RegionalOwner("gru", "gru-1", 7, "gru-2");
-        _ = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(legacy, TerraBaseJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
-        await owners.DeleteAsync("protocol.gru", cancellationToken: token);
-        // Run the unmodified, separately built b443 Program on retained files.
-        // This is not the candidate runtime with a legacy metadata fixture.
-        await drill.Source.StartLegacyAsync(token);
-        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('legacy-acked')", token);
-        var actualLegacy = await drill.OwnerAsync(token);
-        await Assert.That(actualLegacy is { Node: "gru-1", Epoch: 7, Version: 0 }).IsTrue();
-        await drill.Target.StartAsync(token);
-        await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
-        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('legacy-with-upgraded-follower')", token);
-        // Fence by actual process exit before candidate same-node admission.
-        await drill.Source.KillAsync();
-        var exitedAt = DateTimeOffset.UtcNow;
-        var homes = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(HomeLeases.Bucket, token);
-        var home = await homes.GetEntryAsync<byte[]>("home." + drill.Database, cancellationToken: token);
-        await Task.Delay(HomeLeases.Ttl + TimeSpan.FromSeconds(22), token);
-        var retainedHome = await homes.GetEntryAsync<byte[]>("home." + drill.Database, cancellationToken: token);
-        await Assert.That(retainedHome.Revision).IsEqualTo(home.Revision);
-        await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
-        // Hold the real candidate after its Version:0 bootstrap certificate,
-        // long enough to deterministically cross automatic activation recovery.
-        var blocked = drill.SourceNats.Drop((subject, _) => subject == "$KV." + HomeLeases.Bucket + ".home." + drill.Database);
-        await drill.Source.StartAsync(token);
-        await blocked.WaitAsync(TimeSpan.FromSeconds(10), token);
-        await Task.Delay(TimeSpan.FromSeconds(12), token);
-        await Assert.That(await drill.OwnerAsync(token) is { Node: "gru-1", Epoch: 7, Version: 0 }).IsTrue();
-        await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
-        drill.SourceNats.Allow();
-        try { await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token); }
-        catch (OperationCanceledException error)
-        {
-            throw new IOException("legacy bootstrap admission timed out: owner=" + JsonSerializer.Serialize(await drill.OwnerAsync(token))
-                + "\nSOURCE: " + drill.Source.Diagnostics + "\nTARGET: " + drill.Target.Diagnostics, error);
-        }
-        var adopted = await drill.OwnerAsync(token);
-        await Assert.That(adopted is { Node: "gru-1", Epoch: 7, Version: 2, Activated: true }).IsTrue();
-        await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('after-bootstrap')", token);
-        await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "legacy-acked", "legacy-with-upgraded-follower", "after-bootstrap"], token);
-        Console.WriteLine($"DRILL real b443 exit={exitedAt:O} candidate_admission={DateTimeOffset.UtcNow:O}; owner/epoch retained; follower home revision unchanged through 32s outage");
-        Console.WriteLine("DRILL retained Version:0 bootstrap: pinned owner/epoch retained; follower never admitted; exact rows preserved");
-    }
-
-    [Test]
-    [Timeout(120_000)]
     public async Task Recovery_retries_the_certified_live_target_instead_of_returning_ownership_to_a_dead_source(CancellationToken token)
     {
         await using var drill = await RecoveryDrill.StartAsync(token);

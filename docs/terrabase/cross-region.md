@@ -52,6 +52,12 @@ mesh.
   duplex HTTP/2 stream on the internal listener), and the home authenticates it again. An unreachable home answers
   `FATAL 08001` naming the home region; a database that exists in no region answers `FATAL 3D000`. A cancel request sent
   to the relaying region does not reach the home.
+- **WebSockets.** A session WebSocket (`sql/ws`, `shape/ws`) whose database is homed elsewhere cannot follow a `421` or
+  a forwarded upgrade, so the region relays the whole socket to the home: it opens a WebSocket to the home's client route
+  over the mesh (RFC 8441 on the internal listener) with the client's subprotocols, headers and address, then accepts the
+  client and pumps frames both ways for the socket's whole life. The home serves it exactly as a socket that reached it
+  directly — the same token, IP-allowlist and scope checks, once, at the home. When the home cannot be reached the answer
+  is `421 wrong_region` with `X-TerraBase-Database-Home`, like a forwarded request.
 - **Replica regions.** A Postgres or WebSocket session that reaches a replica region of its database is not relayed: it
   reads from the replica and runs writes and transactions on a session at the home
   ([region replicas](region-replicas.md#writes-and-transactions)).

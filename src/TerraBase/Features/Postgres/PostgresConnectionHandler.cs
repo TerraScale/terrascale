@@ -806,7 +806,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         {
             PgKind.Catalog => PgCatalog.Answer(statement.Text, session.Database, session.User,
                 await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
-            PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, token).ConfigureAwait(false),
+            PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, statement.Text, token).ConfigureAwait(false),
             PgKind.Savepoint => await SavepointAsync(session, statement.Text, token).ConfigureAwait(false),
             _ => await session.Sql.ExecuteAsync(new SqlCommand(statement.Sql, args, NoNamed), token).ConfigureAwait(false) switch
             {
@@ -828,8 +828,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     }
 
     // PostgreSQL's transaction verbs on the session: BEGIN inside a transaction and COMMIT or ROLLBACK outside one only
-    // warn, and COMMIT of an aborted transaction rolls it back.
-    private static async ValueTask<PgOutcome> TransactionAsync(Session session, PgKind kind, CancellationToken cancellationToken)
+    // warn, and COMMIT of an aborted transaction rolls it back. A READ ONLY BEGIN carries the access mode into the SQL
+    // session, which refuses writes with 25006; READ WRITE and an unmodified BEGIN behave as before.
+    private static async ValueTask<PgOutcome> TransactionAsync(Session session, PgKind kind, string text, CancellationToken cancellationToken)
     {
         async ValueTask<PgOutcome> Run(string verb)
         {
@@ -848,7 +849,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         if (kind == PgKind.Begin)
         {
-            return await Run("BEGIN").ConfigureAwait(false);
+            // The tag stays BEGIN, as in PostgreSQL; only the statement the session runs carries the access mode.
+            var mode = PostgresStatements.BeginReadOnly(text) ? "BEGIN READ ONLY" : verb;
+            return await session.Sql.ExecuteAsync(new SqlCommand(mode, [], NoNamed), cancellationToken).ConfigureAwait(false) is SqlError error
+                ? PostgresStatements.Error(error)
+                : new[] { new PgResult(null, [], verb) };
         }
 
         var aborted = session.Failed;

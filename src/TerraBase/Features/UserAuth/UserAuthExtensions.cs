@@ -158,6 +158,33 @@ internal static class UserAuthExtensions
         return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "auth_unavailable", KeyAuthorityMessages.Unavailable, op: null);
     }
 
+    /// <summary>RFC 6750 §3: every 401 on the public listener carries a Bearer challenge, so clients can tell how to authenticate.</summary>
+    public static WebApplication UseTerraBaseBearerChallenge(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        app.Use(async (context, next) =>
+        {
+            context.Response.OnStarting(() =>
+            {
+                // The public listener only: internal traffic authenticates differently, and a refused API key
+                // already carries a richer challenge with the refusal code.
+                if (Listeners.ArrivedOn(context) == TerraBaseListener.Client
+                    && context.Response.StatusCode == StatusCodes.Status401Unauthorized
+                    && context.Response.Headers.WWWAuthenticate.Count == 0)
+                {
+                    // A presented-but-rejected credential is an invalid_token; a missing one names only the realm.
+                    context.Response.Headers.WWWAuthenticate = context.Request.Headers.Authorization.Count > 0
+                        ? "Bearer realm=\"terrascale\", error=\"invalid_token\""
+                        : "Bearer realm=\"terrascale\"";
+                }
+
+                return Task.CompletedTask;
+            });
+            await next(context).ConfigureAwait(false);
+        });
+        return app;
+    }
+
     public static WebApplication UseTerraBaseProjectCheck(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);

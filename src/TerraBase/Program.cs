@@ -166,6 +166,7 @@ try
     app.UseTerraBaseCatalogGate();
     SqlRequestTiming.Checkpoint(app, "admission");
     app.UseAuthentication();
+    app.UseTerraBaseBearerChallenge();
     app.UseTerraBaseProjectCheck();
     app.UseAuthorization();
     SqlRequestTiming.Checkpoint(app, "auth");

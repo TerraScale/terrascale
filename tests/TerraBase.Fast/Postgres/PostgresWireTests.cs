@@ -201,6 +201,44 @@ public sealed class PostgresWireTests
         }
     }
 
+    // A READ ONLY transaction stays usable for reads: writes fail with 25006 and ROLLBACK ends it normally (ku TS-1312).
+    [Test]
+    public async Task Read_only_transaction_refuses_writes_and_rolls_back()
+    {
+        await using var api = await ManagementApi.StartSharedAsync();
+        var (database, key) = await DatabaseAsync(api, "sql:read", "sql:write");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, People);
+        var discarded = Faker.Name.FullName();
+
+        await ExecuteAsync(connection, "BEGIN READ ONLY");
+        var reads = await ReadAsync(connection, "SELECT count(*) FROM people");
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, $"INSERT INTO people (name) VALUES ('{Quote(discarded)}')"));
+        await ExecuteAsync(connection, "ROLLBACK");
+        var names = await ReadAsync(connection, "SELECT name FROM people");
+
+        await Assert.That(reads[0][0]).IsEqualTo("0");
+        await Assert.That(refused!.SqlState).IsEqualTo("25006");
+        await Assert.That(names).IsEmpty();
+    }
+
+    // Only UTC and its aliases are supported time zones: anything else is refused with 22023 and SHOW keeps UTC (ku TS-1329).
+    [Test]
+    public async Task Invalid_time_zone_is_refused_and_show_stays_utc()
+    {
+        await using var api = await ManagementApi.StartSharedAsync();
+        var (database, key) = await DatabaseAsync(api, "sql:read");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, $"SET TimeZone = '{Quote(Faker.Name.JobArea())}'"));
+        var shown = await ReadAsync(connection, "SHOW TimeZone");
+
+        await Assert.That(refused!.SqlState).IsEqualTo("22023");
+        await Assert.That(shown[0][0]).IsEqualTo("UTC");
+    }
+
     private static async Task<PostgresException?> OpenFailureAsync(ManagementApi api, string key, string database)
     {
         await using var source = Source(api, key, database);

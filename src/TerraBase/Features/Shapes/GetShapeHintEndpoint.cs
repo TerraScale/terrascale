@@ -21,6 +21,9 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
     public override void Configure()
     {
         Get(ShapeRoute.Shape + "/ws");
+        // CONNECT is the extended CONNECT of a WebSocket relayed from another region (RFC 8441): the same upgrade,
+        // served the same way.
+        Verbs(HttpMethods.Get, "CONNECT");
         Name("connectShapeHints");
         Summary("Waits for shape changes over a WebSocket");
         Description("Requires sql:read. Offer terrascale.shape.v1. Send handle and a decimal offset, plus the shape's where and columns, in the URL. Authenticate with Authorization on the upgrade or a first JSON text frame {\"type\":\"auth\",\"token\":\"…\"} within five seconds. Credentials never enter the URL. The server sends {\"type\":\"ready\"}, then {\"type\":\"new_data\",\"handle\",\"offset\",\"next_offset\",\"manifest\"} hints; the manifest lists sealed ciphertext objects for HTTP CDN catch-up. Hints contain no rows. Keep the last applied HTTP offset; hints may be lost and do not acknowledge delivery. On reconnect, resume HTTP catch-up from that offset. A stale handle sends must_refetch and closes with 1008. Credentials and grants are checked at least every 20 seconds and before hints; expiry or revocation closes with 1008. A slow consumer closes with 1013. Per-node organization limits share 1,024 live polls and sockets; excess authenticated upgrades answer 429 shape_busy and Retry-After: 1. First-frame authentication receives an error frame with retry_after before closing when overloaded. Ordinary organization request-rate limits apply to upgrades and authenticated first frames.");

@@ -34,7 +34,12 @@ description: TerraScale UI standard — simple purpose, architecture, design and
 
 ## Proof
 
-- Before/after screenshots of every changed page (repo rule).
+- Before/after screenshots of every changed page, shown in your T3 thread (repo rule in `AGENTS.md`). How:
+  1. **Run both versions.** Before = `origin/main`, after = your branch; same seed data, same signed-in role, same viewport (1280x800, plus 390x844 if the page has a narrow layout), every supported theme. Start the stack with `make dev`, or reuse the Dashboard E2E fixture (`tests/TerraScale.Dashboard.E2E`) in a scratch test that you delete before committing.
+  2. **Capture** with Playwright 1.63 (its Chromium is installed on every dev server): `npx -y playwright@1.63.0 screenshot --viewport-size=1280,800 --full-page <url> <file>` for a page you can reach by URL, or `page.ScreenshotAsync(new() { Path = <file>, FullPage = true })` in the scratch E2E test for signed-in states.
+  3. **Save** to `~/.local/state/shots/<branch>/<page>-<theme>-before.png` and `-after.png`. Never commit screenshots (no `docs/qa/` folders).
+  4. **Show them in the thread.** With T3 tools: `html_preview`, then `html_render` one grid per page (columns before | after, a caption row with page, theme and viewport, `<img src="<absolute path>">`; local images are inlined). Without T3 tools (GLM in OpenCode): put a `SCREENSHOTS` section in your final reply with one line per page, `![before: <page> <theme>](<absolute path>) ![after: <page> <theme>](<absolute path>)`.
+  5. Compare them against every rule in this file before you open the PR.
 - Don't run suites locally; CI runs Fast and the browser journeys on push.
 - Update tests that asserted removed copy to assert behavior instead; never weaken them.
 - [ ] Before shipping UI, compare actual before/after screenshots against every applicable rule below in dark and supported light themes; fix default-styled or unfinished controls first.

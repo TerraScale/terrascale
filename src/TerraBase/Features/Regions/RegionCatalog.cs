@@ -29,6 +29,7 @@ public static class RegionsExtensions
         services.AddSingleton<IRegionCatalog, ServingRegionCatalog>();
         services.AddSingleton<IRegionPeers, PeersFileRegionPeers>();
         services.AddSingleton<IHomeLocator, HomeLocator>();
+        services.AddSingleton<HomeSocketRelay>();
         services.AddHttpClient(HomeLocator.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
             .ConfigurePrimaryHttpMessageHandler((handler, _) =>
             {
