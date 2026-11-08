@@ -14,9 +14,9 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [SDK reference](/zh-cn/guides/sdks) (being updated for SQL).
 - [Authentication capabilities](/zh-cn/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/zh-cn/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
-- [Connect with psql and Postgres drivers](/zh-cn/guides/postgres-clients) (being updated for SQL).
+- [Connect with psql and Postgres drivers](/zh-cn/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
 - [Use Drizzle ORM](/zh-cn/guides/orm-drizzle), [Use Prisma ORM](/zh-cn/guides/orm-prisma) and [Use SQLAlchemy](/zh-cn/guides/orm-sqlalchemy) (being updated for SQL).
-- [SQL over HTTP](/zh-cn/guides/sql-http) (being updated for SQL).
+- [SQL over HTTP](/zh-cn/guides/sql-http): run SQL statements with any HTTP client.
 - [Errors and safe retries](/zh-cn/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/zh-cn/guides/indexes) (being updated for SQL).
 - [Full-text search](/zh-cn/guides/full-text-search) and [Vector similarity search](/zh-cn/guides/vector-search) (being updated for SQL).

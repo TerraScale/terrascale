@@ -60,7 +60,7 @@ Use this for clients without MCP sign-in, or for automation.
 3. Create a named token, choose its expiry and complete the sign-in redirect.
 4. Save the token securely when it is shown. Its secret is displayed only once.
 
-Tokens expire after 7, 30, 90 or 365 days. An account can hold up to 25 live tokens. Project API keys support the [agent database tools](/hi/guides/agent-databases#use-mcp-from-claude-code-or-codex); personal access tokens are required for the wider dashboard tools. Assistants cannot create personal access tokens or change your password, email, MFA or passkeys; those actions require the browser.
+Tokens expire after 7, 30, 90 or 365 days. An account can hold up to 25 live tokens. Project API keys support the [agent database tools](/hi/guides/agent-databases#use-mcp-from-claude-code-or-codex); personal access tokens are required for the wider dashboard tools. Assistants cannot create personal access tokens or change your password, email or MFA; those actions require the browser.
 
 In Bash, enter the token without recording its value in shell history:
 

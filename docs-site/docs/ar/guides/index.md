@@ -14,9 +14,9 @@ Use the [quickstart](/ar/getting-started/) to establish one working application 
 - [SDK reference](/ar/guides/sdks) (being updated for SQL).
 - [Authentication capabilities](/ar/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/ar/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
-- [Connect with psql and Postgres drivers](/ar/guides/postgres-clients) (being updated for SQL).
+- [Connect with psql and Postgres drivers](/ar/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
 - [Use Drizzle ORM](/ar/guides/orm-drizzle), [Use Prisma ORM](/ar/guides/orm-prisma) and [Use SQLAlchemy](/ar/guides/orm-sqlalchemy) (being updated for SQL).
-- [SQL over HTTP](/ar/guides/sql-http) (being updated for SQL).
+- [SQL over HTTP](/ar/guides/sql-http): run SQL statements with any HTTP client.
 - [Errors and safe retries](/ar/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/ar/guides/indexes) (being updated for SQL).
 - [Full-text search](/ar/guides/full-text-search) and [Vector similarity search](/ar/guides/vector-search) (being updated for SQL).
