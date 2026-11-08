@@ -313,13 +313,13 @@ func (client *PostgresClient) Query(ctx context.Context, query PostgresQuery) (P
 	return client.run(ctx, query)
 }
 
-func (client *PostgresClient) run(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
+func (client *PostgresClient) openRows(ctx context.Context, query PostgresQuery) (pgx.Rows, []PostgresColumn, error) {
 	values, err := postgresParameters(query)
 	if err != nil {
-		return PostgresResult{}, err
+		return nil, nil, err
 	}
 	if client.driver == nil || client.driver.IsClosed() {
-		return PostgresResult{}, &PostgresError{Kind: "connection"}
+		return nil, nil, &PostgresError{Kind: "connection"}
 	}
 	for _, oid := range []uint32{1700, 1082, 1114, 1184} {
 		typ, _ := client.driver.TypeMap().TypeForOID(oid)
@@ -329,57 +329,44 @@ func (client *PostgresClient) run(ctx context.Context, query PostgresQuery) (Pos
 			client.driver.TypeMap().RegisterType(&copy)
 		}
 	}
-	// The producer sends numeric and temporal scalars as text even when binary is requested.
-	// Request text explicitly: pgx ExecStatement trusts the requested formats without Describe.
 	arguments := append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, values...)
 	rows, err := client.driver.Query(ctx, query.Statement, arguments...)
 	if err != nil {
-		return PostgresResult{}, postgresFailure(err)
+		return nil, nil, postgresFailure(err)
 	}
-	defer rows.Close()
-	result := PostgresResult{Columns: make([]PostgresColumn, len(rows.FieldDescriptions())), Rows: [][]PostgresValue{}}
-	budget := postgresResultBytes
+	columns := make([]PostgresColumn, len(rows.FieldDescriptions()))
 	for index, field := range rows.FieldDescriptions() {
-		budget -= len(field.Name) + 64
-		result.Columns[index] = PostgresColumn{Name: field.Name, OID: field.DataTypeOID}
+		columns[index] = PostgresColumn{Name: field.Name, OID: field.DataTypeOID}
 	}
-	for rows.Next() {
-		rawValues := rows.RawValues()
-		if len(rawValues) != len(result.Columns) {
-			client.abort(ctx)
-			return PostgresResult{}, &PostgresError{Kind: "decode"}
-		}
-		budget -= 24 + 64*len(result.Columns)
-		for _, raw := range rawValues {
-			budget -= len(raw)
-		}
+	return rows, columns, nil
+}
+
+func (client *PostgresClient) run(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
+	rows, columns, err := client.openRows(ctx, query)
+	if err != nil {
+		return PostgresResult{}, err
+	}
+	stream := &PostgresRows{client: client, ctx: ctx, rows: rows, columns: columns}
+	result := PostgresResult{Columns: columns, Rows: [][]PostgresValue{}}
+	budget := postgresResultBytes
+	for _, column := range columns {
+		budget -= len(column.Name) + 64
+	}
+	for stream.Next() {
+		row := stream.Values()
+		budget -= stream.rawSize + 24 + 64*len(row)
 		if budget < 0 {
-			// Do not drain an unbounded result or leave an ambiguous session reusable.
-			client.abort(ctx)
-			return PostgresResult{}, &PostgresError{Kind: "limit"}
-		}
-		row := make([]PostgresValue, len(result.Columns))
-		for index, field := range rows.FieldDescriptions() {
-			value, err := postgresDecode(client.driver.TypeMap(), field, rawValues[index])
-			if err != nil {
-				client.abort(ctx)
-				if ctx.Err() != nil {
-					return PostgresResult{}, postgresFailure(ctx.Err())
-				}
-				return PostgresResult{}, &PostgresError{Kind: "decode"}
-			}
-			row[index] = PostgresValue{oid: field.DataTypeOID, value: value}
+			stream.abort(&PostgresError{Kind: "limit"})
+			return PostgresResult{}, stream.err
 		}
 		result.Rows = append(result.Rows, row)
 	}
-	if err := rows.Err(); err != nil {
-		client.abort(ctx)
-		return PostgresResult{}, postgresFailure(err)
+	if stream.err != nil {
+		return PostgresResult{}, stream.err
 	}
-	tag := rows.CommandTag()
-	result.CommandTag = tag.String()
+	result.CommandTag = stream.tag.String()
 	result.Command, _, _ = strings.Cut(result.CommandTag, " ")
-	result.AffectedRows = uint64(tag.RowsAffected())
+	result.AffectedRows = uint64(stream.tag.RowsAffected())
 	return result, nil
 }
 

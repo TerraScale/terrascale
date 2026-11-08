@@ -71,6 +71,14 @@ func (tx *PostgresTx) discard(ctx context.Context) {
 	}
 }
 
+func (tx *PostgresTx) failWith(err error) {
+	tx.mu.Lock()
+	if tx.failed == nil {
+		tx.failed = err
+	}
+	tx.mu.Unlock()
+}
+
 // Query sends the SQL and typed values separately through PostgreSQL binding.
 func (tx *PostgresTx) Query(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
 	if err := tx.enter(true); err != nil {
@@ -79,14 +87,27 @@ func (tx *PostgresTx) Query(ctx context.Context, query PostgresQuery) (PostgresR
 	defer tx.exit()
 	result, err := tx.client.run(ctx, query)
 	if err != nil {
-		tx.mu.Lock()
-		if tx.failed == nil {
-			tx.failed = err
-		}
-		tx.mu.Unlock()
+		tx.failWith(err)
 		return PostgresResult{}, err
 	}
 	return result, nil
+}
+
+// QueryRows streams the statement's rows inside the transaction without buffering.
+func (tx *PostgresTx) QueryRows(ctx context.Context, query PostgresQuery) (*PostgresRows, error) {
+	if err := tx.enter(true); err != nil {
+		return nil, err
+	}
+	rows, columns, err := tx.client.openRows(ctx, query)
+	if err != nil {
+		tx.failWith(err)
+		tx.exit()
+		return nil, err
+	}
+	return &PostgresRows{
+		client: tx.client, ctx: ctx, rows: rows, columns: columns,
+		finish: tx.exit, onError: tx.failWith,
+	}, nil
 }
 
 // Exec runs one statement inside the transaction and returns its command tag.
