@@ -65,8 +65,11 @@
   .Layout .docs-brand-word { display: none; }
 }
 /* Local nav (On this page) lines up with the article column. */
+@media (min-width: 768px) and (max-width: 959px) {
+  .Layout .VPLocalNav .VPLocalNavOutlineDropdown { padding-left: max(32px, calc((100vw - 760px) / 2)); }
+}
 @media (min-width: 960px) {
-  .Layout .VPLocalNav .VPLocalNavOutlineDropdown { padding-inline: clamp(16px, 2.5vw, 40px); }
+  .Layout .VPLocalNav .VPLocalNavOutlineDropdown { padding-left: max(clamp(24px, 3.125vw, 40px), calc((100vw - 1000px) / 2)); }
 }
 
 /* ---------- Sidebar: 240px, frosted, neutral nav with icons ---------- */
@@ -122,14 +125,21 @@
 }
 .Layout .VPSidebar .VPSidebarItem.is-link:not(.level-0).is-active > .item::before { background-color: var(--ts-ink); }
 
-/* ---------- Content: full width, paragraphs ~80ch ---------- */
-@media (min-width: 960px) {
-  .Layout .VPDoc { padding: 32px clamp(16px, 2.5vw, 40px) 64px; }
-  .Layout .VPDoc > .container > .content { min-width: 0; padding: 0 48px 0 0; }
-  .Layout .VPDoc:not(.has-aside) > .container > .content { padding: 0; }
+/* ---------- Content: 760px column centered between sidebar and outline ---------- */
+@media (min-width: 768px) {
+  .Layout .VPDoc .content-container { max-width: 760px !important; margin-inline: auto; }
 }
-.Layout .VPDoc .content-container { max-width: none !important; }
-.Layout .vp-doc > div > :is(p, ul, ol, blockquote) { max-width: 80ch; }
+@media (min-width: 960px) {
+  .Layout .VPDoc { padding: 32px clamp(24px, 3.125vw, 40px) 64px; }
+  .Layout .VPDoc > .container > .content { min-width: 0; padding: 0; }
+}
+@media (min-width: 1280px) {
+  .Layout .VPDoc.has-aside > .container > .content { padding: 0 40px 0 0; }
+  .Layout .VPDoc.has-aside:not(:has(.outline-link)) > .container > .content { padding: 0; }
+  .Layout .VPDoc.has-aside:not(:has(.outline-link)) .aside { display: none; }
+}
+.Layout .VPDoc .vp-doc { font-size: 16px; }
+.Layout .VPDoc .vp-doc > div > :is(p, ul, ol, blockquote) { max-width: none; }
 
 /* ---------- Right-hand TOC: ink + 1px rule on the active heading ---------- */
 @media (min-width: 1280px) {
