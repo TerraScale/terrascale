@@ -45,8 +45,7 @@
 }
 
 /* The logo: blue mark and light wordmark (the dark-UI logo). */
-.st-brand,
-.st-foot-brand {
+.st-brand {
   display: flex;
   color: var(--ts-ink);
 }
@@ -59,10 +58,6 @@
 .st-logo {
   width: auto;
   height: 22px;
-}
-
-.st-foot-brand .st-logo {
-  height: 18px;
 }
 
 .st-logo-mark {
@@ -733,10 +728,21 @@
 }
 
 .st-region-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--ts-link);
   font-size: var(--ts-fs-xs);
   font-weight: 700;
   letter-spacing: 0.08em;
+}
+
+.st-region-flag {
+  width: 16px;
+  height: 12px;
+  flex: none;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14);
 }
 
 .st-region-row {
@@ -802,31 +808,6 @@
 .st-incident-body {
   color: var(--ts-ink-2);
   white-space: pre-line;
-}
-
-/* The footer: logo, ©, links, and the live status link. */
-.st-foot {
-  border-top: 1px solid var(--ts-line);
-}
-
-.st-foot > .st-frame {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ts-s3) var(--ts-s5);
-  padding-block: var(--ts-s6);
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-sm);
-}
-
-.st-foot nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ts-s2) var(--ts-s4);
-}
-
-.st-foot nav a {
-  color: var(--ts-ink-2);
 }
 
 .st-status-link {
@@ -1267,6 +1248,7 @@
 .st-code {
   margin: 0;
   padding: var(--ts-s3);
+  max-width: 100%;
   overflow-x: auto;
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius);

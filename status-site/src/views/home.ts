@@ -86,6 +86,20 @@ const lower = (state: TimelineState): string => STATE_LABELS[state].toLowerCase(
 export const providersOf = (entry: RegionOverview): string =>
   [...new Set(entry.clusters.map((cluster) => PROVIDERS[cluster.provider]))].join(", ") || "No clusters yet";
 
+const FLAGS: Record<string, string> = {
+  Brazil:
+    '<rect width="16" height="12" fill="#009b3a"/><path d="M8 1.6 14.4 6 8 10.4 1.6 6z" fill="#fedf00"/><circle cx="8" cy="6" r="2.5" fill="#002776"/>',
+  Germany:
+    '<rect width="16" height="4" fill="#000"/><rect y="4" width="16" height="4" fill="#dd0000"/><rect y="8" width="16" height="4" fill="#ffce00"/>',
+  "United States":
+    '<rect width="16" height="12" fill="#fff"/><rect width="16" height="0.92" fill="#b22234"/><rect y="1.85" width="16" height="0.92" fill="#b22234"/><rect y="3.69" width="16" height="0.92" fill="#b22234"/><rect y="5.54" width="16" height="0.92" fill="#b22234"/><rect y="7.38" width="16" height="0.92" fill="#b22234"/><rect y="9.23" width="16" height="0.92" fill="#b22234"/><rect width="7" height="6.46" fill="#3c3b6e"/>',
+};
+
+export function regionFlag(country: string): Html {
+  const shapes = FLAGS[country];
+  return shapes ? raw(`<svg class="st-region-flag" viewBox="0 0 16 12" aria-hidden="true">${shapes}</svg>`) : html``;
+}
+
 function axis(view: Overview): Html {
   return html`<div class="st-axis" aria-hidden="true"><span>${RANGES[view.range].label} ago</span><span>Now</span></div>`;
 }
@@ -151,7 +165,7 @@ function region(entry: RegionOverview, view: Overview) {
   return html`<section class="st-region" aria-labelledby="region-${entry.code}">
   <header class="ts-row-between">
     <div class="ts-row">
-      <span class="st-region-code">${({ Brazil: "🇧🇷", Germany: "🇩🇪", "United States": "🇺🇸" } as Record<string, string>)[entry.country] ?? ""} ${entry.code.toLowerCase()}</span>
+      <span class="st-region-code">${regionFlag(entry.country)}${entry.code.toLowerCase()}</span>
       <h3 id="region-${entry.code}" class="ts-strong"><a class="st-incident-link" href="${regionHref(entry.code)}">${entry.name}</a></h3>
       <span class="ts-meta">${entry.country} · ${providersOf(entry)}</span>
     </div>
