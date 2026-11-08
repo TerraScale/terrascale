@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Metadata;
+using System.Security.Claims;
 using OpenIddict.Abstractions;
 using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
@@ -43,7 +44,8 @@ public static class DeviceFlow
     /// <summary>The per-user lookup window.</summary>
     public static readonly TimeSpan LookupWindow = TimeSpan.FromMinutes(15);
 
-    internal static async Task<IResult> PageAsync(HttpContext http, TotpCredentials mfa, AuthOptions options, CancellationToken cancellationToken)
+    internal static async Task<IResult> PageAsync(HttpContext http, TotpCredentials mfa, AuthOptions options, IOpenIddictApplicationManager applications,
+        CancellationToken cancellationToken)
     {
         if (SignInFlow.WrongSlug(http) || http.Items[DeviceGate.Key] is not DeviceGate.Result gate)
         {
@@ -92,15 +94,15 @@ public static class DeviceFlow
 
         if (decision != "approve")
         {
-            return SignInPageModel.Render(http, page with { Step = SignInStep.DeviceConfirm }, post ? StatusCodes.Status400BadRequest : StatusCodes.Status200OK);
+            return SignInPageModel.Render(http, await ConfirmPageAsync(http, page, device, applications, cancellationToken),
+                post ? StatusCodes.Status400BadRequest : StatusCodes.Status200OK);
         }
 
         // The same rule as every other user grant: an active MFA factor refuses primary-only tokens.
         if (!user.MultiFactor && !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
-            return SignInPageModel.Render(http, page with
+            return SignInPageModel.Render(http, await ConfirmPageAsync(http, page, device, applications, cancellationToken) with
             {
-                Step = SignInStep.DeviceConfirm,
                 ErrorTitle = "Two-factor accounts cannot sign in the CLI yet",
                 Error = "This account has two-factor authentication, which the device flow does not support yet.",
             }, StatusCodes.Status403Forbidden);
@@ -108,6 +110,32 @@ public static class DeviceFlow
 
         return OidcResults.SignIn(user, session.CreatedAt, device.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
+
+    /// <summary>The confirm page with the client's display name and readable scope labels.</summary>
+    private static async Task<SignInPageModel> ConfirmPageAsync(HttpContext http, SignInPageModel page, ClaimsPrincipal device,
+        IOpenIddictApplicationManager applications, CancellationToken cancellationToken)
+    {
+        var clientId = device.GetClaim(Claims.ClientId) ?? string.Empty;
+        var name = await applications.FindByClientIdAsync(clientId, cancellationToken) is { } application
+            ? await applications.GetDisplayNameAsync(application, cancellationToken)
+            : null;
+        return page with
+        {
+            Step = SignInStep.DeviceConfirm,
+            ClientName = string.IsNullOrEmpty(name) ? clientId : name,
+            Scopes = [.. device.GetScopes().Select(ScopeLabel)],
+        };
+    }
+
+    /// <summary>The plain-language label a scope shows on the confirm page; unknown scopes keep their raw name.</summary>
+    private static string ScopeLabel(string scope) => scope switch
+    {
+        Scopes.OpenId => "Your account id",
+        Scopes.Email => "Your email address",
+        Scopes.Profile => "Your name",
+        Scopes.OfflineAccess => "Stay signed in",
+        _ => scope,
+    };
 }
 
 /// <summary>
@@ -269,7 +297,7 @@ public sealed class DeviceAuthorizationEndpoint : EndpointWithoutRequest<IResult
 }
 
 /// <summary><c>GET /ui/{slug}/device</c>: the hosted device page; shows the entered code and the account, never approves.</summary>
-public sealed class DevicePageEndpoint(TotpCredentials mfa, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class DevicePageEndpoint(TotpCredentials mfa, AuthOptions options, IOpenIddictApplicationManager applications) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -288,11 +316,11 @@ public sealed class DevicePageEndpoint(TotpCredentials mfa, AuthOptions options)
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await DeviceFlow.PageAsync(this.HttpContext, mfa, options, cancellationToken);
+        await DeviceFlow.PageAsync(this.HttpContext, mfa, options, applications, cancellationToken);
 }
 
 /// <summary><c>POST /ui/{slug}/device</c>: approves or denies a device code for the signed-in user.</summary>
-public sealed class DeviceDecisionEndpoint(TotpCredentials mfa, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class DeviceDecisionEndpoint(TotpCredentials mfa, AuthOptions options, IOpenIddictApplicationManager applications) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -313,5 +341,5 @@ public sealed class DeviceDecisionEndpoint(TotpCredentials mfa, AuthOptions opti
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await DeviceFlow.PageAsync(this.HttpContext, mfa, options, cancellationToken);
+        await DeviceFlow.PageAsync(this.HttpContext, mfa, options, applications, cancellationToken);
 }
