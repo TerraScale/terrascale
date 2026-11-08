@@ -165,7 +165,7 @@ release qualification remain open gates.
 | SQL over WebSocket | `db.connect()` |
 | Live table shapes | `db.shape(table)` |
 | Databases | `client.databases.create/list/get/rename/delete/branch`, plus `deleteIfId`/`branchIfId` guarded by the database's immutable ID |
-| Backups and usage | `db.backups`, `db.metrics`, `client.metrics`, `client.backupDestination` |
+| Backups, usage and regions | `db.backups`, `db.metrics`, `db.regions`, `client.metrics`, `client.backupDestination` |
 | Functions | `db.functions.deploy/list/get/invoke/logs/delete` |
 | Request logs | `db.listDatabaseLogs(status?)` |
 | Project metrics | `client.metrics.metrics()` |

@@ -8,12 +8,11 @@ const current = [...v1Routes, ...managementV1Routes];
 /** @param {{method: string; path: string}} route */
 const key = route => `${route.method} ${route.path}`;
 
-test("all 45 inventoried public routes are inventoried once, including routes absent from the baseline SDK", () => {
+test("all 46 inventoried public routes are inventoried once, including routes absent from the baseline SDK", () => {
   expect(contract.producerRevision).toBe("5c6313056dd0acfd032eb6070db653b264e37fd7");
-  expect(contract.routes).toHaveLength(45);
-  expect(current).toHaveLength(45);
-  expect(new Set(current.map(r => `${r.method} ${r.pathTemplate}`)).size).toBe(45);
-  expect(current.map(r => `${r.method} ${r.pathTemplate}`).sort()).toEqual(contract.routes.map(key).sort());
+  expect(contract.routes).toHaveLength(46);
+  expect(current).toHaveLength(46);
+  expect(new Set(current.map(r => `${r.method} ${r.pathTemplate}`)).size).toBe(46);  expect(current.map(r => `${r.method} ${r.pathTemplate}`).sort()).toEqual(contract.routes.map(key).sort());
   for (const route of current) {
     const expected = contract.routes.find(/** @param {{method: string; path: string}} r */ r => key(r) === `${route.method} ${route.pathTemplate}`);
     expect(expected, route.operation).toBeDefined();
