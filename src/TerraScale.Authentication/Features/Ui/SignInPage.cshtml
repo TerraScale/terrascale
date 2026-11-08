@@ -384,6 +384,23 @@ else
 <button type="submit"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>Set up an authenticator app</button>
 </form>
 }
+<dl class="facts" aria-label="Passkeys">
+@if (Model.Passkeys.Count == 0)
+{
+<div><dt>Passkeys</dt><dd>None</dd></div>
+}
+@foreach (var passkey in Model.Passkeys)
+{
+<div><dt>@(passkey.Name is { Length: > 0 } name ? name : "Passkey")</dt><dd>Added @passkey.CreatedAt.ToString("d", CultureInfo.InvariantCulture) · @(passkey.LastUsedAt is { } lastUsed ? "Last used " + lastUsed.ToString("d", CultureInfo.InvariantCulture) : "Never used")</dd></div>
+}
+</dl>
+<form id="passkey-add" data-options="/ui/@Model.Slug/security/passkeys/options" data-verify="/ui/@Model.Slug/security/passkeys/verify">
+<div class="field">
+<label for="passkey-name">Passkey name</label>
+<input id="passkey-name" name="name" maxlength="100" autocomplete="off" placeholder="YubiKey 5C">
+</div>
+<button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>Add passkey</button>
+</form>
 break;
 case SignInStep.TotpSetup:
 <img src="@Model.QrCode" alt="QR code to add TerraScale to your authenticator app" width="240" height="240">

@@ -50,6 +50,12 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
             Context(user.User.InstanceId)));
     }
 
+    public async Task<IReadOnlyList<PasskeyCredentialEntry>> ListAsync(UserRecord caller, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        return (await this.ReadAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false))?.Record.Entries ?? [];
+    }
+
     public async Task<PasskeyCredentialEntry?> VerifyAsync(UserRecord caller, string? sealedChallenge, AuthenticatorAttestationRawResponse response, string? name, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);

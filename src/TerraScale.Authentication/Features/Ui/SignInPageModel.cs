@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Features.Ui;
@@ -156,6 +157,9 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     /// <summary>Unused recovery codes left.</summary>
     public int RecoveryRemaining { get; init; }
+
+    /// <summary>The account's enrolled passkeys.</summary>
+    public IReadOnlyList<PasskeyCredentialEntry> Passkeys { get; init; } = [];
 
     /// <summary>A success message shown above the page.</summary>
     public string? Notice { get; init; }

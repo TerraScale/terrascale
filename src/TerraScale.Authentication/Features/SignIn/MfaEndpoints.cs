@@ -413,12 +413,15 @@ internal static class SecurityFlow
         int statusCode = StatusCodes.Status200OK, string? notice = null, string? next = null)
     {
         var (enabled, remaining) = await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken);
+        var passkeys = await context.RequestServices.GetRequiredService<Features.WebAuthn.PasskeyCredentials>()
+            .ListAsync(user, cancellationToken);
         return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Security, SignInFlow.Tenant(context), Error: error?.Message, Next: next)
         {
             ErrorTitle = error?.Title,
             Account = user.Email,
             MfaEnabled = enabled,
             RecoveryRemaining = remaining,
+            Passkeys = passkeys,
             Notice = notice,
         }, statusCode);
     }
