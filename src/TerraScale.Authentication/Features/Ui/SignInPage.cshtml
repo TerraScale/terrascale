@@ -346,6 +346,14 @@ case SignInStep.Security:
 </dl>
 @if (Model.MfaEnabled)
 {
+<form method="post" action="/ui/@Model.Slug/security/recovery/regenerate">
+<div class="field">
+<label for="regenerate-code">Authenticator or recovery code</label>
+<input id="regenerate-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
+</div>
+<p class="hint">The old codes stop working; the new ones are shown once.</p>
+<button type="submit" class="secondary">Regenerate recovery codes</button>
+</form>
 <form method="post" action="/ui/@Model.Slug/security/totp/disable">
 <div class="field">
 <label for="disable-code">Authenticator or recovery code</label>

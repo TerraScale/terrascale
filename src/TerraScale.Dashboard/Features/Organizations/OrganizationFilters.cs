@@ -72,6 +72,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 "member.mfa_enabled" => "Member turned on two-factor",
                 "member.mfa_disabled" => "Member turned off two-factor",
                 "member.mfa_recovery_code_used" => "Member used a recovery code",
+                "member.mfa_recovery_codes_regenerated" => "Member regenerated recovery codes",
                 _ => Capitalize(string.Join(' ', item.Action.Replace('.', ' ').Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries)))
             };
         }

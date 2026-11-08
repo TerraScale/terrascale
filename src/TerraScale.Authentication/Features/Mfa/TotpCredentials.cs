@@ -279,6 +279,30 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             : null;
     }
 
+    /// <summary>
+    /// Consumes an active TOTP step or recovery code and replaces the whole recovery-code set in the same single
+    /// conditional write, without touching the TOTP secret or the enabled state; returns the new codes once. The
+    /// caller's validated authorization is consumed atomically with the change; the account's epoch and sessions stay.
+    /// </summary>
+    internal async Task<IssuedRecoveryCodes?> RegenerateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
+            || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
+            || this.Consume(caller, current.Record, code) is not { } proof)
+        {
+            return null;
+        }
+
+        var codes = Enumerable.Range(0, RecoveryCount).Select(_ => Tokens.RandomToken(24)).ToArray();
+        var recoveryExpires = clock.GetUtcNow() + RecoveryLifetime;
+        var regenerated = proof with { RecoveryHashes = codes.Select(Tokens.Sha256Hex).ToArray(), RecoveryExpiresAt = recoveryExpires };
+        return await this.CommitAsync(user.User, regenerated, current.Version, null, authorization, cancellationToken).ConfigureAwait(false)
+            ? new IssuedRecoveryCodes(user.User, codes, recoveryExpires)
+            : null;
+    }
+
     private async Task<(UserRecord User, string Version)?> CurrentUserAsync(UserRecord caller, CancellationToken cancellationToken) =>
         await users.GetVersionedAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is { } current
         && current.User.AuthEpoch == caller.AuthEpoch && current.User.AuthStamp == caller.AuthStamp ? current : null;
