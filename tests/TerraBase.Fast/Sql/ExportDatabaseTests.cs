@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
@@ -51,10 +50,10 @@ public sealed class ExportDatabaseTests
         await using var source = await StartSharedAsync();
         var text = "line one\nit's a 'quote'\r\nand a \"double\"";
         await source.OkAsync(
-            "CREATE TABLE items (id INTEGER PRIMARY KEY, body TEXT, data BLOB, score REAL)",
+            Stmt("CREATE TABLE items (id INTEGER PRIMARY KEY, body TEXT, data BLOB, score REAL)"),
             Stmt("INSERT INTO items VALUES (1, ?, ?, ?)", text, Blob([0x00, 0x01, 0xFE, 0xFF]), 12.5),
-            "INSERT INTO items VALUES (2, NULL, NULL, NULL)",
-            "CREATE INDEX items_body ON items (body)");
+            Stmt("INSERT INTO items VALUES (2, NULL, NULL, NULL)"),
+            Stmt("CREATE INDEX items_body ON items (body)"));
 
         using var export = await source.Writer.GetAsync(
             ManagementApi.Uri(source.Database.Data + "/export"), cancellationToken);
@@ -62,17 +61,13 @@ public sealed class ExportDatabaseTests
         await Assert.That(export.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(export.Content.Headers.ContentDisposition?.DispositionType).IsEqualTo("attachment");
 
-        var restore = await source.Api.CreateManagedDatabaseAsync();
+        await using var target = await StartSharedAsync();
         foreach (var batch in Statements(dump).Chunk(256))
         {
-            using var run = await source.Writer.PostAsJsonAsync(
-                ManagementApi.Uri(restore.Data + "/sql/execute"),
-                new { statements = batch.Select(sql => Stmt(sql.TrimEnd(';'))).ToArray() }, cancellationToken);
-            var body = JsonElement.Parse(await run.Content.ReadAsStringAsync(cancellationToken));
-            await Assert.That(run.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body.GetRawText());
+            await target.OkAsync([.. batch.Select(sql => Stmt(sql.TrimEnd(';')))]);
         }
 
-        var (textBack, blobBack, realBack, nullBack, indexBack) = await Rows(restore);
+        var (textBack, blobBack, realBack, nullBack, indexBack) = await Rows(target);
         await Assert.That(textBack).IsEqualTo(text);
         await Assert.That(blobBack).IsEquivalentTo<byte[], byte>([0, 1, 254, 255]);
         await Assert.That(realBack).IsEqualTo(12.5);
@@ -80,17 +75,15 @@ public sealed class ExportDatabaseTests
         await Assert.That(indexBack).IsTrue();
         return;
 
-        async Task<(string? Text, byte[]? Blob, double? Real, string? Null, bool Index)> Rows(ManagedDatabaseRef database)
+        async Task<(string? Text, byte[]? Blob, double? Real, string? Null, bool Index)> Rows(SqlNativeDatabase database)
         {
-            var rows = await ManagementApi.RowsAsync(source.Writer, database.Data,
-                "SELECT body, data, score FROM items WHERE id = 1", cancellationToken);
-            var nulls = await ManagementApi.RowsAsync(source.Writer, database.Data,
-                "SELECT body FROM items WHERE id = 2", cancellationToken);
-            var indexes = await ManagementApi.RowsAsync(source.Writer, database.Data,
-                "SELECT count(*) FROM sqlite_schema WHERE type = 'index' AND name = 'items_body'", cancellationToken);
-            return (rows[0][0].GetString(), rows[0][1].GetProperty("base64").GetString() is { } encoded
+            var rows = await database.OkAsync("SELECT body, data, score FROM items WHERE id = 1");
+            var nulls = await database.OkAsync("SELECT body FROM items WHERE id = 2");
+            var indexes = await database.OkAsync("SELECT count(*) FROM sqlite_schema WHERE type = 'index' AND name = 'items_body'");
+            return (rows[0].GetProperty("rows")[0][0].GetString(), rows[0].GetProperty("rows")[0][1].GetProperty("base64").GetString() is { } encoded
                     ? Convert.FromBase64String(encoded) : null,
-                rows[0][2].GetDouble(), nulls[0][0].GetString(), indexes[0][0].GetInt64() == 1);
+                rows[0].GetProperty("rows")[0][2].GetDouble(), nulls[0].GetProperty("rows")[0][0].GetString(),
+                indexes[0].GetProperty("rows")[0][0].GetInt64() == 1);
         }
     }
 }
