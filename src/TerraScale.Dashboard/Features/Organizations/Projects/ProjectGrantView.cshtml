@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectGrantPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page" aria-labelledby="project-grants-title" data-signals="{_grantPending: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_grantPending = true)" data-on:pageshow__window="$_grantPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_grantPending = false)">
-    <header class="ts-page-header"><h1 id="project-grants-title">Explicit project grants</h1><p>@Model.Shell.Context.Project!.Name · your role: @Model.Shell.Context.Project.Role</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
+    <header class="ts-page-header"><h1 id="project-grants-title">Members</h1><p>@Model.Shell.Context.Project!.Name · your role: @Model.Shell.Context.Project.Role</p><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></header>
     @if (Model.Status.Length > 0) { <p class="ts-alert ts-alert-success" role="status">@Model.Status</p> }
     @if (Model.CanManageGrants)
     {
@@ -9,7 +9,7 @@
             <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
             <label class="ts-label" for="grant-user-id">Member user ID</label><input class="ts-input" id="grant-user-id" name="userId" value="@Model.DraftUserId" required minlength="26" maxlength="26" placeholder="01JBX8Y3Z4N5P6Q7R8S9T0V1W2" autocomplete="off" spellcheck="false" />
             <label class="ts-label" for="grant-role">Explicit project role</label><select class="ts-select" id="grant-role" name="role">
-                @if (Model.DraftRole is not ("viewer" or "member" or "admin")) { <option value="@Model.DraftRole" selected>Choose a valid role (@Model.DraftRole)</option> }
+                @if (Model.DraftRole is not ("viewer" or "member" or "admin")) { <option value="@Model.DraftRole" selected disabled>Choose a valid role (@Model.DraftRole)</option> }
                 @foreach (var role in new[] { "viewer", "member", "admin" }) { <option value="@role" selected="@(role == Model.DraftRole ? "selected" : null)">@role</option> }
             </select>
             <button class="ts-btn ts-btn-primary" type="submit" name="operation" value="set">Grant or change explicit role</button>

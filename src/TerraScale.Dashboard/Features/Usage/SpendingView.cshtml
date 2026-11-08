@@ -7,11 +7,11 @@
         <form id="spending-controls" class="ts-stack ts-spending-form" method="post" action="/api/v1/dashboard/usage/internal-spending-cap" data-submit-once>
             <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
             <section class="ts-card" aria-labelledby="organization-controls-title">
-                <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-controls-title">Report-only spending cap</h2></div></header>
-                <div class="ts-card-body"><fieldset class="ts-stack" disabled="@(Model.Shell.Context.CanManage ? null : "disabled")"><legend class="ts-sr-only">Report-only spending cap</legend><div class="ts-spending-control">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.SpendingFieldView, SpendingField>(new("organization-spend-cap", "spendCap", "Monthly alert threshold (USD)", (Model.Spending.OrganizationCapCents <= 0 ? "" : (Model.Spending.OrganizationCapCents / 100m).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)))))</div></fieldset></div>
+                <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-controls-title">Spending alert</h2></div></header>
+                <div class="ts-card-body"><fieldset class="ts-stack" disabled="@(Model.Shell.Context.CanManage ? null : "disabled")"><legend class="ts-sr-only">Spending alert</legend><div class="ts-spending-control">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.SpendingFieldView, SpendingField>(new("organization-spend-cap", "spendCap", "Monthly alert (USD)", (Model.Spending.OrganizationCapCents <= 0 ? "" : (Model.Spending.OrganizationCapCents / 100m).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)))))</div></fieldset></div>
             </section>
-            @if (Model.Shell.Context.CanManage) { <div><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Save", 16)<span>Save report-only cap</span></button></div> }
-            else { <p class="ts-meta">Only organization owners and admins can change the report-only cap.</p> }
+            @if (Model.Shell.Context.CanManage) { <div><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Save", 16)<span>Save spending alert</span></button></div> }
+            else { <p class="ts-meta">Only organization owners and admins can change the spending alert.</p> }
         </form>
     </div>
 }
