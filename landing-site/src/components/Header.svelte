@@ -19,7 +19,7 @@
 </script>
 
 <header class="ts-header">
-  <div class="ts-header__inner">
+  <div class="ts-container ts-header__inner">
     <RouteLink href="/" class="ts-header__brand" aria-label={$dict.chrome.brandHome}>
       <img src="/icon-blue.svg" alt="" width="28" height="28" decoding="async" fetchpriority="high" />
       <span class="ts-header__word">TerraScale</span>
@@ -138,18 +138,8 @@
     transition: background 250ms ease;
   }
 
-  /* The frost sits on ::before, not the header, so the header is not a backdrop root and the
-     menus inside it (language, mobile sheet) still blur the page behind them. */
-  .site-nav.ts-glass {
-    background: none;
-    backdrop-filter: none;
-  }
-
   .ts-header__inner {
-    padding: 0 clamp(16px, 2.5vw, 40px);
-    /* Equal side tracks keep the nav on the viewport center, not between brand and actions. */
-    display: grid;
-    grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+    display: flex;
     align-items: center;
     height: 60px;
     gap: 24px;
@@ -231,6 +221,7 @@
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
+    margin-left: auto;
   }
 
   :global(.ts-header__action) {
@@ -252,6 +243,7 @@
     padding: 0 14px;
     border-radius: 8px;
     text-decoration: none;
+    white-space: nowrap;
     transition: opacity 150ms ease;
   }
 
@@ -302,7 +294,7 @@
     max-height: calc(100dvh - 60px);
     overflow-y: auto;
     border-top: 1px solid var(--ts-divider);
-    padding: 16px clamp(16px, 2.5vw, 40px) 20px;
+    padding: 16px clamp(16px, 3vw, 24px) 20px;
     /* Opaque: the header's own backdrop-filter makes it the backdrop root, so frost on the sheet
        cannot blur the page and the text behind would show through. */
     background: var(--ts-bg-base);
@@ -345,9 +337,8 @@
     border-top: 1px solid var(--ts-divider);
   }
 
-  @media (max-width: 1240px) {
+  @media (max-width: 1100px) {
     .ts-header__inner {
-      display: flex;
       gap: 8px;
     }
     :global(.ts-header__mobile-cta) {
@@ -359,14 +350,17 @@
     .ts-header__actions > :global(a) {
       display: none;
     }
-    .ts-header__actions {
-      margin-left: auto;
-    }
     .site-nav__sheet {
       display: block;
     }
     .site-nav__menu {
       display: inline-grid;
+    }
+  }
+
+  @media (max-width: 380px) {
+    .ts-header__word {
+      display: none;
     }
   }
 </style>

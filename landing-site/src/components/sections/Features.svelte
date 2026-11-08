@@ -15,10 +15,10 @@
   }))
 </script>
 
-<section class="features" id="features" use:reveal>
-  <div class="features__inner">
+<section class="features ts-section" id="features" use:reveal>
+  <div class="ts-container">
     <div class="features__head">
-      <h2 class="features__title">
+      <h2 class="ts-section-title">
         {$dict.features.titleLead}<br />
         <span class="features__accent">{$dict.features.titleAccent}</span>
       </h2>
@@ -46,31 +46,13 @@
 
 <style>
   .features {
-    padding: 96px 0;
     border-top: 1px solid var(--ts-divider);
   }
 
-  .features__inner {
-    padding: 0 clamp(16px, 2.5vw, 40px);
-  }
-
   .features__head {
-    display: grid;
-    justify-items: center;
-    gap: 16px;
     max-width: 680px;
-    margin: 0 auto 48px;
+    margin: 0 auto var(--ts-section-gap);
     text-align: center;
-  }
-
-  .features__title {
-    font-size: 48px;
-    font-weight: 600;
-    color: var(--ts-text);
-    line-height: 1;
-    letter-spacing: -0.035em;
-    margin: 0;
-    text-wrap: balance;
   }
 
   .features__accent {
@@ -84,7 +66,7 @@
     padding: 0;
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 16px;
+    gap: 24px;
   }
 
   .feature {
@@ -92,15 +74,8 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 32px;
-    border: 1px solid var(--ts-divider);
-    border-radius: 16px;
-    background: var(--ts-bg-surface);
-    transition: border-color 300ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  .feature:hover {
-    border-color: var(--ts-glass-border);
+    padding-block: 20px 0;
+    border-top: 1px solid var(--ts-divider);
   }
 
   .feature__icon {
@@ -120,7 +95,7 @@
   }
 
   .feature__headline {
-    margin: 12px 0 0;
+    margin: 0;
     font-size: 20px;
     line-height: 28px;
     font-weight: 600;
@@ -134,7 +109,6 @@
     flex-wrap: wrap;
     gap: 8px;
     margin-top: auto;
-    padding-top: 12px;
   }
 
   .feature__tag {
@@ -150,7 +124,7 @@
     line-height: 1;
   }
 
-  @media (max-width: 1024px) {
+  @media (max-width: 900px) {
     .features__grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -160,28 +134,11 @@
   }
 
   @media (max-width: 640px) {
-    .features {
-      padding: 64px 0;
-    }
-    .features__head {
-      margin-bottom: 32px;
-    }
-    .features__title {
-      font-size: 30px;
-      line-height: 36px;
-    }
     .features__grid {
       grid-template-columns: minmax(0, 1fr);
     }
     .feature {
       grid-column: auto;
-      padding: 24px;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .feature {
-      transition: none;
     }
   }
 </style>

@@ -22,61 +22,56 @@
   }
 </script>
 
-<section class="faq" use:reveal>
-  <div class="faq__head">
-    <h2 class="faq__title">{copy.titleLead} {copy.titleAccent}</h2>
-    <div class="faq__actions">
-      <RouteLink href="/contact" class="ts-btn ts-btn-glass">
-        <Icon name="messageSquare" className="faq__action-icon" />
-        {copy.contactSales}
-      </RouteLink>
-    </div>
-  </div>
-
-  <div class="faq__list">
-    {#each faqs as faq, i (faq.q)}
-      <div class="faq__item">
-        <button
-          type="button"
-          class="faq__button"
-          aria-expanded={open === i}
-          aria-controls={`faq-panel-${i}`}
-          on:click={() => toggle(i)}
-        >
-          <span>{faq.q}</span>
-          <Icon name="chevronDown" className="faq__chev" />
-        </button>
-        <div id={`faq-panel-${i}`} class="faq__panel" hidden={open !== i}>
-          {faq.a}
-        </div>
+<section class="faq ts-section" use:reveal>
+  <div class="ts-container faq__inner">
+    <div class="faq__head">
+      <h2 class="ts-section-title">{copy.titleLead} {copy.titleAccent}</h2>
+      <div class="faq__actions">
+        <RouteLink href="/contact" class="ts-btn ts-btn-glass">
+          <Icon name="messageSquare" className="faq__action-icon" />
+          {copy.contactSales}
+        </RouteLink>
       </div>
-    {/each}
+    </div>
+
+    <div class="faq__list">
+      {#each faqs as faq, i (faq.q)}
+        <div class="faq__item">
+          <button
+            type="button"
+            class="faq__button"
+            aria-expanded={open === i}
+            aria-controls={`faq-panel-${i}`}
+            on:click={() => toggle(i)}
+          >
+            <span>{faq.q}</span>
+            <Icon name="chevronDown" className="faq__chev" />
+          </button>
+          <div id={`faq-panel-${i}`} class="faq__panel" hidden={open !== i}>
+            {faq.a}
+          </div>
+        </div>
+      {/each}
+    </div>
   </div>
 </section>
 
 <style>
   .faq {
+    border-top: 1px solid var(--ts-divider);
+  }
+
+  .faq__inner {
     display: grid;
     grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    gap: var(--ts-space-16);
+    gap: var(--ts-section-gap);
     align-items: start;
-    padding: var(--ts-space-20) clamp(16px, 2.5vw, 40px);
-    border-top: 1px solid var(--ts-divider);
   }
 
   .faq__head {
     display: grid;
     gap: var(--ts-space-3);
     max-width: 720px;
-  }
-
-  .faq__title {
-    margin: 0;
-    font-size: 40px;
-    font-weight: 600;
-    line-height: 1.1;
-    letter-spacing: -0.035em;
-    color: var(--ts-text);
   }
 
   .faq__actions {
@@ -105,7 +100,7 @@
     justify-content: space-between;
     gap: var(--ts-space-4);
     width: 100%;
-    padding: var(--ts-space-5) 0;
+    padding: var(--ts-space-4) 0;
     border: 0;
     background: transparent;
     color: var(--ts-text);
@@ -122,6 +117,7 @@
   :global(.faq__chev) {
     width: 16px;
     height: 16px;
+    flex-shrink: 0;
     color: var(--ts-text-muted);
     transition: rotate var(--ts-transition-fast);
   }
@@ -132,26 +128,15 @@
 
   .faq__panel {
     max-width: 70ch;
-    padding-bottom: var(--ts-space-5);
+    padding-bottom: var(--ts-space-4);
     font-size: 14px;
     line-height: 1.7;
     color: var(--ts-text-muted);
   }
 
-  @media (max-width: 1280px) {
-    .faq {
+  @media (max-width: 800px) {
+    .faq__inner {
       grid-template-columns: minmax(0, 1fr);
-      gap: var(--ts-space-10);
-    }
-  }
-
-  @media (max-width: 640px) {
-    .faq {
-      padding-block: var(--ts-space-12);
-    }
-
-    .faq__title {
-      font-size: 24px;
     }
   }
 

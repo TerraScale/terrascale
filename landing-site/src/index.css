@@ -78,6 +78,9 @@
   --ts-space-20: 5rem;
   --ts-space-24: 6rem;
 
+  --ts-section-space: clamp(40px, 5vw, 64px);
+  --ts-section-gap: clamp(24px, 3vw, 32px);
+
   --ts-radius-sm: 4px;
   --ts-radius-md: 6px;
   --ts-radius-lg: 10px;
@@ -143,30 +146,32 @@ svg {
   border-radius: 4px;
 }
 
-/* Page layout shared by About, Contact and 404: the same gutters as the header and the home and
-   pricing sections, and the same section rhythm (80px, 48px on phones, a hairline between). */
+/* One content width and responsive gutter for sections and site chrome. Keep containers at
+   section level so full-width dividers do not require nested content gutters. */
 .ts-container {
   width: 100%;
+  max-width: var(--ts-content-max);
+  min-width: 0;
   margin-inline: auto;
-  padding-inline: clamp(16px, 2.5vw, 40px);
+  padding-inline: clamp(16px, 3vw, 24px);
 }
 
 .ts-section {
-  padding-block: var(--ts-space-20);
+  padding-block: var(--ts-section-space);
+}
+
+.ts-section-title {
+  margin: 0;
+  font-size: clamp(28px, 3vw, 36px);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  color: var(--ts-text);
+  text-wrap: balance;
 }
 
 main > * + .ts-section {
   border-top: 1px solid var(--ts-divider);
-}
-
-main > .ts-section:first-child {
-  padding-top: var(--ts-space-16);
-}
-
-@media (max-width: 640px) {
-  .ts-section {
-    padding-block: var(--ts-space-12);
-  }
 }
 
 .pulse-dot {
