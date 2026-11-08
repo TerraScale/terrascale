@@ -120,6 +120,30 @@ public sealed class SqlNativeRestTests
     }
 
     [Test]
+    public async Task Unfiltered_returning_writes_and_value_is_comparisons_answer_like_sqlite()
+    {
+        await using var db = await StartSharedAsync();
+        await db.OkAsync("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
+
+        var deleted = await db.OkAsync("INSERT INTO notes (body) VALUES ('one'), ('two')", "DELETE FROM notes RETURNING id, body");
+        var updated = await db.OkAsync("INSERT INTO notes (body) VALUES ('three')", "UPDATE notes SET body = 'kept' RETURNING body");
+        var compared = await db.OkAsync("SELECT 0 IS 0, 1 IS NOT 0, NULL IS NOT 1, 1 IS NULL, NULL IS NULL");
+
+        await Assert.That(deleted[1].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
+        await Assert.That(deleted[1].GetProperty("rows")[0][1].GetString()).IsEqualTo("one");
+        await Assert.That(deleted[1].GetProperty("rows")[1][1].GetString()).IsEqualTo("two");
+        await Assert.That(deleted[1].GetProperty("rows_affected").GetInt64()).IsEqualTo(2);
+        await Assert.That(updated[1].GetProperty("rows")[0][0].GetString()).IsEqualTo("kept");
+        var values = compared[0].GetProperty("rows")[0];
+        await Assert.That(values[0].GetInt64()).IsEqualTo(1);
+        await Assert.That(values[1].GetInt64()).IsEqualTo(1);
+        await Assert.That(values[2].GetInt64()).IsEqualTo(1);
+        await Assert.That(values[3].GetInt64()).IsEqualTo(0);
+        await Assert.That(values[4].GetInt64()).IsEqualTo(1);
+        await Assert.That(await db.CountAsync("notes")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task Blobs_round_trip_as_base64()
     {
         await using var db = await StartSharedAsync();
