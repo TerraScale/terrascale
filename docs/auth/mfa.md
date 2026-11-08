@@ -5,7 +5,7 @@ composition with the caller's authorization transition, and refusal of
 primary-only authentication for users with active MFA. Hosted enrolment, the
 second-factor sign-in step and organization policies are described in
 [mfa-sign-in.md](mfa-sign-in.md); where the two differ, that file wins. WebAuthn
-follows in a separate slice. Sign-in for the dashboard and
+passkeys are described in [passkeys.md](passkeys.md). Sign-in for the dashboard and
 the ts CLI happens on ts-auth's hosted pages (HA1).
 
 ## Credential state
