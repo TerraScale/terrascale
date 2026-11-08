@@ -311,7 +311,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
 
         public ValueTask UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public ValueTask ForgetAsync(TenantContext database, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public ValueTask<ForgetDatabaseResult> ForgetAsync(TenantContext database, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class NoApply : IHomeApply

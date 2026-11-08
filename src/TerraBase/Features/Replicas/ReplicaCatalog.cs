@@ -23,8 +23,8 @@ internal interface IReplicaCatalog
     /// <summary>Takes a newer placement its home decided.</summary>
     ValueTask UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken);
 
-    /// <summary>Forgets a database its home deleted.</summary>
-    ValueTask ForgetAsync(TenantContext database, CancellationToken cancellationToken);
+    /// <summary>Forgets a database its home deleted: its record and local copy, or why the catalog could not.</summary>
+    ValueTask<ForgetDatabaseResult> ForgetAsync(TenantContext database, CancellationToken cancellationToken);
 }
 
 /// <summary>The replica catalog over the management catalog (<see cref="ITenantDirectory"/>).</summary>
@@ -62,6 +62,6 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
     public async ValueTask UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken) =>
         _ = await tenants.UpdatePlacementAsync(database, placement, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask ForgetAsync(TenantContext database, CancellationToken cancellationToken) =>
-        _ = await tenants.ForgetDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+    public async ValueTask<ForgetDatabaseResult> ForgetAsync(TenantContext database, CancellationToken cancellationToken) =>
+        await tenants.ForgetDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
 }
