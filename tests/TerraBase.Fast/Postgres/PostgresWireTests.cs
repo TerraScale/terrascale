@@ -111,10 +111,12 @@ public sealed class PostgresWireTests
         await using var api = await ManagementApi.StartSharedAsync();
         var (database, key) = await DatabaseAsync(api, "sql:read", "sql:write");
         await using var psql = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
+        // Bogus names can carry an apostrophe (O'Conner); Quote escapes it for SQL text.
         var (one, two) = (Faker.Name.FullName(), Faker.Name.FullName());
 
         var created = await psql.QueryAsync(People);
-        var committed = await psql.QueryAsync($"INSERT INTO people (name) VALUES ('{one}'); INSERT INTO people (name) VALUES ('{two}')");
+        var committed = await psql.QueryAsync(
+            $"INSERT INTO people (name) VALUES ('{Quote(one)}'); INSERT INTO people (name) VALUES ('{Quote(two)}')");
         var names = await psql.QueryAsync("SELECT name FROM people");
 
         await Assert.That(created.Select(message => $"{message.Type}:{message.Fields[0]}")).IsEquivalentTo(["C:CREATE TABLE", "Z:I"]);
@@ -131,7 +133,8 @@ public sealed class PostgresWireTests
         var discarded = Faker.Name.FullName();
 
         await psql.QueryAsync(People);
-        var failed = await psql.QueryAsync($"INSERT INTO people (name) VALUES ('{discarded}'); SELECT * FROM nowhere; INSERT INTO people (name) VALUES ('{discarded}')");
+        var failed = await psql.QueryAsync(
+            $"INSERT INTO people (name) VALUES ('{Quote(discarded)}'); SELECT * FROM nowhere; INSERT INTO people (name) VALUES ('{Quote(discarded)}')");
         var names = await psql.QueryAsync("SELECT name FROM people");
 
         await Assert.That(failed.Select(message => $"{message.Type}:{message.Fields[0]}")).IsEquivalentTo(["C:INSERT 0 1", "E:42P01", "Z:I"]);
@@ -203,6 +206,9 @@ public sealed class PostgresWireTests
         await using var source = Source(api, key, database);
         return await Assert.ThrowsAsync<PostgresException>(async () => await source.OpenConnectionAsync());
     }
+
+    // Doubles single quotes, as a SQL text literal requires.
+    private static string Quote(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 
     private static async Task<List<string[]>> ReadAsync(NpgsqlConnection connection, string sql)
     {
