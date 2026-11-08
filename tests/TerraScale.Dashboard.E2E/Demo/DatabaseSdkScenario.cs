@@ -413,6 +413,7 @@ namespace TerraScale.Dashboard.E2E
             private readonly Dictionary<string, ProducerBackupPolicy> policies = [];
             private readonly Dictionary<string, BackupDestinationView> destinations = [];
             private string backupFailure = "";
+            private string policyHealth = "";
             // A TerraBase conflict code every database create answers with, or empty.
             private string createConflict = "";
             private int backupLists;
@@ -648,6 +649,7 @@ namespace TerraScale.Dashboard.E2E
                     case "credential-conflict": State.ConflictCredentials = body.GetProperty("value").GetBoolean(); break;
                     case "role": Workspace.Role = body.GetProperty("value").GetString()!; break;
                     case "backup-failure": backupFailure = body.GetProperty("value").GetString()!; break;
+                    case "policy-health": policyHealth = body.GetProperty("value").GetString()!; break;
                     case "hold-restore": Interlocked.Exchange(ref heldRestores, 1); break;
                     case "release-restore": Interlocked.Exchange(ref heldRestores, 0); break;
                     case "create-conflict": createConflict = body.GetProperty("value").GetString()!; break;
@@ -853,7 +855,14 @@ namespace TerraScale.Dashboard.E2E
                     {
                         lock (gate)
                         {
-                            return Results.Json(policies.GetValueOrDefault(source.Id) ?? new ProducerBackupPolicy("0 2 * * *", 7, false, null));
+                            var stored = policies.GetValueOrDefault(source.Id) ?? new ProducerBackupPolicy("0 2 * * *", 7, false, null);
+                            var scheduleCron = stored.FullBackupCron;
+                            return Results.Json(policyHealth == "fail"
+                                ? stored with { LastSucceededAt = DateTimeOffset.UtcNow.AddHours(-26), LastFailedAt = DateTimeOffset.UtcNow.AddMinutes(-30),
+                                    LastError = new BackupPolicyErrorView("capacity", "Backup storage is temporarily unavailable."),
+                                    NextDueAt = scheduleCron is { Length: > 0 } ? DateTimeOffset.UtcNow.AddHours(10) : null }
+                                : stored with { LastSucceededAt = DateTimeOffset.UtcNow.AddHours(-2), LastFailedAt = null, LastError = null,
+                                    NextDueAt = scheduleCron is { Length: > 0 } ? DateTimeOffset.UtcNow.AddHours(22) : null });
                         }
                     }
                     Require(http.Request.Method == "PUT", "Producer full policy uses PUT");

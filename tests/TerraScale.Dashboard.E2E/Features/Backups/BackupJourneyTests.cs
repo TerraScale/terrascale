@@ -162,6 +162,22 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             var resumed = await CallAsync(replica, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "", retentionDays = 35, disabled = false });
             Check(resumed.GetProperty("fullBackupCron").GetString() == "" && resumed.GetProperty("incrementalBackupCron").GetString() == "" &&
                 resumed.GetProperty("retentionDays").GetInt32() == 35, "Null producer schedules are projected as empty public strings; no incremental schedule is invented");
+            await CallAsync(replica, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "0 4 * * *", retentionDays = 7, disabled = false });
+            using (var healthy = await replica.GetAsync("/databases/" + id + "/backups"))
+            {
+                var html = await healthy.Content.ReadAsStringAsync();
+                Check(healthy.StatusCode == HttpStatusCode.OK && html.Contains("id=\"backup-health\"", StringComparison.Ordinal) &&
+                    html.Contains("Last backup", StringComparison.Ordinal) && html.Contains("Next", StringComparison.Ordinal),
+                    "The backups page reports the last successful scheduled backup and the next due time");
+            }
+            await ControlAsync(producer, new { command = "policy-health", value = "fail" });
+            using (var failing = await replica.GetAsync("/databases/" + id + "/backups"))
+            {
+                var html = await failing.Content.ReadAsStringAsync();
+                Check(failing.StatusCode == HttpStatusCode.OK && html.Contains("id=\"backup-health\"", StringComparison.Ordinal) &&
+                    html.Contains("ts-alert-danger", StringComparison.Ordinal) && html.Contains("Backup storage is temporarily unavailable.", StringComparison.Ordinal),
+                    "The backups page shows the failure state with the producer's last error message");
+            }
             using (var page = await replica.GetAsync("/databases/" + id + "/backups"))
             {
                 Check(page.StatusCode == HttpStatusCode.OK, "The actual native backup page renders across replicas");

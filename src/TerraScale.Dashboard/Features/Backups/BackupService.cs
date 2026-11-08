@@ -383,7 +383,8 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new HttpRequestException("The provider returned an invalid backup policy.");
             }
 
-            return new(cron, "", policy.RetentionDays, policy.Disabled, policy.UpdatedAt);
+            return new(cron, "", policy.RetentionDays, policy.Disabled, policy.UpdatedAt,
+                policy.LastSucceededAt, policy.LastFailedAt, policy.LastError, policy.NextDueAt);
         }
         private static bool ValidCron(string cron)
         {
