@@ -70,7 +70,7 @@ The C#, TypeScript, Go, Python and Rust SDKs call the same endpoint; see [SDKs](
 - Tables, indexes (including partial and expression indexes), views and triggers.
 - Foreign keys are always enforced, `ON DELETE CASCADE` included.
 - JSON is stored as `TEXT`; `json_extract`, `->`, `->>` and `json_each` work on it.
-- Values are null, 64-bit integers, doubles, text and blobs. Over HTTP a blob is `{"base64":"…"}`; over the Postgres wire it is `bytea`.
+- Values are null, 64-bit integers, doubles, text and blobs. Over HTTP a blob is `{"base64":"…"}`; over the Postgres wire it is `bytea`. A `uuid` column holds the canonical lowercase hyphenated text and binds in text or binary.
 
 ## Transactions
 
@@ -91,7 +91,7 @@ The C#, TypeScript, Go, Python and Rust SDKs call the same endpoint; see [SDKs](
 
 ## Refused statements
 
-`ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tables, and internal table names are refused. `PRAGMA` is limited to `table_info`, `table_xinfo`, `table_list`, `index_list`, `index_info`, `index_xinfo`, `foreign_key_list`, `foreign_key_check` and `foreign_keys`. `sqlite_schema` is readable.
+`ATTACH`, `DETACH`, `VACUUM`, `ANALYZE`, temporary and virtual tables, and internal table names are refused, and `FULL JOIN`/`FULL OUTER JOIN` answers `0A000` (`sql_error`) with `full outer join is not supported; use LEFT JOIN with UNION ALL`. `PRAGMA` is limited to `table_info`, `table_xinfo`, `table_list`, `index_list`, `index_info`, `index_xinfo`, `foreign_key_list`, `foreign_key_check` and `foreign_keys`. `sqlite_schema` is readable.
 
 ## Errors
 

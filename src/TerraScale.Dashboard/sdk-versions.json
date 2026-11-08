@@ -1,5 +1,5 @@
 {
   "javascript": "0.0.17",
-  "go": "v0.0.15",
+  "go": "v0.0.20",
   "pythonRef": "main"
 }
