@@ -127,7 +127,8 @@ class _Requests:
     def _call(self, method: str, suffix: list[str], parse: Callable[[dict[str, Any]], Any], *,
               body: dict[str, Any] | None = None, params: dict[str, str] | None = None) -> Call:
         restore = method == "POST" and suffix[-1] == "restore"
-        success = (202,) if restore else (201,) if method == "POST" and suffix != ["point-in-time", "plan"] else (200,)
+        immediate = suffix in (["point-in-time", "plan"], ["point-in-time", "rewind"])
+        success = (202,) if restore else (201,) if method == "POST" and not immediate else (200,)
         return Call(method, [*self._path, *suffix], lambda r: parse(r.json()), body=body,
                     params=params or {}, replay_safe=method == "GET" or suffix == ["point-in-time", "plan"],
                     success=success)
@@ -156,7 +157,8 @@ class _Requests:
         body = {"pointInTime": point_in_time, **self._destination(destination)}
         if new_name is not None:
             body["name"] = database_name(new_name)
-        parse = PointInTimePlan.from_json if operation == "plan" else RestoreOperation.from_json
+        parse = (PointInTimePlan.from_json if operation == "plan" else RestoredDatabase.from_json
+                 if operation == "rewind" else RestoreOperation.from_json)
         return self._call("POST", ["point-in-time", operation], parse, body=body)
 
     @staticmethod
@@ -201,6 +203,9 @@ class DatabaseBackups(_Requests):
         done = _send_or_timeout(self._client._send, self._project, self._database, operation)
         return self._client._send(self._restored(done.database))
 
+    def rewind_point_in_time(self, point_in_time: str, *, destination: Destination = "platform") -> RestoredDatabase:
+        return self._client._send(self._recovery("rewind", point_in_time, destination))
+
 
 class AsyncDatabaseBackups(_Requests):
     """The asynchronous twin of DatabaseBackups; methods have identical arguments."""
@@ -236,3 +241,6 @@ class AsyncDatabaseBackups(_Requests):
         operation = await self._client._send(self._recovery("restore", point_in_time, destination, name))
         done = await _send_or_timeout_async(self._client._send, self._project, self._database, operation)
         return await self._client._send(self._restored(done.database))
+
+    async def rewind_point_in_time(self, point_in_time: str, *, destination: Destination = "platform") -> RestoredDatabase:
+        return await self._client._send(self._recovery("rewind", point_in_time, destination))

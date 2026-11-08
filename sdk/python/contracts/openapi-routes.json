@@ -86,6 +86,7 @@
   "POST /v1/projects/{project}/databases/{database}/point-in-time/recover",
   "POST /v1/projects/{project}/databases/{database}/point-in-time/recovery-preview",
   "POST /v1/projects/{project}/databases/{database}/point-in-time/restore",
+  "POST /v1/projects/{project}/databases/{database}/point-in-time/rewind",
   "POST /v1/projects/{project}/databases/{database}/sql",
   "POST /v1/projects/{project}/databases/{database}/sql/check",
   "POST /v1/projects/{project}/databases/{database}/sql/execute",
