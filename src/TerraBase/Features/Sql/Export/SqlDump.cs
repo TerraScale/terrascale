@@ -36,10 +36,10 @@ internal static class SqlDump
         }
 
         var indexes = await transaction.ExecuteStatementAsync(SqlSession.Internal(
-            "SELECT name, sql FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL ORDER BY name"), cancellationToken).ConfigureAwait(false);
+            "SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL ORDER BY name"), cancellationToken).ConfigureAwait(false);
         foreach (var row in indexes.Rows)
         {
-            if (row[0] is not string name || row[1] is not string create || SqlScript.IsReservedName(name))
+            if (row[0] is not string name || row[1] is not string table || row[2] is not string create || SqlScript.IsReservedName(name) || SqlScript.IsReservedName(table))
             {
                 continue;
             }
@@ -59,10 +59,10 @@ internal static class SqlDump
     private static async ValueTask WriteSchemaEntriesAsync(IStorageTransaction transaction, string type, PipeWriter output, CancellationToken cancellationToken)
     {
         var entries = await transaction.ExecuteStatementAsync(SqlSession.Internal(
-            $"SELECT name, sql FROM sqlite_schema WHERE type = '{type}' AND sql IS NOT NULL ORDER BY name"), cancellationToken).ConfigureAwait(false);
+            $"SELECT name, tbl_name, sql FROM sqlite_schema WHERE type = '{type}' AND sql IS NOT NULL ORDER BY name"), cancellationToken).ConfigureAwait(false);
         foreach (var row in entries.Rows)
         {
-            if (row[0] is not string name || row[1] is not string create || SqlScript.IsReservedName(name))
+            if (row[0] is not string name || row[1] is not string table || row[2] is not string create || SqlScript.IsReservedName(name) || SqlScript.IsReservedName(table))
             {
                 continue;
             }
