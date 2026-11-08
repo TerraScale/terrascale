@@ -199,6 +199,11 @@ def list_database_logs(project: str, db: str, status: str | None) -> Call:
                 params={"status": status} if status else {}, replay_safe=True)
 
 
+def get_database_regions(project: str, db: str) -> Call:
+    return Call("GET", _db(project, db, "regions"), lambda r: models.DatabaseRegions.from_json(r.json()),
+                replay_safe=True)
+
+
 def rename_database(project: str, database_id: str, new_name: str) -> Call:
     return Call("PATCH", _db(project, database_selector(database_id)),
                 lambda r: models.Database.from_json(r.json()), body={"name": database_name(new_name)})

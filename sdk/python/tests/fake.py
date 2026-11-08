@@ -87,6 +87,12 @@ class Fake:
             return self._database(request, db, body)
         if rest == "/usage":
             return httpx.Response(200, json=self._usage("01J" + "C" * 23))
+        if rest == "/regions":
+            return httpx.Response(200, json={"databaseId": "01J" + "C" * 23, "homeRegion": "gru",
+                                             "observedAt": "2026-11-08T00:00:00Z",
+                                             "replicas": [{"region": "sjc", "lagMs": 12.5,
+                                                           "lastPulledAt": "2026-11-08T00:00:00Z",
+                                                           "lastVerified": None, "revision": "abc"}]})
         if rest == "/analytics":
             return httpx.Response(200, json=self._analytics("01J" + "C" * 23))
         if rest == "/branches" and db in self.databases:
