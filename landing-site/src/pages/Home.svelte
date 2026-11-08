@@ -1,17 +1,17 @@
 <script lang="ts">
-  import Hero from '@/components/sections/Hero.svelte'
-  import HowItWorks from '@/components/sections/HowItWorks.svelte'
-  import CodePanel from '@/components/sections/CodePanel.svelte'
-  import Features from '@/components/sections/Features.svelte'
-  import PricingTeaser from '@/components/sections/PricingTeaser.svelte'
-  import FaqSection from '@/components/sections/FaqSection.svelte'
-  import CtaSection from '@/components/sections/CtaSection.svelte'
+  import EditorialHero from '@/components/sections/EditorialHero.svelte'
+  import EditorialFeatures from '@/components/sections/EditorialFeatures.svelte'
+  import EditorialHowItWorks from '@/components/sections/EditorialHowItWorks.svelte'
+  import EditorialCode from '@/components/sections/EditorialCode.svelte'
+  import EditorialPricing from '@/components/sections/EditorialPricing.svelte'
+  import EditorialFaq from '@/components/sections/EditorialFaq.svelte'
+  import EditorialCta from '@/components/sections/EditorialCta.svelte'
 </script>
 
-<Hero />
-<HowItWorks />
-<CodePanel />
-<Features />
-<PricingTeaser />
-<FaqSection source="home" />
-<CtaSection />
+<EditorialHero />
+<EditorialFeatures />
+<EditorialHowItWorks />
+<EditorialCode />
+<EditorialPricing />
+<EditorialFaq />
+<EditorialCta />
