@@ -80,7 +80,7 @@ namespace TerraScale.Dashboard.Features.Usage
                         reads = checked(reads + reading.Period.Reads); writes = checked(writes + reading.Period.Writes); logical = checked(logical + reading.LogicalBytes);
                     }
                 }
-                catch (Exception error) when (error is IOException or OverflowException) { complete = false; monthError = "This month's reads and writes could not be loaded from TerraBase. Try again shortly."; }
+                catch (Exception error) when (error is IOException or OverflowException) { complete = false; monthError = "Usage is temporarily unavailable. Try again in a moment."; }
             }
             if (!complete && monthError.Length == 0 && result.Scope.State != UsageSourceState.NoProducer)
             {
@@ -88,7 +88,7 @@ namespace TerraScale.Dashboard.Features.Usage
                     ? "TerraBase didn't accept this sign-in, so this month's reads and writes didn't load. Sign out and in again."
                     : result.Monthly.Values.Any(value => value.State == UsageSourceState.NotMetered)
                         ? "This month's organization usage is incomplete because TerraBase doesn't report every project's monthly usage."
-                        : "This month's reads and writes could not be loaded from TerraBase. Try again shortly.";
+                        : "Usage is temporarily unavailable. Try again in a moment.";
             }
 
             long? organizationStorage = complete ? logical : null;
@@ -116,7 +116,7 @@ namespace TerraScale.Dashboard.Features.Usage
                 UsageSourceState.Restricted => "The usage resource was not found or is not authorized for this account.",
                 UsageSourceState.QueryTooExpensive => "TerraBase could not complete this usage query within its resource limits; no zero usage is inferred.",
                 UsageSourceState.Unauthorized => "TerraBase didn't accept this sign-in. Sign out and in again to load metered reads and writes.",
-                _ => "TerraBase metering is unavailable."
+                _ => "Usage is temporarily unavailable. Try again in a moment."
             };
             var projects = controls.Projects.Select(project =>
             {
@@ -135,7 +135,7 @@ namespace TerraScale.Dashboard.Features.Usage
             var history = scope is { Series.Count: > 0 } ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, [.. scope.Series.Select(point => point.Start)],
                 [new("Reads", [.. scope.Series.Select(point => (decimal)point.Reads)]), new("Writes", [.. scope.Series.Select(point => (decimal)point.Writes)])]) : null;
             return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
-                result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError, organizationStorage is not null)
+                result.Scope.State == UsageSourceState.Unavailable ? "Usage is temporarily unavailable. Try again in a moment." : "", monthError, organizationStorage is not null)
             {
                 WritesPaused = writesPaused,
                 InternalBill = selection.Context.Organization!.InternalBilling is not null

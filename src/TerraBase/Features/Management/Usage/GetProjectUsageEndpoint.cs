@@ -10,7 +10,7 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
 {
     /// <summary>The bounds of the project usage route.</summary>
     internal const string LimitsDescription =
-        "Every database is listed before any is counted: more than 100 answer 400 \"query too expensive\" without a count; so do requests still running after 5 seconds, which start no further catalog read or count.";
+        "Every database is listed before any is counted: more than 100 answer 400 \"query too expensive\" without a count. A request still running after 5 seconds starts no further catalog read or count and answers 503 capacity with Retry-After; retry it unchanged.";
 
     /// <inheritdoc />
     public override void Configure()
