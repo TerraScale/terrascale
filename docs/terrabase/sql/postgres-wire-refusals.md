@@ -7,6 +7,8 @@
   exactly like a catalog relation is shadowed, as in PostgreSQL, where `pg_catalog` is searched first.
 - `LISTEN`, `NOTIFY`, `UNLISTEN` and `CREATE`/`ALTER`/`DROP EXTENSION` get `0A000` (feature not supported), not a
   syntax error.
+- `FULL JOIN` and `FULL OUTER JOIN` get `0A000` with `full outer join is not supported; use LEFT JOIN with UNION ALL`
+  before execution, on every surface (REST, WebSocket and the wire).
 - `BEGIN`/`START TRANSACTION` access modes are honored: `READ ONLY` opens a read-only transaction whose writes fail
   with `25006` (`read_only_sql_transaction`), while reads continue and `COMMIT`/`ROLLBACK` end it normally; `READ WRITE`
   and an unmodified `BEGIN` are unchanged. Isolation levels are accepted and ignored (transactions are serializable).

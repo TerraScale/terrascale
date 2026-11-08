@@ -129,6 +129,11 @@ internal static class SqlScript
             return denied;
         }
 
+        if (UsesFullJoin(tokens))
+        {
+            return SqlErrors.Error("full outer join is not supported; use LEFT JOIN with UNION ALL");
+        }
+
         var text = sql[tokens[0].Start..tokens[^1].End];
         var savepoint = tokens[^1].IsName ? tokens[^1].Value : null;
         var parameters = Parameters(tokens);
@@ -178,6 +183,31 @@ internal static class SqlScript
 
         return verb == "CREATE" && SqlSandbox.GuardTrigger(sql, tokens) is { } guarded ? plan with { Run = guarded, GuardsTrigger = true } : plan;
     }
+
+    private static bool UsesFullJoin(List<SqlToken> tokens)
+    {
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            if (!tokens[i].Is("FULL"))
+            {
+                continue;
+            }
+
+            var next = i + 1;
+            if (next < tokens.Count && tokens[next].Is("OUTER"))
+            {
+                next++;
+            }
+
+            if (next < tokens.Count && tokens[next].Is("JOIN"))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
 
     private static SqlError? Explained(string sql, List<SqlToken> tokens)
     {
