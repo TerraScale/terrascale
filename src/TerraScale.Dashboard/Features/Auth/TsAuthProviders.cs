@@ -10,6 +10,7 @@ namespace TerraScale.Dashboard.Features.Auth
         // Null means unavailable, not an account with no linked providers.
         Task<IReadOnlyList<string>?> ListProvidersAsync(SessionRecord session, CancellationToken cancellationToken);
         Task UnlinkProviderAsync(SessionRecord session, string provider, string code, CancellationToken cancellationToken);
+        Task SendUnlinkCodeAsync(SessionRecord session, string provider, CancellationToken cancellationToken);
     }
 
     // Account provider routes use the platform client and the user's original sign-in bearer.
@@ -24,8 +25,6 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             return provider == "github" ? "GitHub" : "Google";
         }
-
-        public static readonly string RequestSignInCodeUrl = new Uri(AuthOrigin, "ui/" + Tenant + "/sign-in").ToString();
 
         public async Task<IReadOnlyList<string>?> ListProvidersAsync(SessionRecord session, CancellationToken cancellationToken)
         {
@@ -60,6 +59,20 @@ namespace TerraScale.Dashboard.Features.Auth
             if (response.StatusCode != HttpStatusCode.NoContent)
             {
                 throw new IOException("ts-auth did not confirm unlinking.");
+            }
+        }
+
+        public async Task SendUnlinkCodeAsync(SessionRecord session, string provider, CancellationToken cancellationToken)
+        {
+            if (!IsSignInProvider(provider))
+            {
+                throw new AccountAccessException("Choose a linked sign-in method.", 422);
+            }
+
+            using var response = await ProviderCallAsync(HttpMethod.Post, session, "/" + provider + "/code", null, cancellationToken);
+            if (response.StatusCode != HttpStatusCode.Accepted)
+            {
+                throw new IOException("ts-auth did not confirm sending the email code.");
             }
         }
 
