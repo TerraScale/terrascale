@@ -65,7 +65,7 @@ The C#, TypeScript, Go, Python and Rust SDKs call the same endpoint; see [SDKs](
 - Tables, indexes (including partial and expression indexes), views and triggers.
 - Foreign keys are always enforced, `ON DELETE CASCADE` included.
 - JSON is stored as `TEXT`; `json_extract`, `->`, `->>` and `json_each` work on it.
-- Values are null, 64-bit integers, doubles, text and blobs. Over HTTP a blob is `{"base64":"…"}`; over the Postgres wire it is `bytea`.
+- Values are null, 64-bit integers, doubles, text and blobs. Over HTTP a blob is `{"base64":"…"}`; over the Postgres wire it is `bytea`. A `uuid` column holds the canonical lowercase hyphenated text and binds in text or binary.
 
 ## Transactions
 

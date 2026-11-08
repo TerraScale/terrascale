@@ -466,6 +466,7 @@ internal static partial class PostgresStatements
         "JSON" => 114,
         "JSONB" => 3802,
         "BLOB" or "BYTEA" => 17,
+        "UUID" => 2950,
         "DATE" => 1082,
         "TIMESTAMP" or "TIMESTAMP WITHOUT TIME ZONE" => 1114,
         "TIMESTAMPTZ" or "TIMESTAMP WITH TIME ZONE" => 1184,
@@ -489,7 +490,7 @@ internal static partial class PostgresStatements
     public static PgError Error(SqlError error) => new(error.Sqlstate, error.Message);
 
     /// <summary>Whether a column of the type is sent in binary when the client asks; others are always text.</summary>
-    public static bool Binary(int oid) => oid is 16 or 17 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 1082 or 1114 or 1184 or 3802;
+    public static bool Binary(int oid) => oid is 16 or 17 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 1082 or 1114 or 1184 or 2950 or 3802;
 
     /// <summary>
     /// A value in the column's format; false when it does not fit the binary type (SQLite keeps 64-bit integers in an int4
@@ -512,6 +513,17 @@ internal static partial class PostgresStatements
         if (oid is 1082 or 1114 or 1184)
         {
             return value.Kind == SqlValueKind.Text && PostgresTemporal.TryEncode(value.Text ?? "", oid, binary, out bytes);
+        }
+
+        if (oid == 2950)
+        {
+            if (value.Kind != SqlValueKind.Text || !Guid.TryParseExact(value.Text, "D", out var uuid))
+            {
+                return false;
+            }
+
+            bytes = binary ? Convert.FromHexString(uuid.ToString("N", Invariant)) : Utf8.GetBytes(uuid.ToString("D", Invariant));
+            return true;
         }
 
         var text = value.Kind switch
@@ -612,6 +624,7 @@ internal static partial class PostgresStatements
                     (700, 4) => Real(BinaryPrimitives.ReadSingleBigEndian(value)),
                     (701, 8) => Real(BinaryPrimitives.ReadDoubleBigEndian(value)),
                     (1082 or 1114 or 1184, _) => PostgresTemporal.Decode(oid, value),
+                    (2950, 16) => Uuid(value),
                     (3802, > 0) when value[0] == 1 => Text(Utf8.GetString(value.AsSpan(1))),
                     (17, _) => SqlValue.Of(value),
                     (0 or TextOid or 114 or 705 or 1042 or 1043, _) => Text(Utf8.GetString(value)),
@@ -620,6 +633,7 @@ internal static partial class PostgresStatements
                 : (oid, Utf8.GetString(value)) switch
                 {
                     (1082 or 1114 or 1184, var text) => PostgresTemporal.Parse(oid, text),
+                    (2950, var text) => Uuid(text),
                     (17, var text) => Bytea(text),
                     (16, var text) => Bool(text) is { } flag ? SqlValue.Of(flag ? 1L : 0L) : null,
                     (20 or 21 or 23, var text) => long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var integer) ? SqlValue.Of(integer) : null,
@@ -658,6 +672,15 @@ internal static partial class PostgresStatements
             return null;
         }
     }
+
+    private static SqlValue? Uuid(byte[] value)
+    {
+        var hex = Convert.ToHexStringLower(value);
+        return SqlValue.Of($"{hex[..8]}-{hex[8..12]}-{hex[12..16]}-{hex[16..20]}-{hex[20..]}");
+    }
+
+    private static SqlValue? Uuid(string text) =>
+        Guid.TryParseExact(text.AsSpan(), "D", out var uuid) ? SqlValue.Of(uuid.ToString("D", Invariant)) : null;
 
     private static SqlValue? Real(double value) => double.IsFinite(value) ? SqlValue.Of(value) : null;
 
