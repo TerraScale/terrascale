@@ -276,4 +276,16 @@ impl Database {
             .await?;
         self.await_restore(operation).await
     }
+    /// `POST D/point-in-time/rewind`; pointInTime, optional destination.
+    /// Rewrites this database in place at the selected instant; returns the rewound database.
+    pub async fn rewind_point_in_time(&self, body: &impl Serialize) -> Result<RestoredDatabase> {
+        self.management::<RestoredDatabase>(
+            Method::POST,
+            &["point-in-time", "rewind"],
+            &[],
+            Some(body),
+            StatusCode::OK,
+        )
+        .await
+    }
 }
