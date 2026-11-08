@@ -23,6 +23,25 @@ assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache@", workflow), "Use explicit restore/save to restrict writers"
 # Each publish restores only its own project from nuget.org, faster than downloading a monorepo package cache.
 assert "uses: actions/cache/" not in workflow, "No CI job reads or writes a GHA package cache"
+# The pinned native libraries are the one GHA cache CI may read, and only through the composite action:
+# actions/cache itself is commit-pinned there like every other action, the key covers the pins and the
+# download script, and there are no restore-keys — a stale key would fail pin verification and re-download.
+native_cache = (root / ".github/actions/turso-native-cache/action.yml").read_text()
+assert re.findall(r"uses: actions/cache@([0-9a-f]{40})", native_cache), "actions/cache must be commit-pinned"
+assert native_cache.count("actions/cache@") == 1 and "restore-keys" not in native_cache
+assert "/src/vendor/Turso.Data.Sqlite/native" in native_cache
+assert "Turso.Native/SHA256SUMS" in native_cache and "download-turso-native.sh" in native_cache
+# Every Fast area restores the cached libraries before make verifies/downloads them.
+for area in ("libs", "auth", "terrabase"):
+    block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {area}:\n", 1)[1], maxsplit=1)[0]
+    assert "turso-native-cache" in block, f"{area} restores the pinned native cache"
+    assert block.index("turso-native-cache") < block.index("locked-restore"), f"{area} restores before make"
+# Production publishes verify the cached bytes (or download once on a miss) before image-payloads.
+production = workflow.split("steps: &production-steps\n", 1)[1].split("\n\n  ", 1)[0]
+assert production.index("turso-native-cache") < production.index("image-payloads.sh publish")
+# Slow's native job reuses the cache instead of re-downloading the release on every schedule.
+slow_native = slow_workflow.split("\n  native:\n", 1)[1].split("\n  slow-auth-main:\n", 1)[0]
+assert slow_native.index("turso-native-cache\n") < slow_native.index("run: scripts/vendor/download-turso-native.sh")
 assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures need their real source path"
 assert "ContinuousIntegrationBuild: false" not in workflow
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]

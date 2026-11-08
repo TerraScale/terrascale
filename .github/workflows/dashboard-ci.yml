@@ -20,6 +20,7 @@ on:
       - 'global.json'
       - 'NuGet.config'
       - 'Makefile'
+      - '.github/actions/**'
       - '.github/workflows/dashboard-ci.yml'
       - '.github/workflows/images-ghcr.yml'
       - '!**/AGENTS.md'
@@ -42,6 +43,10 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: global.json
+      # dashboard-test-fast verifies the pinned native libraries (or downloads them on a miss): the
+      # cache keeps a release-CDN outage from blocking the dashboard's only build job.
+      - name: Cached pinned Turso native libraries
+        uses: ./.github/actions/turso-native-cache
       - name: Dashboard Fast
         run: make dashboard-test-fast
       # The image job wraps these exact bytes without another build.

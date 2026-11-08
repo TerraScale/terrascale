@@ -44,12 +44,16 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.changes.outputs.sha }}
+      # The cache holds the same verified runtimes/ tree this job uploads: a hit skips the release host
+      # entirely (download-turso-native.sh reuses verified pins), a miss downloads once and repopulates.
+      - name: Cached pinned Turso native libraries
+        uses: ./.github/actions/turso-native-cache
       - name: Download and verify the pinned FTS + contract1 release
-        run: scripts/vendor/download-turso-native.sh native-output
+        run: scripts/vendor/download-turso-native.sh src/vendor/Turso.Data.Sqlite/native
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: turso-native-verified
-          path: native-output/
+          path: src/vendor/Turso.Data.Sqlite/native/
           if-no-files-found: error
 
   slow-auth-main:
