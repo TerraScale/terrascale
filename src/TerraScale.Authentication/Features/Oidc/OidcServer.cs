@@ -141,6 +141,9 @@ public static class OidcIssuer
                     .RegisterScopes(Scopes.Email, Scopes.Profile, Scopes.OfflineAccess)
                     // Each client's scope permissions still bound what it may request; there is no scope store.
                     .DisableScopeValidation()
+                    // The sign-in tokens always carry email, email_verified and auth_time (OidcEndpoints.SignIn);
+                    // discovery must advertise what tokens actually contain (TS-1256).
+                    .RegisterClaims(Claims.Email, Claims.EmailVerified, Claims.AuthenticationTime)
                     .UseReferenceRefreshTokens()
                     .DisableAccessTokenEncryption()
                     // A refresh token family expires 14 days after its code is redeemed; rotation never extends it.
