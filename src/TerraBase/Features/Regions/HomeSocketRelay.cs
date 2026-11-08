@@ -55,8 +55,9 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(ConnectTimeout);
-            var route = new UriBuilder(new Uri(home.Address,
-                context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent())) { Scheme = "ws" }.Uri;
+            var route = new UriBuilder(
+                new Uri(home.Address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()))
+            { Scheme = "ws" }.Uri;
             await upstream.ConnectAsync(route, http.CreateClient(HomeLocator.HttpClientName), timeout.Token).ConfigureAwait(false);
         }
         catch (WebSocketException) when (upstream.HttpStatusCode is not 0)
