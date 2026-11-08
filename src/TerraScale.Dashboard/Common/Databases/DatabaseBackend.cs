@@ -214,7 +214,7 @@ namespace TerraScale.Dashboard.Common.Databases
             if (pointInTime is { } instant)
             {
                 var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
-                var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, ["databases:write"], cancellationToken);
+                var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, ["databases:read", "databases:write"], cancellationToken);
                 var backups = rpc.User<IBackupsService>(token, home.Id).WithCancellationToken(cancellationToken);
                 var answer = await RunAsync(() => backups.RestorePointInTimeAsync(scope.ProjectId, source, new(instant, name, null, ttlSeconds)).ResponseAsync);
                 var restored = answer.Deserialize(ManagementJson.Default.TerraBaseManagedDatabase) ?? throw new JsonException("Invalid fork response.");

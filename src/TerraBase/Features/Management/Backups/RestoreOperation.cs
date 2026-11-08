@@ -40,13 +40,13 @@ internal sealed record RestoreOperationRecord(
     string? Region);
 
 public sealed record RestoreOperation(
-    string OperationId, string Status, string Kind, string Database, string? ErrorCode = null, string? ErrorMessage = null,
+    string Id, string OperationId, string Status, string Kind, string Database, string? ErrorCode = null, string? ErrorMessage = null,
     DateTimeOffset CreatedAt = default, DateTimeOffset? FinishedAt = null);
 
 internal static class RestoreOperationRoute
 {
     public static RestoreOperation ToBody(RestoreOperationRecord record) => new(
-        record.Id, record.State, record.Kind, record.TargetName ?? record.TargetDatabaseId ?? record.SourceDatabaseId,
+        record.Id, record.Id, record.State, record.Kind, record.TargetName ?? record.TargetDatabaseId ?? record.SourceDatabaseId,
         record.ErrorCode, record.ErrorMessage, record.CreatedAt, record.FinishedAt);
 
     public static IResult Accepted(HttpContext context, RestoreOperationRecord record)

@@ -52,7 +52,7 @@ namespace TerraScale.Dashboard.Features.Backups
             (context, var source) = await SourceAsync(context, databaseId, ct);
             Destination(destination);
             TerraBaseRestoreWindow? window = null;
-            try { window = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:read", ct)).GetRestoreWindowAsync(context.Project!.Id, source.Name, destination)); }
+            try { window = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:read"], ct)).GetRestoreWindowAsync(context.Project!.Id, source.Name, destination)); }
             catch (AccountAccessException error) when (error.StatusCode == 404) { }
             if (window is not null && (window.Earliest == default || window.Latest < window.Earliest))
             {
@@ -66,7 +66,7 @@ namespace TerraScale.Dashboard.Features.Backups
         {
             (context, var source) = await SourceAsync(context, databaseId, ct);
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
-            var plan = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:read", ct)).PlanPointInTimeAsync(context.Project!.Id, source.Name, new(instant, null, destination)));
+            var plan = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:read"], ct)).PlanPointInTimeAsync(context.Project!.Id, source.Name, new(instant, null, destination)));
             if (plan.HistoryCheck != "metadata" || plan.PointInTime != instant || plan.SnapshotAt == default || plan.SnapshotAt > instant || plan.SegmentCount < 0 ||
                 plan.Window is null || plan.Window.Earliest > instant || plan.Window.Latest < instant)
             {
@@ -90,7 +90,7 @@ namespace TerraScale.Dashboard.Features.Backups
 
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
             var home = await databases.HomeAsync(context, source, ct);
-            var restoredJson = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:write", ct)).RestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, destination)));
+            var restoredJson = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:read", "databases:write"], ct)).RestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, destination)));
             var restored = restoredJson.Deserialize(BackupBackendJson.Default.ManagedDatabase) ?? throw new JsonException("Invalid restored database.");
             if (restored.Id == source.Id || restored.Name != name || restored.ProjectId != context.Project!.Id || restored.BranchedFrom != source.Id)
             {
@@ -117,7 +117,7 @@ namespace TerraScale.Dashboard.Features.Backups
             }
 
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
-            var json = await SafeAsync(async () => await (await ClientAsync(context, source, "databases:write", ct)).RewindPointInTimeAsync(context.Project!.Id, source.Name, new(instant, null, destination)));
+            var json = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:write"], ct)).RewindPointInTimeAsync(context.Project!.Id, source.Name, new(instant, null, destination)));
             var rewound = json.Deserialize(BackupBackendJson.Default.ManagedDatabase) ?? throw new JsonException("Invalid restored database.");
             if (rewound.Id != source.Id)
             {
@@ -149,10 +149,10 @@ namespace TerraScale.Dashboard.Features.Backups
 
             return instant;
         }
-        private async Task<IBackupsService> ClientAsync(AccountContext context, DatabaseRecord source, string permission, CancellationToken ct)
+        private async Task<IBackupsService> ClientAsync(AccountContext context, DatabaseRecord source, string[] permissions, CancellationToken ct)
         {
             var home = await databases.HomeAsync(context, source, ct);
-            var access = await tokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, [permission], ct);
+            var access = await tokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, permissions, ct);
             return rpc.User<IBackupsService>(access, home.Id).WithCancellationToken(ct);
         }
         private static async Task<T> SafeAsync<T>(Func<Task<T>> action)
