@@ -33,6 +33,11 @@ namespace TerraScale.Dashboard.Features.Auth
         public const string MfaRequiredCode = "mfa_required";
         public static readonly string ManageMfaUrl = new Uri(AuthOrigin, "ui/" + Tenant + "/security").ToString();
 
+        public static string ResetPasswordUrl(string next)
+        {
+            return new Uri(AuthOrigin, "ui/" + Tenant + "/reset?next=" + Uri.EscapeDataString(next)).ToString();
+        }
+
         public async Task<AccountMfaStatus?> GetAccountMfaAsync(SessionRecord session, CancellationToken cancellationToken)
         {
             try
