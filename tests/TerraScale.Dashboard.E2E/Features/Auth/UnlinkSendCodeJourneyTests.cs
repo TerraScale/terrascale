@@ -32,8 +32,9 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 var body = await view.Content.ReadAsStringAsync();
                 await Assert.That(body).Contains("We emailed a code to user@example.com. It expires in 30 minutes.");
                 await Assert.That(body).Contains("Email me a code</button>");
-                await Assert.That(body).Contains(@"formaction=""/api/v1/dashboard/profile/providers/github/code"" formnovalidate");
-                await Assert.That(Regex.Count(Section(body), "<form")).IsEqualTo(1);
+                await Assert.That(body).Contains(@"form=""unlink-code-form""");
+                await Assert.That(body).Contains(@"<form id=""unlink-code-form"" method=""post"" action=""/api/v1/dashboard/profile/providers/github/code""");
+                await Assert.That(Regex.Count(Section(body), "<form")).IsEqualTo(0);
             }
 
             await Assert.That(host.Providers.Sends).IsEqualTo(1);
@@ -51,7 +52,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 var body = await waiting.Content.ReadAsStringAsync();
                 await Assert.That(body).Contains("Email me a code (wait 30 s)</button>");
                 await Assert.That(body).Contains("disabled>Email me a code");
-                await Assert.That(Regex.Count(Section(body), "<form")).IsEqualTo(1);
+                await Assert.That(Regex.Count(Section(body), "<form")).IsEqualTo(0);
             }
 
             await Assert.That(host.Providers.Sends).IsEqualTo(2);
@@ -65,9 +66,9 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 return "";
             }
 
-            var start = body.LastIndexOf("<form", marker, StringComparison.Ordinal);
+            var start = body.IndexOf('>', marker) + 1;
             var end = body.IndexOf("</form>", marker, StringComparison.Ordinal);
-            return start >= 0 && end > start ? body[start..end] : "";
+            return end > start ? body[start..end] : "";
         }
 
         private sealed class UnlinkHost : IAsyncDisposable
