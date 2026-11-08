@@ -67,6 +67,10 @@ public sealed record CreateClientRequest(string? Name, string? Type, IReadOnlyLi
 
 public sealed record UpdateClientRequest(string? Name, IReadOnlyList<string>? RedirectUris);
 
+public sealed record RotateClientRequest(int? GraceSeconds);
+
+public sealed record ClientSecretBody(string ClientId, string ClientSecret, DateTimeOffset? PreviousSecretExpiresAt);
+
 /// <summary>
 /// A project tenant management endpoint (<c>/v1/{project}/…</c>): the caller's terrascale sign-in token, then its
 /// effective project role on every request.
@@ -127,4 +131,6 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
 [JsonSerializable(typeof(ClientPageBody))]
 [JsonSerializable(typeof(CreateClientRequest))]
 [JsonSerializable(typeof(UpdateClientRequest))]
+[JsonSerializable(typeof(RotateClientRequest))]
+[JsonSerializable(typeof(ClientSecretBody))]
 internal sealed partial class ProjectTenantJson : JsonSerializerContext;
