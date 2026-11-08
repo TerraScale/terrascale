@@ -81,7 +81,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 using var refused = new CancellationTokenSource();
                 using var abort = refused.Token.Register(abortConnection);
                 using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, session.Until,
-                    async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
+                    async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, session.Project, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
                     refused, services.GetRequiredService<TimeProvider>());
                 await ServeAsync(session, input, output, closed).ConfigureAwait(false);
             }
@@ -224,6 +224,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             var authorized = access is Authorized granted ? granted : throw new InvalidOperationException();
             var sql = services.GetRequiredService<ISqlService>().Open(authorized.Database, authorized.CanWrite);
+            var project = database.IndexOf('/', StringComparison.Ordinal) is var slash && slash >= 0 ? database[..slash] : null;
             Session session;
             do
             {
@@ -232,6 +233,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 {
                     Key = authorized.Key,
                     Until = authorized.Until,
+                    Project = project,
                 };
             }
             while (!_sessions.TryAdd(session.ProcessId, session));
@@ -273,7 +275,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     }
     private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, bool relayed, CancellationToken cancellationToken)
     {
-        var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, cancellationToken).ConfigureAwait(false);
+        var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, slash >= 0 ? database[..slash] : null, cancellationToken).ConfigureAwait(false);
         if (grant is Unavailable)
         {
             return new PgError("57P03", "authentication is unavailable; retry");
@@ -1093,6 +1095,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         public KeyToken? Key { get; init; }
         public DateTimeOffset? Until { get; init; }
+
+        /// <summary>The project of the database name, which a renewed key exchange asks for again.</summary>
+        public string? Project { get; init; }
 
         private readonly Lock _gate = new();
         private CancellationTokenSource? _running;

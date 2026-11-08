@@ -43,7 +43,7 @@ public sealed class TestIssuer : IDisposable
     private readonly Dictionary<(string Token, string Organization, string Project), ProjectAuthority> _projects = [];
     private readonly Dictionary<string, RecoveryAuthority> _recovery = [];
     private readonly Dictionary<string, string> _projectOrganizations = [];
-    private readonly Dictionary<string, Func<string>> _clients = [];
+    private readonly Dictionary<string, Func<string?, string?>> _clients = [];
     private readonly Dictionary<string, string?> _clientStatus = [];
     private int _statusRequests;
     private int _tokenRequests;
@@ -151,10 +151,12 @@ public sealed class TestIssuer : IDisposable
     }
 
     /// <summary>
-    /// Issues <paramref name="mint"/>'s access token for the dashboard API key <paramref name="key"/> (<c>&lt;key id&gt;_&lt;secret&gt;</c>)
-    /// through the client credentials grant, as ts-auth does; any other credential gets <c>401</c>.
+    /// Issues an access token for the dashboard API key <paramref name="key"/> (<c>&lt;key id&gt;_&lt;secret&gt;</c>)
+    /// through the client credentials grant, as ts-auth does; <paramref name="mint"/> receives the requested
+    /// <c>project</c> form parameter (null when absent) and may answer null to refuse it, as an invalid target does;
+    /// any other credential gets <c>401</c>.
     /// </summary>
-    public void GrantClient(string key, Func<string> mint)
+    public void GrantClient(string key, Func<string?, string?> mint)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         lock (_gate)
@@ -326,7 +328,7 @@ public sealed class TestIssuer : IDisposable
     }
 
     // Answers one request for uri, as ts-auth would.
-    private async Task<HttpResponseMessage> RespondAsync(Uri uri, string method, string? authorization, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> RespondAsync(Uri uri, string method, string? authorization, string? formProject, CancellationToken cancellationToken)
     {
         if (HangJwks && uri.AbsoluteUri == Jwks)
         {
@@ -346,10 +348,10 @@ public sealed class TestIssuer : IDisposable
             await before();
         }
 
-        return Serve(uri, method, authorization);
+        return Serve(uri, method, authorization, formProject);
     }
 
-    private HttpResponseMessage Serve(Uri uri, string method, string? authorization)
+    private HttpResponseMessage Serve(Uri uri, string method, string? authorization, string? formProject = null)
     {
         if (uri.AbsoluteUri == Discovery)
         {
@@ -465,17 +467,17 @@ public sealed class TestIssuer : IDisposable
         if (uri.AbsoluteUri == Issuer + "/oauth/token" && method == "POST")
         {
             Interlocked.Increment(ref _tokenRequests);
-            Func<string>? mint;
+            Func<string?, string?>? mint;
             lock (_gate)
             {
                 mint = authorization is null ? null : _clients.GetValueOrDefault(authorization);
             }
 
-            return mint is null
+            return mint is null || mint(formProject) is not { } token
                 ? new HttpResponseMessage(HttpStatusCode.Unauthorized)
                 : new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(new JsonObject { ["access_token"] = mint(), ["token_type"] = "Bearer", ["expires_in"] = 900 }.ToJsonString(),
+                    Content = new StringContent(new JsonObject { ["access_token"] = token, ["token_type"] = "Bearer", ["expires_in"] = 900 }.ToJsonString(),
                         Encoding.UTF8, "application/json"),
                 };
         }
@@ -517,8 +519,18 @@ public sealed class TestIssuer : IDisposable
     // One per handler the client factory builds; the factory disposes handlers, never the issuer.
     private sealed class Handler(TestIssuer issuer) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            issuer.RespondAsync(request.RequestUri!, request.Method.Method, request.Headers.Authorization?.ToString(), cancellationToken);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            string? project = null;
+            if (request.Content is FormUrlEncodedContent form)
+            {
+                var body = await form.ReadAsStringAsync(cancellationToken);
+                project = body.Split('&').Count(part => part.Length > 0) > 1
+                    ? body.Split('&').Select(part => part.Split('=')).FirstOrDefault(part => part[0] == "project")?[1] : null;
+            }
+
+            return await issuer.RespondAsync(request.RequestUri!, request.Method.Method, request.Headers.Authorization?.ToString(), project, cancellationToken);
+        }
     }
 
     /// <summary>
@@ -581,8 +593,16 @@ public sealed class TestIssuer : IDisposable
                 app = builder.Build();
                 app.Run(async context =>
                 {
+                    string? project = null;
+                    if (context.Request.Method == "POST" && context.Request.ContentType is { Length: > 0 }
+                        && context.Request.ContentType.StartsWith("application/x-www-form-urlencoded", StringComparison.Ordinal))
+                    {
+                        var form = await context.Request.ReadFormAsync(context.RequestAborted);
+                        project = form["project"].FirstOrDefault();
+                    }
+
                     using var response = await issuer.RespondAsync(new Uri(context.Request.GetEncodedUrl()), context.Request.Method,
-                        context.Request.Headers.Authorization.ToString(), context.RequestAborted);
+                        context.Request.Headers.Authorization.ToString(), project, context.RequestAborted);
                     context.Response.StatusCode = (int)response.StatusCode;
                     if (response.Headers.Location is { } location)
                     {

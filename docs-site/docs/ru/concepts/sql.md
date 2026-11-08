@@ -30,7 +30,7 @@ ts sql app "SELECT email, seats FROM customers WHERE seats >= 10"
 
 ### psql
 
-The API key is the password; the database name in the URL selects the database.
+The API key is the password; the database name in the URL selects the database. With several projects, prefix the database name with the project and a slash (`{project}/{database}`). A project key reaches its own project; an organization key reaches every project of its organization, and the project in the database name is the one it acts in.
 
 ```sh
 read -rs PGPASSWORD && export PGPASSWORD  # paste the API key, then press Enter

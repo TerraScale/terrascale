@@ -122,13 +122,13 @@ public sealed class HomeRegionForwardingTests
     {
         var id = EntityIds.New().ToString();
         var key = id + "_" + Faker.Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
-        issuer.GrantClient(key, () => issuer.Mint(id, token =>
+        issuer.GrantClient(key, requested => requested is null || requested == project ? issuer.Mint(id, token =>
         {
             token.Claims["key_id"] = id;
             token.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
             token.Claims["project_id"] = project;
             token.Claims["scope"] = "sql:read sql:write";
-        }));
+        }) : null);
         return key;
     }
 

@@ -17,7 +17,7 @@ namespace TerraBase.Features.UserAuth;
 
 internal sealed record TsAuthTokenResponse([property: JsonPropertyName("access_token")] string? AccessToken);
 
-/// <summary>What a ts-auth project API key may reach, read from the access token ts-auth issued for it.</summary>
+/// <summary>What a ts-auth API key may reach, read from the access token ts-auth issued for it.</summary>
 /// <param name="Subject">The key's id (the token's <c>sub</c>).</param>
 /// <param name="ProjectId">The key's project.</param>
 /// <param name="Database">The key's database restriction, when it has one.</param>
@@ -64,14 +64,14 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         secret.Length is > 27 and <= MaxKeyLength && secret[26] == '_' && EntityIds.IsValid(secret[..26])
         && !secret.AsSpan(27).ContainsAnyExcept(SecretCharacters);
 
-    public async ValueTask<TsAuthKeyResult> ExchangeAsync(string secret, CancellationToken cancellationToken)
+    public async ValueTask<TsAuthKeyResult> ExchangeAsync(string secret, string? project, CancellationToken cancellationToken)
     {
-        if (options.AuthIssuer is not { } issuer || !IsKey(secret))
+        if (options.AuthIssuer is not { } issuer || !IsKey(secret) || project is not null && !EntityIds.IsValid(project))
         {
             return new NotFound();
         }
 
-        var cacheKey = ValidatedTokens.KeyOf(secret);
+        var cacheKey = ValidatedTokens.KeyOf(secret) + (project is null ? string.Empty : "/" + project);
         if (_grants.TryGetValue(cacheKey, out var cached) && time.GetUtcNow() < cached.ValidTo - RenewBefore)
         {
             return cached;
@@ -82,16 +82,16 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             return Unavailable();
         }
 
-        return await _exchanging.GetOrAdd(cacheKey, _ => new Lazy<Task<TsAuthKeyResult>>(() => ExchangeOnceAsync(cacheKey, issuer, secret)))
+        return await _exchanging.GetOrAdd(cacheKey, _ => new Lazy<Task<TsAuthKeyResult>>(() => ExchangeOnceAsync(cacheKey, issuer, secret, project)))
             .Value.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     // Shared by every caller of one key, so no caller's cancellation ends it; the client's timeout bounds it.
-    private async Task<TsAuthKeyResult> ExchangeOnceAsync(string cacheKey, string issuer, string secret)
+    private async Task<TsAuthKeyResult> ExchangeOnceAsync(string cacheKey, string issuer, string secret, string? project)
     {
         try
         {
-            var exchanged = await RequestAsync(issuer, secret, CancellationToken.None).ConfigureAwait(false);
+            var exchanged = await RequestAsync(issuer, secret, project, CancellationToken.None).ConfigureAwait(false);
             switch (exchanged)
             {
                 case TsAuthKeyGrant grant:
@@ -127,13 +127,15 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         }
     }
 
-    private async ValueTask<TsAuthKeyResult> RequestAsync(string issuer, string secret, CancellationToken cancellationToken)
+    private async ValueTask<TsAuthKeyResult> RequestAsync(string issuer, string secret, string? project, CancellationToken cancellationToken)
     {
         // RFC 6749 §2.3.1: the client id and secret are form-encoded before they are joined; both are URL-safe already.
         var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes(secret[..26] + ":" + secret));
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(issuer.TrimEnd('/') + "/oauth/token"))
         {
-            Content = new FormUrlEncodedContent([new("grant_type", "client_credentials")]),
+            Content = new FormUrlEncodedContent(project is null
+                ? [new("grant_type", "client_credentials")]
+                : [new("grant_type", "client_credentials"), new("project", project)]),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
         string? token;
@@ -182,11 +184,12 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             Interlocked.Decrement(ref _inFlight);
         }
 
-        return token is null ? new NotFound() : await ValidateAsync(token, cancellationToken).ConfigureAwait(false);
+        return token is null ? new NotFound() : await ValidateAsync(token, project, cancellationToken).ConfigureAwait(false);
     }
 
-    // The same checks as a bearer token on the client listener: signature, issuer, audience, type and lifetime.
-    private async ValueTask<TsAuthKeyResult> ValidateAsync(string token, CancellationToken cancellationToken)
+    // The same checks as a bearer token on the client listener: signature, issuer, audience, type and lifetime. A token
+    // minted for another project than the exchange asked for is refused, not read as broader than the request.
+    private async ValueTask<TsAuthKeyResult> ValidateAsync(string token, string? project, CancellationToken cancellationToken)
     {
         if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(cancellationToken).ConfigureAwait(false)) is not { } keys)
         {
@@ -202,7 +205,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
 
         if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt
             || !jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || !EntityIds.IsValid(subject)
-            || !jwt.TryGetPayloadValue<string>("project_id", out var project) || !EntityIds.IsValid(project)
+            || !jwt.TryGetPayloadValue<string>("project_id", out var granted) || !EntityIds.IsValid(granted) || granted != (project ?? granted)
             || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
         {
             return new NotFound();
@@ -248,8 +251,8 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             }
         }
 
-        return new TsAuthKeyGrant(subject, project, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
-            hasKey ? new KeyToken(subject, generation!, project, token) { ValidTo = new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero) } : null);
+        return new TsAuthKeyGrant(subject, granted, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
+            hasKey ? new KeyToken(subject, generation!, granted, token) { ValidTo = new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero) } : null);
     }
 
     private static Unavailable Unavailable() => new("ts-auth key exchange is unavailable");

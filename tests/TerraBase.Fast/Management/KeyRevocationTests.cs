@@ -146,7 +146,7 @@ public sealed class KeyRevocationTests
             descriptor.Claims["key_id"] = mismatched ? EntityIds.New().ToString() : id;
             descriptor.Claims["key_gen"] = TestIssuer.KeyGeneration(key);
         });
-        api.Issuer.GrantClient(key, () => token);
+        api.Issuer.GrantClient(key, requested => requested is null || requested == database.Project ? token : null);
         return (key, token);
     }
 }
