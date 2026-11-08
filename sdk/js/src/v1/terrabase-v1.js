@@ -14,6 +14,7 @@ import { stringifyExactJson } from "./json.js";
 import { V1Transport } from "./transport.js";
 import { V1Health, V1Platform, V1Regions } from "./system.js";
 import { V1Backups, V1BackupDestinationClient } from "./backups.js";
+import { V1Functions } from "./functions.js";
 import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
 /** @import { TerraBaseV1ClientConfig } from "./transport.js" */
 
@@ -30,6 +31,8 @@ import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
 export class V1Database {
   /** @type {V1Backups} */
   backups;
+  /** @type {V1Functions} */
+  functions;
   /** @type {V1DatabaseUsageClient} */
   metrics;
   /** @type {V1Transport} */
@@ -46,6 +49,7 @@ export class V1Database {
     this.name = requireDatabaseSelector(name);
     this.metrics = new V1DatabaseUsageClient(transport, this.name);
     this.backups = new V1Backups(transport, this.name);
+    this.functions = new V1Functions(transport, this.name);
     Object.freeze(this);
   }
 

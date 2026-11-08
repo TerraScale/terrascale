@@ -1,4 +1,4 @@
-/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "listRegions"} ManagementOperation */
+/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "listRegions" | "listFunctions" | "deployFunction" | "getFunction" | "deleteFunction" | "invokeFunction" | "listFunctionLogs"} ManagementOperation */
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
   route("executeSql", "POST", "/v1/projects/{project}/databases/{database}/sql/execute"),
@@ -30,18 +30,35 @@ export const managementV1Routes = Object.freeze([
   route("getDatabaseUsage", "GET", "/v1/projects/{project}/databases/{database}/usage"),
   route("getDatabaseAnalytics", "GET", "/v1/projects/{project}/databases/{database}/analytics"),
   route("listRegions", "GET", "/v1/regions"),
+  route("listFunctions", "GET", "/v1/projects/{project}/databases/{database}/functions", 200,
+    { permission: "sql:read", additionalPermissions: ["sql:write"] }),
+  route("deployFunction", "PUT", "/v1/projects/{project}/databases/{database}/functions/{function}", 200,
+    { permission: "sql:write", additionalPermissions: ["sql:read"] }),
+  route("getFunction", "GET", "/v1/projects/{project}/databases/{database}/functions/{function}", 200,
+    { permission: "sql:read", additionalPermissions: ["sql:write"] }),
+  route("deleteFunction", "DELETE", "/v1/projects/{project}/databases/{database}/functions/{function}", 204,
+    { permission: "sql:write", additionalPermissions: ["sql:read"] }),
+  route("invokeFunction", "POST", "/v1/projects/{project}/databases/{database}/functions/{function}/invoke", 200,
+    { permission: "sql:read", requestMediaTypes: ["application/json"], responseMediaType: "",
+      successStatuses: [200, 201, 202, 203, 204, 205, 206, 207, 208, 226] }),
+  route("listFunctionLogs", "GET", "/v1/projects/{project}/databases/{database}/functions/{function}/logs", 200,
+    { permission: "sql:read", additionalPermissions: ["sql:write"] }),
 ]);
 
-/** @param {ManagementOperation} operation @param {import("./routes.js").V1Route["method"]} method @param {string} pathTemplate @param {number} [status] @returns {import("./routes.js").V1Route} */
-function route(operation, method, pathTemplate, status = 200) {
+/** @param {ManagementOperation} operation @param {import("./routes.js").V1Route["method"]} method @param {string} pathTemplate @param {number} [status] @param {Partial<import("./routes.js").V1Route>} [overrides] @returns {import("./routes.js").V1Route} */
+function route(operation, method, pathTemplate, status = 200, overrides = {}) {
   const write = method !== "GET" && operation !== "planPointInTime";
   const anonymous = operation === "listRegions";
   const sql = operation === "executeSql" || operation === "exportDatabase" || operation === "readTableShape" || operation === "getShapeManifest" || operation === "getShapeKey" || operation === "connectSql" || operation === "connectShapeHints";
+  const permission = sql ? "sql:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : anonymous || !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read";
+  const requestMediaTypes = operation === "createBackup" ? [] : method === "POST" || method === "PUT" || method === "PATCH" ? ["application/json"] : [];
+  const responseMediaType = status === 204 || status === 101 ? "" : operation === "exportDatabase" ? "text/plain" : "application/json";
   return Object.freeze({ operation, method, pathTemplate,
-    permission: sql ? "sql:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : anonymous || !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
-    additionalPermissions: Object.freeze([]),
-    requestMediaTypes: Object.freeze(operation === "createBackup" ? [] : method === "POST" || method === "PUT" || method === "PATCH" ? ["application/json"] : []),
-    responseMediaType: status === 204 || status === 101 ? "" : operation === "exportDatabase" ? "text/plain" : "application/json", successStatuses: Object.freeze(operation === "readTableShape" ? [200, 307] : operation === "readyz" || operation === "backupz" ? [200, 503] : [status]),
+    permission: overrides.permission ?? permission,
+    additionalPermissions: Object.freeze([...(overrides.additionalPermissions ?? [])]),
+    requestMediaTypes: Object.freeze(overrides.requestMediaTypes ?? requestMediaTypes),
+    responseMediaType: overrides.responseMediaType ?? responseMediaType,
+    successStatuses: Object.freeze(overrides.successStatuses ?? (operation === "readTableShape" ? [200, 307] : operation === "readyz" || operation === "backupz" ? [200, 503] : [status])),
     idempotencyKey: "none", replaySafe: !write, contract: "docs/terrabase/api.md", contractText: Object.freeze([]),
   });
 }

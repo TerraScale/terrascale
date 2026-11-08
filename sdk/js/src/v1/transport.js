@@ -430,9 +430,22 @@ export class V1Transport {
    * @returns {Promise<string>}
    */
   async readText(response, signal, maximumBytes = this.#maxResponseBytes) {
+    const bytes = await this.readBytes(response, signal, maximumBytes);
+    return bytes.byteLength === 0 ? "" : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  }
+
+  /**
+   * Reads a response body as owned bytes within the response byte bound. A
+   * connection failure while reading is a BodyTransportError.
+   * @param {Response} response
+   * @param {AbortSignal | undefined} [signal]
+   * @param {number} [maximumBytes]
+   * @returns {Promise<Uint8Array>}
+   */
+  async readBytes(response, signal, maximumBytes = this.#maxResponseBytes) {
     signal?.throwIfAborted();
     const reader = response.body?.getReader();
-    if (reader === undefined) return "";
+    if (reader === undefined) return new Uint8Array(0);
     /** @type {Uint8Array[]} */
     const parts = [];
     let size = 0;
@@ -466,7 +479,7 @@ export class V1Transport {
       bytes.set(part, offset);
       offset += part.byteLength;
     }
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    return bytes;
   }
 
   /**
@@ -527,6 +540,19 @@ export class V1Transport {
     } finally {
       deadline.clear();
     }
+  }
+
+  /**
+   * Calls a named producer route whose success body is owned raw bytes instead of JSON,
+   * with the original status and media type. Non-2xx refusals throw TerraBaseV1Error.
+   * @param {V1Operation} operation
+   * @param {Readonly<Record<string, string>>} params
+   * @param {V1CallOptions} [options]
+   * @returns {Promise<{ status: number; contentType: string; body: Uint8Array }>}
+   */
+  async raw(operation, params, options = {}) {
+    const response = await this.#send(operation, params, options, Infinity);
+    return { status: response.status, contentType: response.headers.get("content-type") ?? "", body: await this.readBytes(response, options.signal) };
   }
 
   /**
