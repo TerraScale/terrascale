@@ -89,6 +89,8 @@ public sealed class PostgresWireTests
         await using var psql = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
 
         var script = await psql.QueryAsync($"{People}; CREATE TABLE people (id INTEGER PRIMARY KEY); CREATE TABLE never (id INTEGER PRIMARY KEY)");
+        // The failed statement rolls back the whole Query message, so the table needs its own message.
+        await psql.QueryAsync(People);
         var deallocated = await psql.QueryAsync("DEALLOCATE ALL");
         var tables = await psql.QueryAsync(ListTables);
         var found = await psql.QueryAsync(FindTable);
@@ -100,6 +102,40 @@ public sealed class PostgresWireTests
         await Assert.That(tables.Where(message => message.Type == 'D').Select(message => string.Join(',', message.Fields))).IsEquivalentTo(["public,people,table,wire"]);
         await Assert.That(columns.Where(message => message.Type == 'D').Select(message => string.Join(',', message.Fields.Take(4)))).IsEquivalentTo(
             ["id,integer,,t", "name,text,,t", "email,character varying,,f", "team,text,,f"]);
+    }
+
+    // A simple-protocol Query message with several statements runs as one implicit transaction (ku TS-1307).
+    [Test]
+    public async Task Multi_statement_query_message_commits_every_statement()
+    {
+        await using var api = await ManagementApi.StartSharedAsync();
+        var (database, key) = await DatabaseAsync(api, "sql:read", "sql:write");
+        await using var psql = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
+        var (one, two) = (Faker.Name.FullName(), Faker.Name.FullName());
+
+        var created = await psql.QueryAsync(People);
+        var committed = await psql.QueryAsync($"INSERT INTO people (name) VALUES ('{one}'); INSERT INTO people (name) VALUES ('{two}')");
+        var names = await psql.QueryAsync("SELECT name FROM people");
+
+        await Assert.That(created.Select(message => $"{message.Type}:{message.Fields[0]}")).IsEquivalentTo(["C:CREATE TABLE", "Z:I"]);
+        await Assert.That(committed.Select(message => $"{message.Type}:{message.Fields[0]}")).IsEquivalentTo(["C:INSERT 0 1", "C:INSERT 0 1", "Z:I"]);
+        await Assert.That(names.Where(message => message.Type == 'D').Select(message => message.Fields[0]!)).IsEquivalentTo([one, two]);
+    }
+
+    [Test]
+    public async Task Failed_multi_statement_query_message_rolls_back_its_writes()
+    {
+        await using var api = await ManagementApi.StartSharedAsync();
+        var (database, key) = await DatabaseAsync(api, "sql:read", "sql:write");
+        await using var psql = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
+        var discarded = Faker.Name.FullName();
+
+        await psql.QueryAsync(People);
+        var failed = await psql.QueryAsync($"INSERT INTO people (name) VALUES ('{discarded}'); SELECT * FROM nowhere; INSERT INTO people (name) VALUES ('{discarded}')");
+        var names = await psql.QueryAsync("SELECT name FROM people");
+
+        await Assert.That(failed.Select(message => $"{message.Type}:{message.Fields[0]}")).IsEquivalentTo(["C:INSERT 0 1", "E:42P01", "Z:I"]);
+        await Assert.That(names.Where(message => message.Type == 'D').Select(message => message.Fields[0]!)).IsEmpty();
     }
 
     // Needs SQ1-d (writes) and SQ1-e (transactions).

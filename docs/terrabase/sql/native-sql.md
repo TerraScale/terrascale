@@ -19,6 +19,7 @@ Each result has `columns`, `rows`, `rows_affected` and `last_insert_rowid`. SQL 
 ## Transactions and limits
 
 - One HTTP request is one atomic batch of 1–256 statements, all or nothing. `BEGIN`, `COMMIT` and `ROLLBACK` are refused; savepoint statements are supported.
+- A PostgreSQL simple-protocol Query message with several statements runs as one implicit transaction: a failed statement rolls back the whole message. A message that itself contains `BEGIN`, `COMMIT` or `ROLLBACK` runs statement by statement instead. Single-statement messages and the extended protocol are unchanged.
 - WebSocket transaction frames and PostgreSQL transactions pin one session. Transactions live at most five seconds, then roll back and release the writer. See [WebSocket](websocket.md).
 - A failed statement inside an explicit transaction uses the session's savepoint/error rules; PostgreSQL aborted transactions require rollback or rollback to a savepoint.
 - Statement text is at most 16 KiB, the HTTP body at most 1 MiB, results at most 10,000 rows and 8 MiB, and a transaction changes at most 1,024 rows or grows the file by at most 8 MiB.
