@@ -44,6 +44,9 @@ class Fake:
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         if request.url.host == "auth.test":
+            path = unquote(request.url.path)
+            if re.fullmatch(r"/v1/terrascale/api-keys/[^/]+/rotate", path):
+                return self._rotate_key(request, path)
             return self._token(request)
         auth = request.headers.get("authorization", "")
         if not auth.startswith("Bearer ") or auth[7:] in self.reject_tokens or auth[7:] == API_KEY:
@@ -68,6 +71,17 @@ class Fake:
         if rest == "/sql/execute":
             return self._sql(body)
         return self._err(404, "unknown_route")
+
+    def _rotate_key(self, request: httpx.Request, path: str) -> httpx.Response:
+        m = re.fullmatch(r"/v1/terrascale/api-keys/([^/]+)/rotate", path)
+        if request.method != "POST" or not m:
+            return self._err(404, "unknown_route")
+        basic = base64.b64decode(request.headers["authorization"].split(" ", 1)[1]).decode()
+        client, secret = (unquote_plus(x) for x in basic.split(":", 1))
+        if secret != API_KEY or client != API_KEY[:26]:
+            return self._err(401, "invalid_key")
+        return httpx.Response(200, json={"id": m.group(1), "api_key": m.group(1) + "_" + "b" * 52,
+                                         "previous_secret_expires_at": 1_788_230_400})
 
     def _token(self, request: httpx.Request) -> httpx.Response:
         form = dict(x.split("=", 1) for x in request.content.decode().split("&"))

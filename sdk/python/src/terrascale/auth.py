@@ -52,6 +52,18 @@ def _scoped_key_call(api_key: str | None, issuer: str | None, project: str, data
                       success=(201,), base_url=origin)
 
 
+def _rotate_key_call(api_key: str | None, issuer: str | None, key_id: str, grace_seconds: int) -> _spec.Call:
+    if api_key is None:
+        raise ValueError("rotate_api_key requires the client's api_key")
+    if not isinstance(grace_seconds, int) or isinstance(grace_seconds, bool) or not 0 <= grace_seconds <= 86400:
+        raise ValueError("grace_seconds must be 0 to 86400 seconds")
+    exchange = _Exchange(api_key, None, None, issuer)
+    origin = str(httpx.URL(exchange.endpoint).copy_with(path="/", query=None, fragment=None)).rstrip("/")
+    return _spec.Call("POST", ["v1", "terrascale", "api-keys", validate_id(key_id, "key id"), "rotate"],
+                      lambda r: models.RotatedApiKey.from_json(r.json()), headers=exchange.headers(),
+                      body={"previous_secret_ttl": grace_seconds}, base_url=origin)
+
+
 def _transport_error(attempts: int, exc: Exception) -> TokenError:
     detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
     return TokenError(0, "token_transport_error", f"token exchange failed after {attempts} attempt{'s' if attempts != 1 else ''}"

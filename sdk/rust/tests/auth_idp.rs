@@ -158,6 +158,43 @@ async fn management_routes_carry_the_ts_auth_bearer_and_accept_headers() {
 }
 
 #[tokio::test]
+async fn rotates_an_api_key_with_a_bounded_grace() {
+    let mock = Mock::new();
+    mock.push(Response::json(
+        200,
+        &json!({
+            "id": "key_1",
+            "name": "CI",
+            "api_key": "01ARZ3NDEKTSV4RRFFQ6000007_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "scopes": ["users:read"],
+            "previous_secret_expires_at": 1_788_230_400_i64,
+        }),
+    ));
+    let sdk = client(Arc::clone(&mock));
+
+    let rotated = sdk
+        .auth_idp(SLUG)
+        .expect("ts-auth client")
+        .api_keys()
+        .rotate("key_1", 3600)
+        .await
+        .expect("rotated key");
+    assert_eq!(rotated.id, "key_1");
+    assert!(rotated.api_key.ends_with("bbbb"));
+    assert_eq!(rotated.previous_secret_expires_at, Some(1_788_230_400));
+
+    let request = mock.request(0);
+    assert_eq!(request.method, Method::Post);
+    assert_eq!(
+        request.url,
+        "https://auth.test/v1/acme/api-keys/key_1/rotate"
+    );
+    assert_eq!(header(&request, "authorization"), ["Bearer sk_test_key"]);
+    assert_eq!(body_json(&request), json!({ "previous_secret_ttl": 3600 }));
+    assert_eq!(mock.count(), 1);
+}
+
+#[tokio::test]
 async fn maps_nested_management_errors() {
     let mock = Mock::new();
     mock.push(Response::json(

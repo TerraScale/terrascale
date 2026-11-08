@@ -14,7 +14,7 @@ from . import _spec, models
 from . import sql as _sql
 from ._spec import Call
 from ._version import __version__
-from .auth import APIKeyTokenSource, _scoped_key_call
+from .auth import APIKeyTokenSource, _rotate_key_call, _scoped_key_call
 from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
 from .ids import validate_id
 from .session import SqlSession
@@ -222,6 +222,10 @@ class TerraScale:
         """Mint a key for one database ULID, using this client's API key; the default lifetime is 3600 seconds."""
         return self._send(_scoped_key_call(
             self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds))
+
+    def rotate_api_key(self, key_id: str, grace_seconds: int = 0) -> models.RotatedApiKey:
+        """Issue a new secret for the caller's API key id; the previous one keeps working for grace_seconds (0 to 86400)."""
+        return self._send(_rotate_key_call(self._api_key, self._issuer, key_id, grace_seconds))
 
 
 def _error(response: httpx.Response, *, mutation: bool = False) -> APIError:

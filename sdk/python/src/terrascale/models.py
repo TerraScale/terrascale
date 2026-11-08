@@ -77,6 +77,23 @@ class ScopedKey:
 
 
 @dataclass(frozen=True)
+class RotatedApiKey:
+    api_key: str = field(repr=False)
+    id: str
+    previous_secret_expires_at: int | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> RotatedApiKey:
+        if not isinstance(body.get("api_key"), str) or not body["api_key"]:
+            raise ValueError("invalid rotated api key secret")
+        expiry = body.get("previous_secret_expires_at")
+        if expiry is not None and (not isinstance(expiry, int) or isinstance(expiry, bool)):
+            raise ValueError("invalid rotated api key expiry")
+        return cls(api_key=body["api_key"], id=validate_id(body["id"]),
+                   previous_secret_expires_at=expiry)
+
+
+@dataclass(frozen=True)
 class DatabasePage:
     items: list[Database]
     next_cursor: str | None
