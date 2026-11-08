@@ -409,8 +409,27 @@ normalize exactly into a bounded decimal coefficient/scale without float coercio
 closes the session and returns `limit`. Decode failures abort before row cleanup
 and return `decode`; partial results are discarded and mutations are never replayed. SQL/string/byte validation has a fixed
 1 MiB budget less framing; the pinned producer accepts 32,767 parameters. Admission
-observes cancellation. This remains one logical session: pooling and owned
-transactions are separate work. Never share manual BEGIN/COMMIT groups between callers or replay uncertain mutations.
+observes cancellation. This remains one logical session: pooling is separate work.
+
+Owned transactions hold that session exclusively: `client.Begin(ctx)` returns a
+`*PostgresTx` with `Exec`, `Query` and `QueryRow` bound to the transaction, plus
+`Commit` and `Rollback`. After either, every method returns `ErrTxDone`; concurrent
+use from two goroutines returns `ErrTxBusy`. A failed statement leaves the
+transaction usable only for `Rollback`; `Commit` then rolls back and returns the
+original error.
+
+```go
+tx, err := client.Begin(ctx)
+if err != nil {
+	return err
+}
+defer tx.Rollback(ctx)
+if _, err := tx.Exec(ctx, sdk.PostgresQuery{Statement: "INSERT INTO items (id) VALUES ($1)",
+	Parameters: []sdk.PostgresValue{sdk.PostgresText(id)}}); err != nil {
+	return err
+}
+return tx.Commit(ctx)
+```
 
 ## Region latency (`client.Status`)
 
