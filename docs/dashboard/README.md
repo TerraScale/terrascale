@@ -25,13 +25,13 @@ session-authenticated contract and links its interactive reference.
 - `scripts/dashboard/`: dev/demo launchers, asset builds, SDK and E2E lint checks.
 
 ## Commands
-Run builds and tests through the shared dev-host runner from the monorepo root:
+Run from the monorepo root:
 
 ```sh
-ts-heavy-any make dashboard-build --repo terrascale --branch main
-ts-heavy-any make dashboard-test-fast --repo terrascale --branch main
-ts-heavy-any make dashboard-check --repo terrascale --branch main
-ts-heavy-any make dashboard-test-slow --repo terrascale --branch main
+make dashboard-build
+make dashboard-test-fast
+make dashboard-check
+make dashboard-test-slow
 bash scripts/dashboard/dev.sh   # development host with hot reload
 bash scripts/dashboard/demo.sh  # local synthetic demo host
 ```

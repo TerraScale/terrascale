@@ -14,7 +14,7 @@ response), `send` (POST through `Send.OkAsync` vs `TypedResults.Ok`), `scoped`
 Every variant must return the same status, content type and bytes; the handler
 benchmark checks this before it measures anything.
 
-Run builds and measurements through `ts-heavy-any` on an admitted dev host:
+Run builds and measurements on a dev host:
 
 ```sh
 # Handler pipeline only: calls each endpoint's RequestDelegate with a fresh HttpContext and scope.

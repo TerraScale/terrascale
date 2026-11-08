@@ -10,4 +10,4 @@ TerraScale Python SDK (`terrascale` on PyPI). Sync client: `src/terrascale/clien
 - Fast: `pytest -q` (HTTP fakes in `tests/fake.py`).
 - Static checks: `ruff check src tests` and `mypy`.
 - Each area's Fast suite must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug. Keep default parallelism.
-- Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. Delete at least 80% of tests against the workspace `.cos/verify-20261103/test-policy.md` baseline (2026-11-04). New features add at most one happy-path and one critical-failure test.
+- Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. New features add at most one happy-path and one critical-failure test.

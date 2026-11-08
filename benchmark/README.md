@@ -5,8 +5,8 @@ endpoint and logging overhead. Results and raw measurement evidence belong in
 [`bench/`](bench/). Historical results describe the revision and environment
 measured; they do not qualify current capacity.
 
-Run builds, checks and measurements on an admitted dev host through
-`ts-heavy-any`. `make -C benchmark check` builds the Go SQL tools, checks their
+Run builds, checks and measurements on a dev host (delta, mariogk-dev, beta or rafael-dev).
+`make -C benchmark check` builds the Go SQL tools, checks their
 formatting and runs the Fast suite. `make benchmark-build` also builds the
 .NET endpoint and logging benchmarks.
 
@@ -30,8 +30,8 @@ table-shape subscriptions against the production CDN. It measures table and
 filtered shapes at 1, 10, 100 and 1,000 listeners, with three repeats per cell.
 After F12, identical listeners on one SDK client share one upstream stream;
 this workload does not qualify independent-client fan-out.
-Run it through `ts-heavy-any` after installing the locked `sdk/js` dependencies.
-The admitted host needs its existing regional SSH access and a mode-0600 stdin
+Run it on a dev host after installing the locked `sdk/js` dependencies.
+The host needs its existing regional SSH access and a mode-0600 stdin
 file containing a throwaway account's `project` and `apiKey`. The key needs
 `sql:read`, `sql:write`, `databases:read` and `databases:write`; never pass it
 in arguments. An optional `completed` array contains cohort names already

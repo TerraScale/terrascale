@@ -35,7 +35,7 @@ description: TerraScale UI standard — simple purpose, architecture, design and
 ## Proof
 
 - Before/after screenshots of every changed page (repo rule).
-- Run the area's Fast suite through `ts-ship`; run browser journeys (`make dashboard-test-slow`) through `ts-heavy-any` when dashboard markup changes.
+- Don't run suites locally; CI runs Fast and the browser journeys on push.
 - Update tests that asserted removed copy to assert behavior instead; never weaken them.
 - [ ] Before shipping UI, compare actual before/after screenshots against every applicable rule below in dark and supported light themes; fix default-styled or unfinished controls first.
 
