@@ -6,7 +6,6 @@ namespace TerraBase.Fast.Postgres;
 
 public sealed class PostgresUuidTests
 {
-    // Npgsql binds Guid parameters in binary and asks for binary results by default (ku TS-1306).
     [Test]
     public async Task Prepared_statement_binds_and_returns_binary_uuid()
     {
