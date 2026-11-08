@@ -1,4 +1,4 @@
-| "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"| "listRegions"} ManagementOperation */
+/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery" | "listRegions"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
@@ -41,12 +41,8 @@ export const managementV1Routes = Object.freeze([
 /** @param {ManagementOperation} operation @param {import("./routes.js").V1Route["method"]} method @param {string} pathTemplate @param {number} [status] @returns {import("./routes.js").V1Route} */
 function route(operation, method, pathTemplate, status = 200) {
   const write = method !== "GET" && operation !== "planPointInTime";
-<<<<<<< HEAD
-  const sql = operation === "executeSql" || operation === "exportDatabase" || operation === "readTableShape" || operation === "getShapeManifest" || operation === "getShapeKey" || operation === "connectSql" || operation === "connectShapeHints";
-=======
   const anonymous = operation === "listRegions";
-  const sql = operation === "executeSql" || operation === "readTableShape" || operation === "getShapeManifest" || operation === "getShapeKey" || operation === "connectSql" || operation === "connectShapeHints";
->>>>>>> 89ce2b430 (T82: read the serving-region catalog from the JS SDK)
+  const sql = operation === "executeSql" || operation === "exportDatabase" || operation === "readTableShape" || operation === "getShapeManifest" || operation === "getShapeKey" || operation === "connectSql" || operation === "connectShapeHints";
   return Object.freeze({ operation, method, pathTemplate,
     permission: sql ? "sql:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : anonymous || !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
     additionalPermissions: Object.freeze([]),
