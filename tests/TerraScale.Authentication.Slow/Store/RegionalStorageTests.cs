@@ -32,9 +32,9 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         await UsersIn(local).CreateAsync(Instance, "local-only@example.test");
         await UsersIn(designated).CreateAsync(Instance, "known@example.test");
         var project = await ProjectAsync(local);
-        await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
-        await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
-        await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
+        await using var gru = TcpRelay.Start(fixture.ServerFor(tenant).InternalAddress);
+        await using var own = TcpRelay.Start(fixture.ServerFor(tenant).InternalAddress);
+        await using var other = TcpRelay.Start(fixture.ServerFor(tenant).InternalAddress);
         await using var auth = await StartAsync(tenant, own.Address);
         await KeyAsync(auth, local);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, TimeSpan.FromSeconds(15))).IsTrue();

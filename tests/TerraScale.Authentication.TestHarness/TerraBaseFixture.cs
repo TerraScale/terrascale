@@ -10,11 +10,13 @@ using TUnit.Core.Interfaces;
 
 namespace TerraScale.Authentication.Tests;
 
-/// <summary>One real TerraBase process per suite, built from this commit; every test gets its own tenant and database.</summary>
+/// <summary>A small pool of real TerraBase processes per suite, built from this commit; every test gets its own tenant and database on one pool member.</summary>
 public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 {
-    private TerraBaseTestServer? server;
-    private TerraBaseTestTenant? owner;
+    private static readonly int PoolSize = Math.Clamp(Environment.ProcessorCount / 4, 1, 4);
+    private readonly List<TerraBaseTestServer> started = [];
+    private (TerraBaseTestServer Server, TerraBaseTestTenant Owner)[]? pool;
+    private int nextServer = -1;
     // Separate databases avoid queueing every parallel management journey on one database writer.
     private readonly Lazy<Task<OidcHarness>>[] management;
     private int nextManagement = -1;
@@ -26,7 +28,9 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         this.initialized = new(this.InitializeCoreAsync);
     }
 
-    public TerraBaseTestServer Server => this.server ?? throw new InvalidOperationException("TerraBase fixture has not started.");
+    public TerraBaseTestServer Server => this.pool?[0].Server ?? throw new InvalidOperationException("TerraBase fixture has not started.");
+
+    public TerraBaseTestServer ServerFor(TerraBaseTestTenant tenant) => tenant.Server ?? this.Server;
 
     internal Task<OidcHarness> ManagementAsync() =>
         this.management[(uint)Interlocked.Increment(ref this.nextManagement) % (uint)this.management.Length].Value;
@@ -44,30 +48,53 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     private async Task InitializeCoreAsync()
     {
-        var (running, unavailable) = await TerraBaseTestServer.StartAsync();
-        this.server = running ?? throw new InvalidOperationException($"Real TerraBase integration tests need TerraBase: {unavailable}");
+        var members = new (TerraBaseTestServer Server, TerraBaseTestTenant Owner)[PoolSize];
         try
         {
-            this.owner = await this.Server.CreateTenantAsync();
+            await Task.WhenAll(Enumerable.Range(0, PoolSize).Select(async index => members[index] = await this.StartPoolMemberAsync()));
         }
         catch
         {
-            await this.Server.DisposeAsync();
-            this.server = null;
+            foreach (var server in this.started)
+            {
+                await server.DisposeAsync();
+            }
+
+            this.started.Clear();
+            throw;
+        }
+
+        this.pool = members;
+    }
+
+    private async Task<(TerraBaseTestServer Server, TerraBaseTestTenant Owner)> StartPoolMemberAsync()
+    {
+        var (running, unavailable) = await TerraBaseTestServer.StartAsync();
+        var server = running ?? throw new InvalidOperationException($"Real TerraBase integration tests need TerraBase: {unavailable}");
+        this.started.Add(server);
+        try
+        {
+            return (server, await server.CreateTenantAsync());
+        }
+        catch
+        {
+            this.started.Remove(server);
+            await server.DisposeAsync();
             throw;
         }
     }
 
     public async Task<(TerraBaseTestTenant Tenant, TerraBaseSqlDatabase Database)> CreateDatabaseAsync(bool provision = true)
     {
-        // The fixture owns the Enterprise organization and its setup credential.
-        // Each test still owns a separate project and database, without repeating
-        // organization creation, plan changes and credential issuance in every journey.
-        var shared = this.owner ?? throw new InvalidOperationException("TerraBase fixture has not initialized its owner.");
-        var project = await this.Server.Management().CreateProjectAsync(shared.UserId, shared.Organization.Id, AuthStore.NewId());
-        var tenant = shared with { Project = project };
-        await this.Server.Databases(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
-        var database = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
+        var members = this.pool ?? throw new InvalidOperationException("TerraBase fixture has not initialized its pool.");
+        // Each member owns the Enterprise organization and its setup credential; tests are handed out round-robin
+        // so parallel writes do not queue on one TerraBase process. Each test still owns a separate project and
+        // database, without repeating organization creation, plan changes and credential issuance in every journey.
+        var (server, owner) = members[(uint)Interlocked.Increment(ref this.nextServer) % (uint)members.Length];
+        var project = await server.Management().CreateProjectAsync(owner.UserId, owner.Organization.Id, AuthStore.NewId());
+        var tenant = owner with { Project = project, Server = server };
+        await server.Databases(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
+        var database = server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         if (provision)
         {
             await new AuthStore(database, TimeProvider.System).ProvisionAsync();
@@ -84,12 +111,13 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     /// </summary>
     public void UseStorage(IServiceCollection services, TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null)
     {
-        services.AddSingleton(apiKey is null ? this.Server.Http : this.Server.PublicHttp);
+        var server = this.ServerFor(tenant);
+        services.AddSingleton(apiKey is null ? server.Http : server.PublicHttp);
         services.AddSingleton(provider => new TerraBaseSqlClient(provider.GetRequiredService<HttpClient>(), apiKey is null
-            ? new TerraBaseSqlClientOptions { BaseAddress = this.Server.InternalAddress }
-            : new TerraBaseSqlClientOptions { BaseAddress = this.Server.ClientAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) }).Database(tenant.Project.Id, databaseName));
+            ? new TerraBaseSqlClientOptions { BaseAddress = server.InternalAddress }
+            : new TerraBaseSqlClientOptions { BaseAddress = server.ClientAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) }).Database(tenant.Project.Id, databaseName));
         // Project closures reach this same regional TerraBase: its internal listener, with the peer credential.
-        services.AddKeyedSingleton(App.StorageAuthority, (_, _) => this.Server.Management());
+        services.AddKeyedSingleton(App.StorageAuthority, (_, _) => server.Management());
     }
 
     /// <summary>Uses only this region's storage transport; an unavailable local backend fails closed.</summary>
@@ -107,8 +135,9 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     /// <summary>Creates and provisions another copy of the tenant's storage, <paramref name="name"/>: another region's.</summary>
     public async Task<TerraBaseSqlDatabase> CreateCopyAsync(TerraBaseTestTenant tenant, string name)
     {
-        await this.Server.Databases(tenant.ApiKey).Database(tenant.Project.Id, name).CreateAsync();
-        var copy = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, name);
+        var server = this.ServerFor(tenant);
+        await server.Databases(tenant.ApiKey).Database(tenant.Project.Id, name).CreateAsync();
+        var copy = server.Sql(tenant.ApiKey).Database(tenant.Project.Id, name);
         await new AuthStore(copy, TimeProvider.System).ProvisionAsync();
         return copy;
     }
@@ -134,9 +163,9 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         }
         finally
         {
-            if (this.server is not null)
+            foreach (var server in this.started)
             {
-                await this.server.DisposeAsync();
+                await server.DisposeAsync();
             }
         }
     }

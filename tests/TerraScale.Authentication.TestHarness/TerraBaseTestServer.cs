@@ -454,7 +454,8 @@ internal sealed class PeerCredentialHandler(string peerSecret) : DelegatingHandl
 /// <param name="Organization">The organization.</param>
 /// <param name="Project">A project of the organization.</param>
 /// <param name="ApiKey">A read/write API key for the organization.</param>
-public sealed record TerraBaseTestTenant(string UserId, TerraBaseOrganization Organization, TerraBaseProject Project, string ApiKey)
+public sealed record TerraBaseTestTenant(string UserId, TerraBaseOrganization Organization, TerraBaseProject Project, string ApiKey,
+    TerraBaseTestServer? Server = null)
 {
     /// <inheritdoc />
     public override string ToString() => $"TerraBaseTestTenant {{ UserId = {this.UserId}, Organization = {this.Organization.Id}, Project = {this.Project.Id}, ApiKey = [REDACTED] }}";

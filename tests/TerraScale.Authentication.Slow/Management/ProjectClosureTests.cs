@@ -33,11 +33,11 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         var organization = await oidc.CreateOrganizationAsync(token);
         var first = await oidc.CreateProjectAsync(token, organization, "First");
         var second = await oidc.CreateProjectAsync(token, organization, "Second");
-        var terraBase = fixture.Server.Management();
+        var terraBase = fixture.ServerFor(oidc.Tenant).Management();
 
         await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{organization}/projects/{first}", token, status: HttpStatusCode.NoContent);
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{Organizations}/{organization}/projects/{first}", token)).IsEqualTo((404, "not_found"));
-        await FencedAsync(first, organization);
+        await FencedAsync(terraBase, first, organization);
 
         // The intent is committed and TerraBase accepted, then ts-auth lost the answer before removing the root: the retry
         // presents the same stored closure.
@@ -51,9 +51,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     }
 
     // TerraBase retains the project fence and refuses a different closure id.
-    private async Task FencedAsync(string project, string organization)
+    private static async Task FencedAsync(TerraBaseManagementClient terraBase, string project, string organization)
     {
-        var refused = await Assert.That(async () => await fixture.Server.Management().CloseProjectAsync(project, organization, AuthStore.NewId())).Throws<TerraBaseConflictException>();
+        var refused = await Assert.That(async () => await terraBase.CloseProjectAsync(project, organization, AuthStore.NewId())).Throws<TerraBaseConflictException>();
         await Assert.That(refused!.ErrorCode).IsEqualTo("closure_conflict");
     }
 
