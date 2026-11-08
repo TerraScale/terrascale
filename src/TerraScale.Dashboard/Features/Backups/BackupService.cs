@@ -87,7 +87,7 @@ namespace TerraScale.Dashboard.Features.Backups
         }
 
         public async Task<BackupPolicyView> SetPolicyAsync(AccountContext context, string databaseId, string fullBackupCron,
-            string incrementalBackupCron, int retentionDays, bool disabled, CancellationToken ct)
+            string incrementalBackupCron, int retentionDays, CancellationToken ct)
         {
             context = await databases.CurrentAsync(context, ct);
             var database = Manage(context, databaseId);
@@ -113,9 +113,9 @@ namespace TerraScale.Dashboard.Features.Backups
             }
 
             var policy = await backend.SetPolicyAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, ct), databaseId,
-                fullBackupCron.Length == 0 ? null : fullBackupCron, retentionDays, disabled, ct);
+                fullBackupCron.Length == 0 ? null : fullBackupCron, retentionDays, ct);
             var saved = Policy(policy);
-            if (saved.FullBackupCron != fullBackupCron || saved.RetentionDays != retentionDays || saved.Disabled != disabled || saved.UpdatedAt is null)
+            if (saved.FullBackupCron != fullBackupCron || saved.RetentionDays != retentionDays || saved.UpdatedAt is null)
             {
                 throw new HttpRequestException("The provider did not confirm the submitted backup policy.");
             }
@@ -383,7 +383,7 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new HttpRequestException("The provider returned an invalid backup policy.");
             }
 
-            return new(cron, "", policy.RetentionDays, policy.Disabled, policy.UpdatedAt,
+            return new(cron, "", policy.RetentionDays, policy.UpdatedAt,
                 policy.LastSucceededAt, policy.LastFailedAt, policy.LastError, policy.NextDueAt);
         }
         private static bool ValidCron(string cron)

@@ -37,12 +37,6 @@ def _optional_text(value: Any) -> str | None:
     return None if value is None else _text(value)
 
 
-def _boolean(value: Any) -> bool:
-    if type(value) is not bool:
-        raise ValueError("expected a boolean")
-    return value
-
-
 class _ConfigCall(Call):
     def __repr__(self) -> str:
         return "_ConfigCall(<redacted>)"
@@ -100,7 +94,6 @@ async def _asend(client: AsyncTerraScale, call: Call) -> Any:
 class BackupPolicy:
     full_backup_cron: str | None
     retention_days: int
-    disabled: bool
     updated_at: str | None
 
     @classmethod
@@ -108,21 +101,19 @@ class BackupPolicy:
         retention = _integer(b["retentionDays"], 32)
         if not 1 <= retention <= 35:
             raise ValueError("retention outside contract range")
-        return cls(_optional_text(b["fullBackupCron"]), retention, _boolean(b["disabled"]),
-                   _optional_text(b["updatedAt"]))
+        return cls(_optional_text(b["fullBackupCron"]), retention, _optional_text(b["updatedAt"]))
 
 
 @dataclass(frozen=True)
 class BackupPolicyUpdate:
     full_backup_cron: str | None
     retention_days: int
-    disabled: bool = False
 
     def body(self) -> dict[str, Any]:
         cron = _optional_text(self.full_backup_cron)
         if type(self.retention_days) is not int or not 1 <= self.retention_days <= 35:
             raise ValueError("retention_days must be an integer from 1 to 35")
-        return {"fullBackupCron": cron, "retentionDays": self.retention_days, "disabled": _boolean(self.disabled)}
+        return {"fullBackupCron": cron, "retentionDays": self.retention_days}
 
 
 class _Policies:

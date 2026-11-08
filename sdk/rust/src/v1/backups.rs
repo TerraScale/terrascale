@@ -220,7 +220,7 @@ impl Database {
         )
         .await
     }
-    /// `PUT D/backup-policy`; fullBackupCron, retentionDays and disabled.
+    /// `PUT D/backup-policy`; fullBackupCron and retentionDays.
     pub async fn set_backup_policy<T: DeserializeOwned>(&self, body: &impl Serialize) -> Result<T> {
         self.management(
             Method::PUT,

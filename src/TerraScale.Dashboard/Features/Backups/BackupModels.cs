@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Backups
 {
     public sealed record BackupView(string Id, string Status, DateTimeOffset CreatedAt, long SizeBytes);
     public sealed record BackupPolicyErrorView(string Code, string Message);
-    public sealed record BackupPolicyView(string FullBackupCron, string IncrementalBackupCron, int RetentionDays, bool Disabled,
+    public sealed record BackupPolicyView(string FullBackupCron, string IncrementalBackupCron, int RetentionDays,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? UpdatedAt = null,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? LastSucceededAt = null,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? LastFailedAt = null,
@@ -46,7 +46,7 @@ namespace TerraScale.Dashboard.Features.Backups
     }
     public sealed record ProducerBackup(string Id, string DatabaseId, string Status, string Trigger, long SizeBytes, DateTimeOffset CreatedAt);
     public sealed record BackupBackendPage(IReadOnlyList<ProducerBackup> Items, string? NextCursor);
-    public sealed record ProducerBackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt,
+    public sealed record ProducerBackupPolicy(string? FullBackupCron, int RetentionDays, DateTimeOffset? UpdatedAt,
         DateTimeOffset? LastSucceededAt = null, DateTimeOffset? LastFailedAt = null, BackupPolicyErrorView? LastError = null, DateTimeOffset? NextDueAt = null);
 
     public static class BackupHealth
@@ -86,7 +86,7 @@ namespace TerraScale.Dashboard.Features.Backups
         Task<ProducerBackup> CreateAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<ProducerBackupPolicy> PolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
         Task<ProducerBackupPolicy> SetPolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? fullBackupCron,
-            int retentionDays, bool disabled, CancellationToken cancellationToken);
+            int retentionDays, CancellationToken cancellationToken);
         Task<BackupDestinationView?> DestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
         Task<BackupDestinationView> SetDestinationAsync(DatabaseScope scope, DatabaseRegion home, string endpoint, string region, string bucket,
             string accessKeyId, string secretKey, CancellationToken cancellationToken);

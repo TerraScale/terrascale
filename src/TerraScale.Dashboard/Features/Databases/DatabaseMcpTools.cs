@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 var listing = await backups.ListAsync(context, db.Id, Cancellation);
                 if (listing.Policy is { } policy)
                 {
-                    backupsEnabled = !policy.Disabled && policy.FullBackupCron.Length > 0;
+                    backupsEnabled = policy.FullBackupCron.Length > 0;
                 }
                 else
                 {

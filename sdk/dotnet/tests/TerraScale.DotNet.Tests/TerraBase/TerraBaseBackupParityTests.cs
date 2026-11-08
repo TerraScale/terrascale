@@ -8,7 +8,7 @@ public sealed class TerraBaseBackupParityTests
 {
     private const string BackupId = "01JA0000000000000000000003";
     private const string Backup = """{"id":"01JA0000000000000000000003","databaseId":"01JA0000000000000000000002","status":"ready","trigger":"manual","sizeBytes":9007199254740993,"createdAt":"2026-10-22T00:00:00Z"}""";
-    private const string Policy = """{"fullBackupCron":null,"retentionDays":7,"disabled":false,"updatedAt":null}""";
+    private const string Policy = """{"fullBackupCron":null,"retentionDays":7,"updatedAt":null}""";
     private const string Window = """{"earliest":"2026-10-21T00:00:00Z","latest":"2026-10-22T00:00:00Z"}""";
     private const string Restored = """{"id":"01JA0000000000000000000004","projectId":"01JA0000000000000000000001","name":"copy","branchedFrom":"01JA0000000000000000000002","createdAt":"2026-10-22T00:00:00Z","homeRegion":null,"replicaRegions":null,"placementVersion":0,"replicas":[]}""";
     private const string OperationRunning = """{"id":"01JA0000000000000000000006","operationId":"01JA0000000000000000000006","status":"running","kind":"backup","database":"copy","errorCode":null,"errorMessage":null,"createdAt":"2026-10-22T00:00:01Z","finishedAt":null}""";
@@ -50,7 +50,7 @@ public sealed class TerraBaseBackupParityTests
         await Assert.That(restored.HomeRegion).IsNull();
         await Assert.That(calls[0].Path).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/backups");
         await Assert.That(calls[1].Query).IsEqualTo("?after=opaque%2Fcursor%2B&limit=2");
-        await Assert.That(calls[3].Body).IsEqualTo("{\"retentionDays\":7,\"disabled\":false}");
+        await Assert.That(calls[3].Body).IsEqualTo("{\"retentionDays\":7}");
         await Assert.That(calls[4].Path).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/restores/01JA0000000000000000000006");
         await Assert.That(calls[5].Path).EndsWith($"/backups/{BackupId}/restore");
         await Assert.That(calls[5].Body).IsEqualTo("{}");

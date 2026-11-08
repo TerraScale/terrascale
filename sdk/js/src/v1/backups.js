@@ -1,6 +1,6 @@
 import { requireId } from "../ids.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
-import { flag, list, nullable, numeric, optional, record, text } from "./management-decode.js";
+import { list, nullable, numeric, optional, record, text } from "./management-decode.js";
 import { members, mutationOptions, pageQuery } from "./management-validation.js";
 import { malformed, object } from "./decode.js";
 import { TerraBaseV1Error } from "./errors.js";
@@ -9,7 +9,7 @@ import { stringifyExactJson } from "./json.js";
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
 const backup = record({ id: requireId, databaseId: requireId, status: text, trigger: text, sizeBytes: numeric, createdAt: text });
 const backupPage = record({ items: list(backup), next: nullable(text) });
-const policy = record({ fullBackupCron: nullable(text), retentionDays: numeric, disabled: flag, updatedAt: nullable(text) });
+const policy = record({ fullBackupCron: nullable(text), retentionDays: numeric, updatedAt: nullable(text) });
 const window = record({ earliest: text, latest: text });
 const plan = record({ window, pointInTime: text, snapshotAt: text, latestSegmentAt: nullable(text), segmentCount: numeric, historyCheck: text });
 const restored = record({ id: requireId, projectId: requireId, name: text, branchedFrom: nullable(requireId), createdAt: text,
@@ -26,7 +26,7 @@ const destination = record({ endpoint: text, region: text, bucket: text, mode: t
 /** @typedef {ReturnType<typeof restored>} V1RestoredDatabase */
 /** @typedef {ReturnType<typeof restoreOperation>} V1RestoreOperation */
 /** @typedef {ReturnType<typeof destination>} V1BackupDestination */
-/** @typedef {{ readonly fullBackupCron?: string | null; readonly retentionDays?: number | null; readonly disabled?: boolean | null }} V1BackupPolicyRequest */
+/** @typedef {{ readonly fullBackupCron?: string | null; readonly retentionDays?: number | null }} V1BackupPolicyRequest */
 /** @typedef {{ readonly pointInTime: string; readonly destination?: "platform" | "customer" | null }} V1PointInTimeRequest */
 /** @typedef {V1PointInTimeRequest & { readonly name?: string | null }} V1PointInTimeRestoreRequest */
 /** @typedef {{ readonly endpoint: string; readonly region: string; readonly bucket: string; readonly accessKeyId: string; readonly secretKey: string; readonly mode: "both" | "customer" }} V1BackupDestinationRequest */
@@ -109,7 +109,7 @@ export class V1Backups {
   async getPolicy(options = {}) { return policy((await this.#transport.call("getBackupPolicy", this.#params, { signal: options.signal })).value); }
   /** @param {V1BackupPolicyRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1BackupPolicy>} */
   async setPolicy(request, options = {}) {
-    members(request, ["fullBackupCron", "retentionDays", "disabled"]);
+    members(request, ["fullBackupCron", "retentionDays"]);
     mutationOptions(options);
     return policy((await this.#transport.call("setBackupPolicy", this.#params, { body: stringifyExactJson(request, "backup policy"), signal: options.signal })).value);
   }

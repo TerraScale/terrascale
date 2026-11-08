@@ -19,7 +19,7 @@ internal sealed class SetBackupPolicyEndpoint(IManagementService management, IMa
         Metadata(AnchoredRevocation.Instance);
         Name("setBackupPolicy");
         Summary("Saves the backup policy of a database");
-        Description("fullBackupCron is a standard 5-field cron expression evaluated in UTC, or null or empty for no scheduled backups. retentionDays (1 to 35) applies to manual and scheduled backups. disabled pauses scheduled backups." + " " + ProjectApiRoute.IdentityDescription);
+        Description("fullBackupCron is a standard 5-field cron expression evaluated in UTC, or null or empty for no scheduled backups. retentionDays (1 to 35) applies to manual and scheduled backups." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Backups");
         Produces<BackupPolicy>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -50,7 +50,7 @@ internal sealed class SetBackupPolicyEndpoint(IManagementService management, IMa
             Forbidden error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
             TenantContext database => await backups.SetPolicyAsync(
-                ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), database, cron, retentionDays, request.Disabled ?? false, cancellationToken) switch
+                ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), database, cron, retentionDays, cancellationToken) switch
             {
                 BackupPolicy policy => TypedResults.Ok(policy),
                 NotFound error => ErrorResponse.From(error),

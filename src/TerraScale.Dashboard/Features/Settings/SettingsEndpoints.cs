@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Settings
                                 var retention = int.TryParse(form["retentionDays"], System.Globalization.NumberStyles.Integer,
                                     System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
                                 await settings.SetBackupPolicyAsync(context, form["databaseId"].ToString(), form["fullBackupCron"].ToString(),
-                                    form["incrementalBackupCron"].ToString(), retention, form["disabled"].ToString() is "on" or "true" or "1", http.RequestAborted); break;
+                                    form["incrementalBackupCron"].ToString(), retention, http.RequestAborted); break;
                             case "backup-now": await settings.CreateBackupAsync(context, form["databaseId"].ToString(), http.RequestAborted); break;
                             case "restore":
                                 if (form["replace"].ToString() is "on" or "true" or "1")

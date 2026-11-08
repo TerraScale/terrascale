@@ -16,9 +16,8 @@ public sealed record DatabaseBackup(string Id, string DatabaseId, string Status,
 /// <summary>When a database is backed up and how long its backups are kept.</summary>
 /// <param name="FullBackupCron">Standard 5-field cron expression (UTC), or <see langword="null"/> for no scheduled backups.</param>
 /// <param name="RetentionDays">Backups older than this many days are deleted (1 to 35).</param>
-/// <param name="Disabled">Whether scheduled backups are paused.</param>
 /// <param name="UpdatedAt">When the policy was last saved; <see langword="null"/> for the default policy.</param>
-public sealed record BackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt);
+public sealed record BackupPolicy(string? FullBackupCron, int RetentionDays, DateTimeOffset? UpdatedAt);
 
 /// <summary>Why the last scheduled backup attempt failed.</summary>
 /// <param name="Code">A stable machine-readable code.</param>
@@ -28,16 +27,14 @@ public sealed record BackupPolicyError(string Code, string Message);
 /// <summary>The body of <c>GET …/backup-policy</c>: the policy and the health of its scheduled backups.</summary>
 /// <param name="FullBackupCron">Standard 5-field cron expression (UTC), or <see langword="null"/> for no scheduled backups.</param>
 /// <param name="RetentionDays">Backups older than this many days are deleted (1 to 35).</param>
-/// <param name="Disabled">Whether scheduled backups are paused.</param>
 /// <param name="UpdatedAt">When the policy was last saved; <see langword="null"/> for the default policy.</param>
 /// <param name="LastSucceededAt">When the newest scheduled backup completed; <see langword="null"/> if none ever did.</param>
 /// <param name="LastFailedAt">When the newest scheduled attempt failed; <see langword="null"/> if none ever failed.</param>
 /// <param name="LastError">The error of the attempt named by <paramref name="LastFailedAt"/>, when its cause is known.</param>
-/// <param name="NextDueAt">The next cron occurrence in UTC; <see langword="null"/> with no cron or while disabled.</param>
+/// <param name="NextDueAt">The next cron occurrence in UTC; <see langword="null"/> with no cron.</param>
 public sealed record BackupPolicyStatus(
     string? FullBackupCron,
     int RetentionDays,
-    bool Disabled,
     DateTimeOffset? UpdatedAt,
     DateTimeOffset? LastSucceededAt,
     DateTimeOffset? LastFailedAt,
@@ -47,8 +44,7 @@ public sealed record BackupPolicyStatus(
 /// <summary>The body of <c>PUT …/backup-policy</c>.</summary>
 /// <param name="FullBackupCron">Standard 5-field cron expression (UTC); null or empty for no scheduled backups.</param>
 /// <param name="RetentionDays">1 to 35.</param>
-/// <param name="Disabled">Whether scheduled backups are paused; defaults to false.</param>
-public sealed record BackupPolicyRequest(string? FullBackupCron, int? RetentionDays, bool? Disabled);
+public sealed record BackupPolicyRequest(string? FullBackupCron, int? RetentionDays);
 
 /// <summary>The body of <c>POST …/point-in-time/restore</c>.</summary>
 /// <param name="PointInTime">The time to restore the database as of, inside its restore window.</param>
@@ -98,7 +94,7 @@ public interface IManagedBackupService
 
     /// <summary>Saves the policy of a database; the values are validated by the caller.</summary>
     ValueTask<SetBackupPolicyResult> SetPolicyAsync(
-        string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, bool disabled, CancellationToken cancellationToken);
+        string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, CancellationToken cancellationToken);
 
     ValueTask<StartRestoreResult> StartRestoreAsync(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken);

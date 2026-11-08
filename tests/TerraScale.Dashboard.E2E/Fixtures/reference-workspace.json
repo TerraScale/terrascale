@@ -562,7 +562,6 @@
         "backups": {
           "backups": [],
           "policy": {
-            "disabled": false,
             "fullBackupCron": "",
             "incrementalBackupCron": "",
             "retentionDays": 0
@@ -592,7 +591,6 @@
         "backups": {
           "backups": [],
           "policy": {
-            "disabled": false,
             "fullBackupCron": "",
             "incrementalBackupCron": "",
             "retentionDays": 0
@@ -622,7 +620,6 @@
         "backups": {
           "backups": [],
           "policy": {
-            "disabled": false,
             "fullBackupCron": "",
             "incrementalBackupCron": "",
             "retentionDays": 0
@@ -652,7 +649,6 @@
         "backups": {
           "backups": [],
           "policy": {
-            "disabled": false,
             "fullBackupCron": "",
             "incrementalBackupCron": "",
             "retentionDays": 0

@@ -74,10 +74,10 @@ namespace TerraScale.Dashboard.Features.Backups
         }
 
         public async Task<ProducerBackupPolicy> SetPolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? fullBackupCron,
-                int retentionDays, bool disabled, CancellationToken cancellationToken)
+                int retentionDays, CancellationToken cancellationToken)
         {
             var database = await NameAsync(scope, home, databaseId, cancellationToken);
-            var request = JsonSerializer.SerializeToElement(new BackupPolicyRequest(fullBackupCron, retentionDays, disabled), BackupBackendJson.Default.BackupPolicyRequest);
+            var request = JsonSerializer.SerializeToElement(new BackupPolicyRequest(fullBackupCron, retentionDays), BackupBackendJson.Default.BackupPolicyRequest);
             return await CallAsync(scope, home, ["databases:write"], client => client.SetPolicyAsync(scope.ProjectId, database, request).ResponseAsync, BackupBackendJson.Default.ProducerBackupPolicy, cancellationToken, "backup-policy");
         }
 
@@ -231,7 +231,7 @@ namespace TerraScale.Dashboard.Features.Backups
     }
 
     internal sealed record BackupResponse(IReadOnlyList<ProducerBackup> Items, string? Next);
-    internal sealed record BackupPolicyRequest(string? FullBackupCron, int RetentionDays, bool Disabled);
+    internal sealed record BackupPolicyRequest(string? FullBackupCron, int RetentionDays);
     internal sealed record BackupRestoreRequest(string? Name);
     internal sealed record BackupDestinationRequest(string Endpoint, string Region, string Bucket, string AccessKeyId, string SecretKey, string Mode)
     {

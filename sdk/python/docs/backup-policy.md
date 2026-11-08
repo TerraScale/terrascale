@@ -11,13 +11,12 @@ saved = policy.set_backup_policy(BackupPolicyUpdate("0 2 * * *", 7))
 
 `AsyncDatabaseBackupPolicy` has identical awaitable methods. GET requires
 `databases:read`; PUT requires `databases:write`. A database without a saved
-policy returns daily 02:00 UTC, seven days retention, `disabled=False` and
+policy returns daily 02:00 UTC, seven days retention and
 `updated_at=None`. Null or empty cron means no scheduled backups. The server
 validates standard five-field UTC cron; retention 1–35 days applies to manual
 and scheduled backups. Changing retention can delete older backups.
 
-DECISION: preserve `disabled` as the existing server resource property for
-pausing its schedule; it is not an SDK feature switch. Compose with the existing
+Compose with the existing
 database rather than modifying the recovery/core modules. GET can retry; PUT
 never replays after transport/server failure or an invalid acknowledgement.
 Re-read policy after `CommitUncertainError` before retrying. Diagnostics retain

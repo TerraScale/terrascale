@@ -76,7 +76,7 @@ namespace TerraScale.Dashboard.Features.Backups
                             {
                                 var days = int.TryParse(form["retentionDays"], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
                                 var policy = await backups.SetPolicyAsync(context, databaseId, form["fullBackupCron"].ToString(),
-                                    form["incrementalBackupCron"].ToString(), days, form["disabled"] == "1", http.RequestAborted);
+                                    form["incrementalBackupCron"].ToString(), days, http.RequestAborted);
                                 return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(policy);
                             }
                             if (action is "destination" or "destination-remove")
