@@ -38,7 +38,8 @@ internal sealed record RestoreOperationRecord(
     DateTimeOffset CreatedAt,
     DateTimeOffset? FinishedAt,
     string? Region,
-    string? Node = null);
+    string? Node = null,
+    string? LeasedBackupId = null);
 
 public sealed record RestoreOperation(
     string Id, string OperationId, string Status, string Kind, string Database, string? ErrorCode = null, string? ErrorMessage = null,

@@ -27,18 +27,21 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvid
 
     public DateTimeOffset SnapshotAt { get; private set; }
 
+    public FakeTimeProvider Time => (FakeTimeProvider)Api.Server.Services.GetRequiredService<TimeProvider>();
+
     public TenantContext Tenant => new(Database.Organization, PlanTier.Pro, Database.Project, Database.Id);
 
     private IContinuousBackup Backup => Api.Server.Services.GetRequiredService<IContinuousBackup>();
 
-    public static async Task<SqlBackupHost> StartAsync(CancellationToken cancellationToken)
+    public static async Task<SqlBackupHost> StartAsync(CancellationToken cancellationToken, Action<IServiceCollection>? services = null)
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        var api = await ManagementApi.StartAsync(s3.Configure, services =>
+        var api = await ManagementApi.StartAsync(s3.Configure, inner =>
         {
-            s3.Route(services);
-            ManualBackupHosting.Configure(services);
+            s3.Route(inner);
+            ManualBackupHosting.Configure(inner);
+            services?.Invoke(inner);
         }, time);
         try
         {

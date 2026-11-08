@@ -48,6 +48,13 @@ internal sealed class EngineManagedBackupService(
     private const int MaxDatabaseNameLength = 63;
     private const int MaxRestoreNameAttempts = 100;
 
+    // A restore lease can never pin storage forever: the settle transaction deletes it, and this expiry bounds a
+    // lease whose settle was lost (a crashed process, whose restart sweep settles the record and deletes it too).
+    // The heartbeat renews a running copy's lease well before this passes.
+    private static readonly TimeSpan RestoreLeaseExpiry = TimeSpan.FromHours(1);
+
+    private static readonly TimeSpan RestoreLeaseHeartbeat = TimeSpan.FromMinutes(5);
+
     // Bounds the snapshot copies one pass takes; databases still due get theirs on the next pass.
     private const int MaxScheduledBackupsPerPass = 16;
 
@@ -173,10 +180,12 @@ internal sealed class EngineManagedBackupService(
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <remarks>
-    /// ponytail: a backup that expires while it is being restored can have its snapshot swept mid-copy, which fails the
-    /// restore cleanly; hold a restore lease on the record if restores of nearly expired backups must always succeed.
-    /// </remarks>
+    /// <summary>
+    /// Admitting a restore also writes a lease on its snapshot in the same transaction, so the retention sweep cannot
+    /// delete the snapshot a running restore copies from; several restores can hold the same snapshot at once. The
+    /// settle transaction deletes the lease, a heartbeat renews it while the copy runs, and its expiry bounds a
+    /// settle that was lost.
+    /// </summary>
     public async ValueTask<StartRestoreResult> StartRestoreAsync(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken)
     {
@@ -224,7 +233,7 @@ internal sealed class EngineManagedBackupService(
         return await StartOperationAsync(
             organizationId, owner, RestoreKind.Backup, name,
             stopping => CopyRestoredAsync(userId, organizationId, owner, source.Database.Name, source.StorageId, name, stopping),
-            cancellationToken);
+            cancellationToken, source.StorageId);
     }
 
     public async ValueTask<StartRestoreResult> StartRestorePointInTimeAsync(
@@ -323,7 +332,7 @@ internal sealed class EngineManagedBackupService(
 
     private async ValueTask<StartRestoreResult> StartOperationAsync(
         string organizationId, DatabaseOwner owner, string kind, string? name,
-        Func<CancellationToken, ValueTask<RestoreBackupResult>> copy, CancellationToken cancellationToken)
+        Func<CancellationToken, ValueTask<RestoreBackupResult>> copy, CancellationToken cancellationToken, string? leasedBackupId = null)
     {
         var id = EntityIds.New(time).ToString();
         _ = _runningRestores.TryAdd(id, 0);
@@ -339,9 +348,19 @@ internal sealed class EngineManagedBackupService(
                 return ManagementErrors.NameTaken;
             }
 
+            if (leasedBackupId is { } backupId)
+            {
+                if (await GetRecordAsync(transaction, organizationId, backupId, cancellationToken).ConfigureAwait(false) is not { State: BackupState.Registered })
+                {
+                    return new NotFound();
+                }
+
+                await PutLeaseAsync(transaction, organizationId, backupId, id, cancellationToken).ConfigureAwait(false);
+            }
+
             var record = new RestoreOperationRecord(
                 id, organizationId, owner.ProjectId, owner.DatabaseId, null, kind, RestoreOperationState.Running, name, null, null,
-                time.GetUtcNow(), null, options.Region, options.MachineId);
+                time.GetUtcNow(), null, options.Region, options.MachineId, leasedBackupId);
             await PutRestoreOperationAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             return record;
         }, static error => error, cancellationToken).ConfigureAwait(false);
@@ -371,6 +390,8 @@ internal sealed class EngineManagedBackupService(
     private async Task RunRestoreAsync(RestoreOperationRecord record, ProjectAccess? access, Func<CancellationToken, ValueTask<RestoreBackupResult>> copy)
     {
         using var qos = QosContext.Enter(null, memoryBudget);
+        using var beating = new CancellationTokenSource();
+        var heartbeat = HeartbeatLeaseAsync(record, beating.Token);
         RestoreBackupResult? result = null;
         try
         {
@@ -385,10 +406,14 @@ internal sealed class EngineManagedBackupService(
         }
         catch (Exception) when (lifetime.ApplicationStopping.IsCancellationRequested)
         {
+            beating.Cancel();
+            await heartbeat.ConfigureAwait(false);
             await SettleStoppedAsync(record).ConfigureAwait(false);
             return;
         }
 
+        beating.Cancel();
+        await heartbeat.ConfigureAwait(false);
         var settled = result switch
         {
             ManagedDatabase restored => record with { State = RestoreOperationState.Completed, TargetDatabaseId = restored.Id, TargetName = restored.Name },
@@ -443,6 +468,7 @@ internal sealed class EngineManagedBackupService(
                 .ConfigureAwait(false) is { State: RestoreOperationState.Running })
             {
                 await PutRestoreOperationAsync(transaction, settled, CancellationToken.None).ConfigureAwait(false);
+                await ReleaseLeaseAsync(transaction, record, CancellationToken.None).ConfigureAwait(false);
             }
 
             return new Done();
@@ -952,6 +978,13 @@ internal sealed class EngineManagedBackupService(
                         break;
                     }
 
+                    // A running restore still copies from a leased backup: it is the boundary, nothing past it expires
+                    // either, so retention keeps deleting from the oldest once the lease is released or expired.
+                    if (await LeaseActiveAsync(transaction, record, cancellationToken).ConfigureAwait(false))
+                    {
+                        break;
+                    }
+
                     await ExpireAsync(transaction, record, cancellationToken).ConfigureAwait(false);
                     expired.Add(record);
                 }
@@ -1039,16 +1072,23 @@ internal sealed class EngineManagedBackupService(
         {
             var page = await transaction.ListAsync(BackupCatalog.List(entry.OrganizationId, entry.Id), afterId: null, PageSize, MaxPageBytes, cancellationToken).ConfigureAwait(false);
             var expired = new List<BackupRecord>(page.Records.Count);
+            var leased = false;
             foreach (var listed in page.Records)
             {
                 if (await GetRecordAsync(transaction, entry.OrganizationId, JsonSerializer.Deserialize(listed.Json.Span, Id)!, cancellationToken).ConfigureAwait(false) is { } record)
                 {
+                    if (await LeaseActiveAsync(transaction, record, cancellationToken).ConfigureAwait(false))
+                    {
+                        leased = true;
+                        continue;
+                    }
+
                     await ExpireAsync(transaction, record, cancellationToken).ConfigureAwait(false);
                     expired.Add(record);
                 }
             }
 
-            if (!page.HasMore)
+            if (!page.HasMore && !leased)
             {
                 await StorageSweep.RemoveAsync(transaction, entry, cancellationToken).ConfigureAwait(false);
             }
@@ -1121,6 +1161,13 @@ internal sealed class EngineManagedBackupService(
                     await PutRecordAsync(transaction, record, CancellationToken.None).ConfigureAwait(false);
                     return new SweepBackupState(record, plan);
                 default:
+                    // A running restore still copies from the snapshot: this pass leaves it, a later one deletes it
+                    // once the lease is released or expired. Decided here, in the transaction that owns the deletion.
+                    if (await LeaseActiveAsync(transaction, record, CancellationToken.None).ConfigureAwait(false))
+                    {
+                        return new SweepBackupState(null, plan);
+                    }
+
                     return new SweepBackupState(record, plan);
             }
         }, static error => error, CancellationToken.None).ConfigureAwait(false);
@@ -1209,6 +1256,71 @@ internal sealed class EngineManagedBackupService(
         PutAsync(transaction, BackupCatalog.Records(record.OrganizationId), record.Id, record, TerraBaseJsonContext.Default.BackupRecord, cancellationToken);
 
     private static SweepEntry SweepOf(BackupRecord record) => new(StorageSweep.Backup, record.OrganizationId, record.Id);
+
+    private static async ValueTask ReleaseLeaseAsync(IStorageTransaction transaction, RestoreOperationRecord record, CancellationToken cancellationToken)
+    {
+        if (record.LeasedBackupId is { } backupId)
+        {
+            await transaction.DeleteAsync(BackupCatalog.Leases(record.OrganizationId), BackupCatalog.LeaseKey(backupId, record.Id), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private ValueTask PutLeaseAsync(IStorageTransaction transaction, string organizationId, string backupId, string operationId, CancellationToken cancellationToken) =>
+        PutAsync(
+            transaction, BackupCatalog.Leases(organizationId), BackupCatalog.LeaseKey(backupId, operationId),
+            new BackupLease(backupId, operationId, time.GetUtcNow() + RestoreLeaseExpiry),
+            TerraBaseJsonContext.Default.BackupLease, cancellationToken);
+
+    // A lease holds the sweep only while it can still be live: not yet expired and its operation still Running. A
+    // settle that never committed is bounded by the expiry; an operation record that is gone or settled no longer copies.
+    private async ValueTask<bool> LeaseActiveAsync(IStorageTransaction transaction, BackupRecord record, CancellationToken cancellationToken)
+    {
+        var leases = await SystemCatalog.ListAllAsync(
+            transaction, BackupCatalog.Leases(record.OrganizationId), TerraBaseJsonContext.Default.BackupLease, cancellationToken).ConfigureAwait(false);
+        foreach (var lease in leases)
+        {
+            if (lease.BackupId == record.Id
+                && lease.Until > time.GetUtcNow()
+                && await GetAsync(transaction, RestoreCatalog.Kind, lease.OperationId, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken)
+                    .ConfigureAwait(false) is { State: RestoreOperationState.Running })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // While the copy runs, the lease is renewed: a restore has no deadline, so an unattended expiry would let the
+    // sweep delete the source mid-copy. Only a lease whose operation is still Running is renewed; the settle deletes it.
+    private async Task HeartbeatLeaseAsync(RestoreOperationRecord record, CancellationToken stopping)
+    {
+        if (record.LeasedBackupId is not { } backupId)
+        {
+            return;
+        }
+
+        using var timer = new PeriodicTimer(RestoreLeaseHeartbeat, time);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stopping).ConfigureAwait(false))
+            {
+                _ = await catalog.WriteAsync<CatalogCheck>(async transaction =>
+                {
+                    if (await GetRestoreOperationRecordAsync(transaction, record.OrganizationId, record.SourceDatabaseId, record.Id, CancellationToken.None)
+                        .ConfigureAwait(false) is { State: RestoreOperationState.Running })
+                    {
+                        await PutLeaseAsync(transaction, record.OrganizationId, backupId, record.Id, CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    return new Done();
+                }, static error => error, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
 
     // Completion ticks first, then the list key for uniqueness: oldest completion first.
     private static string RetentionKey(DateTimeOffset completedAt, string order) => EngineManagementService.TicksKey(completedAt) + order;

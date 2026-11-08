@@ -66,6 +66,16 @@ internal sealed record BackupRecord(
 internal sealed record BackupSchedule(DateTimeOffset? LastSucceededAt, DateTimeOffset? LastFailedAt, string? LastErrorCode, string? LastErrorMessage);
 
 /// <summary>
+/// A running restore's hold on a backup snapshot: written in the transaction that admits the restore, renewed while its
+/// copy runs and deleted when it settles; its expiry bounds a lease whose holder never comes back. One backup can hold
+/// several leases at once, one per restoring operation.
+/// </summary>
+/// <param name="BackupId">The leased backup.</param>
+/// <param name="OperationId">The restore operation whose copy still reads the snapshot.</param>
+/// <param name="Until">When the lease expires unless renewed.</param>
+internal sealed record BackupLease(string BackupId, string OperationId, DateTimeOffset Until);
+
+/// <summary>
 /// Where the lifecycle lives in the catalog. Backups are kept under their organization, not under the database, so
 /// deleting a database never loses track of a snapshot file: its backups are expired and swept like any other.
 /// </summary>
@@ -88,4 +98,10 @@ internal static class BackupCatalog
 
     /// <summary>The <see cref="BackupSchedule"/> of a database, deleted with it.</summary>
     public static string Schedule(string databaseId) => SystemCatalog.DatabaseState(databaseId) + "backup_schedule";
+
+    /// <summary>The <see cref="BackupLease"/> records of an organization, keyed by backup id then operation id.</summary>
+    public static string Leases(string organizationId) => $"organizations/{organizationId}/backup_leases";
+
+    /// <summary>The key of one operation's lease on one backup.</summary>
+    public static string LeaseKey(string backupId, string operationId) => $"{backupId}/{operationId}";
 }
