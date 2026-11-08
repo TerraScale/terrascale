@@ -95,6 +95,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(UsageReading))]
 [JsonSerializable(typeof(Organization))]
 [JsonSerializable(typeof(PlanRequest))]
+[JsonSerializable(typeof(EnrollmentRequest))]
 [JsonSerializable(typeof(PressureBody))]
 [JsonSerializable(typeof(Project))]
 [JsonSerializable(typeof(ProjectBackupDestination))]
