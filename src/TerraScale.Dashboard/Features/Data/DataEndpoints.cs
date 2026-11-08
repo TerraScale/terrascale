@@ -173,6 +173,28 @@ namespace TerraScale.Dashboard.Features.Data
             try
             {
                 queries = await saved.ListAsync(context, id, http.RequestAborted);
+                if (submitted is not null)
+                {
+                    history = SqlHistory.Read(submitted["history"].ToString());
+                    if (sql.Length > 0 && http.Request.Path == "/api/v1/dashboard/data/sql")
+                    {
+                        history = SqlHistory.Run(history, sql);
+                    }
+                }
+                else
+                {
+                    try
+                    {
+                        if (await http.RequestServices.GetRequiredService<SqlRuns>().ReadWorkspaceAsync(context, id, http.RequestAborted) is { } workspace)
+                        {
+                            (sql, history) = (workspace.Draft, workspace.History);
+                        }
+                    }
+                    catch (SqlWorkspaceUnavailable)
+                    {
+                        history = [];
+                    }
+                }
                 if (submitted is null && http.Request.Query["result"].ToString() is { Length: > 0 } receiptId)
                 {
                     try
