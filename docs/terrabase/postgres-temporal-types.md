@@ -18,3 +18,10 @@ when read as temporal.
 Native `uuid` (OID 2950) supports text and binary binds and results. A binary bind is 16 bytes, matching the canonical
 string byte for byte; storage and text format are the canonical lowercase hyphenated form. A text bind must parse as a
 uuid. A `uuid` column holding non-uuid text fails the read with `22P02`.
+
+## numeric
+
+Native `numeric` (OID 1700) supports text and binary binds and results. Binary values use PostgreSQL's base-10000
+format: int16 ndigits, int16 weight, uint16 sign, int16 dscale, then ndigits int16 digit groups. Values that fit a
+`long` bind and return as integers; wider values bind and return as exact text. Columns with NUMERIC affinity store
+non-integers as 64-bit floats; keep exact decimals in TEXT columns.
