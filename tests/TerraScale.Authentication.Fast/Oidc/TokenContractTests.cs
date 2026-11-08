@@ -108,6 +108,40 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
+    [Test]
+    public async Task Replaying_a_consumed_authorization_code_revokes_its_family_and_leaves_an_unrelated_sign_in_alive()
+    {
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var replayed = await oidc.CreateUserAsync(oidc.UniqueEmail("replay"));
+        var other = await oidc.CreateUserAsync(oidc.UniqueEmail("other"));
+        var first = (await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(replayed)).Token;
+        var (verifier, challenge) = OidcHarness.Pkce();
+        var code = await oidc.CodeAsync(first, challenge);
+        using var redeemed = await oidc.RedeemCodeAsync(code, verifier);
+        var familyA = await OidcHarness.JsonAsync(redeemed);
+        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        using var rotated = await oidc.RefreshAsync(familyA.GetProperty("refresh_token").GetString()!);
+        var current = await OidcHarness.JsonAsync(rotated);
+        await Assert.That(rotated.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var (_, familyB) = await oidc.CreateSessionAndRedeemAsync(other);
+
+        using var replay = await oidc.RedeemCodeAsync(code, verifier);
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await OidcHarness.ErrorAsync(replay)).IsEqualTo("invalid_grant");
+
+        using var refusedRefresh = await oidc.RefreshAsync(current.GetProperty("refresh_token").GetString()!);
+        await Assert.That(refusedRefresh.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await OidcHarness.ErrorAsync(refusedRefresh)).IsEqualTo("invalid_grant");
+
+        using var userInfo = await oidc.UserInfoAsync(familyA.GetProperty("access_token").GetString()!);
+        await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        using var unrelated = await oidc.RefreshAsync(familyB.GetProperty("refresh_token").GetString()!);
+        await Assert.That(unrelated.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
     // RFC 6749 §5.1: the response omits scope when it equals the requested one.
     private static async Task AssertScopeAsync(JsonElement body, string requested)
     {
