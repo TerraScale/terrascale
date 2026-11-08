@@ -16,7 +16,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// <see cref="PasskeySignInOptionsEndpoint"/> and opens the session like a password sign-in. A user-verified passkey
 /// proves the second factor, so the session is marked multi-factor and no second-factor step follows.
 /// </summary>
-public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials passkeys, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials passkeys, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     private const int MaxBody = 16384;
 
@@ -47,6 +47,12 @@ public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials 
         if (this.HttpContext.Request.Headers.Origin is not [{ } origin] || !SignInFlow.IsPublicOrigin(origin, options.PublicOrigin))
         {
             throw Denied();
+        }
+
+        if (await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken) is { } ipWait)
+        {
+            AuthMetrics.SignIn("hosted_passkey", "rate_limited");
+            throw ApiException.RateLimited("Too many sign-in attempts; retry after the Retry-After delay.", ipWait);
         }
 
         var body = await this.BodyAsync(cancellationToken);

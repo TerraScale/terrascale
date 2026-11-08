@@ -11,7 +11,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// <c>POST /ui/{slug}/sign-in/passkey/options</c>: the hosted sign-in step's WebAuthn assertion options for the address
 /// the visitor entered: a sealed single-use challenge and that account's credential ids with user verification required.
 /// </summary>
-public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -21,10 +21,10 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Au
         Summary("Start a passkey sign-in");
         Description("Same-origin form post with the email address. Returns WebAuthn PublicKeyCredentialRequestOptions with a sealed single-use challenge valid 5 minutes, the account's credential ids as allowCredentials and userVerification required. An unknown address gets the same shape with an empty allowCredentials, so nothing reveals which addresses have accounts; the verification then fails the same way for every address. The challenge dies with the account's authentication state. Pass the answer to ui_sign_in_passkey.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<PasskeyOptionsBody>(StatusCodes.Status200OK);
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
     }
@@ -35,6 +35,11 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Au
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
         {
             return SignInFlow.Refused(this.HttpContext);
+        }
+
+        if (await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken) is { } wait)
+        {
+            throw ApiException.RateLimited("Too many sign-in attempts; retry after the Retry-After delay.", wait);
         }
 
         var assertion = await passkeys.SignInOptionsAsync(SignInFlow.Tenant(this.HttpContext), form.Email ?? string.Empty, cancellationToken);
