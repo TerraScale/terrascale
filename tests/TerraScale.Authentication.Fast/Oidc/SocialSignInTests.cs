@@ -2,8 +2,10 @@ using System.Net;
 using Bogus;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -109,5 +111,28 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
         var (_, token) = await oidc.CreateUserTokenAsync(this.faker.Internet.Email(provider: "example.test").ToLowerInvariant());
         var organization = await oidc.CreateOrganizationAsync(token, this.faker.Company.CompanyName());
         return (await oidc.CreateProjectAsync(token, organization, this.faker.Commerce.ProductName()), token);
+    }
+
+    [Test]
+    public async Task A_linked_provider_emails_a_single_use_unlink_code()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var email = this.faker.Internet.Email(provider: "example.test").ToLowerInvariant();
+        var users = oidc.Server.App.Services.GetRequiredService<Users>();
+        var linked = await users.FromProviderAsync(OidcIssuer.InstanceId,
+            new LinkedProvider(SocialProviders.GitHub, "https://github.com", "platform", "42"), email, true, CancellationToken.None);
+        await Assert.That(linked).IsNotNull();
+        var (_, tokens) = await oidc.CreateSessionAndRedeemAsync(linked!);
+        var token = tokens.GetProperty("access_token").GetString()!;
+
+        using var sent = await oidc.CallAsync(HttpMethod.Post, "/v1/terrascale/account/providers/github/code", token);
+        await Assert.That(sent.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+        var code = await oidc.Email.NextCodeAsync(email);
+
+        using var unlinked = await oidc.CallAsync(HttpMethod.Delete, "/v1/terrascale/account/providers/github", token, new { code });
+        await Assert.That(unlinked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+        using var replayed = await oidc.CallAsync(HttpMethod.Delete, "/v1/terrascale/account/providers/github", token, new { code });
+        await Assert.That(replayed.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 }
