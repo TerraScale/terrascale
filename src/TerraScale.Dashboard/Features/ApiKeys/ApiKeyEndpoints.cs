@@ -237,8 +237,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var hasMore = false;
             var cursor = http.Request.Query["cursor"].ToString();
             IReadOnlyList<string>? projectCidrs = null;
+            var viewerOnly = false;
             var network = context.Project is null ? Task.FromResult<IReadOnlyList<string>>([]) : service.ProjectAllowedCidrsAsync(context, http.RequestAborted);
-            try { (keys, var next) = await service.ListPageAsync(context, cursor.Length == 0 ? null : cursor, ApiKeyService.IssuerPageSize, http.RequestAborted); hasMore = next is not null; cursor = next ?? ""; }
+            try { (keys, var next, viewerOnly) = await service.ListPageAsync(context, cursor.Length == 0 ? null : cursor, ApiKeyService.IssuerPageSize, http.RequestAborted); hasMore = next is not null; cursor = next ?? ""; }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && (failure is HttpRequestException || revealed is not null && ApiKeyService.FollowUpFailure(failure)))
             {
                 if (revealed is null)
@@ -264,7 +265,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             try { await ApiKeyExpiryNotifications.AddAsync(http.RequestServices.GetRequiredService<AccountService>(), context, keys, now, http.RequestAborted); }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && revealed is not null && ApiKeyService.FollowUpFailure(failure))
             { warning = (warning + " Expiry reminders could not be updated; the key change succeeded.").Trim(); }
-            var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, ProjectCidrs: projectCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning, DraftKeyCidrs = draftKeyCidrs });
+            var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, ProjectCidrs: projectCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning, DraftKeyCidrs = draftKeyCidrs, ViewerOnly = viewerOnly });
             result.StatusCode = status;
             return result;
         }
