@@ -8,6 +8,12 @@ second-factor sign-in step and organization policies are described in
 passkeys are described in [passkeys.md](passkeys.md). Sign-in for the dashboard and
 the ts CLI happens on ts-auth's hosted pages (HA1).
 
+Adding a factor is a sensitive credential change: hosted TOTP enrolment and
+passkey enrollment both require a recent sign-in (15 and 10 minutes
+respectively; an older session signs in again first), and a future headless
+enrolment API would consume a purpose-bound `enroll_totp` step-up proof. A
+stolen session alone cannot add a factor that survives sign-out.
+
 ## Credential state
 
 `mfa_credentials` holds one record per instance and user, addressed through

@@ -248,7 +248,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
     private static bool Pair(string purpose, string audience) => audience switch
     {
         "ts-dashboard" => purpose is "delete_account" or "create_pat",
-        "ts-auth" => purpose is "delete_account" or "create_api_key" or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email",
+        "ts-auth" => purpose is "delete_account" or "create_api_key" or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "enroll_totp",
         _ => false,
     };
     private static JsonElement Serialize(StepUpRecord value) => JsonSerializer.SerializeToElement(value, StepUpJson.Default.StepUpRecord);

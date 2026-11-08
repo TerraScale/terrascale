@@ -16,7 +16,7 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
         Post("/ui/{slug}/security/passkeys/verify");
         Name("ui_security_passkey_verify");
         Summary("Finish passkey enrollment from the security page");
-        Description("Same-origin JSON fetch from the hosted security page's live session with the browser's WebAuthn registration answer; verifies exactly like create_passkey_verify and stores the passkey. A refused ceremony, a cross-origin post or a missing session answers 403 passkey_denied.");
+        Description("Same-origin JSON fetch from the hosted security page's live session, opened within the last 10 minutes, with the browser's WebAuthn registration answer; verifies exactly like create_passkey_verify and stores the passkey. An older session must sign in again before a passkey can be added. A refused ceremony, a cross-origin post or a missing session answers 403 passkey_denied.");
         Tags("Security");
         Produces<PasskeyEnrolledBody>(StatusCodes.Status201Created, "application/json");
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
@@ -31,7 +31,9 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
             return Results.NotFound();
         }
 
-        if (!SameOrigin(this.HttpContext, options) || await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is not { } live)
+        if (!SameOrigin(this.HttpContext, options)
+            || await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is not { } live
+            || !SecurityFlow.Recent(this.HttpContext, live.Session, SecurityFlow.FactorEnrollmentWindow))
         {
             throw new ApiException(403, "passkey_denied", "Sign in again before enrolling a passkey.");
         }

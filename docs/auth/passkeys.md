@@ -35,6 +35,13 @@ since the challenge was issued, or a credential id already enrolled answers
 403 `passkey_denied`. Exhausting the attempt budget answers 429 with
 `Retry-After`.
 
+Enrolling a passkey is a sensitive credential change: the platform verify
+endpoint additionally requires a fresh, approved, single-use `add_passkey`
+proof in the `X-TerraScale-Step-Up-Proof` header
+([step-up-proof.md](step-up-proof.md)); a bearer token alone answers 403
+`step_up_required`. The options endpoint mints nothing persistent and needs no
+proof.
+
 ### Hosted security page (session cookie, same-origin)
 
 | Method and path | Purpose |
@@ -42,8 +49,11 @@ since the challenge was issued, or a credential id already enrolled answers
 | `POST /ui/{slug}/security/passkeys/options` | Same creation options and sealed challenge as the API endpoint, for the browser's `navigator.credentials.create` call. |
 | `POST /ui/{slug}/security/passkeys/verify` | Same verification and storage as the API endpoint. |
 
-Both require a live session cookie and a same-origin request; anything else
-answers 403 `passkey_denied`.
+Both require a live session cookie, a same-origin request and a sign-in within
+the last 10 minutes; a missing session, a cross-origin post or an older session
+answers 403 `passkey_denied` and the account signs in again before adding a
+passkey. A first enrollment right after sign-in (forced MFA) is always within
+the window.
 
 ### Hosted sign-in (anonymous)
 

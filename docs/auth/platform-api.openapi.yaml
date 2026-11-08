@@ -310,6 +310,8 @@ paths:
       tags: [Members]
       summary: Finish passkey enrollment
       description: |
+        Requires a fresh, approved, single-use add_passkey/ts-auth proof in X-TerraScale-Step-Up-Proof
+        (step-up.openapi.yaml); a bearer token alone never adds a factor and answers 403 step_up_required.
         Verifies the browser's WebAuthn registration answer (origin, relying party id, user verification, challenge)
         against the sealed challenge from create_passkey_options and stores the passkey. The challenge works once
         and dies with the account's authentication state; a refused ceremony, a reused or stale challenge, or a
