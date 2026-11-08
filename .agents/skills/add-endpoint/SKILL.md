@@ -68,4 +68,4 @@ One happy-path test in `tests/<Project>.Fast/<Feature>/` that calls the real end
 ## 5. Then
 
 - If customers call it, add it to the SDKs (`sdk-parity` skill) and update the API doc in `docs/<area>/`.
-- Build: `make terrabase-build` / `make auth-build` / `make dashboard-build`. Push; CI runs the tests.
+- Build: `make terrabase-build` / `make auth-build` / `make dashboard-build`. Open a PR; CI runs the tests.

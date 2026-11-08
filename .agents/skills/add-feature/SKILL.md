@@ -59,4 +59,4 @@ A feature folder holds its endpoints, records, services, options, storage and re
 
 ## 6. Ship
 
-Build only what you changed (`make <area>-build`, `npm run typecheck`, `go build ./...`), commit, rebase on `origin/main`, push to `main`. CI runs the tests. If main goes red because of you, fix or revert within about 30 minutes. See `docs/dev/shipping.md`.
+Build only what you changed (`make <area>-build`, `npm run typecheck`, `go build ./...`), commit on a branch from fresh `origin/main` and open a PR to `main`. CI runs the tests on it; it squash-merges when checks are green. If your merge turns main red, fix or revert within about 30 minutes. See `docs/dev/shipping.md`.
