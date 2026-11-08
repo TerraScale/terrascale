@@ -88,6 +88,8 @@ Package all `contracts/auth` manifests/fixtures with the SDK candidate and regis
 
 ## Retired instance clients
 
+The unsupported instance `auth.AuditEvents` client is retired (TS-1243): the producer serves only the organization-level `list_audit_events` route with a user sign-in token, which existing `Platform.ListAuditEventsAsync` already calls. No replacement instance-level audit route exists.
+
 The unsupported `auth.Billing` client and its exclusive plan, seat-quota, checkout and portal DTOs have been removed. Its five operations used the legacy instance management key and `/v1/{slug}/billing...` routes; they are not wrappers for current public platform or dashboard billing. No replacement endpoint or adapter is provided. `Platform`, `Projects`, `Oidc` and their existing constructors/DTOs remain intact in this retirement phase.
 
 Instance `auth.ApiKeys` and its exclusive `sk_` DTOs are retired. Use only existing producer-backed `Platform` organization/project key operations for their documented authority. Their models, CIDRs, credentials and routes are preserved; no legacy key is silently reinterpreted.

@@ -43,6 +43,14 @@ public sealed class TerraScaleAuthClientTests
         await Assert.That(handler.Accept).IsEqualTo("application/json");
     }
 
+    // The producer serves only the organization-level route (list_audit_events in routes.json);
+    // the legacy sk_-keyed instance audit client is retired (TS-1243).
+    [Test]
+    public async Task NoInstanceAuditClientRemains()
+    {
+        await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetType("TerraScale.DotNet.TerraScaleAuthAuditClient")).IsNull();
+    }
+
     [Test]
     public async Task OptionsValidationRejectsMissingPiecesAndHostileInput()
     {

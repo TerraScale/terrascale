@@ -55,7 +55,6 @@ public sealed partial class TerraScaleAuthClient
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Users = new TerraScaleAuthUsersClient(this);
         Sessions = new TerraScaleAuthSessionsClient(this);
-        AuditEvents = new TerraScaleAuthAuditClient(this);
         Oidc = new TerraScaleAuthOidcClient(this);
         Platform = new TerraScaleAuthPlatformClient(this);
         Projects = new TerraScaleAuthProjectsClient(this);
@@ -67,9 +66,6 @@ public sealed partial class TerraScaleAuthClient
     /// <summary>Session revocation.</summary>
     public TerraScaleAuthSessionsClient Sessions { get; }
 
-
-    /// <summary>Instance audit event listing.</summary>
-    public TerraScaleAuthAuditClient AuditEvents { get; }
 
     /// <summary>OIDC discovery, JWKS, token, revocation, and userinfo.</summary>
     public TerraScaleAuthOidcClient Oidc { get; }
