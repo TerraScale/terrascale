@@ -51,13 +51,21 @@ public sealed class HomeSocketRelayTests
             await Assert.That(read.GetProperty("results")[0].GetProperty("rows")[0][0].GetString()).IsEqualTo(note).Because(region + ": " + read);
         }
 
+        // A browser-style socket authenticates with a first frame instead of a header: the region resolves the home from
+        // the route alone and relays, and the home runs the frame's checks itself.
+        await using var frame = await SqlSocketClient.ConnectAsync(sjc, database.Data, apiKey: null);
+        var admitted = await frame.AuthAsync(token);
+        await Assert.That(admitted.GetProperty("type").GetString()).IsEqualTo("result").Because(admitted.ToString());
+        var framed = await frame.ExecuteAsync(new { sql = "INSERT INTO notes VALUES (3, ?)", args = new object[] { note } });
+        await Assert.That(framed.GetProperty("type").GetString()).IsEqualTo("result").Because(framed.ToString());
+
         // The sessions ran at gru: the home serves the rows, not the relaying regions.
         using var viaGru = gru.WithToken(token);
         using var atHome = await viaGru.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"),
             new { statements = new object[] { new { sql = "SELECT count(*) FROM notes WHERE body = ?", args = new[] { note } } } });
         await Assert.That(atHome.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await atHome.Content.ReadAsStringAsync());
         await Assert.That((await atHome.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("results")[0].GetProperty("rows")[0][0].GetInt64())
-            .IsEqualTo(2).Because("both relayed sockets wrote at the home");
+            .IsEqualTo(3).Because("every relayed socket wrote at the home");
     }
 
     private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, Mesh mesh) => ManagementApi.StartAsync(

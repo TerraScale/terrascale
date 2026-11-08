@@ -43,9 +43,10 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         // The same headers a forwarded request carries, so the home runs the same token, IP-allowlist and scope checks.
         foreach (var (name, values) in context.Request.Headers)
         {
-            if (HomeForwarding.IsForwardable(name) && values.Count == 1 && !name.StartsWith("Sec-WebSocket-", StringComparison.OrdinalIgnoreCase))
+            if (HomeForwarding.IsForwardable(name) && !name.StartsWith("Sec-WebSocket-", StringComparison.OrdinalIgnoreCase))
             {
-                upstream.Options.SetRequestHeader(name, values[0]!);
+                // SetRequestHeader replaces, so one header joins its values as the wire format does.
+                upstream.Options.SetRequestHeader(name, string.Join(", ", values.Where(value => value is not null)));
             }
         }
 
@@ -62,10 +63,22 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
         catch (WebSocketException) when (upstream.HttpStatusCode is not 0)
         {
-            // The home answered the upgrade with a refusal: the client sees the same status it would have seen there.
+            // The home answered the upgrade with a refusal: the client sees the same status it would have seen there,
+            // with the refusal headers the home set.
             var status = upstream.HttpStatusCode;
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers["X-TerraBase-Region"] = home.Region;
+            if (upstream.HttpResponseHeaders is { } headers)
+            {
+                foreach (var (name, values) in headers)
+                {
+                    if (name is "Retry-After" or "WWW-Authenticate")
+                    {
+                        context.Response.Headers[name] = values.ToArray();
+                    }
+                }
+            }
+
             await BadRequests.WriteAsync(context, (int)status, RefusalCode(status), RefusalMessage(status), op: null).ConfigureAwait(false);
             return;
         }
@@ -114,6 +127,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         _ => "the home refused the session",
     };
 
+    /// <summary>Pumps one direction until it ends or breaks, never throwing; the other side is then closed best-effort.</summary>
     private static async Task PumpAsync(WebSocket from, WebSocket to, CancellationToken cancellationToken)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
@@ -133,27 +147,39 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
 
                 if (read.MessageType == WebSocketMessageType.Close)
                 {
-                    await to.CloseAsync(read.CloseStatus ?? WebSocketCloseStatus.NormalClosure, read.CloseStatusDescription, cancellationToken).ConfigureAwait(false);
+                    await CloseAsync(to, read.CloseStatus ?? WebSocketCloseStatus.NormalClosure, read.CloseStatusDescription).ConfigureAwait(false);
                     return;
                 }
 
-                await to.SendAsync(buffer.AsMemory(0, read.Count), read.MessageType, read.EndOfMessage, cancellationToken).ConfigureAwait(false);
-            }
-
-            try
-            {
-                if (to.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                try
                 {
-                    await to.CloseAsync(WebSocketCloseStatus.EndpointUnavailable, "the relayed session ended", CancellationToken.None).ConfigureAwait(false);
+                    await to.SendAsync(buffer.AsMemory(0, read.Count), read.MessageType, read.EndOfMessage, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException)
+                {
+                    break;
                 }
             }
-            catch (Exception error) when (error is WebSocketException or OperationCanceledException or ObjectDisposedException)
-            {
-            }
+
+            await CloseAsync(to, WebSocketCloseStatus.EndpointUnavailable, "the relayed session ended").ConfigureAwait(false);
         }
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private static async Task CloseAsync(WebSocket socket, WebSocketCloseStatus status, string? description)
+    {
+        try
+        {
+            if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+            {
+                await socket.CloseAsync(status, description, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch (Exception error) when (error is WebSocketException or OperationCanceledException or ObjectDisposedException or ConnectionResetException)
+        {
         }
     }
 }
