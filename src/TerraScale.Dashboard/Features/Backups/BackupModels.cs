@@ -4,8 +4,13 @@ using TerraScale.Dashboard.Common.UI;
 namespace TerraScale.Dashboard.Features.Backups
 {
     public sealed record BackupView(string Id, string Status, DateTimeOffset CreatedAt, long SizeBytes);
+    public sealed record BackupPolicyErrorView(string Code, string Message);
     public sealed record BackupPolicyView(string FullBackupCron, string IncrementalBackupCron, int RetentionDays, bool Disabled,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? UpdatedAt = null);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? UpdatedAt = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? LastSucceededAt = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? LastFailedAt = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BackupPolicyErrorView? LastError = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? NextDueAt = null);
     public sealed record BackupListing(
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BackupPolicyView? Policy,
         IReadOnlyList<BackupView> Backups)
@@ -41,7 +46,28 @@ namespace TerraScale.Dashboard.Features.Backups
     }
     public sealed record ProducerBackup(string Id, string DatabaseId, string Status, string Trigger, long SizeBytes, DateTimeOffset CreatedAt);
     public sealed record BackupBackendPage(IReadOnlyList<ProducerBackup> Items, string? NextCursor);
-    public sealed record ProducerBackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt);
+    public sealed record ProducerBackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt,
+        DateTimeOffset? LastSucceededAt = null, DateTimeOffset? LastFailedAt = null, BackupPolicyErrorView? LastError = null, DateTimeOffset? NextDueAt = null);
+
+    public static class BackupHealth
+    {
+        public static string Relative(DateTimeOffset at, DateTimeOffset now)
+        {
+            var delta = at - now;
+            var ahead = delta >= TimeSpan.Zero;
+            var span = delta.Duration();
+            var text = span.TotalMinutes < 1 ? "now"
+                : span.TotalHours < 1 ? ((int)span.TotalMinutes).ToString("0'm'", System.Globalization.CultureInfo.InvariantCulture)
+                : span.TotalDays < 1 ? ((int)span.TotalHours).ToString("0'h'", System.Globalization.CultureInfo.InvariantCulture)
+                : ((int)span.TotalDays).ToString("0'd'", System.Globalization.CultureInfo.InvariantCulture);
+            return text == "now" ? text : ahead ? "in " + text : text + " ago";
+        }
+
+        public static string Utc(DateTimeOffset at)
+        {
+            return at.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
     // The project's own bucket at TerraBase (credentials are write-only there) and a database's scheduled NDJSON export into it.
     public sealed record BackupDestinationView(string Endpoint, string Region, string Bucket, string Mode, DateTimeOffset? UpdatedAt);
     public sealed record BackupBucketView(BackupDestinationView? Destination);
