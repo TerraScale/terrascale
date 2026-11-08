@@ -26,6 +26,7 @@ public sealed class TerraScaleAuthProjectsContractTests
     [Arguments("revoke_session")]
     [Arguments("list_clients")]
     [Arguments("create_client")]
+    [Arguments("rotate_client_secret")]
     [Arguments("delete_client")]
     public async Task ProjectTenantRoutesMatchFixture(string operation)
     {
@@ -58,16 +59,18 @@ public sealed class TerraScaleAuthProjectsContractTests
             "revoke_session" => projects.RevokeSessionAsync(Token, project, session),
             "list_clients" => projects.ListClientsAsync(Token, project),
             "create_client" => projects.CreateClientAsync(Token, project, JsonSerializer.Deserialize(requestJson!, json.TerraScaleAuthProjectCreateOAuthClient)!, "fixture-step-up"),
+            "rotate_client_secret" => projects.RotateProjectClientSecretAsync(Token, project, clientId, "fixture-step-up", JsonSerializer.Deserialize(requestJson!, json.TerraScaleAuthProjectRotateOAuthClient)!),
             "delete_client" => projects.DeleteClientAsync(Token, project, clientId),
             _ => throw new ArgumentException("Unknown contract operation.", nameof(operation))
         };
         await call;
-        await Assert.That(handler.StepUpProof).IsEqualTo(operation == "create_client" ? "fixture-step-up" : null);
+        await Assert.That(handler.StepUpProof).IsEqualTo(operation is "create_client" or "rotate_client_secret" ? "fixture-step-up" : null);
         string? resultJson = call switch
         {
             Task<TerraScaleAuthProjectSettings> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthProjectSettings),
             Task<TerraScaleAuthProjectUser> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthProjectUser),
             Task<TerraScaleAuthProjectOAuthClient> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthProjectOAuthClient),
+            Task<TerraScaleAuthProjectClientSecret> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthProjectClientSecret),
             Task<TerraScaleAuthUserExportPage> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthUserExportPage),
             Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthPlatformPageTerraScaleAuthProjectUser),
             Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> typed => JsonSerializer.Serialize(await typed, json.TerraScaleAuthPlatformPageTerraScaleAuthProjectSession),

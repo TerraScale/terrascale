@@ -149,3 +149,25 @@ public sealed record TerraScaleAuthProjectCreateOAuthClient(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("type")] string? Type,
     [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris);
+
+/// <summary>PUT /clients/{client_id} body. Name and 1 to 10 redirect URIs with the same rules as creation;
+/// the client_id, type and secret stay unchanged.</summary>
+public sealed record TerraScaleAuthProjectUpdateOAuthClient(
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris);
+
+/// <summary>POST /clients/{client_id}/secret/rotate body. GraceSeconds is 0 to 86400; null uses the producer
+/// default of 3600.</summary>
+public sealed record TerraScaleAuthProjectRotateOAuthClient(
+    [property: JsonPropertyName("grace_seconds")] int? GraceSeconds = null);
+
+/// <summary>A rotated OAuth client secret. ClientSecret is answered exactly once; display it immediately and
+/// never log or persist the record.</summary>
+public sealed record TerraScaleAuthProjectClientSecret(
+    [property: JsonPropertyName("client_id")] string ClientId,
+    [property: JsonPropertyName("client_secret")] string ClientSecret,
+    [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt)
+{
+    /// <inheritdoc />
+    public override string ToString() => "TerraScaleAuthProjectClientSecret { sensitive fields redacted }";
+}

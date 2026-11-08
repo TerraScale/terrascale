@@ -114,6 +114,23 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
             request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectCreateOAuthClient,
             Json.TerraScaleAuthProjectOAuthClient, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, MaxRequestBytes, cancellationToken, TerraScaleAuthPlatformClient.Proof(stepUpProof));
 
+    /// <summary>PUT /v1/{project}/clients/{client_id} (admin, update_oauth_client/ts-auth proof). Replaces the
+    /// client's name and redirect URIs; the client_id, type and secret stay unchanged and no secret is answered.</summary>
+    public Task<TerraScaleAuthProjectOAuthClient> UpdateProjectClientAsync(
+        string accessToken, string projectId, string clientId, TerraScaleAuthProjectUpdateOAuthClient request, string stepUpProof, CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, "/clients/" + Id(clientId)),
+            request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectUpdateOAuthClient,
+            Json.TerraScaleAuthProjectOAuthClient, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken, TerraScaleAuthPlatformClient.Proof(stepUpProof));
+
+    /// <summary>POST /v1/{project}/clients/{client_id}/secret/rotate (admin, rotate_oauth_client/ts-auth proof).
+    /// Issues a new secret for a confidential client, answered exactly once; the previous secret keeps working
+    /// until PreviousSecretExpiresAt (null when the grace was zero).</summary>
+    public Task<TerraScaleAuthProjectClientSecret> RotateProjectClientSecretAsync(
+        string accessToken, string projectId, string clientId, string stepUpProof, TerraScaleAuthProjectRotateOAuthClient? request = null, CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/clients/" + Id(clientId) + "/secret/rotate"),
+            request, Json.TerraScaleAuthProjectRotateOAuthClient,
+            Json.TerraScaleAuthProjectClientSecret, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken, TerraScaleAuthPlatformClient.Proof(stepUpProof));
+
     /// <summary>DELETE /v1/{project}/clients/{client_id} (admin).</summary>
     public Task DeleteClientAsync(
         string accessToken, string projectId, string clientId, CancellationToken cancellationToken = default) =>
