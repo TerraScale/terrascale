@@ -18,6 +18,9 @@ namespace TerraScale.Authentication.Fast.Management;
 public sealed class ProjectTenantTests(TerraBaseFixture fixture)
 {
     private static readonly string[] InsecureRedirect = ["http://app.example.test/cb"];
+    private static readonly string[] CreateRedirect = ["https://app.example.test/callback"];
+    private static readonly string[] UpdatedRedirects = ["https://app.example.test/changed", "http://localhost:3000/cb"];
+    private static readonly string[] HostileRedirect = ["https://evil.example.test/callback"];
 
     private readonly Faker faker = new();
 
@@ -60,20 +63,20 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
         var (_, token, _, root) = await this.ProjectAsync(oidc);
         var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token,
-            new { name = this.faker.Company.CompanyName(), type = "public", redirect_uris = new[] { "https://app.example.test/callback" } }, HttpStatusCode.Created);
+            new { name = this.faker.Company.CompanyName(), type = "public", redirect_uris = CreateRedirect }, HttpStatusCode.Created);
         var clientId = created.GetProperty("client_id").GetString()!;
 
         var updated = await oidc.OkAsync(HttpMethod.Put, $"{root}/clients/{clientId}", token,
-            new { name = "Renamed app", redirect_uris = new[] { "https://app.example.test/changed", "http://localhost:3000/cb" } });
+            new { name = "Renamed app", redirect_uris = UpdatedRedirects });
         await Assert.That(updated.GetProperty("client_id").GetString()).IsEqualTo(clientId);
         await Assert.That(updated.GetProperty("name").GetString()).IsEqualTo("Renamed app");
         await Assert.That(updated.GetProperty("redirect_uris").EnumerateArray().Select(uri => uri.GetString()!).ToArray())
-            .IsEquivalentTo(["https://app.example.test/changed", "http://localhost:3000/cb"]);
+            .IsEquivalentTo(UpdatedRedirects);
         await Assert.That(updated.TryGetProperty("client_secret", out _)).IsFalse();
         var listed = (await oidc.OkAsync(HttpMethod.Get, $"{root}/clients", token)).GetProperty("items");
         await Assert.That(listed[0].GetProperty("client_id").GetString()).IsEqualTo(clientId);
         await Assert.That(listed[0].GetProperty("redirect_uris").EnumerateArray().Select(uri => uri.GetString()!).ToArray())
-            .IsEquivalentTo(["https://app.example.test/changed", "http://localhost:3000/cb"]);
+            .IsEquivalentTo(UpdatedRedirects);
         await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/clients/{clientId}", token,
             new { name = "Renamed app", redirect_uris = InsecureRedirect })).IsEqualTo((400, "invalid_request"));
 
@@ -87,12 +90,12 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
         var (_, token, _, root) = await this.ProjectAsync(oidc);
         var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token,
-            new { name = this.faker.Company.CompanyName(), type = "public", redirect_uris = new[] { "https://app.example.test/callback" } }, HttpStatusCode.Created);
+            new { name = this.faker.Company.CompanyName(), type = "public", redirect_uris = CreateRedirect }, HttpStatusCode.Created);
         var clientId = created.GetProperty("client_id").GetString()!;
         var (_, otherToken, _, _) = await this.ProjectAsync(oidc);
 
         using var denied = await oidc.CallAsync(HttpMethod.Put, $"{root}/clients/{clientId}", otherToken,
-            new { name = "Hostile rename", redirect_uris = new[] { "https://evil.example.test/callback" } });
+            new { name = "Hostile rename", redirect_uris = HostileRedirect });
         await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
 
         using var deleted = await oidc.CallAsync(HttpMethod.Delete, $"{root}/clients/{clientId}", token);
