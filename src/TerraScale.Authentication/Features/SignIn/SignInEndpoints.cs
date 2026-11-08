@@ -840,11 +840,6 @@ internal static class SignInFlow
     /// <summary>The tenant's security page, which a sign-in may resume.</summary>
     public static string SecurityPath(string tenant) => $"/ui/{tenant}/security";
 
-    /// <summary>
-    /// Only the page's own issuer's authorization endpoint or security page, the platform's device page, or the
-    /// dashboard's profile or security-tab profile page, may be resumed. The same-origin paths are relative; the
-    /// dashboard destinations are two exact absolute URLs.
-    /// </summary>
     public static string? SafeNext(HttpContext context, string? next) =>
         next is not null && Tenancy.Resolved(context) is { } tenant
             && (next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)

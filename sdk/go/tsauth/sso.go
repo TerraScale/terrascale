@@ -13,7 +13,6 @@ import (
 )
 
 // SsoVerification is the DNS TXT record that proves the organization owns
-// the SSO email domain.
 type SsoVerification struct {
 	Type  string `json:"type"`
 	Name  string `json:"name"`
@@ -23,8 +22,6 @@ type SsoVerification struct {
 func (*SsoVerification) requiredAuthMembers() string { return "type name value" }
 
 // SsoOidc names the organization's OpenID Connect identity provider. The
-// client secret is never returned; ClientSecretSet only reports whether one
-// is stored.
 type SsoOidc struct {
 	Issuer          string `json:"issuer"`
 	ClientID        string `json:"client_id"`
@@ -35,8 +32,6 @@ type SsoOidc struct {
 func (*SsoOidc) requiredAuthMembers() string { return "client_secret_set redirect_uri" }
 
 // SsoConnection is the organization's single sign-on connection. Until
-// DomainVerified is true, members keep signing in with passwords and email
-// codes.
 type SsoConnection struct {
 	OrganizationID string           `json:"organization_id" ulid:"required"`
 	Domain         string           `json:"domain"`
@@ -55,7 +50,6 @@ func (*SsoConnection) requiredAuthMembers() string {
 }
 
 // SsoOidcRequest carries the identity provider registration. ClientSecret
-// may be empty to keep the stored secret.
 type SsoOidcRequest struct {
 	Issuer       string
 	ClientID     string
@@ -75,7 +69,6 @@ type ssoOidcRequestBody struct {
 }
 
 // SsoConnectionRequest creates or changes the organization's SSO connection.
-// Formatting it never reveals the OIDC client secret.
 type SsoConnectionRequest struct {
 	Domain      string
 	Protocol    string
@@ -99,8 +92,6 @@ type ssoRequestBody struct {
 }
 
 // GetSsoConnection reads the organization's SSO connection (GET
-// /v1/terrascale/organizations/{org}/sso, admin). It answers ErrNotFound
-// when the organization has none.
 func (u *User) GetSsoConnection(ctx context.Context, org string) (*SsoConnection, error) {
 	if err := entityid.Check(org); err != nil {
 		return nil, err
@@ -109,9 +100,6 @@ func (u *User) GetSsoConnection(ctx context.Context, org string) (*SsoConnection
 }
 
 // PutSsoConnection creates or changes the organization's SSO connection
-// (PUT /v1/terrascale/organizations/{org}/sso, owner). The secret is sent
-// but never echoed or logged. It is sent once: an interrupted response may
-// have changed the connection; read it before deciding to retry.
 func (u *User) PutSsoConnection(ctx context.Context, org string, request SsoConnectionRequest) (*SsoConnection, error) {
 	if err := entityid.Check(org); err != nil {
 		return nil, err
@@ -153,8 +141,6 @@ func (u *User) PutSsoConnection(ctx context.Context, org string, request SsoConn
 }
 
 // VerifySsoDomain re-checks the connection's DNS TXT record (POST
-// /v1/terrascale/organizations/{org}/sso/verify, owner). Until it carries
-// the verification value, the answer is a 409 domain_unverified *APIError.
 func (u *User) VerifySsoDomain(ctx context.Context, org string) (*SsoConnection, error) {
 	if err := entityid.Check(org); err != nil {
 		return nil, err
@@ -163,8 +149,6 @@ func (u *User) VerifySsoDomain(ctx context.Context, org string) (*SsoConnection,
 }
 
 // DeleteSsoConnection removes the SSO connection (DELETE
-// /v1/terrascale/organizations/{org}/sso, owner). It never retries the
-// mutation.
 func (u *User) DeleteSsoConnection(ctx context.Context, org string) error {
 	if err := entityid.Check(org); err != nil {
 		return err

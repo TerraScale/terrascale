@@ -8,7 +8,6 @@ using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Security;
 
-/// <summary>The dashboard profile URL as next: honoured exactly on the reset and factor-change pages, refused for anything else.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed partial class DashboardNextTests(TerraBaseFixture fixture)
 {

@@ -11,11 +11,6 @@ import (
 	"testing"
 )
 
-// The SSO connection contract of the auth producer, replayed from the shared
-// fixture (contracts/auth/sso.json, values synthetic): one put including the
-// OIDC client secret, then one get, one verify and one delete against the
-// same fixture's methods, paths and statuses. The secret never appears in
-// formatted values.
 func TestSsoConnectionMatchFixture(t *testing.T) {
 	t.Parallel()
 	data, err := os.ReadFile("../contracts/auth/sso.json")

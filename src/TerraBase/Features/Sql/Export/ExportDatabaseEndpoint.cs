@@ -8,10 +8,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Sql;
 
-/// <summary><c>GET /v1/projects/{project}/databases/{database}/export</c>: downloads the database as a SQL dump.</summary>
 internal sealed class ExportDatabaseEndpoint(IStorageEngine engine, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(DatabaseRoute.Template + "/export");
@@ -33,7 +31,6 @@ internal sealed class ExportDatabaseEndpoint(IStorageEngine engine, ITenantDirec
         Metadata(ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (DatabaseRoute.CheckParameters(HttpContext) is Validation invalid)
