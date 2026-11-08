@@ -1,5 +1,0 @@
-Original runner + injected GitHub HTTP 403 on beta: exit 2; no structured failure marker.
-Patched runner identity HTTP 403: exit 2; setup failure reported; no success proof.
-Patched runner status HTTP 403: exit 2; suite failure reported; no success proof.
-One live beta identity cache warmup followed by five reads with HTTP_PROXY and HTTPS_PROXY=http://127.0.0.1:9: all returned MarioGK, exit 0.
-Patch applies to saved baseline and produces exactly the installed bytes; Python syntax compiles.
