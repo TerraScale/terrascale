@@ -29,6 +29,23 @@ namespace TerraScale.Dashboard.Features.Backups
                     (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
                 { return Failure(error); }
             });
+            endpoints.MapGet("/api/v1/dashboard/backups/restore", async (HttpContext http, DashboardSessions sessions, AccountService accounts, BackupService backups) =>
+            {
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+                if (context is null)
+                {
+                    return Results.Unauthorized();
+                }
+
+                try
+                {
+                    var status = await backups.RestoreStatusAsync(context, http.Request.Query["databaseId"].ToString(), http.Request.Query["operation"].ToString(), http.RequestAborted);
+                    return Results.Json(new RestoreStatusResponse(status.OperationId, status.Status, status.TargetDatabaseId, status.TargetName, status.ErrorCode, status.ErrorMessage));
+                }
+                catch (Exception error) when (KnownFailure(error) &&
+                    (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
+                { return Failure(error); }
+            });
             foreach (var operation in new[] { "create", "policy", "restore", "destination", "destination-remove" })
             {
                 var action = operation;
@@ -78,9 +95,9 @@ namespace TerraScale.Dashboard.Features.Backups
                                 BackupService.RejectOverwrite();
                             }
 
-                            var restored = await backups.RestoreAsync(context, databaseId, form["backupId"].ToString(), form["name"].ToString(), http.RequestAborted);
-                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(restored.DatabaseId)) :
-                                Results.Json(new { id = restored.DatabaseId, restored.Name }, statusCode: 201);
+                            var started = await backups.StartRestoreAsync(context, databaseId, form["backupId"].ToString(), form["name"].ToString(), http.RequestAborted);
+                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups") + "?restore=" + started.OperationId) :
+                                Results.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
                         }
                         catch (Exception error) when (KnownFailure(error) &&
                             (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
@@ -115,11 +132,21 @@ namespace TerraScale.Dashboard.Features.Backups
             }
 
             var form = http.Request.HasFormContentType ? await http.Request.ReadFormAsync(http.RequestAborted) : null;
+            RestoreProgress? restore = null;
+            var restoreOperation = http.Request.Query["restore"].ToString();
+            if (restoreOperation.Length > 0)
+            {
+                try { restore = await http.RequestServices.GetRequiredService<BackupService>().RestoreStatusAsync(context, database.Id, restoreOperation, http.RequestAborted); }
+                catch (Exception failure) when (KnownFailure(failure) &&
+                    (failure is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
+                { restore = new(restoreOperation, "failed", ErrorMessage: Message(failure)); }
+            }
+
             return new(ShellModel.For(http, context, database.Name + " · backups"), database, listing, unavailable, error,
-                form?["backupId"].ToString() ?? http.Request.Query["restore"].ToString(), form?["name"].ToString() ?? http.Request.Query["name"].ToString(),
+                form?["backupId"].ToString() ?? "", form?["name"].ToString() ?? http.Request.Query["name"].ToString(),
                 form is not null && form.ContainsKey("fullBackupCron") ? form["fullBackupCron"].ToString() : null,
                 form is not null && form.ContainsKey("retentionDays") ? form["retentionDays"].ToString() : null)
-            { Bucket = bucket, BucketRead = export };
+            { Bucket = bucket, BucketRead = export, Restore = restore };
         }
 
         internal static bool KnownFailure(Exception error)

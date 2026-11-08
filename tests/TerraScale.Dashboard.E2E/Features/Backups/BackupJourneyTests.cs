@@ -104,9 +104,45 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             await ControlAsync(producer, new { command = "plan", organizationId = org, value = OrganizationRecord.StarterPlanId });
             using var restored = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
             { ["_csrf"] = csrf, ["databaseId"] = id, ["backupId"] = backupId, ["name"] = "backup-restored" });
-            Check(restored.StatusCode == HttpStatusCode.Created, "Native restore finishes a real new producer database and durable projection");
-            var restoredBody = await JsonAsync(restored); var restoredId = restoredBody.GetProperty("id").GetString()!;
-            Check(TerraScaleIds.IsValid(restoredId) && restoredId != id && restoredBody.GetProperty("name").GetString() == "backup-restored", "Native restore returns a new canonical identity");
+            Check(restored.StatusCode == HttpStatusCode.Accepted, "Native restore returns the accepted operation at once instead of waiting for the copy");
+            var restoredBody = await JsonAsync(restored);
+            var operationId = restoredBody.GetProperty("operationId").GetString()!;
+            Check(TerraScaleIds.IsValid(operationId) && restoredBody.GetProperty("status").GetString() == "running", "Native restore answers with a pollable operation identity");
+            var completed = await RestoreCompletedAsync(client, id, operationId);
+            var restoredId = completed.GetProperty("targetDatabaseId").GetString()!;
+            Check(TerraScaleIds.IsValid(restoredId) && restoredId != id && completed.GetProperty("targetName").GetString() == "backup-restored", "Native restore status reports the new canonical identity once the copy lands");
+            using (var htmlRestore = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/backups/restore")
+            { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["backupId"] = backupId, ["name"] = "backup-html-restored" }) })
+            {
+                htmlRestore.Headers.Accept.ParseAdd("text/html");
+                using var redirected = await client.SendAsync(htmlRestore);
+                var location = redirected.Headers.Location?.PathAndQuery ?? "";
+                var htmlOperation = location.StartsWith("/databases/" + id + "/backups?restore=", StringComparison.Ordinal)
+                    ? location[("/databases/" + id + "/backups?restore=").Length..] : "";
+                Check(redirected.StatusCode == HttpStatusCode.SeeOther && TerraScaleIds.IsValid(htmlOperation),
+                    "The dashboard form redirect carries the restore operation back to the backups page");
+                var htmlCompleted = await RestoreCompletedAsync(client, id, htmlOperation);
+                var htmlId = htmlCompleted.GetProperty("targetDatabaseId").GetString()!;
+                using var page = await client.GetAsync("/databases/" + id + "/backups?restore=" + htmlOperation);
+                var html = await page.Content.ReadAsStringAsync();
+                Check(page.StatusCode == HttpStatusCode.OK && html.Contains("id=\"restore-status\"", StringComparison.Ordinal) &&
+                    html.Contains("href=\"/databases/" + htmlId + "\"", StringComparison.Ordinal) && html.Contains("backup-html-restored", StringComparison.Ordinal),
+                    "The backups page shows the completed restore with a link to the restored database");
+                await CallAsync(client, secret, "delete_database", new { databaseId = htmlId, confirmName = "backup-html-restored" });
+            }
+            using (var unpolled = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
+            { ["_csrf"] = csrf, ["databaseId"] = id, ["backupId"] = backupId, ["name"] = "backup-unpolled" }))
+            {
+                Check(unpolled.StatusCode == HttpStatusCode.Accepted && TerraScaleIds.IsValid((await JsonAsync(unpolled)).GetProperty("operationId").GetString()!),
+                    "A restore started without a watching browser still answers with a pollable operation");
+                var listed = await ReadAsync(client, "/api/v1/dashboard/databases?limit=100");
+                var unpolledRow = listed.GetProperty("items").EnumerateArray()
+                    .SingleOrDefault(database => database.GetProperty("name").GetString() == "backup-unpolled");
+                Check(unpolledRow.ValueKind != JsonValueKind.Undefined && TerraScaleIds.IsValid(unpolledRow.GetProperty("id").GetString()!),
+                    "Loading the databases list settles an unwatched completed restore into the project");
+                await CallAsync(client, secret, "delete_database", new { databaseId = unpolledRow.GetProperty("id").GetString()!, confirmName = "backup-unpolled" });
+            }
+
             Check(await ScoreAsync(restoredId) == 1 && await ScoreAsync(id) == 2, "The restored database reads the captured snapshot through SQL; the source retains its later write");
             var defaultRestore = await CallAsync(replica, secret, "restore_backup", new { databaseId = id });
             var defaultId = defaultRestore.GetProperty("databaseId").GetString()!;
@@ -168,6 +204,23 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                 "All native/MCP backup requests matched the frozen producer contract and native cleanup deleted each real database");
             Console.WriteLine("BACKUP PROTOCOL E2E: isolated producer snapshot restore verified with actual app HTTP/MCP + official SDK; live backup storage/scheduler/secret-delivery qualification remains open.");
             async Task<int> ScoreAsync(string databaseId) => (await CallAsync(replica, secret, "execute_sql", new { databaseId, sql = "SELECT score FROM users" })).GetProperty("rows")[0][0].GetInt32();
+        }
+
+        private static async Task<JsonElement> RestoreCompletedAsync(HttpClient client, string databaseId, string operationId)
+        {
+            JsonElement status = default;
+            for (var attempt = 0; attempt < 120; attempt++)
+            {
+                status = await ReadAsync(client, "/api/v1/dashboard/backups/restore?databaseId=" + databaseId + "&operation=" + operationId);
+                if (status.GetProperty("status").GetString() != "running")
+                {
+                    return status;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250));
+            }
+
+            throw new InvalidOperationException("The restore operation did not finish: " + status.GetRawText());
         }
 
         private static async Task<JsonElement> CallAsync(HttpClient client, string secret, string name, object arguments)

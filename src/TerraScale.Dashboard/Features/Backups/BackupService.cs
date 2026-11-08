@@ -1,9 +1,13 @@
 using Cronos;
+using System.Text.Json;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
-    public sealed class BackupService(AccountService accounts, DatabaseService databases, IBackupBackend backend)
+    public sealed class BackupService(AccountService accounts, DatabaseService databases, IBackupBackend backend, IDashboardState state)
     {
+        public const string PendingRestoresTable = "dashboard_pending_restores";
+
         // One producer page per call: the dashboard forwards its own cursor and returns exactly that page (TS-1230 pattern).
         public async Task<BackupPageSlice> ListPageAsync(AccountContext context, string databaseId, string? cursor, int limit, CancellationToken ct)
         {
@@ -121,6 +125,119 @@ namespace TerraScale.Dashboard.Features.Backups
 
         public async Task<BackupRestoreResult> RestoreAsync(AccountContext context, string databaseId, string backupId, string name, CancellationToken ct)
         {
+            var (scope, home, source, restoreId) = await RestoreRequestAsync(context, databaseId, backupId, name, ct);
+            var restored = await backend.RestoreAsync(scope, home, databaseId, restoreId, name.Length == 0 ? null : DatabaseService.ValidName(name), ct);
+            return await RecordRestoreAsync(context, source, home, restored, name, ct);
+        }
+
+        public async Task<BackupRestoreStart> StartRestoreAsync(AccountContext context, string databaseId, string backupId, string name, CancellationToken ct)
+        {
+            var (scope, home, source, restoreId) = await RestoreRequestAsync(context, databaseId, backupId, name, ct);
+            var operation = await backend.StartRestoreAsync(scope, home, databaseId, restoreId, name.Length == 0 ? null : DatabaseService.ValidName(name), ct);
+            await state.PutAsync(PendingRestoresTable, operation.OperationId,
+                JsonSerializer.SerializeToElement(new PendingRestore(operation.OperationId, scope.OrganizationId, scope.ProjectId, source.Id), BackupBackendJson.Default.PendingRestore),
+                StatePrecondition.Absent, ct);
+            return new(operation.OperationId, operation.Status);
+        }
+
+        public async Task<AccountContext> SettleRestoresAsync(AccountContext context, CancellationToken ct)
+        {
+            if (context.Project is null || context.Organization is null)
+            {
+                return context;
+            }
+
+            var settled = false;
+            foreach (var row in await state.ListAsync(PendingRestoresTable, ct))
+            {
+                PendingRestore? pending = null;
+                try { pending = row.Body.Deserialize(BackupBackendJson.Default.PendingRestore); }
+                catch (JsonException) { }
+                if (pending is null || pending.OrganizationId != context.Organization.Id || pending.ProjectId != context.Project.Id)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await RestoreStatusAsync(context, pending.SourceDatabaseId, pending.OperationId, ct);
+                    settled = true;
+                }
+                catch (Exception error) when (error is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    if (error is AccountAccessException { StatusCode: 404 })
+                    {
+                        await DropPendingAsync(pending.OperationId, ct);
+                        settled = true;
+                    }
+                }
+            }
+
+            return settled ? await databases.CurrentAsync(context, ct) : context;
+        }
+
+        private async Task DropPendingAsync(string operationId, CancellationToken ct)
+        {
+            var row = await state.GetAsync(PendingRestoresTable, operationId, ct);
+            if (row is not null)
+            {
+                await state.DeleteAsync(PendingRestoresTable, operationId, row.Version, ct);
+            }
+        }
+
+        public async Task<RestoreProgress> RestoreStatusAsync(AccountContext context, string databaseId, string operationId, CancellationToken ct)
+        {
+            context = await databases.CurrentAsync(context, ct);
+            var source = DatabaseService.Database(context, databaseId);
+            if (!TerraScaleIds.IsValid(operationId))
+            {
+                throw new AccountAccessException("That restore is no longer available.", 404);
+            }
+
+            var scope = DatabaseService.Scope(context);
+            var home = await databases.HomeAsync(context, source, ct);
+            var operation = await backend.RestoreOperationAsync(scope, home, databaseId, operationId, ct);
+            if (operation.Status != "completed")
+            {
+                if (operation.Status == "failed")
+                {
+                    await DropPendingAsync(operationId, ct);
+                }
+
+                return new(operationId, operation.Status, ErrorCode: operation.ErrorCode,
+                    ErrorMessage: operation.Status == "failed" ? BackupBackend.RestoreMessage(operation) : null);
+            }
+
+            var targetName = operation.Database!;
+            var recorded = Recorded(context, source, targetName);
+            if (recorded is null)
+            {
+                var restored = await backend.RestoreTargetAsync(scope, home, databaseId, targetName, ct);
+                try { recorded = await RecordRestoreAsync(context, source, home, restored, "", ct); }
+                catch (AccountAccessException error) when (error.StatusCode == 409)
+                {
+                    recorded = Recorded(context, source, targetName);
+                    if (recorded is null)
+                    {
+                        throw;
+                    }
+                }
+            }
+
+            await DropPendingAsync(operationId, ct);
+            return new(operationId, "completed", recorded.DatabaseId, recorded.Name);
+        }
+
+        private static BackupRestoreResult? Recorded(AccountContext context, DatabaseRecord source, string targetName)
+        {
+            return context.Project?.Databases.Values
+                .Where(record => record.Name == targetName && record.BranchedFrom == source.Id)
+                .Select(record => new BackupRestoreResult(record.Id, record.Name, record.Status))
+                .FirstOrDefault();
+        }
+
+        private async Task<(DatabaseScope Scope, DatabaseRegion Home, DatabaseRecord Source, string BackupId)> RestoreRequestAsync(AccountContext context, string databaseId, string backupId, string name, CancellationToken ct)
+        {
             context = await databases.CurrentAsync(context, ct);
             var source = Manage(context, databaseId);
             DatabaseService.DemandProvision(context.Organization!, context.UserId);
@@ -132,17 +249,15 @@ namespace TerraScale.Dashboard.Features.Backups
             }
 
             var listing = await ListAsync(context, databaseId, ct);
-            backupId = backupId.Length == 0 ? (listing.Backups is [var firstBackup, ..] ? firstBackup?.Id ?? "" : "") : backupId;
+            backupId = backupId.Length == 0 ? (listing.Backups is [var first, ..] ? first.Id : "") : backupId;
             if (!TerraScaleIds.IsValid(backupId) || !listing.Backups.Any(backup => backup.Id == backupId))
             {
                 throw new AccountAccessException("That restore point is no longer available.", 404);
             }
+
             // The producer returns only after a new snapshot copy has completed.
             // No local records or cached metadata can claim a successful restore.
-            var scope = DatabaseService.Scope(context);
-            var home = await databases.HomeAsync(context, source, ct);
-            var restored = await backend.RestoreAsync(scope, home, databaseId, backupId, name.Length == 0 ? null : name, ct);
-            return await RecordRestoreAsync(context, source, home, restored, name, ct);
+            return (DatabaseService.Scope(context), await databases.HomeAsync(context, source, ct), source, backupId);
         }
 
         internal async Task<BackupRestoreResult> RecordRestoreAsync(AccountContext context, DatabaseRecord source, DatabaseRegion home, ManagedDatabase restored, string name, CancellationToken ct)

@@ -1,6 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Backups.BackupPage>
 @using TerraScale.Dashboard.Features.Databases
 @{ var policy = Model.Listing?.Policy; var canManage = Model.Shell.Context.CanManage && Model.Database.Status == "ready"; var canRestore = canManage && Model.Shell.Context.Organization?.CanProvision(Model.Shell.Context.UserId) == true; }
+@if(Model.Restore is not null){@(await RenderPartialAsync<TerraScale.Dashboard.Features.Backups.RestoreStatusView, TerraScale.Dashboard.Features.Backups.BackupPage>(Model))}
 <section class="ts-card" id="backup-policy" aria-labelledby="backup-policy-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="backup-policy-title">Backup policy</h2></div></header><div class="ts-card-body">
 @if(policy is null){<p class="ts-meta">Provider backup scheduling is unavailable.</p>}
 else{<div class="ts-db-setting"><div class="ts-list-main"><span class="ts-strong">Scheduled backups</span><span class="ts-meta">@(policy.Disabled ? "Scheduled backups paused" : policy.FullBackupCron.Length == 0 ? "No full backup schedule" : "Scheduled full backups enabled")</span></div>

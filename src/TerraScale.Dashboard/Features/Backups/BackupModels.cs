@@ -28,6 +28,17 @@ namespace TerraScale.Dashboard.Features.Backups
         public bool HasMore => NextCursor is not null;
     }
     public sealed record BackupRestoreResult(string DatabaseId, string Name, string Status);
+    public sealed record BackupRestoreStart(string OperationId, string Status);
+    public sealed record PendingRestore(string OperationId, string OrganizationId, string ProjectId, string SourceDatabaseId);
+    public sealed record ProducerRestoreOperation(string OperationId, string Status, string? Database, string? ErrorCode, string? ErrorMessage);
+    public sealed record RestoreStatusResponse(string OperationId, string Status, string? TargetDatabaseId, string? TargetName,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ErrorCode = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ErrorMessage = null);
+    public sealed record RestoreProgress(string OperationId, string Status, string? TargetDatabaseId = null, string? TargetName = null,
+        string? ErrorCode = null, string? ErrorMessage = null)
+    {
+        public string Failure => ErrorMessage is { Length: > 0 } message ? message : "The restore could not be completed.";
+    }
     public sealed record ProducerBackup(string Id, string DatabaseId, string Status, string Trigger, long SizeBytes, DateTimeOffset CreatedAt);
     public sealed record BackupBackendPage(IReadOnlyList<ProducerBackup> Items, string? NextCursor);
     public sealed record ProducerBackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt);
@@ -39,6 +50,7 @@ namespace TerraScale.Dashboard.Features.Backups
     {
         public BackupBucketView? Bucket { get; init; }
         public bool BucketRead { get; init; }
+        public RestoreProgress? Restore { get; init; }
     }
 
     public interface IBackupBackend
@@ -54,5 +66,8 @@ namespace TerraScale.Dashboard.Features.Backups
             string accessKeyId, string secretKey, CancellationToken cancellationToken);
         Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
         Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken);
+        Task<ProducerRestoreOperation> StartRestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken);
+        Task<ProducerRestoreOperation> RestoreOperationAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string operationId, CancellationToken cancellationToken);
+        Task<ManagedDatabase> RestoreTargetAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string targetName, CancellationToken cancellationToken);
     }
 }
