@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -20,6 +21,12 @@ public sealed class TerraScaleAuthOidcDiscoveryContractTests
         await Assert.That(typeof(TerraScaleAuthOidcClient).GetMethod("IntrospectTokenAsync")).IsNull();
         await Assert.That(typeof(TerraScaleAuthClient).Assembly.GetType("TerraScale.DotNet.TerraScaleAuthIntrospection")).IsNull();
         await Assert.That(handler.Calls).IsEqualTo(1);
+
+        // claims_supported must advertise exactly what sign-in tokens emit (TS-1256):
+        // OidcEndpoints.SignIn always carries email, email_verified and auth_time.
+        using var document = JsonDocument.Parse(json);
+        var claims = document.RootElement.GetProperty("claims_supported").EnumerateArray().Select(claim => claim.GetString()!).ToArray();
+        await Assert.That(claims).IsEquivalentTo(new[] { "aud", "exp", "iat", "iss", "sub", "email", "email_verified", "auth_time" });
     }
 
     private sealed class Handler(string json) : HttpMessageHandler
