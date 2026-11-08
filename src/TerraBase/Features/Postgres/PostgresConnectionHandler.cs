@@ -1096,7 +1096,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         public KeyToken? Key { get; init; }
         public DateTimeOffset? Until { get; init; }
 
-        /// <summary>The project of the database name, which a renewed key exchange asks for again.</summary>
         public string? Project { get; init; }
 
         private readonly Lock _gate = new();

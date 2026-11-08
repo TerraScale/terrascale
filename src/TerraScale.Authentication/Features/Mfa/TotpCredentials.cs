@@ -279,11 +279,6 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             : null;
     }
 
-    /// <summary>
-    /// Consumes an active TOTP step or recovery code and replaces the whole recovery-code set in the same single
-    /// conditional write, without touching the TOTP secret or the enabled state; returns the new codes once. The
-    /// caller's validated authorization is consumed atomically with the change; the account's epoch and sessions stay.
-    /// </summary>
     internal async Task<IssuedRecoveryCodes?> RegenerateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);

@@ -10,7 +10,6 @@ using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Security;
 
-/// <summary>Regenerating the recovery-code set on the hosted security page.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed partial class RecoveryRegenerateTests(TerraBaseFixture fixture)
 {
@@ -36,7 +35,6 @@ public sealed partial class RecoveryRegenerateTests(TerraBaseFixture fixture)
             fresh = issued[0];
         }
 
-        // The factor and its secret are untouched: a current TOTP code still verifies, an old recovery code is refused.
         await Assert.That(await StatusAsync(oidc, enrolled)).IsEqualTo(8);
         clock.Advance(TimeSpan.FromSeconds(31));
         using (var disable = await SendAsync(oidc, "/ui/terrascale/security/totp/disable", enrolled, new() { ["code"] = codes[1] }))

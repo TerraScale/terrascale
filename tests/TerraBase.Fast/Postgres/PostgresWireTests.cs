@@ -240,7 +240,6 @@ public sealed class PostgresWireTests
         await Assert.That(shown[0][0]).IsEqualTo("UTC");
     }
 
-    // An organization key acts in the project its database name carries: its own organization's projects only (TS-1311).
     [Test]
     public async Task An_organization_key_connects_to_databases_of_its_own_projects_only()
     {
