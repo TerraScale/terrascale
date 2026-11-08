@@ -128,6 +128,7 @@ live server behavior remains unqualified.
 A database has one home region, which commits its writes, and replica regions,
 which hold read replicas. `CreateDatabaseOptions` accepts `HomeRegion`,
 `ReplicaRegions` and `AllRegions`; unset options are not sent.
+`Database.Regions` reads the home region and home-observed replica pull progress.
 
 ```go
 db, err := c.CreateDatabase(ctx, projectID, "orders", tb.CreateDatabaseOptions{HomeRegion: "gru", ReplicaRegions: []string{"sjc"}})
