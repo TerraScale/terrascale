@@ -61,7 +61,9 @@ internal sealed record BackupRecord(
 /// <summary>The scheduled backup history of a database, kept even after retention deletes its backups.</summary>
 /// <param name="LastSucceededAt">When the last scheduled backup was registered, if ever; the cron counts from here.</param>
 /// <param name="LastFailedAt">When the last scheduled attempt failed, if it failed after the last success.</param>
-internal sealed record BackupSchedule(DateTimeOffset? LastSucceededAt, DateTimeOffset? LastFailedAt);
+/// <param name="LastErrorCode">A stable code for the failed attempt, when one is known; null when its cause is unknown.</param>
+/// <param name="LastErrorMessage">A safe description of the failed attempt; never internal paths or secrets.</param>
+internal sealed record BackupSchedule(DateTimeOffset? LastSucceededAt, DateTimeOffset? LastFailedAt, string? LastErrorCode, string? LastErrorMessage);
 
 /// <summary>
 /// Where the lifecycle lives in the catalog. Backups are kept under their organization, not under the database, so

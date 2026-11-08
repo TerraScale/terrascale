@@ -39,11 +39,18 @@ Paged like other management lists (`after` and `limit` query parameters, `next` 
 GET /v1/projects/{project}/databases/{database}/backup-policy
 ```
 
-Until a policy is saved this returns the default: a full backup daily at 02:00 UTC, kept 7 days, with `updatedAt` null. The scheduler applies the default from the database's creation, as it applies a saved policy from its save.
+Until a policy is saved this returns the default: a full backup daily at 02:00 UTC, kept 7 days, with `updatedAt` null. The scheduler applies the default from the database's creation, as it applies a saved policy from its save. The response also reports whether scheduled backups are actually succeeding:
 
 ```json
-{"fullBackupCron":"0 2 * * *","retentionDays":7,"disabled":false,"updatedAt":null}
+{"fullBackupCron":"0 2 * * *","retentionDays":7,"disabled":false,"updatedAt":null,"lastSucceededAt":"2026-10-07T02:00:04Z","lastFailedAt":null,"lastError":null,"nextDueAt":"2026-10-08T02:00:00Z"}
 ```
+
+| Field | Meaning |
+| --- | --- |
+| `lastSucceededAt` | When the newest scheduled backup completed; null if none ever did. |
+| `lastFailedAt` | When the newest scheduled attempt failed; null if none ever failed. |
+| `lastError` | `{code, message}` of that failed attempt, or null; codes are `snapshot_failed`, `source_missing` (the database's files could not be read) and `abandoned` (the attempt did not finish). |
+| `nextDueAt` | The next cron occurrence in UTC; null with no `fullBackupCron` or while `disabled` is true. |
 
 ```
 PUT /v1/projects/{project}/databases/{database}/backup-policy
