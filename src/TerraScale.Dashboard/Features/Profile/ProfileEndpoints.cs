@@ -76,6 +76,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     "profile-saved" => tab == "profile" ? "Profile saved." : "",
                     "language-saved" => tab == "profile" ? "Language preference saved." : "",
                     "token-revoked" => tab == "access-tokens" ? "Access token revoked." : "",
+                    "session-revoked" => tab == "sessions" ? "Session revoked." : "",
                     _ => ""
                 };
                 return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Status: notice, Tokens: list, Sessions: active, Mfa: status)
@@ -98,6 +99,23 @@ namespace TerraScale.Dashboard.Features.Profile
             endpoints.MapPost("/api/v1/dashboard/profile/email-change", (HttpContext http, DashboardSessions sessions, AccountService accounts, IAuthEmailChangeGateway gateway) => EmailChange.SubmitAsync(http, sessions, accounts, gateway, false));
             endpoints.MapPost("/api/v1/dashboard/profile/email-change/confirm", (HttpContext http, DashboardSessions sessions, AccountService accounts, IAuthEmailChangeGateway gateway) => EmailChange.SubmitAsync(http, sessions, accounts, gateway, true));
             endpoints.MapPost("/api/v1/dashboard/profile/sign-out-everywhere", SignOutEverywhereAsync);
+            endpoints.MapPost("/api/v1/dashboard/profile/sessions/{id}/revoke", async (HttpContext http, string id, DashboardSessions sessions, AccountService accounts) =>
+            {
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
+                if (context is null)
+                {
+                    return Results.Unauthorized();
+                }
+
+                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+                if (!Csrf.Validate(http, form))
+                {
+                    return Results.BadRequest("Invalid form token.");
+                }
+
+                await sessions.RevokeAsync(http, context.Session, id);
+                return HttpRedirects.SeeOther("/profile?tab=sessions&status=session-revoked");
+            });
             return endpoints;
         }
 
