@@ -118,4 +118,7 @@ public interface IManagedBackupService
     /// catalog is at a version this build cannot use.
     /// </summary>
     ValueTask RunScheduleAsync(CancellationToken cancellationToken);
+
+    /// <summary>Settles restore operations a stopped process left running in this region, naming any database they may have left behind.</summary>
+    ValueTask RecoverInterruptedRestoresAsync(CancellationToken cancellationToken);
 }

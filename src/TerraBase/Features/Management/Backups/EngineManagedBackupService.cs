@@ -67,6 +67,10 @@ internal sealed class EngineManagedBackupService(
     // Where the next pass resumes the sweep; passes run one at a time (BackupScheduler).
     private string? _sweepCursor;
 
+    private readonly ConcurrentDictionary<string, byte> _runningRestores = new();
+
+    private readonly DateTimeOffset _startedAt = time.GetUtcNow();
+
     public static BackupPolicy DefaultPolicy { get; } = new("0 2 * * *", 7, false, null);
 
     public ValueTask<ListBackupsResult> ListBackupsAsync(
@@ -321,6 +325,8 @@ internal sealed class EngineManagedBackupService(
         string organizationId, DatabaseOwner owner, string kind, string? name,
         Func<CancellationToken, ValueTask<RestoreBackupResult>> copy, CancellationToken cancellationToken)
     {
+        var id = EntityIds.New(time).ToString();
+        _ = _runningRestores.TryAdd(id, 0);
         var admitted = await catalog.WriteAsync<StartRestoreResult>(async transaction =>
         {
             var running = await SystemCatalog.ListAllAsync(transaction, RestoreCatalog.Kind, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken)
@@ -334,19 +340,30 @@ internal sealed class EngineManagedBackupService(
             }
 
             var record = new RestoreOperationRecord(
-                EntityIds.New(time).ToString(), organizationId, owner.ProjectId, owner.DatabaseId, null, kind, RestoreOperationState.Running, name, null, null,
-                time.GetUtcNow(), null, options.Region);
+                id, organizationId, owner.ProjectId, owner.DatabaseId, null, kind, RestoreOperationState.Running, name, null, null,
+                time.GetUtcNow(), null, options.Region, options.MachineId);
             await PutRestoreOperationAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             return record;
         }, static error => error, cancellationToken).ConfigureAwait(false);
         if (admitted is not RestoreOperationRecord record)
         {
+            _ = _runningRestores.TryRemove(id, out _);
             return admitted;
         }
 
         var access = ProjectAccess.Current;
         _ = Task.Run(
-            async () => await RunRestoreAsync(record, access, copy).ConfigureAwait(false),
+            async () =>
+            {
+                try
+                {
+                    await RunRestoreAsync(record, access, copy).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _ = _runningRestores.TryRemove(id, out _);
+                }
+            },
             CancellationToken.None);
         return record;
     }
@@ -454,6 +471,87 @@ internal sealed class EngineManagedBackupService(
         }
     }
 
+    /// <summary>
+    /// Settles the restore records a stopped process left Running in this region to failed/interrupted, naming the
+    /// database a stranded restore may have left behind without touching it.
+    /// </summary>
+    public async ValueTask RecoverInterruptedRestoresAsync(CancellationToken cancellationToken)
+    {
+        var running = await catalog.ReadAsync<List<RestoreOperationRecord>?>(
+            async transaction => await SystemCatalog.ListAllAsync(transaction, RestoreCatalog.Kind, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken)
+                .ConfigureAwait(false),
+            static _ => null, cancellationToken).ConfigureAwait(false);
+        foreach (var record in running ?? [])
+        {
+            if (record.State != RestoreOperationState.Running || record.Region != options.Region
+                || record.Node is not null && record.Node != options.MachineId
+                || record.CreatedAt >= _startedAt || _runningRestores.ContainsKey(record.Id))
+            {
+                continue;
+            }
+
+            try
+            {
+                await RecoverInterruptedAsync(record, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception error)
+            {
+                logger.ZLogWarning(error, $"Recovering interrupted restore operation {record.Id:@OperationId} failed; the next pass tries again");
+            }
+        }
+    }
+
+    private async ValueTask RecoverInterruptedAsync(RestoreOperationRecord record, CancellationToken cancellationToken)
+    {
+        var target = await FindStrandedTargetAsync(record, cancellationToken).ConfigureAwait(false);
+        var message = target is { } found
+            ? $"the process stopped while the restore was running; database {found.Name} ({found.Id}) may hold a partial or complete restore — check it and delete it if unwanted"
+            : "the process stopped while the restore was running";
+        await SettleAsync(record, record with
+        {
+            State = RestoreOperationState.Failed,
+            ErrorCode = "interrupted",
+            ErrorMessage = message,
+            FinishedAt = time.GetUtcNow(),
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<ManagedDatabase?> FindStrandedTargetAsync(RestoreOperationRecord record, CancellationToken cancellationToken)
+    {
+        var candidates = await catalog.ReadAsync<List<ManagedDatabase>?>(
+            async transaction =>
+            {
+                if (record.TargetName is { } name)
+                {
+                    return await CatalogTables.DatabaseNamedAsync(transaction, record.ProjectId, name, cancellationToken).ConfigureAwait(false) is { } id
+                        && await CatalogTables.DatabaseAsync(transaction, record.ProjectId, id, cancellationToken).ConfigureAwait(false) is { } named
+                            ? [named]
+                            : [];
+                }
+
+                var found = new List<ManagedDatabase>();
+                string? after = null;
+                do
+                {
+                    var page = await CatalogTables.DatabasesAsync(transaction, record.ProjectId, after, PageSize, cancellationToken).ConfigureAwait(false);
+                    found.AddRange(page.Items);
+                    after = page.Next;
+                }
+                while (after is not null);
+                return found;
+            },
+            static _ => null, cancellationToken).ConfigureAwait(false) ?? [];
+
+        return candidates.FirstOrDefault(database => database.ProjectId == record.ProjectId
+            && database.BranchedFrom == record.SourceDatabaseId
+            && database.CreatedAt >= record.CreatedAt
+            && (record.TargetName is null || database.Name == record.TargetName));
+    }
+
     public ValueTask<RestoreBackupResult> RewindPointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, CancellationToken cancellationToken) =>
         RewindFromStagingAsync(userId, organizationId, database, at, destination, cancellationToken);
@@ -549,6 +647,8 @@ internal sealed class EngineManagedBackupService(
         {
             return;
         }
+
+        await RecoverInterruptedRestoresAsync(cancellationToken).ConfigureAwait(false);
 
         if (await SweepAsync(cancellationToken).ConfigureAwait(false) is Unavailable)
         {
