@@ -272,7 +272,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
 /// OpenIddict authorizations on TerraBase, one per sign-in. Revoking one rejects every token issued under it, because
 /// OpenIddict checks the authorization whenever it validates such a token.
 /// </summary>
-public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor http) : IOpenIddictAuthorizationStore<OidcAuthorization>
+public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor http, TimeProvider clock) : IOpenIddictAuthorizationStore<OidcAuthorization>
 {
     private const string Table = AuthStore.OidcAuthorizationTable;
 
@@ -408,19 +408,25 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
 
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
+        var cutoff = JsonSerializer.Serialize(clock.GetUtcNow() - TimeSpan.FromHours(1), OidcJson.Default.DateTimeOffset);
         var candidates = new JsonObject
         {
-            ["or"] = new JsonArray(
-                new JsonObject { ["eq"] = new JsonArray("/status", Statuses.Revoked) },
-                new JsonObject { ["eq"] = new JsonArray("/type", AuthorizationTypes.AdHoc) }),
+            ["and"] = new JsonArray(
+                new JsonObject
+                {
+                    ["or"] = new JsonArray(
+                        new JsonObject { ["eq"] = new JsonArray("/status", Statuses.Revoked) },
+                        new JsonObject { ["eq"] = new JsonArray("/type", AuthorizationTypes.AdHoc) }),
+                },
+                new JsonObject { ["lte"] = new JsonArray("/creationDate", cutoff) }),
         };
         using var filter = JsonDocument.Parse(candidates.ToJsonString());
         var total = 0;
-        while (true)
+        string? cursor = null;
+        for (var page = 0; page < 20; page++)
         {
-            var batch = await store.QueryAsync(Table, filter.RootElement, batchSize, cancellationToken).ConfigureAwait(false);
-            var deleted = 0;
-            foreach (var rowData in batch)
+            var batch = await store.PageAsync(Table, filter.RootElement, batchSize, cursor, cancellationToken).ConfigureAwait(false);
+            foreach (var rowData in batch.Items)
             {
                 var authorization = rowData.Body.Deserialize(OidcJson.Default.OidcAuthorization);
                 if (authorization?.Id is not { } id || authorization.InstanceId is not { } instanceId
@@ -431,16 +437,18 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
 
                 if (await store.CompareAndDeleteAsync(Table, instanceId, id, rowData.Version, cancellationToken).ConfigureAwait(false))
                 {
-                    deleted++;
+                    total++;
                 }
             }
 
-            total += deleted;
-            if (batch.Count < batchSize || deleted == 0)
+            cursor = batch.NextCursor;
+            if (batch.Items.Count < batchSize || cursor is null)
             {
                 return total;
             }
         }
+
+        return total;
     }
 
     private async ValueTask<bool> HasTokensAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
