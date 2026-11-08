@@ -51,6 +51,31 @@ public sealed partial class RecoveryRegenerateTests(TerraBaseFixture fixture)
         }
     }
 
+    [Test]
+    public async Task Regenerating_recovery_codes_with_a_stale_session_asks_to_sign_in_again_without_spending_the_code()
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var user = await oidc.CreateUserAsync("regen-stale@example.test");
+        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
+        var session = await sessions.CreateAsync(user);
+        var (secret, codes, enrolled) = await EnrolAsync(oidc, session.Token, clock);
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        using (var regenerate = await SendAsync(oidc, "/ui/terrascale/security/recovery/regenerate", enrolled, new() { ["code"] = Code(secret, clock) }))
+        {
+            await Assert.That(regenerate.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            var page = await regenerate.Content.ReadAsStringAsync();
+            await Assert.That(page).Contains("Sign in again");
+            await Assert.That(page).DoesNotContain("That code is wrong or already used");
+        }
+
+        using (var disable = await SendAsync(oidc, "/ui/terrascale/security/totp/disable", enrolled, new() { ["code"] = codes[0] }))
+        {
+            await Assert.That(disable.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+    }
+
     private static async Task<(string Secret, IReadOnlyList<string> Codes, string Session)> EnrolAsync(OidcHarness oidc, string session, ManualClock clock)
     {
         using var begin = await SendAsync(oidc, "/ui/terrascale/security/totp", session, []);
