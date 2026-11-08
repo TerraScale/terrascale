@@ -36,5 +36,5 @@ routes = sorted(
 out = Path(__file__).parent.parent / "contracts" / "openapi-routes.json"
 out.write_text(json.dumps({"source": origin, "fetched": date.today().isoformat(),
                            "contract": "sdk/SQL-API.md#databases-for-agents", "contract_routes": AGENT_ROUTES,
-                           "routes": routes}, indent=1) + "\n")
+                           "routes": sorted(set(routes + AGENT_ROUTES))}, indent=1) + "\n")
 print(f"{len(routes)} routes -> {out}")
