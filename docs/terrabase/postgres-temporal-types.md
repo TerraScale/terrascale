@@ -12,3 +12,9 @@ fractional digits, plus `+00` for `timestamptz`. Extra precision is refused. Ses
 alter formats. Npgsql maps .NET MinValue/MaxValue to infinity by default; use finite ISO text for exact endpoints.
 Validation applies to typed temporal binds and result columns; text-bound SQL writes can store invalid text, which fails
 when read as temporal.
+
+## uuid
+
+Native `uuid` (OID 2950) supports text and binary binds and results. A binary bind is 16 bytes, matching the canonical
+string byte for byte; storage and text format are the canonical lowercase hyphenated form. A text bind must parse as a
+uuid. A `uuid` column holding non-uuid text fails the read with `22P02`.
