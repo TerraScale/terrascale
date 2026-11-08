@@ -259,6 +259,10 @@ namespace TerraScale.Dashboard.E2E.Demo
                 }
 
                 var after = query.GetValueOrDefault("after").ToString();
+                if (!manage)
+                {
+                    return Error(HttpStatusCode.Forbidden, "access_denied");
+                }
                 if (listGate is { } paused) { Interlocked.Increment(ref pausedLists); await paused.Task.WaitAsync(cancellationToken); }
                 lock (gate)
                 {
