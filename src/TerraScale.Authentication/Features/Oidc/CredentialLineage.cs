@@ -62,7 +62,6 @@ internal static class CredentialLineage
     }
 }
 
-/// <summary>Validates stored ancestry and status, ending the grant on authenticated refresh-token and authorization-code replay.</summary>
 public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> tokens) : IOpenIddictServerHandler<ValidateTokenContext>
 {
     /// <inheritdoc />

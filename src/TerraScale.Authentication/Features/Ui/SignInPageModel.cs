@@ -134,7 +134,6 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The same-origin page that starts the single sign-on (<see cref="SignInStep.Sso"/>).</summary>
     public string? SsoUrl { get; init; }
 
-    /// <summary>The validated dashboard profile URL the completion pages link to (<see cref="SignInStep.ResetDone"/> and <see cref="SignInStep.Security"/>).</summary>
     public string? AccountUrl => this.Next is { } next && (next == Configuration.AuthOptions.DashboardOrigin + "/profile"
         || next == Configuration.AuthOptions.DashboardOrigin + "/profile?tab=security")
         ? next

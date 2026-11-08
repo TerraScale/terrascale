@@ -396,7 +396,7 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
 /// Replaces OpenIddict's redemption step, which ignores a lost redemption for refresh tokens. Here a code, device code,
 /// device user code or refresh token is redeemed by a conditional write on the version this request validated, so of any number of concurrent
 /// redemptions one succeeds locally. Replicated winner claims reject unused losing descendants without ending the
-/// winning grant. Replaying a consumed refresh token or authorization code ends that grant, including when its ancestry lost.
+/// winning grant. Replaying a consumed refresh token ends that grant, including when its ancestry lost.
 /// </summary>
 public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, AuthStore store, TimeProvider clock) : IOpenIddictServerHandler<ProcessSignInContext>
 {
