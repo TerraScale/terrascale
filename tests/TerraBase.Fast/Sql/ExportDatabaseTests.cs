@@ -34,8 +34,8 @@ public sealed class ExportDatabaseTests
             }
             else if (character == ';' && !quoted)
             {
-                var statement = text.ToString();
-                if (statement != "BEGIN;" && statement != "COMMIT;")
+                var statement = text.ToString().Trim();
+                if (statement != "BEGIN;" && statement != "COMMIT;" && statement.Length > 0)
                 {
                     yield return statement;
                 }
@@ -67,7 +67,7 @@ public sealed class ExportDatabaseTests
         {
             using var run = await source.Writer.PostAsJsonAsync(
                 ManagementApi.Uri(restore.Data + "/sql/execute"),
-                new { statements = batch.Select(sql => new { sql }).ToArray() }, cancellationToken);
+                new { statements = batch.Select(sql => Stmt(sql.TrimEnd(';'))).ToArray() }, cancellationToken);
             var body = JsonElement.Parse(await run.Content.ReadAsStringAsync(cancellationToken));
             await Assert.That(run.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body.GetRawText());
         }

@@ -29,8 +29,8 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database} TsAuth(databases:read) getDatabase Databases
         GET /v1/projects/{project}/databases/{database}/analytics TsAuth(databases:read) getDatabaseAnalytics Analytics
         GET /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:read) getBackupPolicy Backups
-        GET /v1/projects/{project}/databases/{database}/export TsAuth(sql:read) exportDatabase Queries
         GET /v1/projects/{project}/databases/{database}/backups TsAuth(databases:read) listBackups Backups
+        GET /v1/projects/{project}/databases/{database}/export TsAuth(sql:read) exportDatabase Queries
         GET /v1/projects/{project}/databases/{database}/functions TsAuth(sql:read,sql:write) listFunctions Functions
         GET /v1/projects/{project}/databases/{database}/functions/{function} TsAuth(sql:read,sql:write) getFunction Functions
         GET /v1/projects/{project}/databases/{database}/functions/{function}/logs TsAuth(sql:read,sql:write) listFunctionLogs Functions
