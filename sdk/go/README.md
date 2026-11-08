@@ -513,6 +513,17 @@ project means an organization key) and `AuditEvents`. Errors are
 `tsauth.ErrNotFound` (also an organization the user cannot reach),
 `ErrForbiddenRole` or `ErrLastOwner`.
 
+A signed-in user also manages a project's hosted sign-in tenant through
+`{origin}/v1/{project}` (viewer reads, admin changes): the end-user directory
+(`ProjectUsers`, `ProjectUser`, `DisableProjectUser`, `EnableProjectUser`,
+`DeleteProjectUser`), live end-user sessions (`ProjectSessions` with the
+producer's pagination and optional `User` filter, `RevokeProjectSession`),
+OAuth clients (`ListProjectOAuthClients`, `CreateProjectOAuthClient`,
+`DeleteProjectOAuthClient`) and the tenant's hosted-auth settings and social
+providers. Session and user records carry canonical ULIDs; revocations are
+sent once, never automatically replayed. See `contracts/project-directory.md`
+and `contracts/project-oauth-clients.md` for the pinned producer contracts.
+
 ```go
 c, err := tsauth.New(tsauth.Config{})
 u := c.WithToken(signInToken)

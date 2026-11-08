@@ -9,6 +9,8 @@ Authority: `src/TerraScale.Authentication/Features/ProjectTenants/` endpoints,
 | --- | --- | --- | --- |
 | GET /v1/{project}/users | list_project_users | viewer | 200 ProjectUserPageBody |
 | GET /v1/{project}/users/{user} | get_project_user | viewer | 200 ProjectUserBody |
+| GET /v1/{project}/sessions | list_project_sessions | viewer | 200 ProjectSessionPageBody |
+| DELETE /v1/{project}/sessions/{session} | revoke_project_session | admin | 204 empty |
 
 Bearer is a terrascale sign-in user token; project/API-key/end-user tokens fail.
 JSON uses **snake_case** at runtime: id/email/created_at/disabled; page items/next.
@@ -32,3 +34,11 @@ Disable prevents sign-in and invalidates existing sessions/tokens immediately.
 Enable permits new sign-ins but does not restore ended sessions. Delete releases
 email and invalidates tokens/sessions. Never automatically replay any mutation;
 reconcile an uncertain response through the directory before a manual retry.
+
+Sessions are live only: unrevoked, of enabled users, within both their issued
+expiry and the current project lifetime, with the earlier effective expiry
+answered. `user` filters to one user id; limit 1..100 defaults to 50; `after`
+is opaque, list-bound. Items are id/user_id/email/created_at/expires_at,
+snake_case, every member required, next alone nullable. Revoke signs the
+session out and answers 204 again for an already-revoked session; it is sent
+once and never replayed automatically.
