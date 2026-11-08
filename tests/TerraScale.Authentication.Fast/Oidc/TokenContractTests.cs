@@ -75,24 +75,24 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         using var omitted = await oidc.RefreshAsync(refresh);
         var full = JsonSerializer.Deserialize<JsonElement>(await omitted.Content.ReadAsStringAsync());
         await Assert.That(omitted.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(full.GetProperty("scope").GetString()).IsEqualTo("openid email profile offline_access");
-        await Assert.That(ScopesAsync(await ValidateAsync(full.GetProperty("access_token").GetString()!, keys, Audience)))
+        await AssertScopeAsync(full, "openid email profile offline_access");
+        await Assert.That(Scopes(await ValidateAsync(full.GetProperty("access_token").GetString()!, keys, Audience)))
             .IsEquivalentTo(["openid", "email", "profile", "offline_access"]);
         refresh = full.GetProperty("refresh_token").GetString()!;
 
         using var reduced = await oidc.TokenAsync(new() { ["grant_type"] = "refresh_token", ["refresh_token"] = refresh, ["scope"] = "openid email" });
         var subset = JsonSerializer.Deserialize<JsonElement>(await reduced.Content.ReadAsStringAsync());
         await Assert.That(reduced.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(subset.GetProperty("scope").GetString()).IsEqualTo("openid email");
-        await Assert.That(ScopesAsync(await ValidateAsync(subset.GetProperty("access_token").GetString()!, keys, Audience)))
+        await AssertScopeAsync(subset, "openid email");
+        await Assert.That(Scopes(await ValidateAsync(subset.GetProperty("access_token").GetString()!, keys, Audience)))
             .IsEquivalentTo(["openid", "email"]);
         refresh = subset.GetProperty("refresh_token").GetString()!;
 
         using var restored = await oidc.RefreshAsync(refresh);
         var whole = JsonSerializer.Deserialize<JsonElement>(await restored.Content.ReadAsStringAsync());
         await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(whole.GetProperty("scope").GetString()).IsEqualTo("openid email profile offline_access");
-        await Assert.That(ScopesAsync(await ValidateAsync(whole.GetProperty("access_token").GetString()!, keys, Audience)))
+        await AssertScopeAsync(whole, "openid email profile offline_access");
+        await Assert.That(Scopes(await ValidateAsync(whole.GetProperty("access_token").GetString()!, keys, Audience)))
             .IsEquivalentTo(["openid", "email", "profile", "offline_access"]);
         refresh = whole.GetProperty("refresh_token").GetString()!;
 
@@ -108,7 +108,16 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
-    private static string[] ScopesAsync(JsonWebToken token) =>
+    // RFC 6749 §5.1: the response omits scope when it equals the requested one.
+    private static async Task AssertScopeAsync(JsonElement body, string requested)
+    {
+        if (body.TryGetProperty("scope", out var scope))
+        {
+            await Assert.That(scope.GetString()).IsEqualTo(requested);
+        }
+    }
+
+    private static string[] Scopes(JsonWebToken token) =>
         token.GetClaim("scope").Value.Split(' ');
 
     private static async Task<JsonWebKeySet> KeysAsync(OidcHarness oidc) =>
