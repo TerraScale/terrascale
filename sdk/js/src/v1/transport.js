@@ -529,6 +529,25 @@ export class V1Transport {
     }
   }
 
+  /**
+   * Calls a named producer route that answers with a body to stream, not JSON. The
+   * caller consumes and cancels the returned body; only header-time failures are retried here.
+   * @param {V1Operation} operation
+   * @param {Readonly<Record<string, string>>} params
+   * @param {AbortSignal | undefined} [signal]
+   * @returns {Promise<ReadableStream<Uint8Array>>}
+   */
+  async stream(operation, params, signal) {
+    const deadline = operationDeadline(operation, signal);
+    try {
+      const response = await this.#send(operation, params, { signal: deadline.signal }, deadline.expiresAt);
+      if (response.body === null) throw new TypeError("TerraBase returned no stream body.");
+      return response.body;
+    } finally {
+      deadline.clear();
+    }
+  }
+
   /** @param {string} url @param {number} size @param {AbortSignal} signal */
   async readShapeObject(url, size, signal) {
     const target = new URL(url);

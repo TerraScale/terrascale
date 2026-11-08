@@ -84,6 +84,16 @@ export class V1Database {
   }
 
   /**
+   * Streams the database as one SQL dump (BEGIN … COMMIT) from one read snapshot; needs the read scope.
+   * The caller consumes the returned body and cancels it when done.
+   * @param {V1RequestOptions} [options]
+   * @returns {Promise<ReadableStream<Uint8Array>>}
+   */
+  exportDatabase(options = {}) {
+    return this.#transport.stream("exportDatabase", { database: this.name }, options.signal);
+  }
+
+  /**
    * A SQL table's shape: `shape("todos", { where: "done = 0" }).subscribe(({ rows }) => …)` syncs the matching rows, then live changes.
    * @param {string} table
    * @param {import("./table-shape.js").V1TableShapeRequest} [request]
