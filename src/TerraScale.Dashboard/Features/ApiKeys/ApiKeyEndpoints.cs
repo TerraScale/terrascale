@@ -146,9 +146,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
             try
             {
-                if (!context.CanManage)
+                if (!context.CanManageKeys)
                 {
-                    throw new AccountAccessException("Organization management access is required.");
+                    throw new AccountAccessException("Project member access is required.");
                 }
 
                 if (kind is not ("key" or "api-key"))
@@ -198,9 +198,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
             try
             {
-                if (!context.CanManage)
+                if (!context.CanManageKeys)
                 {
-                    throw new AccountAccessException("Organization management access is required.");
+                    throw new AccountAccessException("Project member access is required.");
                 }
 
                 var ttl = form["previousSecretTtl"].ToString();
