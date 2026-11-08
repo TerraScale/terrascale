@@ -181,32 +181,6 @@ public sealed class TerraBaseManagementClient
             : throw new TerraBaseException(status, "TerraBase answered a history erasure with a status or erasure id that does not match the request.", "invalid_response", null);
     }
 
-    // Databases and branches
-
-    /// <summary>Creates an empty database in a project.</summary>
-    public Task<TerraBaseManagedDatabase> CreateDatabaseAsync(
-        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Post, Project(organizationId, projectId) + "/databases", userId, organizationId, new RequestBody { Name = name }, Json.TerraBaseManagedDatabase, cancellationToken);
-
-    /// <summary>Lists a project's databases in creation order.</summary>
-    public Task<TerraBasePage<TerraBaseManagedDatabase>> ListDatabasesAsync(
-        string userId, string organizationId, string projectId, string? after = null, int? limit = null, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Get, Project(organizationId, projectId) + "/databases" + Page(after, limit), userId, organizationId, null, Json.TerraBasePageTerraBaseManagedDatabase, cancellationToken);
-
-    /// <summary>Reads a database by id.</summary>
-    public Task<TerraBaseManagedDatabase> GetDatabaseAsync(
-        string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Get, Database(organizationId, projectId, databaseId), userId, organizationId, null, Json.TerraBaseManagedDatabase, cancellationToken);
-
-    /// <summary>Deletes a database and its data. Its branches are independent and stay.</summary>
-    public Task DeleteDatabaseAsync(string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Delete, Database(organizationId, projectId, databaseId), userId, organizationId, null, cancellationToken);
-
-    /// <summary>Creates database <paramref name="name"/> in the same project, holding a consistent snapshot copy of <paramref name="databaseId"/>.</summary>
-    public Task<TerraBaseManagedDatabase> BranchDatabaseAsync(
-        string userId, string organizationId, string projectId, string databaseId, string name, CancellationToken cancellationToken = default) =>
-        SendAsync(HttpMethod.Post, Database(organizationId, projectId, databaseId) + "/branches", userId, organizationId, new RequestBody { Name = name }, Json.TerraBaseManagedDatabase, cancellationToken);
-
     // Members
 
     /// <summary>Lists an organization's members in user id order.</summary>
@@ -343,9 +317,6 @@ public sealed class TerraBaseManagementClient
 
     private static string Project(string organizationId, string projectId) =>
         $"{Organization(organizationId)}/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}";
-
-    private static string Database(string organizationId, string projectId, string databaseId) =>
-        $"{Project(organizationId, projectId)}/databases/{TerraBaseConnection.Segment(databaseId, nameof(databaseId))}";
 
     private static string Member(string organizationId, string memberUserId) =>
         $"{Organization(organizationId)}/members/{TerraBaseConnection.Segment(memberUserId, nameof(memberUserId))}";

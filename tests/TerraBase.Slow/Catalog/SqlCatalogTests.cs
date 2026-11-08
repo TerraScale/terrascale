@@ -16,37 +16,39 @@ public sealed class SqlCatalogTests
         var directory = Directory.CreateTempSubdirectory("terrabase-sql-catalog-").FullName;
         try
         {
-            string user;
             string databases;
+            string project = "";
+            string organization = "";
             string kept;
             string dropped;
             var names = new[] { "orders", "users", "events" };
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
             {
-                user = api.User;
-                var organization = await api.CreateOrganizationAsync(faker.Company.CompanyName());
-                var project = await api.CreateProjectAsync(organization, faker.Commerce.Department());
-                databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
+                organization = await api.CreateOrganizationAsync(faker.Company.CompanyName());
+                project = await api.CreateProjectAsync(organization, faker.Commerce.Department());
+                databases = $"/v1/projects/{project}/databases";
+                using var management = api.ProjectClient(project);
                 var ids = new List<string>();
                 foreach (var name in names)
                 {
                     ids.Add(await api.CreateDatabaseAsync(organization, project, name));
                 }
 
-                using var duplicate = await api.Client.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = names[0] }, cancellationToken);
+                using var duplicate = await management.PostAsJsonAsync(ManagementApi.Uri(databases), new { name = names[0] }, cancellationToken);
                 await Assert.That(duplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
 
-                await Assert.That(await ListAsync(api.Client, databases, cancellationToken)).IsEquivalentTo(names);
+                await Assert.That(await ListAsync(management, databases, cancellationToken)).IsEquivalentTo(names);
 
                 (kept, dropped) = (ids[0], ids[1]);
-                using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri($"{databases}/{dropped}"), cancellationToken);
+                using var deleted = await management.DeleteAsync(ManagementApi.Uri($"{databases}/{dropped}"), cancellationToken);
                 await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-                await Assert.That(await ListAsync(api.Client, databases, cancellationToken)).IsEquivalentTo([names[0], names[2]]);
+                await Assert.That(await ListAsync(management, databases, cancellationToken)).IsEquivalentTo([names[0], names[2]]);
                 await Assert.That(await CatalogRowsAsync(api.Server, cancellationToken)).IsEqualTo(2L);
             }
 
             await using var restarted = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory);
-            using var owner = restarted.As(user);
+            restarted.RegisterProject(project, organization);
+            using var owner = restarted.ProjectClient(project);
             await Assert.That(await ListAsync(owner, databases, cancellationToken)).IsEquivalentTo([names[0], names[2]]);
             await Assert.That(await CatalogRowsAsync(restarted.Server, cancellationToken)).IsEqualTo(2L);
 

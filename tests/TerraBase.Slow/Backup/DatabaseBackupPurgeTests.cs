@@ -78,7 +78,7 @@ public sealed class DatabaseBackupPurgeTests
 
     private static async Task DeleteAsync(ManagementApi api, ManagedDatabaseRef database, CancellationToken token)
     {
-        using var response = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
+        using var response = await api.ProjectClient(database.Project).DeleteAsync(ManagementApi.Uri(database.Path), token);
         response.EnsureSuccessStatusCode();
         await api.Server.Services.GetRequiredService<EngineManagementService>().RunMaintenanceAsync(token);
         await Assert.That(await api.Server.Services.GetRequiredService<SystemCatalog>().AreActiveCopiesAbsentAsync(

@@ -39,7 +39,7 @@ public sealed class ShapeDeletionTests
             s3.SeedObject(false, "v1/shapes/h1-0000000000000000/" + index.ToString("x64", System.Globalization.CultureInfo.InvariantCulture), [9]);
         }
         s3.ObservedListPrefix = "v1/shapes/";
-        using var response = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
+        using var response = await api.ProjectClient(database.Project).DeleteAsync(ManagementApi.Uri(database.Path), token);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(s3.Objects.ContainsKey(key)).IsFalse();
         await Assert.That(s3.Objects.Keys.Any(item => item.StartsWith(ShapeObjectStore.InventoryPrefix(owner), StringComparison.Ordinal))).IsFalse();

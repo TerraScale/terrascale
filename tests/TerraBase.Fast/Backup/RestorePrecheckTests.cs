@@ -22,7 +22,7 @@ public sealed class RestorePrecheckTests
             }
         };
 
-        using var restored = await host.Api.Client.PostAsJsonAsync(
+        using var restored = await host.Management.PostAsJsonAsync(
             ManagementApi.Uri($"{host.Database.Path}/point-in-time/restore"), new { pointInTime = host.SnapshotAt, name = second.Name }, cancellationToken);
         await ErrorAssert.ErrorAsync(restored, HttpStatusCode.Conflict, "name_taken", "name is already taken");
 

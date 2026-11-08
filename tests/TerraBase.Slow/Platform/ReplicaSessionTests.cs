@@ -33,8 +33,8 @@ public sealed class ReplicaSessionTests
         var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
         await gru.SetPlanAsync(gru.User, organization, "hobby", token);
         var project = await gru.CreateProjectAsync(organization, "Project");
-        using var created = await gru.Client.PostAsJsonAsync(
-            ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = Sjc }, token);
+        using var created = await gru.ProjectClient(project).PostAsJsonAsync(
+            ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name = "main", replicaRegions = Sjc }, token);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync(token));
         var database = new ManagedDatabaseRef(organization, project, (await created.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!, "main");
         var bearer = issuer.Mint(gru.User, descriptor =>

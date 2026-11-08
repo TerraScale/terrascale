@@ -131,8 +131,8 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
 
             var organization = await api.CreateOrganizationAsync("Org " + EntityIds.New());
             var project = await api.CreateProjectAsync(organization, "Project");
-            using var created = await api.Client.PostAsJsonAsync(
-                ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = ReplicaRegions });
+            using var created = await api.ProjectClient(project).PostAsJsonAsync(
+                ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name = "main", replicaRegions = ReplicaRegions });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             var reference = new ManagedDatabaseRef(organization, project, (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!, "main");
             var writer = api.DataClient(await api.Server.IssueNarrowedAsync(organization, project, null, "sql:read", "sql:write"));

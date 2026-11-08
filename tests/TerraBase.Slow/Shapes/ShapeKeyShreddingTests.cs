@@ -51,7 +51,7 @@ public sealed class ShapeKeyShreddingTests
         await Assert.That(opened.Any(text => text.Contains("second", StringComparison.Ordinal))).IsTrue();
 
         var tenant = new TenantContext(db.Database.Organization, PlanTier.Hobby, db.Database.Project, db.Database.Id);
-        using (var deleted = await db.Api.Client.DeleteAsync(ManagementApi.Uri(db.Database.Path), cancellationToken))
+        using (var deleted = await db.Api.ProjectClient(db.Database.Project).DeleteAsync(ManagementApi.Uri(db.Database.Path), cancellationToken))
         {
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         }

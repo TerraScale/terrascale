@@ -16,15 +16,15 @@ public sealed class SqlTableBackupTests
         await host.OkAsync("CREATE TABLE items (id TEXT PRIMARY KEY, v TEXT NOT NULL)", "CREATE UNIQUE INDEX items_v ON items(v)");
         await host.OkAsync(Stmt("INSERT INTO items VALUES ('kept', ?)", Faker.Lorem.Word()));
 
-        using var created = await host.Api.Client.PostAsync(ManagementApi.Uri($"{host.Database.Path}/backups"), content: null, cancellationToken);
+        using var created = await host.Management.PostAsync(ManagementApi.Uri($"{host.Database.Path}/backups"), content: null, cancellationToken);
         var backupId = (await created.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("id").GetString();
         await host.OkAsync(Stmt("INSERT INTO items VALUES ('later', ?)", Faker.Lorem.Sentence()), Stmt("DELETE FROM items WHERE id = 'kept'"));
-        using var restored = await host.Api.Client.PostAsJsonAsync(
+        using var restored = await host.Management.PostAsJsonAsync(
             ManagementApi.Uri($"{host.Database.Path}/backups/{backupId}/restore"), new { name = "manual" }, cancellationToken);
         var operation = await restored.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        await Assert.That(restored.Headers.Location?.ToString()).IsEqualTo($"{host.Database.Path}/restores/{operation.GetProperty("operationId").GetString()}");
+        await Assert.That(restored.Headers.Location?.ToString()).IsEqualTo($"{host.Database.Data}/restores/{operation.GetProperty("operationId").GetString()}");
         await Assert.That(operation.GetProperty("status").GetString()).IsEqualTo("running");
         await Assert.That(operation.GetProperty("database").GetString()).IsEqualTo("manual");
 
@@ -41,7 +41,7 @@ public sealed class SqlTableBackupTests
         JsonElement last = default;
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
-            using var status = await host.Api.Client.GetAsync(ManagementApi.Uri($"{host.Database.Path}/restores/{operationId}"), token);
+            using var status = await host.Management.GetAsync(ManagementApi.Uri($"{host.Database.Path}/restores/{operationId}"), token);
             last = await status.Content.ReadFromJsonAsync<JsonElement>(token);
             return status.StatusCode == HttpStatusCode.OK && last.GetProperty("status").GetString() is "completed" or "failed";
         }, timeout: TimeSpan.FromSeconds(30));

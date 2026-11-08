@@ -31,7 +31,7 @@ public sealed class PointInTimeLeaseTests
         var shipped = host.S3.Objects.Keys.Where(key => key.StartsWith(host.File + "/", StringComparison.Ordinal)).ToList();
         await Assert.That(shipped.Count).IsGreaterThan(0);
 
-        using var restore = await host.Api.Client.PostAsJsonAsync(
+        using var restore = await host.Management.PostAsJsonAsync(
             ManagementApi.Uri($"{host.Database.Path}/point-in-time/restore"), new { pointInTime = host.SnapshotAt, name = "held" }, cancellationToken);
         var operation = await restore.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
         await Assert.That(restore.StatusCode).IsEqualTo(HttpStatusCode.Accepted).Because(operation.GetRawText());
@@ -56,7 +56,7 @@ public sealed class PointInTimeLeaseTests
         gate.Release();
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
-            using var status = await host.Api.Client.GetAsync(ManagementApi.Uri($"{host.Database.Path}/restores/{operationId}"), token);
+            using var status = await host.Management.GetAsync(ManagementApi.Uri($"{host.Database.Path}/restores/{operationId}"), token);
             return status.StatusCode == HttpStatusCode.OK
                 && (await status.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("status").GetString() == "completed";
         }, timeout: TimeSpan.FromSeconds(30));

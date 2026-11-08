@@ -20,7 +20,7 @@ public sealed class DatabasePurgeTests
         await using var api = await state.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         var tenant = Tenant(database);
-        using var deleted = await api.Client.DeleteAsync(new Uri(database.Path, UriKind.Relative));
+        using var deleted = await api.ProjectClient(database.Project).DeleteAsync(new Uri(database.Path, UriKind.Relative));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
         var record = (await catalog.ListDatabasePurgesAsync(null, 100, CancellationToken.None))!.Items.Single();

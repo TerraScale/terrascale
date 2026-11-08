@@ -17,24 +17,25 @@ public sealed class ManagementDatabaseLifecycleTests
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Shop");
         using var data = api.DataClient(await api.Server.IssueAsync(organization, "sql:read", "sql:write"));
-        var databases = $"/v1/management/organizations/{organization}/projects/{project}/databases";
+        var databases = $"/v1/projects/{project}/databases";
         var dataApi = $"/v1/projects/{project}/databases";
+        using var management = api.ProjectClient(project);
         var person = new { name = Faker.Name.FullName() };
         var (p1, p2) = (EntityIds.New().ToString(), EntityIds.New().ToString());
 
-        using var created = await api.Client.PostAsJsonAsync(Uri(databases), new { name = "main" });
+        using var created = await management.PostAsJsonAsync(Uri(databases), new { name = "main" });
         var main = await created.Content.ReadFromJsonAsync<JsonElement>();
         var mainId = main.GetProperty("id").GetString()!;
         (await ManagementApi.SqlAsync(data, $"{dataApi}/main", "CREATE TABLE people (id TEXT PRIMARY KEY, name TEXT NOT NULL)")).EnsureSuccessStatusCode();
         (await ManagementApi.SqlAsync(data, $"{dataApi}/main", $"INSERT INTO people VALUES ('{p1}', '{person.name.Replace("'", "''", StringComparison.Ordinal)}')")).EnsureSuccessStatusCode();
-        using var branched = await api.Client.PostAsJsonAsync(Uri($"{databases}/{mainId}/branches"), new { name = "preview" });
+        using var branched = await management.PostAsJsonAsync(Uri($"{databases}/{mainId}/branches"), new { name = "preview" });
         var branch = await branched.Content.ReadFromJsonAsync<JsonElement>();
         (await ManagementApi.SqlAsync(data, $"{dataApi}/preview", $"INSERT INTO people VALUES ('{p2}', 'branch')")).EnsureSuccessStatusCode();
         var mainWithoutBranchWrite = await ManagementApi.RowsAsync(data, $"{dataApi}/main", $"SELECT id FROM people WHERE id = '{p2}'");
-        using var list = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(databases)));
+        using var list = JsonDocument.Parse(await management.GetStringAsync(Uri(databases)));
         using var projectNotEmpty = await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}"));
-        using var deleted = await api.Client.DeleteAsync(Uri($"{databases}/{mainId}"));
-        using var gone = await api.Client.GetAsync(Uri($"{databases}/{mainId}"));
+        using var deleted = await management.DeleteAsync(Uri($"{databases}/{mainId}"));
+        using var gone = await management.GetAsync(Uri($"{databases}/{mainId}"));
         using var dataGone = await ManagementApi.SqlAsync(data, $"{dataApi}/main", "SELECT 1");
         var branchKeepsCopy = await ManagementApi.RowsAsync(data, $"{dataApi}/preview", $"SELECT id FROM people WHERE id = '{p1}'");
 

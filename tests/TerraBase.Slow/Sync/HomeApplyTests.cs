@@ -214,8 +214,8 @@ public sealed class HomeApplyTests
         {
             var organization = await api.CreateOrganizationAsync("Org " + EntityIds.New());
             var project = await api.CreateProjectAsync(organization, "Project");
-            using var created = await api.Client.PostAsJsonAsync(
-                ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main", replicaRegions = Replicas });
+            using var created = await api.ProjectClient(project).PostAsJsonAsync(
+                ManagementApi.Uri($"/v1/projects/{project}/databases"), new { name = "main", replicaRegions = Replicas });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             var database = new ManagedDatabaseRef(organization, project, (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!, "main");
             var writer = await api.Server.IssueNarrowedAsync(organization, project, null, "sql:read", "sql:write");

@@ -14,7 +14,7 @@ public static class SharedServer
         using var data = api.DataClient(await api.Server.IssueAsync(database.Organization, "sql:read", "sql:write"));
         using var query = await ManagementApi.SqlAsync(data, database, "SELECT 1");
         query.EnsureSuccessStatusCode();
-        using var dropped = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path));
+        using var dropped = await api.ProjectClient(database.Project).DeleteAsync(ManagementApi.Uri(database.Path));
         dropped.EnsureSuccessStatusCode();
         using var project = await api.Client.DeleteAsync(ManagementApi.Uri(database.ProjectPath));
         project.EnsureSuccessStatusCode();
