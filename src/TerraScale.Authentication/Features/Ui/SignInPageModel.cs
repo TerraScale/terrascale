@@ -108,6 +108,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The wait a disabled resend control repeats when <see cref="CodeBudgetExhausted"/>.</summary>
     public string? WaitText { get; init; }
 
+    public string? ErrorId => this.Error is null ? null : "sign-in-error";
+
     /// <summary>The pending sign-up's token, carried from the sign-up form to its code form.</summary>
     public string? PendingToken { get; init; }
 
