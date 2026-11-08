@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
@@ -10,6 +11,39 @@ public sealed class ExportDatabaseTests
     private static object Stmt(string sql, params object?[] args) => new { sql, args };
 
     private static object Blob(byte[] bytes) => new { base64 = Convert.ToBase64String(bytes) };
+
+    private static IEnumerable<string> Statements(string dump)
+    {
+        var text = new StringBuilder();
+        var quoted = false;
+        for (var i = 0; i < dump.Length; i++)
+        {
+            var character = dump[i];
+            text.Append(character);
+            if (character == '\'')
+            {
+                if (quoted && i + 1 < dump.Length && dump[i + 1] == '\'')
+                {
+                    text.Append('\'');
+                    i++;
+                }
+                else
+                {
+                    quoted = !quoted;
+                }
+            }
+            else if (character == ';' && !quoted)
+            {
+                var statement = text.ToString();
+                if (statement != "BEGIN;" && statement != "COMMIT;")
+                {
+                    yield return statement;
+                }
+
+                text.Clear();
+            }
+        }
+    }
 
     [Test]
     public async Task An_export_round_trips_into_a_fresh_database(CancellationToken cancellationToken)
@@ -29,10 +63,14 @@ public sealed class ExportDatabaseTests
         await Assert.That(export.Content.Headers.ContentDisposition?.DispositionType).IsEqualTo("attachment");
 
         var restore = await source.Api.CreateManagedDatabaseAsync();
-        using var run = await source.Writer.PostAsJsonAsync(
-            ManagementApi.Uri(restore.Data + "/sql/execute"), new { statements = new[] { new { sql = dump } } }, cancellationToken);
-        var body = JsonElement.Parse(await run.Content.ReadAsStringAsync(cancellationToken));
-        await Assert.That(run.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body.GetRawText());
+        foreach (var batch in Statements(dump).Chunk(256))
+        {
+            using var run = await source.Writer.PostAsJsonAsync(
+                ManagementApi.Uri(restore.Data + "/sql/execute"),
+                new { statements = batch.Select(sql => new { sql }).ToArray() }, cancellationToken);
+            var body = JsonElement.Parse(await run.Content.ReadAsStringAsync(cancellationToken));
+            await Assert.That(run.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(body.GetRawText());
+        }
 
         var (textBack, blobBack, realBack, nullBack, indexBack) = await Rows(restore);
         await Assert.That(textBack).IsEqualTo(text);
