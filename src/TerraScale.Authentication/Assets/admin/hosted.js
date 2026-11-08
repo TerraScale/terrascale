@@ -29,21 +29,21 @@
     document.querySelectorAll('[data-loading-submitter]').forEach(function (hidden) { hidden.remove(); });
   });
 })();
+function passkeyEncode(buffer) {
+  var bytes = new Uint8Array(buffer), binary = '';
+  for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function passkeyDecode(text) {
+  var base64 = text.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+  base64 = base64 + '='.repeat((4 - base64.length % 4) % 4);
+  var binary = atob(base64), bytes = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 (function () {
   var form = document.getElementById('passkey-add');
   if (!form) return;
-  function encode(buffer) {
-    var bytes = new Uint8Array(buffer), binary = '';
-    for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  }
-  function decode(text) {
-    var base64 = text.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
-    base64 = base64 + '='.repeat((4 - base64.length % 4) % 4);
-    var binary = atob(base64), bytes = new Uint8Array(binary.length);
-    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-  }
   function json(response) {
     return response.json().then(function (body) {
       if (!response.ok) throw new Error(body.error && body.error.message || 'The passkey was not added.');
@@ -79,13 +79,13 @@
         sealed = body.challenge;
         var options = body.options;
         return navigator.credentials.create({ publicKey: {
-          challenge: decode(options.challenge),
+          challenge: passkeyDecode(options.challenge),
           rp: options.rp,
-          user: { id: decode(options.user.id), name: options.user.name, displayName: options.user.displayName },
+          user: { id: passkeyDecode(options.user.id), name: options.user.name, displayName: options.user.displayName },
           pubKeyCredParams: options.pubKeyCredParams,
           timeout: options.timeout,
           excludeCredentials: (options.excludeCredentials || []).map(function (credential) {
-            return { type: credential.type, id: decode(credential.id) };
+            return { type: credential.type, id: passkeyDecode(credential.id) };
           }),
           authenticatorSelection: options.authenticatorSelection,
           attestation: options.attestation
@@ -101,11 +101,11 @@
             name: name,
             response: {
               id: assertion.id,
-              rawId: encode(assertion.rawId),
+              rawId: passkeyEncode(assertion.rawId),
               type: assertion.type,
               response: {
-                clientDataJSON: encode(assertion.response.clientDataJSON),
-                attestationObject: encode(assertion.response.attestationObject),
+                clientDataJSON: passkeyEncode(assertion.response.clientDataJSON),
+                attestationObject: passkeyEncode(assertion.response.attestationObject),
                 transports: assertion.response.getTransports ? assertion.response.getTransports() : []
               }
             }
@@ -114,5 +114,101 @@
       })
       .then(function () { window.location.reload(); })
       .catch(function (error) { fail(button, error.message || 'The passkey was not added.'); });
+  });
+})();
+(function () {
+  var button = document.getElementById('passkey-sign-in');
+  if (!button || !window.PublicKeyCredential) return;
+  button.hidden = false;
+  var email = document.getElementById('sign-in-email');
+  function reset() {
+    button.disabled = false;
+    button.classList.remove('is-loading');
+    button.removeAttribute('aria-busy');
+  }
+  function fail() {
+    reset();
+    var alert = document.getElementById('sign-in-error');
+    if (!alert) {
+      alert = document.createElement('div');
+      alert.id = 'sign-in-error';
+      alert.className = 'alert';
+      alert.setAttribute('data-state', 'error');
+      alert.setAttribute('role', 'alert');
+      var head = document.querySelector('.head');
+      (head || document.body).after(alert);
+    }
+    alert.innerHTML = '<strong>Passkey sign-in failed</strong><p>The passkey sign-in failed; start again.</p>';
+  }
+  function json(response) {
+    return response.json().then(function (body) {
+      if (!response.ok) throw new Error('The passkey sign-in failed.');
+      return body;
+    });
+  }
+  function follow(html) {
+    var page = new DOMParser().parseFromString(html, 'text/html');
+    var refresh = page.querySelector('meta[http-equiv="refresh"]');
+    var url = refresh && refresh.getAttribute('content').match(/^0;\s*url=(.+)$/);
+    if (url) { window.location.href = url[1]; return; }
+    var link = page.querySelector('a.btn');
+    if (link) { window.location.href = link.href; return; }
+    window.location.reload();
+  }
+  button.addEventListener('click', function () {
+    var address = email ? email.value.trim() : '';
+    if (!address) { if (email) email.focus(); return; }
+    button.disabled = true;
+    button.classList.add('is-loading');
+    button.setAttribute('aria-busy', 'true');
+    var next = button.form && button.form.querySelector('input[name="next"]');
+    var sealed = null;
+    fetch(button.dataset.options, { method: 'POST', headers: { 'Accept': 'application/json' }, body: new URLSearchParams({ email: address }) })
+      .then(json)
+      .then(function (body) {
+        sealed = body.challenge;
+        var options = body.options;
+        return navigator.credentials.get({ publicKey: {
+          challenge: passkeyDecode(options.challenge),
+          rpId: options.rpId,
+          timeout: options.timeout,
+          userVerification: options.userVerification,
+          allowCredentials: (options.allowCredentials || []).map(function (credential) {
+            return { type: credential.type, id: passkeyDecode(credential.id) };
+          })
+        } });
+      })
+      .then(function (assertion) {
+        if (!assertion) throw new Error('The passkey sign-in failed.');
+        return fetch(button.dataset.verify, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            challenge: sealed,
+            email: address,
+            next: next ? next.value : null,
+            response: {
+              id: assertion.id,
+              rawId: passkeyEncode(assertion.rawId),
+              type: assertion.type,
+              response: {
+                clientDataJSON: passkeyEncode(assertion.response.clientDataJSON),
+                authenticatorData: passkeyEncode(assertion.response.authenticatorData),
+                signature: passkeyEncode(assertion.response.signature),
+                userHandle: assertion.response.userHandle ? passkeyEncode(assertion.response.userHandle) : null
+              }
+            }
+          })
+        });
+      })
+      .then(function (response) {
+        if (!response.ok) throw new Error('The passkey sign-in failed.');
+        return response.text();
+      })
+      .then(follow)
+      .catch(function (error) {
+        if (error && error.name === 'NotAllowedError') { reset(); return; }
+        fail();
+      });
   });
 })();
