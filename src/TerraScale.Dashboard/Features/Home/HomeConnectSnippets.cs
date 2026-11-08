@@ -53,8 +53,8 @@ namespace TerraScale.Dashboard.Features.Home
             {
                 "js" => $"npm install @terrascale/sdk@{SdkVersions.JavaScript}",
                 "go" => $"go get terrascale.tech/sdk@{SdkVersions.Go}",
-                "python" => $"pip install \"terrascale @ git+https://github.com/TerraScale/terrascale@history/ts-python/{SdkVersions.Python}\"",
-                "rust" => $"cargo add terrascale --git https://github.com/TerraScale/terrascale --tag history/ts-rust/{SdkVersions.Rust}",
+                "python" => $"pip install \"terrascale @ git+https://github.com/TerraScale/terrascale@{SdkVersions.PythonRef}#subdirectory=sdk/python\"",
+                "rust" => "cargo add terrascale --git https://github.com/TerraScale/terrascale",
                 _ => ""
             };
         }

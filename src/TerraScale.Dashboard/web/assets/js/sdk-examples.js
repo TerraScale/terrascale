@@ -71,7 +71,7 @@ db := client.Database(project, "app")
 customers, err := db.Query(context.Background(),
     "SELECT email, seats FROM customers WHERE seats >= ? ORDER BY seats DESC LIMIT 25", 10)
 if err != nil { panic(err) }`,
-  rust: `use terrascale::Client;
+  rust: `use terrascale::v1::Client;
 
 // Server-side: the client exchanges and refreshes project tokens.
 let project = std::env::var("TERRASCALE_PROJECT_ID")?;

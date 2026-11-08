@@ -26,15 +26,15 @@ export TERRASCALE_DATABASE_NAME=main                       # your database's nam
 
 ## Install the SDK
 
-The SQL methods live on `Database` in the module on `main`; published tags predate them, so install from the monorepo tip for now:
+The SQL methods live on `Database` in the module; the latest tag carries them:
 
 ```bash
 mkdir quickstart && cd quickstart
 go mod init example.com/quickstart
-go get terrascale.tech/sdk/v1@main terrascale.tech/sdk/tsauth@main
+go get terrascale.tech/sdk@v0.0.15
 ```
 
-The quickstart imports `terrascale.tech/sdk/v1` and `terrascale.tech/sdk/tsauth`, so `go get` names both; fetching only the root module leaves `go.sum` without `github.com/coder/websocket`, which `v1` needs.
+The root module is enough: it pulls in the `v1` and `tsauth` packages the quickstart imports.
 
 ## Run the quickstart
 

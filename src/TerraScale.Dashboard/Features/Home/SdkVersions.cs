@@ -1,11 +1,13 @@
 namespace TerraScale.Dashboard.Features.Home
 {
-    // Keep these compile-time pins equal to sdk-versions.json, the dashboard/docs contract.
+    // Install pins for the Connect snippets; keep equal to sdk-versions.json, the dashboard/docs contract.
     public static class SdkVersions
     {
+        // npm latest; its database handle carries the current SQL API (execute/query/batch).
         public const string JavaScript = "0.0.17";
-        public const string Go = "v0.0.8";
-        public const string Python = "v0.0.1";
-        public const string Rust = "v0.0.2";
+        // Latest sdk/go module tag; verified to contain the SQL API (Database.Execute/Query/Batch).
+        public const string Go = "v0.0.15";
+        // Git ref for the pip install; no PyPI release or sdk/python tag exists before go-live (docs/decisions/go-live.md).
+        public const string PythonRef = "main";
     }
 }
