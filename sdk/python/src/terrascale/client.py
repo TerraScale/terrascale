@@ -15,7 +15,19 @@ from . import backups as _backups
 from . import sql as _sql
 from ._spec import Call
 from ._version import __version__
-from .auth import APIKeyTokenSource, _rotate_key_call, _scoped_key_call
+from .auth import (
+    APIKeyTokenSource,
+    _rotate_key_call,
+    _scoped_key_call,
+    create_api_key_call,
+    create_project_client_call,
+    delete_project_client_call,
+    list_api_keys_call,
+    list_project_clients_call,
+    revoke_api_key_call,
+    rotate_project_client_secret_call,
+    update_project_client_call,
+)
 from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
 from .ids import validate_id
 from .session import SqlSession
@@ -231,6 +243,59 @@ class TerraScale:
     def rotate_api_key(self, key_id: str, grace_seconds: int = 0) -> models.RotatedApiKey:
         """Issue a new secret for the caller's API key id; the previous one keeps working for grace_seconds (0 to 86400)."""
         return self._send(_rotate_key_call(self._api_key, self._issuer, key_id, grace_seconds))
+
+    def create_api_key(
+        self, organization: str, name: str, scopes: Sequence[str], *, step_up_proof: str,
+        project: str | None = None, database: str | None = None, expires_at: str | None = None,
+        allowed_cidrs: Sequence[str] | None = None,
+    ) -> models.ApiKeySecret:
+        """Create an organization key, or a project key with ``project``; the whole key string is answered once."""
+        return self._send(create_api_key_call(
+            self._issuer, organization, project, name, scopes, database, expires_at, allowed_cidrs, step_up_proof))
+
+    def list_api_keys(
+        self, organization: str, *, project: str | None = None, limit: int | None = None, cursor: str | None = None,
+    ) -> models.ApiKeyPage:
+        """List an organization's keys, or a project's, in creation order; never secrets."""
+        return self._send(list_api_keys_call(self._issuer, organization, project, limit, cursor))
+
+    def revoke_api_key(self, organization: str, key: str, *, project: str | None = None) -> None:
+        """Revoke a key at once; tokens already issued live out their 15 minutes."""
+        self._send(revoke_api_key_call(self._issuer, organization, project, key))
+
+    def create_project_client(
+        self, name: str, client_type: str, redirect_uris: Sequence[str], *, step_up_proof: str,
+        project: str | None = None,
+    ) -> models.ProjectClient:
+        """Register a public or confidential OAuth client; a confidential secret is answered once."""
+        return self._send(create_project_client_call(
+            self._issuer, project if project is not None else self.project, name, client_type, redirect_uris,
+            step_up_proof))
+
+    def list_project_clients(self, *, project: str | None = None) -> models.ProjectClientPage:
+        """List every registered client of the project in one page, without secrets."""
+        return self._send(list_project_clients_call(self._issuer, project if project is not None else self.project))
+
+    def update_project_client(
+        self, client_id: str, name: str, redirect_uris: Sequence[str], *, step_up_proof: str,
+        project: str | None = None,
+    ) -> models.ProjectClient:
+        """Rename a client and replace its redirect URIs; the id, type and secret stay unchanged."""
+        return self._send(update_project_client_call(
+            self._issuer, project if project is not None else self.project, client_id, name, redirect_uris,
+            step_up_proof))
+
+    def rotate_project_client_secret(
+        self, client_id: str, *, step_up_proof: str, grace_seconds: int | None = None, project: str | None = None,
+    ) -> models.ProjectClientSecret:
+        """Issue a new secret for a confidential client; the previous one keeps working for grace_seconds (0 to 86400)."""
+        return self._send(rotate_project_client_secret_call(
+            self._issuer, project if project is not None else self.project, client_id, grace_seconds, step_up_proof))
+
+    def delete_project_client(self, client_id: str, *, project: str | None = None) -> None:
+        """Delete a registered client."""
+        self._send(delete_project_client_call(self._issuer, project if project is not None else self.project,
+                                              client_id))
 
 
 def _error(response: httpx.Response, *, mutation: bool = False) -> APIError:
