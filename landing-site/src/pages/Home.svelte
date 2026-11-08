@@ -1,17 +1,17 @@
 <script lang="ts">
-  import Hero from '@/components/sections/Hero.svelte'
+  import BentoHero from '@/components/sections/BentoHero.svelte'
+  import BentoFeatures from '@/components/sections/BentoFeatures.svelte'
   import HowItWorks from '@/components/sections/HowItWorks.svelte'
   import CodePanel from '@/components/sections/CodePanel.svelte'
-  import Features from '@/components/sections/Features.svelte'
   import PricingTeaser from '@/components/sections/PricingTeaser.svelte'
   import FaqSection from '@/components/sections/FaqSection.svelte'
   import CtaSection from '@/components/sections/CtaSection.svelte'
 </script>
 
-<Hero />
+<BentoHero />
+<BentoFeatures />
 <HowItWorks />
 <CodePanel />
-<Features />
 <PricingTeaser />
 <FaqSection source="home" />
 <CtaSection />
