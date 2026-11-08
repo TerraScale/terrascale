@@ -120,6 +120,24 @@ public sealed class SqlNativeRestTests
     }
 
     [Test]
+    public async Task A_table_name_is_reusable_after_create_and_drop_in_one_batch_and_across_requests()
+    {
+        await using var db = await StartSharedAsync();
+
+        var batch = await db.OkAsync(
+            "CREATE TABLE reuse_t (id INTEGER PRIMARY KEY, v TEXT)",
+            "INSERT INTO reuse_t VALUES (1, 'a')",
+            "DROP TABLE reuse_t",
+            "CREATE TABLE reuse_t (id INTEGER PRIMARY KEY, v TEXT)");
+        await db.OkAsync("DROP TABLE reuse_t");
+        await db.OkAsync("CREATE TABLE reuse_t (id INTEGER PRIMARY KEY)");
+
+        await Assert.That(batch.Length).IsEqualTo(4);
+        await Assert.That(batch[1].GetProperty("rows_affected").GetInt64()).IsEqualTo(1);
+        await Assert.That(await db.CountAsync("reuse_t")).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Unfiltered_returning_writes_and_value_is_comparisons_answer_like_sqlite()
     {
         await using var db = await StartSharedAsync();
