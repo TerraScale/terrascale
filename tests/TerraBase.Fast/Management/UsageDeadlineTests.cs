@@ -10,9 +10,10 @@ public sealed class UsageDeadlineTests
 {
     private sealed class PastBudget : TimeProvider
     {
-        private readonly long _origin = Stopwatch.GetTimestamp();
+        private readonly long _step = (long)((UsageService.Deadline + TimeSpan.FromSeconds(1)).TotalSeconds * Stopwatch.Frequency);
+        private long _calls;
 
-        public override long GetTimestamp() => _origin - (long)((UsageService.Deadline + TimeSpan.FromSeconds(1)).TotalSeconds * Stopwatch.Frequency);
+        public override long GetTimestamp() => Stopwatch.GetTimestamp() + Interlocked.Increment(ref _calls) * _step;
     }
 
     [Test]
