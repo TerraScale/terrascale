@@ -317,7 +317,7 @@ public sealed class RecoveryRegenerateEndpoint(Sessions sessions, TotpCredential
         Post("/ui/{slug}/security/recovery/regenerate");
         Name("ui_security_recovery_regenerate");
         Summary("Regenerate recovery codes");
-        Description("Same-origin form post with code (the authenticator's current code or an unused recovery code) from a live session opened in the last 15 minutes; the code reauthenticates the change, and a sign-out that lands before it commits refuses it. Success replaces every recovery code with eight new ones in one write (old codes stop working, the authenticator and its secret stay, the account's sessions stay) and shows the new codes once. The authorizing code is spent. A wrong code answers 401; 10 attempts per account per 15 minutes (429).");
+        Description("Same-origin form post with code (the authenticator's current code or an unused recovery code) from a live session opened in the last 15 minutes; an older session is asked to sign in again before its code is read. The code reauthenticates the change, and a sign-out that lands before it commits refuses it. Success replaces every recovery code with eight new ones in one write (old codes stop working, the authenticator and its secret stay, the account's sessions stay) and shows the new codes once. The authorizing code is spent. A wrong code answers 401; 10 attempts per account per 15 minutes (429).");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
@@ -339,6 +339,12 @@ public sealed class RecoveryRegenerateEndpoint(Sessions sessions, TotpCredential
         if (await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is not { } live)
         {
             return SecurityFlow.SignIn(this.HttpContext);
+        }
+
+        if (!SecurityFlow.Recent(this.HttpContext, live.Session))
+        {
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Reauthenticate, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SecurityPath(SignInFlow.Tenant(this.HttpContext)))
+            { Account = live.User.Email }, StatusCodes.Status401Unauthorized);
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
