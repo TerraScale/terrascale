@@ -15,8 +15,7 @@ public sealed class PasskeyHostedEnrollTests(TerraBaseFixture fixture)
     [Test]
     public async Task Enrolling_a_passkey_from_the_security_page_lists_it()
     {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var oidc = await fixture.SharedAsync();
         var user = await oidc.CreateUserAsync("passkey-hosted@example.test");
         var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
         var session = await sessions.CreateAsync(user);

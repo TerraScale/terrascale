@@ -116,7 +116,7 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_linked_provider_emails_a_single_use_unlink_code()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var oidc = await fixture.SharedAsync();
         var email = this.faker.Internet.Email(provider: "example.test").ToLowerInvariant();
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
         var linked = await users.FromProviderAsync(OidcIssuer.InstanceId,

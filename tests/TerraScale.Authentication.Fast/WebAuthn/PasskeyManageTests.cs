@@ -13,8 +13,7 @@ public sealed class PasskeyManageTests(TerraBaseFixture fixture)
     [Test]
     public async Task Renaming_and_deleting_a_passkey_updates_the_list()
     {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var oidc = await fixture.SharedAsync();
         var (_, token) = await oidc.SignInUserAsync("passkey-manage@example.test");
         using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var (sealedChallenge, ceremony) = await OptionsAsync(oidc, token);
@@ -43,8 +42,7 @@ public sealed class PasskeyManageTests(TerraBaseFixture fixture)
     [Test]
     public async Task Deleting_a_passkey_without_a_step_up_proof_is_refused()
     {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var oidc = await fixture.SharedAsync();
         var (_, token) = await oidc.SignInUserAsync("passkey-noproof@example.test");
         using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var (sealedChallenge, ceremony) = await OptionsAsync(oidc, token);

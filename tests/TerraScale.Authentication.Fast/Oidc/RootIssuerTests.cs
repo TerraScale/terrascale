@@ -14,7 +14,7 @@ public sealed class RootIssuerTests(TerraBaseFixture fixture)
     [Test]
     public async Task Root_discovery_and_jwks_answer_404_while_the_platform_issuer_serves_both()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var oidc = await fixture.SharedAsync();
 
         using var discovery = await oidc.Client.GetAsync("/.well-known/openid-configuration");
         await Assert.That(discovery.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

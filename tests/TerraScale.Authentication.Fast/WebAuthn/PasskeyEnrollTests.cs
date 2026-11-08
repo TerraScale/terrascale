@@ -16,8 +16,7 @@ public sealed class PasskeyEnrollTests(TerraBaseFixture fixture)
     [Test]
     public async Task Enrolling_a_passkey_with_a_none_attestation_persists_the_credential()
     {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var oidc = await fixture.SharedAsync();
         var (_, token) = await oidc.SignInUserAsync("passkey-happy@example.test");
         using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var (sealedChallenge, ceremony) = await OptionsAsync(oidc, token);
@@ -40,8 +39,7 @@ public sealed class PasskeyEnrollTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_verify_without_a_proof_a_reused_challenge_or_a_stale_epoch_is_refused()
     {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var oidc = await fixture.SharedAsync();
         var (user, token) = await oidc.SignInUserAsync("passkey-stale@example.test");
         using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var (sealedChallenge, ceremony) = await OptionsAsync(oidc, token);
