@@ -69,10 +69,10 @@ POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore
 {"name":"restored"}
 ```
 
-Restore never overwrites: it creates a new database in the same project holding the backup's data, with `branchedFrom` set to the backed-up database and the same primary, replica regions and `allRegions` choice. `name` follows the database name rules; without it the first free of `<source>-restore`, `<source>-restore-2`, … is used. Answers `201`:
+Restore never overwrites: it creates a new database in the same project holding the backup's data, with `branchedFrom` set to the backed-up database and the same primary, replica regions and `allRegions` choice. `name` follows the database name rules; without it the first free of `<source>-restore`, `<source>-restore-2`, … is used. The copy runs in the background: the answer is `202` with the restore operation, and `GET …/restores/{operation}` reports `running`, then `completed` with `database` naming the new database, or `failed`:
 
 ```json
-{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"restored","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","homeRegion":"gru-1","replicaRegions":[],"placementVersion":0,"allRegions":false}
+{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA7","operationId":"01ARZ3NDEKTSV4RRFFQ69G5FA7","status":"running","kind":"backup","database":"restored","errorCode":null,"errorMessage":null,"createdAt":"2026-10-07T12:00:00Z","finishedAt":null}
 ```
 
 A request sent to the wrong region answers `421` and names the snapshot region; an unknown snapshot region answers `503 backup_region_unknown`, and a snapshot outside current placement `409 backup_region_not_placed`. Platform organization sources answer `409 recovery_erasure_fenced`; use the separately reviewed operator recovery procedure for platform recovery.
@@ -117,9 +117,23 @@ POST /v1/projects/{project}/databases/{database}/point-in-time/restore
 {"pointInTime":"2026-10-07T12:00:13Z","name":"restored","destination":"customer","ttlSeconds":3600}
 ```
 
-Restores every transaction committed before `pointInTime` (to the millisecond) and none whose commit was recorded at or after it, whole transactions only, into a new database in the same project; the source database itself is unchanged. `name` is optional as for backup restore; `ttlSeconds` is optional. Answers `201` with the new database, as backup restore does.
+Restores every transaction committed before `pointInTime` (to the millisecond) and none whose commit was recorded at or after it, whole transactions only, into a new database in the same project; the source database itself is unchanged. `name` is optional as for backup restore; `ttlSeconds` is optional. The replay and copy run in the background: the answer is `202` with the restore operation, as backup restore does.
 
 A taken name answers `409 name_taken` and a full database allowance `409 database_limit`, before the backup is read. `400` only when `pointInTime` is after now or before the plan's retention window; the error names the earliest and latest available restore timestamps. A time inside that range but outside the proven restore window answers `409 backup_history_incomplete`, retryable once the backup holds it. When the backup cannot prove the history (`409 backup_history_incomplete` or `restore_point_unproven`) or an object fails its integrity check (`409 backup_unreadable`), nothing is created. Restores execute in the primary region; requests sent elsewhere answer `421`.
+
+## Check restore status
+
+```
+GET /v1/projects/{project}/databases/{database}/restores/{operation}
+```
+
+Reads a background restore operation with the `databases:read` scope. `status` is `running` while the copy runs, then `completed`, with `database` naming the restored database, or `failed` with `errorCode` and `errorMessage` (for example `interrupted`, when the process stopped while the restore ran). Unknown ids, and ids of another project's or database's operations, answer `404`.
+
+```json
+{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA7","operationId":"01ARZ3NDEKTSV4RRFFQ69G5FA7","status":"completed","kind":"backup","database":"restored","errorCode":null,"errorMessage":null,"createdAt":"2026-10-07T12:00:00Z","finishedAt":"2026-10-07T12:00:05Z"}
+```
+
+The SDKs poll this route for you and return the restored database once the operation completes.
 
 ## Rewind a database in place
 
