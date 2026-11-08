@@ -33,7 +33,7 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, PlatformA
             WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created);
     }
 
-    private static AuthenticatorAttestationRawResponse? Map(PasskeyAttestationRequest? response)
+    internal static AuthenticatorAttestationRawResponse? Map(PasskeyAttestationRequest? response)
     {
         if (response?.Response is not { } inner
             || response.RawId is not { Length: > 0 }
