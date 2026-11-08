@@ -52,6 +52,86 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
             Context(user.User.InstanceId)));
     }
 
+    public async Task<PasskeyCredentialEntry?> RenameAsync(UserRecord caller, string credentialId, string name, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentException.ThrowIfNullOrWhiteSpace(credentialId);
+        if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user)
+        {
+            return null;
+        }
+
+        if (await this.ReadAsync(user.User.InstanceId, user.User.Id, cancellationToken).ConfigureAwait(false) is not { } current
+            || current.Record.Entries.FirstOrDefault(entry => entry.CredentialId == credentialId) is not { } entry)
+        {
+            throw NotFound();
+        }
+
+        var renamed = entry with { Name = name };
+        var record = current.Record with
+        {
+            AuthEpoch = user.User.AuthEpoch,
+            AuthStamp = user.User.AuthStamp,
+            Entries = [.. current.Record.Entries.Select(existing => existing.CredentialId == credentialId ? renamed : existing)],
+        };
+        await this.WriteAsync(user, current, record, [], cancellationToken).ConfigureAwait(false);
+        return renamed;
+    }
+
+    public async Task<PasskeyCredentialEntry?> DeleteAsync(UserRecord caller, string credentialId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentException.ThrowIfNullOrWhiteSpace(credentialId);
+        if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user)
+        {
+            return null;
+        }
+
+        if (await this.ReadAsync(user.User.InstanceId, user.User.Id, cancellationToken).ConfigureAwait(false) is not { } current
+            || current.Record.Entries.FirstOrDefault(entry => entry.CredentialId == credentialId) is not { } entry)
+        {
+            throw NotFound();
+        }
+
+        var claim = await store.FindUniqueAsync(user.User.InstanceId, CredentialClaimKind, credentialId, cancellationToken).ConfigureAwait(false);
+        var record = current.Record with
+        {
+            AuthEpoch = user.User.AuthEpoch,
+            AuthStamp = user.User.AuthStamp,
+            Entries = [.. current.Record.Entries.Where(existing => existing.CredentialId != credentialId)],
+        };
+        var release = claim is { } held
+            ? new[] { AuthStore.Release(user.User.InstanceId, CredentialClaimKind, credentialId, held.Version) }
+            : Array.Empty<StoreOperation>();
+        await this.WriteAsync(user, current, record, release, cancellationToken).ConfigureAwait(false);
+        return entry;
+    }
+
+    private async Task<IReadOnlyList<PasskeyCredentialEntry>> WriteAsync((UserRecord User, string Version) user, (PasskeyCredentialRecord Record, string Version) current,
+        PasskeyCredentialRecord record, IReadOnlyList<StoreOperation> extra, CancellationToken cancellationToken)
+    {
+        var epoch = new JsonObject
+        {
+            ["and"] = new JsonArray(
+                new JsonObject { ["eq"] = new JsonArray("/instanceId", user.User.InstanceId) },
+                new JsonObject { ["eq"] = new JsonArray("/id", user.User.Id) },
+                new JsonObject { ["eq"] = new JsonArray("/authEpoch", user.User.AuthEpoch) }),
+        };
+        using var filter = JsonDocument.Parse(epoch.ToJsonString());
+        var operations = new List<StoreOperation>
+        {
+            AuthStore.Require(AuthStore.UserTable, user.User.InstanceId, user.User.Id, filter.RootElement),
+            AuthStore.Replace(AuthStore.PasskeyTable, user.User.InstanceId, user.User.Id,
+                JsonSerializer.SerializeToElement(record, WebAuthnJson.Default.PasskeyCredentialRecord), current.Version),
+        };
+        operations.AddRange(extra);
+        return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null
+            ? record.Entries
+            : throw new ApiException(StatusCodes.Status409Conflict, "version_conflict", "The passkey list changed; read it again and retry.");
+    }
+
+    private static ApiException NotFound() => new(StatusCodes.Status404NotFound, "passkey_not_found", "No passkey with this id is enrolled for the account.");
+
     public async Task<IReadOnlyList<PasskeyCredentialEntry>> ListAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
@@ -352,6 +432,9 @@ internal sealed record PasskeySignInChallenge(string Id, string UserId, long Aut
 [JsonSerializable(typeof(PasskeyVerifyRequest))]
 [JsonSerializable(typeof(PasskeyEnrolledBody))]
 [JsonSerializable(typeof(PasskeySignInRequest))]
+[JsonSerializable(typeof(PasskeyItemBody))]
+[JsonSerializable(typeof(PasskeyListBody))]
+[JsonSerializable(typeof(PasskeyRenameRequest))]
 [JsonSerializable(typeof(ErrorBody))]
 internal sealed partial class WebAuthnJson : JsonSerializerContext;
 
@@ -379,3 +462,9 @@ public sealed record PasskeyAssertionInnerRequest(
     [property: JsonPropertyName("userHandle")] string? UserHandle = null);
 
 public sealed record PasskeyEnrolledBody(string Id, string? Name, string Aaguid, DateTimeOffset CreatedAt);
+
+public sealed record PasskeyItemBody(string Id, string? Name, string Aaguid, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt);
+
+public sealed record PasskeyListBody(IReadOnlyList<PasskeyItemBody> Passkeys);
+
+public sealed record PasskeyRenameRequest(string? Name);

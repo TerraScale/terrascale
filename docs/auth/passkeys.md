@@ -7,8 +7,9 @@ platform API, and a sign-in method on the hosted sign-in page whose user
 verification satisfies the second-factor requirement. TOTP and recovery-code
 MFA are described in [mfa.md](mfa.md) and [mfa-sign-in.md](mfa-sign-in.md).
 
-Listing, renaming and deleting enrolled passkeys is not available yet; the
-security page currently offers enrollment only.
+Members list, rename and delete their enrolled passkeys through the platform
+API and the hosted security page; deletion always requires fresh
+reauthentication.
 
 ## Relying party and origins
 
@@ -29,11 +30,25 @@ credentials) are preferred.
 | --- | --- |
 | `POST /v1/terrascale/account/passkeys/options` | Start enrollment: returns `PublicKeyCredentialCreationOptions` and a sealed challenge. Existing credential ids are excluded. |
 | `POST /v1/terrascale/account/passkeys/verify` | Finish enrollment: sends the browser's registration answer, the sealed challenge and an optional name (1–100 characters). Stores the passkey and returns 201 with the credential id, AAGUID and creation time. |
+| `GET /v1/terrascale/account/passkeys` | List the account's passkeys: id, name, AAGUID, creation time and last use. Public keys are never returned. |
+| `PATCH /v1/terrascale/account/passkeys/{id}` | Rename one passkey (1–64 characters). |
+| `DELETE /v1/terrascale/account/passkeys/{id}` | Delete one passkey; sessions and tokens stay. |
 
 A refused ceremony, a reused or stale challenge, an authentication-state change
 since the challenge was issued, or a credential id already enrolled answers
 403 `passkey_denied`. Exhausting the attempt budget answers 429 with
-`Retry-After`.
+`Retry-After`. Rename and delete are conditional on the account's
+authentication state and the stored passkey list: a concurrent change answers
+409 `version_conflict`, an unknown credential id 404 `passkey_not_found`, a
+stale account state 403 `passkey_denied`.
+
+Deletion requires a fresh approved `delete_passkey`/`ts-auth` step-up proof in
+`X-TerraScale-Step-Up-Proof` (see [step-up-proof.md](step-up-proof.md));
+exactly like account deletion, a bearer token alone never authorizes it, and
+the 404 and last-factor checks run before the proof is consumed. Deleting the
+last passkey of an account without an authenticator app that belongs to an
+organization requiring two-factor authentication answers 409 `last_factor`:
+add another passkey or an authenticator app first.
 
 Enrolling a passkey is a sensitive credential change: the platform verify
 endpoint additionally requires a fresh, approved, single-use `add_passkey`
@@ -48,12 +63,18 @@ proof.
 | --- | --- |
 | `POST /ui/{slug}/security/passkeys/options` | Same creation options and sealed challenge as the API endpoint, for the browser's `navigator.credentials.create` call. |
 | `POST /ui/{slug}/security/passkeys/verify` | Same verification and storage as the API endpoint. |
+| `POST /ui/{slug}/security/passkeys/rename` | Same-origin form post with the passkey id and a new name (1–64 characters), exactly like the API rename. |
+| `POST /ui/{slug}/security/passkeys/delete` | Same-origin form post with the passkey id and a code (the authenticator's current code or an unused recovery code) that reauthenticates the removal, as turning off two-factor authentication does. Records `member.passkey_removed` in the account's organizations' audit logs. |
 
-Both require a live session cookie, a same-origin request and a sign-in within
-the last 10 minutes; a missing session, a cross-origin post or an older session
-answers 403 `passkey_denied` and the account signs in again before adding a
-passkey. A first enrollment right after sign-in (forced MFA) is always within
-the window.
+All require a live session cookie and a same-origin request; anything else
+answers 403 `passkey_denied`. Enrollment additionally needs a sign-in within
+the last 10 minutes, as for adding a passkey through the API: an older session
+answers 403 `passkey_denied` and the account signs in again first, and a first
+enrollment right after sign-in (forced MFA) is always within the window. The
+same 409 `last_factor` rule as the API guards the hosted removal, checked
+before the authorizing code is spent. An account whose only factor is a
+passkey has no hosted code to present; its member removes a passkey through
+the API's step-up proof instead.
 
 ### Hosted sign-in (anonymous)
 
