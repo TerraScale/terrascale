@@ -408,10 +408,17 @@ internal sealed partial class EngineManagementService(
         // The fan-out must use the placement the commit acted on: a placement change committing in between would
         // otherwise leave the regions it added un-notified until their own sweeps.
         ManagedDatabase? committed = null;
+        Conflict? moveRefusal = null;
         bool Unregistered(ManagedDatabase record)
         {
             committed = record;
             return true;
+        }
+
+        bool MovedDuringCommit(Conflict error)
+        {
+            moveRefusal = error;
+            return false;
         }
 
         return await DeleteRecordedAsync(
@@ -420,11 +427,12 @@ internal sealed partial class EngineManagementService(
                 await UnregisterDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, token).ConfigureAwait(false) switch
                 {
                     DeletableDatabase unregistered => Unregistered(unregistered.Record),
+                    Conflict error => MovedDuringCommit(error),
                     _ => false,
                 },
             cancellationToken).ConfigureAwait(false) switch
         {
-            bool deleted => !deleted ? ManagementErrors.NotFound
+            bool deleted => moveRefusal is { } refused ? refused : !deleted ? ManagementErrors.NotFound
                 : await ForgetReplicaRegionsAsync(deletable.Storage, committed ?? deletable.Record, CancellationToken.None).ConfigureAwait(false),
             Unavailable refused => refused,
         };
@@ -539,7 +547,19 @@ internal sealed partial class EngineManagementService(
             return ManagementErrors.NotFound;
         }
 
-        return CheckDeletionPlacement(database, region) is Conflict refused ? refused : new DeletableDatabase(tenant with { DatabaseId = database.Id }, database);
+        if (CheckDeletionPlacement(database, region) is Conflict refused)
+        {
+            return refused;
+        }
+
+        // A home move and a delete cannot both win: while this region holds the move's marker it still owns the
+        // record, so the delete is refused; once the move settles, the delete follows the database's new home.
+        if (await HomeMovePendingAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false))
+        {
+            return MoveInProgress;
+        }
+
+        return new DeletableDatabase(tenant with { DatabaseId = database.Id }, database);
     }
 
     // Re-reads the database inside the commit transaction, so the record it returns — and its placement — is the one
