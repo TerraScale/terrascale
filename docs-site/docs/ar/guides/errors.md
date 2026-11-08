@@ -23,7 +23,7 @@ Decide recovery from the typed status and code, and from whether an operation ma
 
 ## Retry behavior
 
-SQL SDK retry contracts are being updated. Check a qualified SDK's reference before relying on automatic retries; do not assume a failed response permits replaying a write.
+A `serialization_conflict` is resent at most twice; nothing else is.
 
 For a repeatable read, wait as directed by the server, bound attempts and honor cancellation. Validation, authorization and conflict failures need a fix before another attempt. Do not hide those failures in an infinite retry loop.
 
