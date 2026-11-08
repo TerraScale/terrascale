@@ -64,15 +64,36 @@ namespace TerraScale.Dashboard.Features.Data
         // Null when the receipt expired, was replaced by a newer run or belongs to another user, project or database.
         public async Task<SqlWorkspaceRecord?> ReadAsync(AccountContext context, string databaseId, string receiptId, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(SqlWorkspace.Table, Key(context, databaseId), cancellationToken) is not { } row)
+            var record = await ReadWorkspaceAsync(context, databaseId, cancellationToken);
+            if (record is null)
             {
                 return null;
             }
 
-            var record = AccountService.Read<SqlWorkspaceRecord>(row);
+            var receipt = record.Receipt;
+            return receipt is { } run && run.Id == receiptId && time.GetUtcNow() - run.CreatedAt < Lifetime ? record : null;
+        }
+
+        public async Task<SqlWorkspaceRecord?> ReadWorkspaceAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
+        {
+            StateRecord? row;
+            try
+            {
+                row = await state.GetAsync(SqlWorkspace.Table, Key(context, databaseId), cancellationToken);
+            }
+            catch (Exception error) when (SqlWorkspace.Unavailable(error) && !cancellationToken.IsCancellationRequested)
+            {
+                throw new SqlWorkspaceUnavailable(error);
+            }
+
+            if (row is not { } stored)
+            {
+                return null;
+            }
+
+            var record = AccountService.Read<SqlWorkspaceRecord>(stored);
             var scope = DatabaseService.Scope(context);
-            return record.Receipt is { } receipt && receipt.Id == receiptId && time.GetUtcNow() - receipt.CreatedAt < Lifetime &&
-                record.OrganizationId == scope.OrganizationId && record.ProjectId == scope.ProjectId && record.DatabaseId == databaseId && record.UserId == context.UserId
+            return record.OrganizationId == scope.OrganizationId && record.ProjectId == scope.ProjectId && record.DatabaseId == databaseId && record.UserId == context.UserId
                 ? record : null;
         }
 

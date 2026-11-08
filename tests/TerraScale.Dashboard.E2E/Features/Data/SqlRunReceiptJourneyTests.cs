@@ -84,6 +84,41 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(Volatile.Read(ref executions)).IsEqualTo(1);
         }
 
+        [Test]
+        public async Task PlainGetShowsTheStoredRecentQueriesAndDraft()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
+            {
+                if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                if (await DatabaseSdkScenario.EmptySqlCatalogAsync(http) is { } catalog)
+                {
+                    return catalog;
+                }
+
+                return Results.Json(new { results = new[] { new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), rows_affected = 1, last_insert_rowid = 7 } } });
+            });
+            using var client = scenario.CreateClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+            var id = await HttpJourney.CreateDatabaseAsync(client, "sql-revisit");
+            var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + id + "/sql");
+            const string sql = "INSERT INTO items (id) VALUES (1)";
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/data/sql")
+            { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["sql"] = sql }) };
+            request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+            request.Headers.Accept.ParseAdd("text/html");
+            using var posted = await client.SendAsync(request);
+            await Assert.That(posted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            using var revisit = await client.GetAsync("/databases/" + id + "/sql");
+            var html = WebUtility.HtmlDecode(await revisit.Content.ReadAsStringAsync());
+            await Assert.That(revisit.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(html).Contains(sql).Because("The stored draft fills the editor on a plain GET.");
+            await Assert.That(html).Contains("name=\"history\"").Because("The stored recent queries render.");
+        }
+
         private sealed class RetryAfterResult : IResult
         {
             public Task ExecuteAsync(HttpContext http)
