@@ -30,6 +30,7 @@ export const ptBr: Messages = {
 
   footer: {
     rightsReserved: 'Todos os direitos reservados.',
+    tagline: 'Banco de dados multirregião',
     columns: {
       product: {
         title: 'Produto',
@@ -37,7 +38,6 @@ export const ptBr: Messages = {
           features: 'Recursos',
           pricing: 'Preços',
           changelog: 'Changelog',
-          documentation: 'Documentação',
         },
       },
       company: {
@@ -54,9 +54,14 @@ export const ptBr: Messages = {
       resources: {
         title: 'Recursos',
         links: {
-          docs: 'Docs',
+          documentation: 'Documentação',
           apiReference: 'Referência da API',
           status: 'Status',
+        },
+      },
+      support: {
+        title: 'Suporte',
+        links: {
           support: 'Suporte',
           supportEmail: 'Contato: support@terrascale.tech',
         },
