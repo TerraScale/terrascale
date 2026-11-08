@@ -136,13 +136,14 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await Assert.That(await mcp.TextAsync()).Contains(name).Because("MCP observes the database created through native UI");
                     await GotoAsync("/profile?tab=access-tokens");
                     await Assert.That(await page.Locator("#access-token-secret").CountAsync()).IsEqualTo(0);
-                    await Assert.That(await page.Locator("#profile-access-tokens").GetByRole(AriaRole.Button, new() { Name = "Revoke", Exact = true }).CountAsync()).IsEqualTo(0).Because("revocation lives only on the danger tab");
-                    await GotoAsync("/profile?tab=danger");
                     await Assert.That(await page.Locator(".ts-profile-tabs .ts-tab").Last.InnerTextAsync()).Contains("Danger").Because("the danger zone is the last profile tab");
-                    var tokenRow = page.Locator("#profile-danger tbody tr").Filter(new() { HasText = name });
+                    var tokenRow = page.Locator("#profile-access-tokens tbody tr").Filter(new() { HasText = name });
                     await tokenRow.GetByRole(AriaRole.Button, new() { Name = "Revoke", Exact = true }).ClickAsync();
                     await page.Locator("dialog[open]").GetByRole(AriaRole.Button, new() { Name = "Revoke token", Exact = true }).ClickAsync();
-                    await page.WaitForURLAsync(new Regex(@"/profile\?tab=danger"));
+                    await page.WaitForURLAsync(new Regex(@"\/profile\?tab=access-tokens&status=token-revoked"));
+                    await Assert.That(await page.Locator("#profile-access-tokens tbody tr").Filter(new() { HasText = name }).CountAsync()).IsEqualTo(0).Because("revoking removes the token from the access tokens tab");
+                    await GotoAsync("/profile?tab=danger");
+                    await Assert.That(await page.Locator("#profile-danger").CountAsync()).IsEqualTo(0).Because("the danger tab no longer lists access tokens");
                     var revoked = await McpAsync(new { jsonrpc = "2.0", id = 2, method = "tools/list", @params = new { } });
                     await Assert.That(revoked.Status).IsEqualTo(401);
 
