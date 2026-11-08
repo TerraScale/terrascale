@@ -116,9 +116,29 @@ internal sealed class EngineManagedBackupService(
     }
 
     public async ValueTask<GetBackupPolicyResult> GetPolicyAsync(string databaseId, CancellationToken cancellationToken) =>
-        await catalog.ReadAsync<GetBackupPolicyResult>(
-            async transaction => await GetPolicyAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false), static error => error, cancellationToken)
+        await catalog.ReadAsync<GetBackupPolicyResult>(async transaction =>
+        {
+            var policy = await GetPolicyAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false);
+            var schedule = await GetAsync(transaction, BackupCatalog.Schedule(databaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, cancellationToken).ConfigureAwait(false);
+            return new BackupPolicyStatus(
+                policy.FullBackupCron, policy.RetentionDays, policy.Disabled, policy.UpdatedAt,
+                schedule?.LastSucceededAt,
+                schedule?.LastFailedAt,
+                schedule is { LastErrorCode: { } code, LastErrorMessage: { } message } ? new BackupPolicyError(code, message) : null,
+                NextDueAt(policy, time.GetUtcNow()));
+        }, static error => error, cancellationToken)
             .ConfigureAwait(false);
+
+    private static DateTimeOffset? NextDueAt(BackupPolicy policy, DateTimeOffset now)
+    {
+        if (policy is not { Disabled: false, FullBackupCron: { } expression }
+            || !CronExpression.TryParse(expression, CronFormat.Standard, out var cron))
+        {
+            return null;
+        }
+
+        return cron.GetNextOccurrence(now, TimeZoneInfo.Utc);
+    }
 
     public async ValueTask<SetBackupPolicyResult> SetPolicyAsync(
         string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, bool disabled, CancellationToken cancellationToken)
@@ -662,7 +682,7 @@ internal sealed class EngineManagedBackupService(
         }
         catch
         {
-            await FailAsync(record).ConfigureAwait(false);
+            await FailAsync(record, "snapshot_failed", "Taking the snapshot failed").ConfigureAwait(false);
             throw;
         }
 
@@ -685,7 +705,7 @@ internal sealed class EngineManagedBackupService(
             var snapshot = record.Storage(source.Plan);
             if (!await engine.CopyDatabaseAsync(source, snapshot, cancellationToken).ConfigureAwait(false))
             {
-                await FailAsync(record).ConfigureAwait(false);
+                await FailAsync(record, "source_missing", "The database's files could not be read").ConfigureAwait(false);
                 return new NotFound();
             }
 
@@ -696,7 +716,7 @@ internal sealed class EngineManagedBackupService(
         }
         catch
         {
-            await FailAsync(record).ConfigureAwait(false);
+            await FailAsync(record, "snapshot_failed", "Taking the snapshot failed").ConfigureAwait(false);
             throw;
         }
 
@@ -743,7 +763,7 @@ internal sealed class EngineManagedBackupService(
             .ConfigureAwait(false);
         if (done.Trigger == Scheduled)
         {
-            await PutAsync(transaction, BackupCatalog.Schedule(done.DatabaseId), LastSchedule, new BackupSchedule(now, null), TerraBaseJsonContext.Default.BackupSchedule, cancellationToken)
+            await PutAsync(transaction, BackupCatalog.Schedule(done.DatabaseId), LastSchedule, new BackupSchedule(now, null, null, null), TerraBaseJsonContext.Default.BackupSchedule, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -752,7 +772,7 @@ internal sealed class EngineManagedBackupService(
 
     // A failed attempt: the record expires (its sweep entry is already in place), a scheduled attempt on a database that
     // still exists records the failure, and the sweep is tried right away. Not cancellable: it settles what was started.
-    private async ValueTask FailAsync(BackupRecord record)
+    private async ValueTask FailAsync(BackupRecord record, string errorCode, string errorMessage)
     {
         try
         {
@@ -769,7 +789,7 @@ internal sealed class EngineManagedBackupService(
                 {
                     var schedule = await GetAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, CancellationToken.None)
                         .ConfigureAwait(false);
-                    var failure = (schedule ?? new BackupSchedule(null, null)) with { LastFailedAt = time.GetUtcNow() };
+                    var failure = (schedule ?? new BackupSchedule(null, null, null, null)) with { LastFailedAt = time.GetUtcNow(), LastErrorCode = errorCode, LastErrorMessage = errorMessage };
                     await PutAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, failure, TerraBaseJsonContext.Default.BackupSchedule, CancellationToken.None)
                         .ConfigureAwait(false);
                 }
@@ -991,7 +1011,7 @@ internal sealed class EngineManagedBackupService(
                             .ConfigureAwait(false);
                         if (!(schedule?.LastSucceededAt >= record.StartedAt) && !(schedule?.LastFailedAt >= record.StartedAt))
                         {
-                            var failure = (schedule ?? new BackupSchedule(null, null)) with { LastFailedAt = record.StartedAt };
+                            var failure = (schedule ?? new BackupSchedule(null, null, null, null)) with { LastFailedAt = record.StartedAt, LastErrorCode = "abandoned", LastErrorMessage = "The scheduled attempt did not finish; its process stopped mid-way" };
                             await PutAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, failure, TerraBaseJsonContext.Default.BackupSchedule, CancellationToken.None)
                                 .ConfigureAwait(false);
                         }

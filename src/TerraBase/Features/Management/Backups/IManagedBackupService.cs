@@ -20,6 +20,30 @@ public sealed record DatabaseBackup(string Id, string DatabaseId, string Status,
 /// <param name="UpdatedAt">When the policy was last saved; <see langword="null"/> for the default policy.</param>
 public sealed record BackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt);
 
+/// <summary>Why the last scheduled backup attempt failed.</summary>
+/// <param name="Code">A stable machine-readable code.</param>
+/// <param name="Message">A safe human-readable description; never internal paths or secrets.</param>
+public sealed record BackupPolicyError(string Code, string Message);
+
+/// <summary>The body of <c>GET …/backup-policy</c>: the policy and the health of its scheduled backups.</summary>
+/// <param name="FullBackupCron">Standard 5-field cron expression (UTC), or <see langword="null"/> for no scheduled backups.</param>
+/// <param name="RetentionDays">Backups older than this many days are deleted (1 to 35).</param>
+/// <param name="Disabled">Whether scheduled backups are paused.</param>
+/// <param name="UpdatedAt">When the policy was last saved; <see langword="null"/> for the default policy.</param>
+/// <param name="LastSucceededAt">When the newest scheduled backup completed; <see langword="null"/> if none ever did.</param>
+/// <param name="LastFailedAt">When the newest scheduled attempt failed; <see langword="null"/> if none ever failed.</param>
+/// <param name="LastError">The error of the attempt named by <paramref name="LastFailedAt"/>, when its cause is known.</param>
+/// <param name="NextDueAt">The next cron occurrence in UTC; <see langword="null"/> with no cron or while disabled.</param>
+public sealed record BackupPolicyStatus(
+    string? FullBackupCron,
+    int RetentionDays,
+    bool Disabled,
+    DateTimeOffset? UpdatedAt,
+    DateTimeOffset? LastSucceededAt,
+    DateTimeOffset? LastFailedAt,
+    BackupPolicyError? LastError,
+    DateTimeOffset? NextDueAt);
+
 /// <summary>The body of <c>PUT …/backup-policy</c>.</summary>
 /// <param name="FullBackupCron">Standard 5-field cron expression (UTC); null or empty for no scheduled backups.</param>
 /// <param name="RetentionDays">1 to 35.</param>
@@ -42,8 +66,8 @@ public readonly union ListBackupsResult(ManagementPage<DatabaseBackup>, Unavaila
 /// <summary>A completed backup, or that its database is gone or out of the user's reach.</summary>
 public readonly union CreateBackupResult(DatabaseBackup, NotFound, Unavailable);
 
-/// <summary>A database's backup policy.</summary>
-public readonly union GetBackupPolicyResult(BackupPolicy, Unavailable);
+/// <summary>A database's backup policy with its scheduled-backup health.</summary>
+public readonly union GetBackupPolicyResult(BackupPolicyStatus, Unavailable);
 
 /// <summary>The saved policy, or why it was not saved.</summary>
 public readonly union SetBackupPolicyResult(BackupPolicy, NotFound, Forbidden, Unavailable);

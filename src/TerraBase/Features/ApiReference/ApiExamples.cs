@@ -21,6 +21,8 @@ internal static class ApiExamples
     private const string FileCapability = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAD","url":"https://files.example/signed-capability","expiresAt":"2026-10-24T12:05:00Z","headers":{"Content-Type":"text/plain","Content-Length":"5","x-amz-checksum-sha256":"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="}}""";
     private const string Backup = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA4","databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","status":"ready","trigger":"manual","sizeBytes":40960,"createdAt":"2026-10-07T12:00:00Z"}""";
     private const string Policy = """{"fullBackupCron":"0 2 * * *","retentionDays":7,"disabled":false,"updatedAt":null}""";
+    private const string PolicyStatus =
+        """{"fullBackupCron":"0 2 * * *","retentionDays":7,"disabled":false,"updatedAt":null,"lastSucceededAt":"2026-10-07T02:00:04Z","lastFailedAt":null,"lastError":null,"nextDueAt":"2026-10-08T02:00:00Z"}""";
     private const string Period = """{"from":"2026-10-07T00:00:00Z","to":"2026-10-08T00:00:00Z","granularity":"day","reads":0,"writes":0}""";
     private const string Series = """[{"start":"2026-10-07T00:00:00Z","reads":0,"writes":0}]""";
     private const string Function = """{"name":"hello","source":"function handler(event) { return event.body; }","cron":"*/5 * * * *","createdAt":"2026-10-07T12:00:00Z","updatedAt":"2026-10-07T12:00:00Z"}""";
@@ -118,7 +120,7 @@ internal static class ApiExamples
         "listBackups" => Page(Backup),
         "restoreBackup" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA7","operationId":"01ARZ3NDEKTSV4RRFFQ69G5FA7","status":"running","kind":"backup","database":"restored","errorCode":null,"errorMessage":null,"createdAt":"2026-10-07T12:00:00Z","finishedAt":null}""",
         "getRestoreOperation" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA7","operationId":"01ARZ3NDEKTSV4RRFFQ69G5FA7","status":"completed","kind":"backup","database":"restored","errorCode":null,"errorMessage":null,"createdAt":"2026-10-07T12:00:00Z","finishedAt":"2026-10-07T12:00:05Z"}""",
-        "getBackupPolicy" => Policy,
+        "getBackupPolicy" => PolicyStatus,
         "getBackupDestination" or "setBackupDestination" => """{"endpoint":"https://s3.example.com","region":"us-east-1","bucket":"customer-backups","mode":"both","updatedAt":"2026-10-07T12:00:00Z"}""",
         "getRestoreWindow" => """{"earliest":"2026-10-07T12:00:00Z","latest":"2026-10-07T12:00:16Z"}""",
         "planPointInTime" => """{"window":{"earliest":"2026-10-07T12:00:00Z","latest":"2026-10-07T12:00:16Z"},"pointInTime":"2026-10-07T12:00:13Z","snapshotAt":"2026-10-07T12:00:10Z","latestSegmentAt":null,"segmentCount":0}""",

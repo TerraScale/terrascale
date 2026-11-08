@@ -46,6 +46,8 @@ namespace TerraBase.Hosting;
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredMaxDepth + 8)]
 [JsonSerializable(typeof(ApiKey))]
 [JsonSerializable(typeof(BackupPolicy))]
+[JsonSerializable(typeof(BackupPolicyStatus))]
+[JsonSerializable(typeof(BackupPolicyError))]
 [JsonSerializable(typeof(BackupStatus))]
 [JsonSerializable(typeof(BackupStatusRecord))]
 [JsonSerializable(typeof(BackupPolicyRequest))]
