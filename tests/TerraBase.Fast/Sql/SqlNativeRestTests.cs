@@ -64,7 +64,8 @@ public sealed class SqlNativeRestTests
         var email = Faker.Internet.Email();
         await db.OkAsync(Stmt("INSERT INTO players VALUES (1, 1, ?, 3)", email));
 
-        var primaryKey = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (1, 1, ?, 0)", Faker.Internet.Email()));
+        var (primaryKeyStatus, primaryKeyBody) = await db.PostAsync(db.Writer, Stmt("INSERT INTO players VALUES (1, 1, ?, 0)", Faker.Internet.Email()));
+        var primaryKey = primaryKeyBody.GetProperty("error");
         var unique = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, 1, ?, 0)", email));
         var notNull = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, NULL, ?, 0)", Faker.Internet.Email()));
         var check = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, 1, ?, -1)", Faker.Internet.Email()));
@@ -72,7 +73,10 @@ public sealed class SqlNativeRestTests
         var enforced = await db.OkAsync("PRAGMA foreign_keys");
         await db.OkAsync("DELETE FROM teams WHERE id = 1");
 
-        await Assert.That(primaryKey.Code).IsEqualTo("primary_key_violation");
+        await Assert.That((primaryKeyStatus, primaryKey.GetProperty("code").GetString(), primaryKey.GetProperty("sqlstate").GetString()))
+            .IsEqualTo((HttpStatusCode.BadRequest, "primary_key_violation", "23505"));
+        await Assert.That(primaryKey.EnumerateObject().Select(property => property.Name).ToArray())
+            .IsEquivalentTo(["code", "message", "statement", "sqlstate"]);
         await Assert.That(unique.Code).IsEqualTo("unique_violation");
         await Assert.That(notNull.Code).IsEqualTo("not_null_violation");
         await Assert.That(check.Code).IsEqualTo("check_violation");

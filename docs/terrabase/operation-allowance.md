@@ -79,8 +79,8 @@ that crosses into another UTC month or runs past 30 seconds answers `503`. Respo
 ## Behavior
 
 - A write statement is refused once the organization's write units this month reach the cap (the
-  allowance on hobby): HTTP `429 quota_exceeded` with `sqlite_code` `SQLITE_QUOTA`, Postgres wire
-  SQLSTATE `53100`, and the upgrade path. Nothing in the statement runs.
+  allowance on hobby): HTTP `429 quota_exceeded` with SQLSTATE `53100` on REST, the WebSocket and
+  the Postgres wire, and the upgrade path. Nothing in the statement runs.
 - A SQL read of tables is refused the same way once fair use is reached. Shape reads keep working.
 - The month resets at 00:00 UTC on the first day of the next calendar month.
 - A node reads the organization's month on its first check of the month, then on every usage flush

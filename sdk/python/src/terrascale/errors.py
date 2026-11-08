@@ -66,7 +66,6 @@ class APIError(TerraScaleError):
         region: str | None = None,
         request_id: str | None = None,
         statement: int | None = None,
-        sqlite_code: str | None = None,
         sqlstate: str | None = None,
     ):
         self.status = status
@@ -77,7 +76,6 @@ class APIError(TerraScaleError):
         self.region = region
         self.request_id: str | None = request_id if is_valid_id(request_id) else None
         self.statement = statement
-        self.sqlite_code = sqlite_code
         self.sqlstate = sqlstate
         text = f"{status} {code}"
         if message:
@@ -211,7 +209,7 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
     cls = _BY_CODE.get(code) or _BY_STATUS.get(status) or APIError
     if mutation and status >= 500:
         cls = CommitUncertainError
-    if statement is not None and raw_code and (isinstance(raw_state, str) or isinstance(err.get("sqlite_code"), str)):
+    if statement is not None and raw_code and isinstance(raw_state, str):
         cls = SqlError
     return cls(
         status,
@@ -222,7 +220,6 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
         region=err.get("region"),
         request_id=response_request_id(headers),
         statement=statement,
-        sqlite_code=err.get("sqlite_code") if isinstance(err.get("sqlite_code"), str) else None,
         sqlstate=sqlstate,
     )
 
