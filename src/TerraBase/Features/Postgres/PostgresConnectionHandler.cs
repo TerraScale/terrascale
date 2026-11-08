@@ -16,6 +16,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Regions;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
@@ -270,35 +271,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         output.Ready(session.Status);
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
-    private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, bool relayed, CancellationToken cancellationToken)
-    {
-        if (!services.GetRequiredService<TerraBase.Features.Catalog.ICatalogGate>().IsOpen)
-        {
-            return new PgError("57P03", "this machine's catalog is not verified; retry");
-        }
-
-        var slash = database.IndexOf('/', StringComparison.Ordinal);
-        if (TsAuthKeyExchange.IsKey(secret))
-        {
-            return await AuthorizeDashboardKeyAsync(secret, database, slash, client, relayed, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (await Keys.FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
-            || !key.Scopes.Contains(ApiKeyScopes.SqlRead)
-            || (slash < 0 ? key.ProjectId : database[..slash]) is not { } project
-            || !EntityIds.IsValid(project)
-            || (!EntityIds.IsValid(database[(slash + 1)..]) && !DatabaseName.TryParse(database[(slash + 1)..], out _)))
-        {
-            return Denied;
-        }
-
-        return await Tenants.FindDatabaseAsync(key.OrganizationId, project, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
-        {
-            TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite)),
-            Unavailable => new PgError("57P03", "the database is unavailable; retry"),
-            _ => Denied,
-        };
-    }
     private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, bool relayed, CancellationToken cancellationToken)
     {
         var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, cancellationToken).ConfigureAwait(false);
@@ -366,11 +338,58 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
+            // The catalog record reached this region without the database: a home-only database homed elsewhere is served
+            // by relaying the whole session to its home (docs/terrabase/cross-region.md), never by opening the record here.
+            TenantContext tenant when !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
             NotFound => await ElsewhereAsync(key.ProjectId, database[(slash + 1)..], relayed, cancellationToken).ConfigureAwait(false),
             _ => Denied,
         };
+    }
+
+    private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, bool relayed, CancellationToken cancellationToken)
+    {
+        if (!services.GetRequiredService<TerraBase.Features.Catalog.ICatalogGate>().IsOpen)
+        {
+            return new PgError("57P03", "this machine's catalog is not verified; retry");
+        }
+
+        var slash = database.IndexOf('/', StringComparison.Ordinal);
+        if (TsAuthKeyExchange.IsKey(secret))
+        {
+            return await AuthorizeDashboardKeyAsync(secret, database, slash, client, relayed, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (await Keys.FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
+            || !key.Scopes.Contains(ApiKeyScopes.SqlRead)
+            || (slash < 0 ? key.ProjectId : database[..slash]) is not { } project
+            || !EntityIds.IsValid(project)
+            || (!EntityIds.IsValid(database[(slash + 1)..]) && !DatabaseName.TryParse(database[(slash + 1)..], out _)))
+        {
+            return Denied;
+        }
+
+        return await Tenants.FindDatabaseAsync(key.OrganizationId, project, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
+        {
+            // As above: a record homed elsewhere serves its sessions from its home.
+            TenantContext tenant when !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
+            TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite)),
+            Unavailable => new PgError("57P03", "the database is unavailable; retry"),
+            _ => Denied,
+        };
+    }
+
+    /// <summary>Whether <paramref name="tenant"/>'s record places its database in another region only, so its session is relayed there.</summary>
+    private async ValueTask<HomeNode?> AwayAsync(TenantContext tenant, CancellationToken cancellationToken)
+    {
+        var region = services.GetRequiredService<Configuration.TerraBaseOptions>().Region;
+        return await services.GetRequiredService<IReplicaCatalog>().FindAsync(tenant, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
+            && !placement.Includes(region)
+            && await services.GetRequiredService<IHomeLocator>().LocateAsync(tenant.ProjectId!, tenant.DatabaseId, cancellationToken).ConfigureAwait(false) is { } home
+            && home.Region != region
+                ? home
+                : null;
     }
 
     private async ValueTask<Access> ElsewhereAsync(string project, string database, bool relayed, CancellationToken cancellationToken) =>

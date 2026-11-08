@@ -1,9 +1,11 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Features.Regions;
+using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -66,6 +68,42 @@ public sealed class HomeRegionForwardingTests
         await Assert.That(dropped.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         using var viaGru = gru.WithToken(token);
         await Assert.That(await NamesAsync(viaGru, databases)).IsEquivalentTo([database.Name]);
+    }
+
+    [Test]
+    public async Task Postgres_in_a_region_that_records_a_home_only_database_relays_the_whole_session_to_its_home()
+    {
+        using var issuer = new TestIssuer();
+        var mesh = new Mesh();
+        await using var gru = await StartAsync("gru", issuer, mesh);
+        await using var sjc = await StartAsync("sjc", issuer, mesh);
+        mesh.Peers = [new("gru", gru.Server.BaseAddress), new("sjc", sjc.Server.BaseAddress)];
+        var database = await gru.CreateManagedDatabaseAsync();
+        await gru.SetPlanAsync(gru.User, database.Organization, "hobby");
+        var token = issuer.Mint(gru.User, descriptor =>
+        {
+            descriptor.Claims["project_id"] = database.Project;
+            descriptor.Claims["scope"] = "databases:read sql:read sql:write";
+        });
+
+        // sjc keeps the home-only database's record without a placement here, as project enrollment leaves it.
+        var recorded = await sjc.Server.Services.GetRequiredService<IReplicaCatalog>().RecordAsync(
+            new ReplicaCatalogEntry(database.Organization, database.Project, database.Id, database.Name, "gru", [], 1), CancellationToken.None);
+        await Assert.That(recorded).IsTrue();
+
+        await using var postgres = PostgresSql.Source(sjc, DashboardKey(issuer, database.Project), database.Name);
+        await using var connection = await postgres.OpenConnectionAsync();
+        await PostgresSql.ExecuteAsync(connection, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
+        var note = Faker.Lorem.Sentence();
+        await Assert.That(await PostgresSql.ExecuteAsync(connection, "INSERT INTO notes VALUES (1, $1)", note)).IsEqualTo(1);
+        await Assert.That(await PostgresSql.ScalarAsync(connection, "SELECT body FROM notes")).IsEqualTo(note);
+
+        // The session ran at gru: the home serves the rows, not a local copy at sjc.
+        using var viaGru = gru.WithToken(token);
+        using var read = await viaGru.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"),
+            new { statements = new object[] { new { sql = "SELECT body FROM notes" } } });
+        await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await read.Content.ReadAsStringAsync());
+        await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("results")[0].GetProperty("rows")[0][0].GetString()).IsEqualTo(note);
     }
 
     private static async Task<List<string>> NamesAsync(HttpClient client, Uri databases)
