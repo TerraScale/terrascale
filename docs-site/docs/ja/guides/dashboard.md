@@ -18,7 +18,7 @@ For team setup, follow [organization roles, invitations and ownership](/ja/guide
 1. Sign in at [dash.terrascale.tech](https://dash.terrascale.tech/login), or [create an account](https://dash.terrascale.tech/register).
 2. Select the organization and project you want to use. The **Organization** page shows the **Current project** ID.
 3. Open **Databases** and create a database, or select an existing one.
-4. Open **API keys**, select **Create credential**, then **API key**. Name it, limit **Database access** to that database and choose the minimum permissions. Select **Create key**.
+4. Open **API keys** and select **Create key**. Name it, limit **Database access** to that database and choose the minimum permissions.
 5. Copy the key when it is shown and place it in your application's secret store.
 
 The application exchanges the key for an access token; see [authentication](/ja/guides/authentication).
