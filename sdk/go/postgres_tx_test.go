@@ -12,7 +12,7 @@ func TestPostgresTransactionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tx.Exec(ctx, PostgresQuery{Statement: "INSERT INTO items (id) VALUES ($1)", Parameters: []PostgresValue{PostgresText("01ARZ3NDEKTSV4RRFFQ69G5FAEV")}})
+	result, err := tx.Exec(ctx, PostgresQuery{Statement: "INSERT INTO items (id) VALUES (01ARZ3NDEKTSV4RRFFQ69G5FAEV)"})
 	if err != nil || result.CommandTag != "INSERT 0 1" || result.AffectedRows != 1 {
 		t.Fatalf("exec: %v %v", result, err)
 	}
@@ -27,7 +27,7 @@ func TestPostgresTransactionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rolled.Exec(ctx, PostgresQuery{Statement: "INSERT INTO items (id) VALUES ($1)", Parameters: []PostgresValue{PostgresText("01ARZ3NDEKTSV4RRFFQ69G5FAEV")}}); err != nil {
+	if _, err := rolled.Exec(ctx, PostgresQuery{Statement: "INSERT INTO items (id) VALUES (01ARZ3NDEKTSV4RRFFQ69G5FAEV)"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := rolled.Rollback(ctx); err != nil {
