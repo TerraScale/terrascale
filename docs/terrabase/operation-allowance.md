@@ -50,7 +50,7 @@ database, in the usage flush (every 10 s). No other region holds those records, 
 
 A month reads every node's own record plus its unflushed units. Units of databases deleted since stay in the month.
 
-`GET /v1/management/organizations/{organization}/projects/{project}/usage` returns `month`:
+`GET /v1/projects/{project}/usage` returns `month`:
 
 | Field | Meaning |
 |---|---|
