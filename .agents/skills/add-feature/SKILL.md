@@ -14,7 +14,7 @@ Each product owns its data and its API. Put the feature in the product that owns
 | Data or behavior | Owner | Code |
 | --- | --- | --- |
 | Users, sessions, MFA, SSO, OAuth clients, organizations, projects, memberships, API credentials | ts-auth | `src/TerraScale.Authentication*` |
-| Databases, documents, SQL, queries, transactions, backups, indexes, schema, usage metering | TerraBase | `src/TerraBase` |
+| Databases, SQL tables, queries, transactions, backups, indexes, schema, usage metering | TerraBase | `src/TerraBase` |
 | Platform UI/API/MCP, plans, subscriptions, billing, spending caps | Dashboard | `src/TerraScale.Dashboard` |
 | Placement, scaling, rollout | ts-orch | separate `ts-orchestrator` repo |
 | Customer libraries | SDKs | `sdk/{dotnet,js,go,python,rust}` |
@@ -36,7 +36,7 @@ A feature folder holds its endpoints, records, services, options, storage and re
 ## 3. Build in this order
 
 1. **Contract.** Request/response records, route under `/v1`, error bodies, required scope. See the `add-endpoint` skill.
-2. **Storage.** One TerraBase collection per entity type, one document per record; IDs are ULIDs. TerraBase internals go through `Engine/` interfaces. No in-memory or local-file stores.
+2. **Storage.** Application data lives in TerraBase SQL tables: one table per entity type, one row per record; IDs are ULIDs. TerraBase internals go through `Engine/` interfaces. No in-memory or local-file stores.
 3. **Endpoint and service.** Behavior behind DI interfaces; the endpoint stays thin.
 4. **SDKs.** After the producer contract exists, add the operation to every SDK that exposes the area. See the `sdk-parity` skill.
 5. **UI.** Dashboard or auth screens follow `.agents/skills/simple-ui/SKILL.md`. Take before/after screenshots.
@@ -59,4 +59,4 @@ A feature folder holds its endpoints, records, services, options, storage and re
 
 ## 6. Ship
 
-Build only what you changed (`make <area>-build`, `npm run typecheck`, `go build ./...`), commit, rebase on `origin/main`, push to `main`. CI runs the tests. If main goes red because of you, fix or revert within about 30 minutes. See `docs/dev/shipping.md`.
+Build only what you changed (`make <area>-build`, `npm run typecheck`, `go build ./...`), commit on a branch from fresh `origin/main` and open a PR to `main`. CI runs the tests on it; it squash-merges when checks are green. If your merge turns main red, fix or revert within about 30 minutes. See `docs/dev/shipping.md`.
