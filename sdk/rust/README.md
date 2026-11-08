@@ -60,10 +60,12 @@ bind as `1`/`0`; NaN and infinity are refused before sending. Named argument key
 `SqlRecord` reads by ordinal or column name with `get_i64`, `get_f64`, `get_bool`, `get_str`, `get_bytes` and
 `is_null`; a repeated column name resolves to its first ordinal.
 
-A refused statement is `Error::Sql`; `Error::sql()` returns its `code` (constants in `sql_error_codes`),
-`message`, zero-based `statement` and `sqlstate`, and `is_transient()` is true for `serialization_conflict`
-and `tenant_busy`. A `409 serialization_conflict` rolled back and is resent at most twice with jitter; other
-refusals return at once. Failures before execution keep the generic error variants (401, 404, 421, 429, 503).
+A refused statement over REST is `Error::Response` wrapping `Error::Sql` (`error.sql()`, or `Error::sql()`
+on the outer error, returns it); over a WebSocket session it is `Error::Sql` directly. `sql()` exposes `code`
+(constants in `sql_error_codes`), `message`, zero-based `statement` and `sqlstate`, and `is_transient()` is
+true for `serialization_conflict` and `tenant_busy`. A `409 serialization_conflict` rolled back and is
+resent at most twice with jitter; other refusals return at once. Failures before execution keep the generic
+error variants (401, 404, 421, 429, 503).
 
 ### Sessions: interactive transactions
 
