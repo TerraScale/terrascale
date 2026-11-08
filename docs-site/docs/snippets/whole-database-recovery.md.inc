@@ -1,6 +1,6 @@
-**Pending rollout.** Check the deployed dashboard and MCP tool discovery for this workflow. The existing [HTTP backup and restore guide](/guides/backups-and-restore) describes the underlying API.
+The existing [HTTP backup and restore guide](/guides/backups-and-restore) describes the underlying API.
 
-Restore retained point-in-time history into a **new database in the same project**, leaving the source unchanged.
+Restore retained point-in-time history into a **new database in the same project**, leaving the source unchanged, or rewind the source database **in place** to a chosen time.
 
 ## Access, history and quota
 
@@ -15,8 +15,9 @@ A restore consumes one additional organization database slot and normal storage 
 1. Open the source database, choose **Backups**, then **Restore database at UTC time**.
 2. Select the backup source bucket and **Read retained window**. Review its actual UTC bounds and the organization database allowance.
 3. Enter a retained **UTC** timestamp and a unique new database name. The timestamp defaults to the latest retained point; the form performs no local-time conversion.
-4. Choose **Preview advisory metadata**. Review the source bucket, chosen time, snapshot time and applicable segment count/latest time. This is **metadata only**: it does not verify replay bytes, object integrity, segment continuity or transaction times, reserve history, or guarantee a successful restore.
-5. Explicitly approve the source bucket, time and new name. Type that new name exactly into the confirmation field, then choose **Restore as new database**. The source remains unchanged. Successful identity readback opens the new database; independently read its expected application records before using it.
+4. Choose **Preview plan**. Review the source bucket, chosen time, snapshot time and applicable segment count/latest time. This is **metadata only**: it does not verify replay bytes, object integrity, segment continuity or transaction times, reserve history, or guarantee a successful restore.
+5. To restore into a new database, explicitly approve the source bucket, time and new name. Type that new name exactly into the confirmation field, then choose **Restore as new database**. The source remains unchanged. Successful identity readback opens the new database; independently read its expected application records before using it.
+6. To restore in place instead, type the source database's exact name into the confirmation field under the plan, then choose **Restore in place**. This rewinds the database to the chosen time in one transaction: every table, index, view and trigger returns to its state at that time, the database keeps its id, name, credentials and allowance, and changes committed after that time are discarded. The typed name must match exactly, so read it back from the plan before approving.
 
 ## Over MCP
 
@@ -51,7 +52,7 @@ Replace the IDs and example time with the reviewed values. Window and plan use c
 
 ## Refusals, unknown outcomes and cleanup
 
-Retention can advance after planning. For unavailable, incomplete or unproven history, refresh the selected destination's window and review another retained point. Unreadable history may need support; retain the request ID. For a name conflict choose another new name; for a quota refusal review the organization allowance. None of these conditions permits overwriting the source or bypassing access checks.
+Retention can advance after planning. For unavailable, incomplete or unproven history, refresh the selected destination's window and review another retained point. Unreadable history may need support; retain the request ID. For a name conflict choose another new name; for a quota refusal review the organization allowance. None of these conditions bypasses access checks, and restore into a new database never overwrites the source; only the explicit in-place confirmation above restores over the source, and a refusal leaves the source unchanged.
 
 An interrupted request, timeout or unavailable response can leave the restore outcome **unknown**, including when the new database was created but readback failed. Inspect the same project's database list and the proposed new name before submitting another restore. Reconcile its identity and read expected records; a missing response is not proof that nothing was created. Do not automatically retry with another name or a broader identity. For a confirmed temporary refusal, respect `Retry-After` when supplied.
 

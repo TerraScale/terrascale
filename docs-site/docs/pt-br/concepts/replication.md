@@ -44,7 +44,10 @@ Set `"durability": "all"` on a SQL REST request to wait for every replica region
 confirm within 10 seconds, the request fails with `503 unavailable`; the write stays at the home.
 
 A replica is not a backup: it follows changes made at the home. Use point-in-time recovery to restore an earlier
-state into a new database. A restore needs a free database slot. In-place point-in-time restore is coming.
+state into a new database. A restore needs a free database slot. A rewind restores an earlier state in place: it
+replaces every table, index, view and trigger with the state as of a chosen time, in one transaction, keeping the
+database's id, name and credentials, and discarding changes committed after that time. See
+[backups and restore](/pt-br/guides/backups-and-restore).
 
 ## Encryption and deletion
 
