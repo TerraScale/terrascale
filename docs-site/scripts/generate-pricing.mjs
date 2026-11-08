@@ -5,6 +5,7 @@ const { plans, metering } = JSON.parse(readFileSync(new URL('data/canonical/pric
 const count = (value) => (value === null ? 'No limit' : value.toLocaleString('en-US'));
 const seconds = (value) => (value === null ? 'No limit' : `${value} s`);
 const gb = (value) => (value === null ? 'No limit' : `${value} GB`);
+const yearly = (plan) => (plan.priceAnnualUsd === null ? '—' : `$${plan.priceAnnualUsd}`);
 const rates = metering.overageRates;
 // Scan budgets are not in the catalog: TerraBase sets them per plan in
 // src/TerraBase/Features/Qos/QosPolicy.cs (ScanRows, ScanBytes).
@@ -15,9 +16,11 @@ const outputs = {
 
 Prices and limits come from the [published catalog](https://terrascale.tech/pricing.json).
 
-| Plan | Monthly price (USD) | Included write units | Write cap | SQL read fair use | Storage |
-| --- | --- | --- | --- | --- | --- |
-${plans.map((plan) => `| ${plan.name} | $${plan.priceMonthlyUsd} | ${count(plan.limits.operationUnitsPerMonth)} | ${count(plan.limits.operationUnitCapPerMonth)} | ${count(plan.limits.sqlReadUnitsPerMonth)} | ${plan.limits.storageGb} GB |`).join('\n')}
+| Plan | Monthly price (USD) | Yearly price (USD) | Included write units | Write cap | SQL read fair use | Client egress | Storage |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+${plans.map((plan) => `| ${plan.name} | $${plan.priceMonthlyUsd} | ${yearly(plan)} | ${count(plan.limits.operationUnitsPerMonth)} | ${count(plan.limits.operationUnitCapPerMonth)} | ${count(plan.limits.sqlReadUnitsPerMonth)} | ${gb(plan.limits.egressGbPerMonth)}/month | ${plan.limits.storageGb} GB |`).join('\n')}
+
+Starter, Pro and Team can be billed monthly or yearly; a year costs ten monthly payments (two months free). A paid plan can only switch to a billing interval it is sold at; upgrades take effect immediately with a prorated charge and other changes apply at renewal.
 
 ## What is billed
 

@@ -2,13 +2,15 @@
 
 Prices and limits come from the [published catalog](https://terrascale.tech/pricing.json).
 
-| Plan | Monthly price (USD) | Included write units | Write cap | SQL read fair use | Storage |
-| --- | --- | --- | --- | --- | --- |
-| Free | $0 | 50,000 | 50,000 | 500,000 | 0.1 GB |
-| Starter | $3 | 250,000 | 2,500,000 | 2,500,000 | 1 GB |
-| Pro | $20 | 2,000,000 | 20,000,000 | 20,000,000 | 10 GB |
-| Team | $50 | 5,000,000 | 50,000,000 | 50,000,000 | 25 GB |
-| Enterprise | $999 | 10,000,000 | No limit | No limit | 100 GB |
+| Plan | Monthly price (USD) | Yearly price (USD) | Included write units | Write cap | SQL read fair use | Client egress | Storage |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Free | $0 | $0 | 50,000 | 50,000 | 500,000 | 1 GB/month | 0.1 GB |
+| Starter | $3 | $30 | 250,000 | 2,500,000 | 2,500,000 | 5 GB/month | 1 GB |
+| Pro | $20 | $200 | 2,000,000 | 20,000,000 | 20,000,000 | 50 GB/month | 10 GB |
+| Team | $50 | $500 | 5,000,000 | 50,000,000 | 50,000,000 | 100 GB/month | 25 GB |
+| Enterprise | $999 | — | 10,000,000 | No limit | No limit | 250 GB/month | 100 GB |
+
+Starter, Pro and Team can be billed monthly or yearly; a year costs ten monthly payments (two months free). A paid plan can only switch to a billing interval it is sold at; upgrades take effect immediately with a prorated charge and other changes apply at renewal.
 
 ## What is billed
 
