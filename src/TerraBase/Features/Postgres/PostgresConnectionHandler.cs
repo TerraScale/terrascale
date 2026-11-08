@@ -340,7 +340,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         {
             // The catalog record reached this region without the database: a home-only database homed elsewhere is served
             // by relaying the whole session to its home (docs/terrabase/cross-region.md), never by opening the record here.
-            TenantContext tenant when !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
+            // Only a session this grant already authorizes relays; a restricted key is denied here, without the hop.
+            TenantContext tenant when (restriction is null || restriction == tenant.DatabaseId)
+                && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
             NotFound => await ElsewhereAsync(key.ProjectId, database[(slash + 1)..], relayed, cancellationToken).ConfigureAwait(false),
@@ -372,8 +374,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         return await Tenants.FindDatabaseAsync(key.OrganizationId, project, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            // As above: a record homed elsewhere serves its sessions from its home.
-            TenantContext tenant when !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
+            // As above: a record homed elsewhere serves its sessions from its home, when this key reaches it.
+            TenantContext tenant when key.Reaches(tenant) && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite)),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
             _ => Denied,
