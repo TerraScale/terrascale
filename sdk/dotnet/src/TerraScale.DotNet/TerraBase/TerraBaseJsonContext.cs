@@ -48,6 +48,7 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBasePage<TerraBaseAuditEvent>))]
 [JsonSerializable(typeof(TerraBaseCreateDatabaseRequest))]
 [JsonSerializable(typeof(TerraBaseDatabaseUsage))]
+[JsonSerializable(typeof(TerraBaseDatabaseRegions))]
 [JsonSerializable(typeof(TerraBaseProjectUsage))]
 [JsonSerializable(typeof(TerraBaseBackup))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseBackup>))]

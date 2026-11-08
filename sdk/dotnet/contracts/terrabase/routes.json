@@ -255,6 +255,12 @@
     },
     {
       "client": "database",
+      "operation": "getDatabaseRegions",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/regions"
+    },
+    {
+      "client": "database",
       "operation": "branchDatabase",
       "method": "POST",
       "path": "/v1/projects/{project}/databases/{database}/branches"
