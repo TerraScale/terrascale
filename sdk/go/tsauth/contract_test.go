@@ -17,6 +17,9 @@ func TestContractConstants(t *testing.T) {
 	if endpoint, err := tokenEndpoint(""); err != nil || endpoint != "https://auth.terrascale.tech/terrascale/oauth/token" {
 		t.Fatalf("default token endpoint = %q, %v", endpoint, err)
 	}
+	if DefaultDashboardOrigin != "https://dash.terrascale.tech" {
+		t.Fatalf("DefaultDashboardOrigin = %q", DefaultDashboardOrigin)
+	}
 	got := []string{ScopeDatabasesRead, ScopeDatabasesWrite, ScopeSQLRead, ScopeSQLWrite}
 	want := []string{"databases:read", "databases:write", "sql:read", "sql:write"}
 	for i := range want {
