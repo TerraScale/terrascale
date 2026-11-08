@@ -188,6 +188,17 @@ def get_database(project: str, db: str) -> Call:
     return Call("GET", _db(project, db), lambda r: models.Database.from_json(r.json()), replay_safe=True)
 
 
+LOG_STATUS_CLASSES = ("2xx", "3xx", "4xx", "5xx")
+
+
+def list_database_logs(project: str, db: str, status: str | None) -> Call:
+    if status is not None and status not in LOG_STATUS_CLASSES:
+        raise ValueError("status must be 2xx, 3xx, 4xx or 5xx")
+    return Call("GET", _db(project, database_selector(db), "logs"),
+                lambda r: models.DatabaseRequestLogs.from_json(r.json()),
+                params={"status": status} if status else {}, replay_safe=True)
+
+
 def rename_database(project: str, database_id: str, new_name: str) -> Call:
     return Call("PATCH", _db(project, database_selector(database_id)),
                 lambda r: models.Database.from_json(r.json()), body={"name": database_name(new_name)})
