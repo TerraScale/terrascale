@@ -39,7 +39,8 @@ composed API catalog is available in OpenAPI and Scalar.
 | --- | --- | --- |
 | Password signup, recovery, verified email | Implemented | Existing HTTP/security regression coverage; Cloudflare Email Sending delivery still needs live acceptance |
 | Magic links, email passcodes | Implemented | Existing mailbox/proof regressions; delivery, abuse and mobile continuation need further work |
-| Passkeys and TOTP/recovery MFA | Implemented | Cryptographic/HTTP tests; complete browser/device interoperability is still a release gate |
+| Passkeys | Implemented (enrollment via platform API and hosted security page #1248/#1265; hosted passkey sign-in satisfying MFA #1271) | Listing, renaming and deletion are not on main yet; complete browser/device interoperability is still a release gate |
+| TOTP/recovery MFA | Implemented | Cryptographic/HTTP tests; complete browser/device interoperability is still a release gate |
 | Anonymous/guest accounts | Missing | Added explicit client opt-in, quota-accounted guest identities, OAuth tokens and `is_anonymous` claims |
 | Guest conversion | Missing | Added mailbox OTP verification and atomic conversion preserving user ID, quota seat and metadata; existing accounts cannot be merged or replaced |
 | Browser API integration | OAuth clients stored unused origins | Added exact-origin CORS for OAuth bearer/form APIs; hosted cookie and management APIs stay outside CORS |

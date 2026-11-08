@@ -58,6 +58,8 @@ five minutes and dies with the account's authentication state; a replayed
 challenge or a non-increasing sign count is refused with a generic 403 and
 records nothing. A member whose only factor is a passkey satisfies
 organizations that require a second factor, and may turn that policy on.
+Passkey enrollment and the relying-party configuration are described in
+[passkeys.md](passkeys.md).
 
 The device flow (ts CLI) works for two-factor accounts: the approving browser
 session already proved the factor.
