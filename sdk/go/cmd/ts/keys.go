@@ -29,14 +29,8 @@ func parseKeyRotation(args []string) (string, time.Duration, error) {
 	return args[0], grace, nil
 }
 
-// stepUpPollInterval is the CLI's bounded wait between proof consumptions.
 var stepUpPollInterval = 5 * time.Second
 
-// stepUp drives the hosted confirmation for one sensitive key operation: it
-// starts a proof, prints its approval URL and retries the mutation until the
-// proof is consumed, its deadline passes or the user interrupts. The proof
-// never leaves this function. A non-step-up failure of the retried request is
-// returned at once: its outcome may be unknown and must not repeat.
 func stepUp[T any](ctx context.Context, s *session, purpose, action string, operate func(*tsauth.User) (*T, error), diagnostics io.Writer) (*T, error) {
 	challenge, err := s.user.RequestStepUp(ctx, purpose)
 	if err != nil {
@@ -119,8 +113,6 @@ func keyOperationError(err error, action string, s *session) error {
 	message := "API key operation failed; verify the selected project and permissions."
 	switch string(api.Code) {
 	case "step_up_required":
-		// The hosted confirmation normally completes in stepUp; this is the
-		// defensive answer for requests that never started one.
 		return &cliError{code: string(api.Code), status: api.Status,
 			message: action + " needs a fresh sign-in confirmation; run the command again to start one."}
 	case "rotation_pending":

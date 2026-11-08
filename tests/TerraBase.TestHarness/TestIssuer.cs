@@ -150,12 +150,6 @@ public sealed class TestIssuer : IDisposable
         }
     }
 
-    /// <summary>
-    /// Issues an access token for the dashboard API key <paramref name="key"/> (<c>&lt;key id&gt;_&lt;secret&gt;</c>)
-    /// through the client credentials grant, as ts-auth does; <paramref name="mint"/> receives the requested
-    /// <c>project</c> form parameter (null when absent) and may answer null to refuse it, as an invalid target does;
-    /// any other credential gets <c>401</c>.
-    /// </summary>
     public void GrantClient(string key, Func<string?, string?> mint)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);

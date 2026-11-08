@@ -17,7 +17,6 @@ namespace TerraBase.Features.UserAuth;
 
 internal sealed record TsAuthTokenResponse([property: JsonPropertyName("access_token")] string? AccessToken);
 
-/// <summary>What a ts-auth API key may reach, read from the access token ts-auth issued for it.</summary>
 /// <param name="Subject">The key's id (the token's <c>sub</c>).</param>
 /// <param name="ProjectId">The key's project.</param>
 /// <param name="Database">The key's database restriction, when it has one.</param>
@@ -187,8 +186,6 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         return token is null ? new NotFound() : await ValidateAsync(token, project, cancellationToken).ConfigureAwait(false);
     }
 
-    // The same checks as a bearer token on the client listener: signature, issuer, audience, type and lifetime. A token
-    // minted for another project than the exchange asked for is refused, not read as broader than the request.
     private async ValueTask<TsAuthKeyResult> ValidateAsync(string token, string? project, CancellationToken cancellationToken)
     {
         if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(cancellationToken).ConfigureAwait(false)) is not { } keys)

@@ -66,7 +66,6 @@ func (c *Client) WithToken(accessToken string) *User {
 type User struct {
 	c     *Client
 	token string
-	// proof rides along in X-TerraScale-Step-Up-Proof on every request.
 	proof string
 }
 
@@ -632,8 +631,6 @@ func sendJSON(ctx context.Context, hc *http.Client, method, target, authorizatio
 	return err
 }
 
-// sendJSONStatus sends one request, optionally carrying a step-up proof, and
-// returns its status; a non-2xx answer is *APIError.
 func sendJSONStatus(ctx context.Context, hc *http.Client, method, target, authorization string, in, out any, proof string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err

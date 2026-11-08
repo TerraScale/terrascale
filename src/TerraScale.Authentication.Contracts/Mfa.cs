@@ -28,8 +28,6 @@ public sealed record TotpEnrollment(string Secret, string ProvisioningUri, DateT
     public override string ToString() => nameof(TotpEnrollment);
 }
 
-/// <summary>The user as its recovery change committed, and its plaintext recovery codes, returned once.</summary>
-/// <param name="User">The account as the transaction committed it.</param>
 /// <param name="Codes">Eight single-use recovery codes.</param>
 /// <param name="ExpiresAt">The recovery-code batch expiry.</param>
 public sealed record IssuedRecoveryCodes(UserRecord User, IReadOnlyList<string> Codes, DateTimeOffset ExpiresAt)
