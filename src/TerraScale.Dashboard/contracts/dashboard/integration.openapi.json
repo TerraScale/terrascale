@@ -308,7 +308,7 @@
           "Credentials"
         ],
         "summary": "Revoke a project key",
-        "description": "Deletes the key at ts-auth: token requests then fail with invalid_client. Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. A failed revoke call is re-checked, so 204/303 means the key is gone.",
+        "description": "Deletes the key at ts-auth: token requests then fail with invalid_client. Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. A failed revoke call is re-checked, so 204/303 means the key is gone. Idempotent: revoking a key that is already revoked or absent from this project succeeds.",
         "operationId": "revokeDashboardCredentialById",
         "parameters": [
           {

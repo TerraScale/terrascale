@@ -53,12 +53,12 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     return Results.BadRequest("Invalid form token.");
                 }
 
-                try { await keys.RevokeAsync(context, keyId, http.RequestAborted); await keys.RecordAsync(accounts, context, keyId, false, http.RequestAborted); }
+                try { await RecordRevokeAsync(http, context, accounts, keys, keyId); }
                 catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
                 return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys") : Results.NoContent();
             }).WithGroupName("integration").WithName("revokeDashboardCredentialById").WithTags("Credentials")
                 .WithSummary("Revoke a project key")
-                .WithDescription("Deletes the key at ts-auth: token requests then fail with invalid_client. Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. A failed revoke call is re-checked, so 204/303 means the key is gone.")
+                .WithDescription("Deletes the key at ts-auth: token requests then fail with invalid_client. Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. A failed revoke call is re-checked, so 204/303 means the key is gone. Idempotent: revoking a key that is already revoked or absent from this project succeeds.")
                 .Accepts<RevokeProjectCredentialRequest>("application/x-www-form-urlencoded")
                 .Produces(204).Produces(303).Produces<string>(400).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
             endpoints.MapPost("/api/v1/dashboard/credentials/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys, DatabaseService databases) =>
@@ -75,7 +75,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     return Results.BadRequest("Invalid form token.");
                 }
 
-                try { await keys.RevokeAsync(context, form["keyId"].ToString(), http.RequestAborted); await keys.RecordAsync(accounts, context, form["keyId"].ToString(), false, http.RequestAborted); }
+                try { await RecordRevokeAsync(http, context, accounts, keys, form["keyId"].ToString()); }
                 catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
                 return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
             }).WithGroupName("integration").WithName("revokeDashboardCredential").WithTags("Credentials")
@@ -106,6 +106,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     }
 
                     var cidrs = ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString());
+                    var keyId = form["keyId"].ToString();
                     try
                     {
                         if (project)
@@ -114,7 +115,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                         }
                         else
                         {
-                            var key = await keys.SetAllowedCidrsAsync(context, form["keyId"].ToString(), cidrs, http.RequestAborted);
+                            var key = await keys.SetAllowedCidrsAsync(context, keyId, cidrs, http.RequestAborted);
                             if (!DatabaseEndpoints.WantsHtml(http))
                             {
                                 return Results.Json(ApiKeyService.CredentialMetadata(key), ApiKeyContractJson.Default.ProjectCredentialMetadata);
@@ -122,7 +123,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                         }
                     }
                     catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException)
-                    { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
+                    { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error), draftKeyCidrs: project ? "project" : keyId, draftAllowedCidrs: form["allowedCidrs"].ToString()) : DatabaseEndpoints.Failure(error); }
                     return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
                 });
             }
@@ -221,7 +222,16 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
         }
 
-        private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ApiKeyService service, DatabaseService databases, string error = "", string create = "", string name = "", CreatedProjectCredential? revealed = null, int status = 200, string draftScopes = "", string draftDatabaseId = "", string draftExpiresInDays = "", string draftAllowedCidrs = "")
+        // Idempotent revoke: the audit trail records only revokes that removed a key this call, never repeats.
+        private static async Task RecordRevokeAsync(HttpContext http, AccountContext context, AccountService accounts, ApiKeyService keys, string keyId)
+        {
+            if (await keys.RevokeAsync(context, keyId, http.RequestAborted))
+            {
+                await keys.RecordAsync(accounts, context, keyId, false, http.RequestAborted);
+            }
+        }
+
+        private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ApiKeyService service, DatabaseService databases, string error = "", string create = "", string name = "", CreatedProjectCredential? revealed = null, int status = 200, string draftScopes = "", string draftDatabaseId = "", string draftExpiresInDays = "", string draftAllowedCidrs = "", string draftKeyCidrs = "")
         {
             var warning = "";
             IReadOnlyList<ProjectCredential> keys = [];
@@ -255,7 +265,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             try { await ApiKeyExpiryNotifications.AddAsync(http.RequestServices.GetRequiredService<AccountService>(), context, keys, now, http.RequestAborted); }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && revealed is not null && ApiKeyService.FollowUpFailure(failure))
             { warning = (warning + " Expiry reminders could not be updated; the key change succeeded.").Trim(); }
-            var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, ProjectCidrs: projectCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning });
+            var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes, draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, ProjectCidrs: projectCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning, DraftKeyCidrs = draftKeyCidrs });
             result.StatusCode = status;
             return result;
         }

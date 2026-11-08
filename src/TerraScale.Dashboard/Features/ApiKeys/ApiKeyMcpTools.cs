@@ -59,12 +59,15 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(ApiKeyService.Metadata(result.Key), result.Secret);
         }
 
-        [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds.")]
+        [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. Idempotent: revoking again succeeds, because the key is already gone from this project.")]
         public async Task<McpCredentialRevoked> RevokeApiKey(string keyId, string? organizationId = null, string? projectId = null)
         {
             var context = Scope(organizationId, projectId);
-            await keys.RevokeAsync(context, keyId, Cancellation);
-            await keys.RecordAsync(accounts, context, keyId, false, Cancellation);
+            if (await keys.RevokeAsync(context, keyId, Cancellation))
+            {
+                await keys.RecordAsync(accounts, context, keyId, false, Cancellation);
+            }
+
             return new(keyId, true);
         }
 
