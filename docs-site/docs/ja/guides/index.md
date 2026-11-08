@@ -14,9 +14,9 @@ Use the [quickstart](/ja/getting-started/) to establish one working application 
 - [SDK reference](/ja/guides/sdks) (being updated for SQL).
 - [Authentication capabilities](/ja/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/ja/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
-- [Connect with psql and Postgres drivers](/ja/guides/postgres-clients) (being updated for SQL).
+- [Connect with psql and Postgres drivers](/ja/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
 - [Use Drizzle ORM](/ja/guides/orm-drizzle), [Use Prisma ORM](/ja/guides/orm-prisma) and [Use SQLAlchemy](/ja/guides/orm-sqlalchemy) (being updated for SQL).
-- [SQL over HTTP](/ja/guides/sql-http) (being updated for SQL).
+- [SQL over HTTP](/ja/guides/sql-http): run SQL statements with any HTTP client.
 - [Errors and safe retries](/ja/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/ja/guides/indexes) (being updated for SQL).
 - [Full-text search](/ja/guides/full-text-search) and [Vector similarity search](/ja/guides/vector-search) (being updated for SQL).
