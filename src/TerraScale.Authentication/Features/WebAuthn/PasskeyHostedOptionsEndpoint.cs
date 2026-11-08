@@ -15,7 +15,7 @@ public sealed class PasskeyHostedOptionsEndpoint(Sessions sessions, PasskeyCrede
         Post("/ui/{slug}/security/passkeys/options");
         Name("ui_security_passkey_options");
         Summary("Start passkey enrollment from the security page");
-        Description("Same-origin fetch from the hosted security page with a live session cookie; returns the same WebAuthn creation options and sealed challenge as create_passkey_options, for the browser's navigator.credentials.create call. A cross-origin post or a missing session answers 403 passkey_denied.");
+        Description("Same-origin fetch from the hosted security page with a live session cookie opened within the last 10 minutes; an older session must sign in again before a passkey can be added. Returns the same WebAuthn creation options and sealed challenge as create_passkey_options, for the browser's navigator.credentials.create call. A cross-origin post or a missing session answers 403 passkey_denied.");
         Tags("Security");
         Produces<PasskeyOptionsBody>(StatusCodes.Status200OK, "application/json");
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
@@ -31,6 +31,7 @@ public sealed class PasskeyHostedOptionsEndpoint(Sessions sessions, PasskeyCrede
 
         if (!PasskeyHostedVerifyEndpoint.SameOrigin(this.HttpContext, options)
             || await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is not { } live
+            || !SecurityFlow.Recent(this.HttpContext, live.Session, SecurityFlow.FactorEnrollmentWindow)
             || await passkeys.OptionsAsync(live.User, cancellationToken).ConfigureAwait(false) is not { } created)
         {
             throw new ApiException(403, "passkey_denied", "Sign in again before enrolling a passkey.");

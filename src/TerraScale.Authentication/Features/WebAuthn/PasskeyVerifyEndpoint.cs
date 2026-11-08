@@ -6,13 +6,13 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.WebAuthn;
 
-public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpProofs proofs, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
     public override void Configure()
     {
         Post("/v1/terrascale/account/passkeys/verify");
         this.Describe("create_passkey_verify", "Finish passkey enrollment",
-            "Verifies the browser's WebAuthn registration answer (origin, RP id, user verification, challenge) against the sealed challenge from create_passkey_options and stores the passkey. The challenge works once and dies with the account's authentication state; a refused ceremony, a reused or stale challenge, or a credential id that is already enrolled answers 403 passkey_denied.",
+            "Needs a fresh, approved, single-use add_passkey/ts-auth proof in X-TerraScale-Step-Up-Proof; a bearer token alone never adds a factor (403 step_up_required). Verifies the browser's WebAuthn registration answer (origin, RP id, user verification, challenge) against the sealed challenge from create_passkey_options and stores the passkey. The challenge works once and dies with the account's authentication state; a refused ceremony, a reused or stale challenge, or a credential id that is already enrolled answers 403 passkey_denied.",
             "Members", typeof(PasskeyVerifyRequest), StatusCodes.Status201Created, typeof(PasskeyEnrolledBody), roleChecked: false, scoped: false);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
@@ -21,6 +21,7 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, PlatformA
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var body = await this.BodyAsync(WebAuthnJson.Default.PasskeyVerifyRequest, cancellationToken);
+        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "add_passkey", cancellationToken);
         var raw = Map(body.Response);
         var entry = raw is null ? null
             : await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken).ConfigureAwait(false);

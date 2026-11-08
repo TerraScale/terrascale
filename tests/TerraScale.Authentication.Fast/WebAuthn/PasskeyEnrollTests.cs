@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using System.Net;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -37,13 +38,22 @@ public sealed class PasskeyEnrollTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task A_reused_challenge_or_a_stale_epoch_verify_is_refused()
+    public async Task A_verify_without_a_proof_a_reused_challenge_or_a_stale_epoch_is_refused()
     {
         var clock = new ManualClock(DateTimeOffset.UtcNow);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         var (user, token) = await oidc.SignInUserAsync("passkey-stale@example.test");
         using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var (sealedChallenge, ceremony) = await OptionsAsync(oidc, token);
+
+        using var unproven = new HttpRequestMessage(HttpMethod.Post, "/v1/terrascale/account/passkeys/verify")
+        {
+            Content = JsonContent.Create(Attestation(sealedChallenge, ceremony, RandomNumberGenerator.GetBytes(32), ecdsa)),
+        };
+        unproven.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        using var refused = await oidc.Client.SendAsync(unproven);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(await OidcHarness.EnvelopeCodeAsync(refused)).IsEqualTo("step_up_required");
 
         using var enrolled = await oidc.CallAsync(HttpMethod.Post, "/v1/terrascale/account/passkeys/verify", token,
             Attestation(sealedChallenge, ceremony, RandomNumberGenerator.GetBytes(32), ecdsa));

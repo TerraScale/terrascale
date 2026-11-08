@@ -365,6 +365,9 @@ internal static class SecurityFlow
     /// <summary>How recent a sign-in must be to start enrolment.</summary>
     public static readonly TimeSpan ReauthenticationWindow = TimeSpan.FromMinutes(15);
 
+    /// <summary>How recent a sign-in must be to add a new authentication factor from the security page.</summary>
+    public static readonly TimeSpan FactorEnrollmentWindow = TimeSpan.FromMinutes(10);
+
     /// <summary>The browser's live session, its stored version and its user, or null.</summary>
     public static Task<(SessionRecord Session, string Version, UserRecord User)?> LiveAsync(HttpContext context, Sessions sessions, CancellationToken cancellationToken)
     {
@@ -398,8 +401,11 @@ internal static class SecurityFlow
         await LiveAsync(context, sessions, cancellationToken) is null ? SignIn(context) : await PageAsync(context, mfa, user, error, cancellationToken, statusCode);
 
     /// <summary>Whether <paramref name="session"/> was opened recently enough for a credential change.</summary>
-    public static bool Recent(HttpContext context, SessionRecord session) =>
-        session.CreatedAt > context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow() - ReauthenticationWindow;
+    public static bool Recent(HttpContext context, SessionRecord session) => Recent(context, session, ReauthenticationWindow);
+
+    /// <summary>Whether <paramref name="session"/> was opened within <paramref name="window"/>.</summary>
+    public static bool Recent(HttpContext context, SessionRecord session, TimeSpan window) =>
+        session.CreatedAt > context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow() - window;
 
     /// <summary>Sends a browser without a session to sign in, returning to the security page.</summary>
     public static IResult SignIn(HttpContext context)
