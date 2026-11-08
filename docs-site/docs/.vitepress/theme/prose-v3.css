@@ -16,7 +16,19 @@
 .vp-doc :not(pre) > code { overflow-wrap: anywhere; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-sm); -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 
 .vp-doc td { line-height: 1.7; padding-block: 8px; }
-.vp-doc :is(th, td) :not(pre) > code { padding-block: 1px; }
+.vp-doc th { background: var(--ts-surface); }
+.vp-doc :is(th, td) code { padding-block: 1px; white-space: normal; overflow-wrap: normal; word-break: normal; }
+.vp-doc :is(th, td):first-child:has(code) { white-space: nowrap; }
+@media (min-width: 641px) {
+  .vp-doc table { display: table; width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); overflow: hidden; }
+  .vp-doc :is(th, td) { border: 0 solid var(--ts-line); border-right-width: 1px; border-bottom-width: 1px; }
+  .vp-doc :is(th, td):last-child { border-right-width: 0; }
+  .vp-doc tr:last-child :is(th, td) { border-bottom-width: 0; }
+  .vp-doc tr:first-child > :is(th, td):first-child { border-top-left-radius: calc(var(--ts-radius-lg) - 1px); }
+  .vp-doc tr:first-child > :is(th, td):last-child { border-top-right-radius: calc(var(--ts-radius-lg) - 1px); }
+  .vp-doc tr:last-child > :is(th, td):first-child { border-bottom-left-radius: calc(var(--ts-radius-lg) - 1px); }
+  .vp-doc tr:last-child > :is(th, td):last-child { border-bottom-right-radius: calc(var(--ts-radius-lg) - 1px); }
+}
 
 /* Code groups: tabs on a hairline header, native radio + label behaviour unchanged. */
 .vp-code-group { margin: 16px 0; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); background: var(--ts-surface); overflow: hidden; }
