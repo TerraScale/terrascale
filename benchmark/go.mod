@@ -3,7 +3,7 @@ module terrascale.tech/ts-benchmark
 go 1.27.3
 
 require (
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/nats-io/nats.go v1.54.0
 	github.com/oklog/ulid/v2 v2.1.2
 )

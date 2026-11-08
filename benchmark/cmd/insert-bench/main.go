@@ -30,6 +30,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -43,8 +44,159 @@ const (
 	allScopes   = "databases:read databases:write sql:read sql:write"
 	tokenLife   = time.Hour
 	nodeName    = "gru-1"
+	s3Bucket    = "insertbench"
+	shapesHost  = "6cd3f3639e928077593d9b470765efeb.r2.cloudflarestorage.com"
 	dbName      = "insertbench"
 )
+
+type s3fake struct {
+	server  *http.Server
+	addr    string
+	mu      sync.Mutex
+	objects map[string][]byte
+}
+
+type singleConnListener struct {
+	conn net.Conn
+	done chan struct{}
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	select {
+	case <-l.done:
+		return nil, net.ErrClosed
+	default:
+		close(l.done)
+		return l.conn, nil
+	}
+}
+
+func (l *singleConnListener) Close() error { return nil }
+
+func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
+
+func startEgressProxy(handler http.Handler, cert tls.Certificate) (*http.Server, string, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, "", err
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			return
+		}
+		if _, err := conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+			conn.Close()
+			return
+		}
+		tlsConn := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
+		if err := tlsConn.Handshake(); err != nil {
+			conn.Close()
+			return
+		}
+		_ = (&http.Server{Handler: handler}).Serve(&singleConnListener{conn: tlsConn, done: make(chan struct{})})
+	})}
+	go server.Serve(ln)
+	return server, ln.Addr().String(), nil
+}
+
+func s3Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		if len(parts) < 2 {
+			writeS3Error(w, 400, "InvalidRequest")
+			return
+		}
+		key := strings.Join(parts[1:], "/")
+		bucket := parts[0]
+		objects.s3(w, r, bucket, key)
+	})
+	return mux
+}
+
+var objects = &s3fake{objects: map[string][]byte{}}
+
+func (f *s3fake) s3(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch {
+	case r.Method == http.MethodPut && key != "":
+		data, err := io.ReadAll(io.LimitReader(r.Body, 1<<30))
+		if err != nil {
+			w.WriteHeader(400)
+			return
+		}
+		f.objects[bucket+"/"+key] = data
+		w.Header().Set("ETag", `"`+fmt.Sprintf("%x", sha256.Sum256(data))[:32]+`"`)
+		w.WriteHeader(200)
+	case r.Method == http.MethodGet && key != "":
+		data, ok := f.objects[bucket+"/"+key]
+		if !ok {
+			writeS3Error(w, 404, "NoSuchKey")
+			return
+		}
+		w.Header().Set("ETag", `"`+fmt.Sprintf("%x", sha256.Sum256(data))[:32]+`"`)
+		w.WriteHeader(200)
+		_, _ = w.Write(data)
+	case r.Method == http.MethodDelete && key != "":
+		delete(f.objects, bucket+"/"+key)
+		w.WriteHeader(204)
+	case r.Method == http.MethodGet && key == "" && r.URL.Query().Get("list-type") == "2":
+		prefix := r.URL.Query().Get("prefix")
+		start := r.URL.Query().Get("start-after")
+		keys := make([]string, 0, len(f.objects))
+		for k := range f.objects {
+			if strings.HasPrefix(k, bucket+"/"+prefix) && strings.TrimPrefix(k, bucket+"/") > start {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		w.Header().Set("Content-Type", "application/xml")
+		fmt.Fprintf(w, "<?xml version=\"1.0\"?><ListBucketResult><Name>%s</Name><Prefix>%s</Prefix><KeyCount>%d</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>",
+			bucket, prefix, len(keys))
+		for _, k := range keys {
+			fmt.Fprintf(w, "<Contents><Key>%s</Key><LastModified>2026-01-01T00:00:00.000Z</LastModified><ETag>&quot;x&quot;</ETag><Size>%d</Size><StorageClass>STANDARD</StorageClass></Contents>",
+				strings.TrimPrefix(k, bucket+"/"), len(f.objects[k]))
+		}
+		fmt.Fprint(w, "</ListBucketResult>")
+	case r.Method == http.MethodGet && key == "" && r.URL.Query().Has("uploads"):
+		w.Header().Set("Content-Type", "application/xml")
+		fmt.Fprintf(w, "<?xml version=\"1.0\"?><ListMultipartUploadsResult><Bucket>%s</Bucket><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>", bucket)
+	default:
+		writeS3Error(w, 400, "InvalidRequest")
+	}
+}
+
+func startS3(cert tls.Certificate) (*s3fake, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	f := objects
+	f.server = &http.Server{Handler: s3Handler(), TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert},
+		MinVersion: tls.VersionTLS12}}
+	go f.server.ServeTLS(ln, "", "")
+	f.addr = ln.Addr().String()
+	return f, nil
+}
+
+func (f *s3fake) close() { f.server.Close() }
+
+func writeS3Error(w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, "<?xml version=\"1.0\"?><Error><Code>%s</Code><Message>%s</Message><Resource></Resource><RequestId>insertbench</RequestId></Error>", code, code)
+}
 
 type issuer struct {
 	addr    string
@@ -107,51 +259,52 @@ func (a *issuer) projectToken() string {
 		"org_id": a.org, "scope": allScopes})
 }
 
-func startIssuer(org, project, apiKey string) (*issuer, []byte, error) {
+func startIssuer(org, project, apiKey string) (*issuer, []byte, tls.Certificate, error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, tls.Certificate{}, err
 	}
 	caTemplate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "insert-bench-ca"},
 		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(2 * time.Hour), IsCA: true,
 		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature, BasicConstraintsValid: true}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, tls.Certificate{}, err
 	}
 	caCert, err := x509.ParseCertificate(caDER)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, tls.Certificate{}, err
 	}
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, tls.Certificate{}, err
 	}
 	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "localhost"},
-		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(2 * time.Hour), DNSNames: []string{"localhost"},
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(2 * time.Hour),
+		DNSNames:    []string{"localhost", shapesHost},
 		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, KeyUsage: x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, tls.Certificate{}, err
 	}
 	keyDER, err := x509.MarshalECPrivateKey(leafKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, tls.Certificate{}, err
 	}
 	cert, err := tls.X509KeyPair(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}),
 		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, tls.Certificate{}, err
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, tls.Certificate{}, err
 	}
 	signingKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		ln.Close()
-		return nil, nil, err
+		return nil, nil, tls.Certificate{}, err
 	}
 	a := &issuer{addr: ln.Addr().String(), key: signingKey, kid: ulid.Make().String(), user: ulid.Make().String(),
 		org: org, project: project, apiKey: apiKey}
@@ -186,7 +339,7 @@ func startIssuer(org, project, apiKey string) (*issuer, []byte, error) {
 	a.server = &http.Server{Handler: mux, TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert},
 		MinVersion: tls.VersionTLS12}}
 	go a.server.ServeTLS(ln, "", "")
-	return a, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), nil
+	return a, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), cert, nil
 }
 
 func (a *issuer) close() { a.server.Close() }
@@ -270,11 +423,17 @@ func dotnetRoot() (string, error) {
 	return root, nil
 }
 
+type proxy struct {
+	server *http.Server
+}
+
 type stack struct {
+	egress     *http.Server
 	dir        string
 	nats       *process
 	node       *process
 	issuer     *issuer
+	store      *s3fake
 	clientPort int
 	pgPort     int
 	internal   int
@@ -338,10 +497,20 @@ func startStack(terrabase, logDir string) (*stack, error) {
 	}); err != nil {
 		return nil, err
 	}
-	auth, caPEM, err := startIssuer(s.org, s.project, s.apiKey)
+	auth, caPEM, cert, err := startIssuer(s.org, s.project, s.apiKey)
 	if err != nil {
 		return nil, err
 	}
+	egress, egressAddr, err := startEgressProxy(s3Handler(), cert)
+	if err != nil {
+		return nil, err
+	}
+	s.egress = egress
+	bucket, err := startS3(cert)
+	if err != nil {
+		return nil, err
+	}
+	s.store = bucket
 	s.issuer = auth
 	s.token = auth.projectToken()
 	if err := writeFile0600(filepath.Join(dir, "ca.pem"), caPEM); err != nil {
@@ -378,7 +547,12 @@ func startStack(terrabase, logDir string) (*stack, error) {
 		"TERRABASE_PORT=" + fmt.Sprint(s.clientPort), "TERRABASE_INTERNAL_PORT=" + fmt.Sprint(s.internal),
 		"TERRABASE_METRICS_PORT=" + fmt.Sprint(metrics), "TERRABASE_POSTGRES_PORT=" + fmt.Sprint(s.pgPort),
 		"TERRABASE_DATA_DIRECTORY=" + filepath.Join(dir, "data"), "TERRABASE_AUTH_ISSUER=" + s.issuer.url(),
-		"TERRABASE_AUTH_AUDIENCE=" + platformAud, "DOTNET_ROOT=" + root}
+		"TERRABASE_AUTH_AUDIENCE=" + platformAud, "DOTNET_ROOT=" + root,
+		"AWS_ENDPOINT_URL_S3=https://" + s.store.addr, "AWS_REGION=auto", "BUCKET_NAME=" + s3Bucket,
+		"AWS_ACCESS_KEY_ID=insertbench", "AWS_SECRET_ACCESS_KEY=" + randomHex(16),
+		"TERRABASE_SHAPES_ACCESS_KEY_ID=insertbench", "TERRABASE_SHAPES_SECRET_ACCESS_KEY=" + randomHex(16),
+		"TERRABASE_SHAPES_CDN_API_TOKEN=" + randomHex(16),
+		"HTTPS_PROXY=http://" + egressAddr, "HTTP_PROXY=http://" + egressAddr, "NO_PROXY=localhost,127.0.0.1"}
 	if s.node, err = startProcess(nodeName, filepath.Join(logDir, "node.log"), env, argv...); err != nil {
 		return nil, err
 	}
@@ -405,6 +579,12 @@ func (s *stack) stop() {
 	}
 	if s.issuer != nil {
 		s.issuer.close()
+	}
+	if s.egress != nil {
+		s.egress.Close()
+	}
+	if s.store != nil {
+		s.store.close()
 	}
 	if s.nats != nil {
 		s.nats.stop(5 * time.Second)
@@ -462,7 +642,7 @@ func (s *stack) publishPlan() error {
 	transport := &http.Transport{Protocols: protocols}
 	defer transport.CloseIdleConnections()
 	address := fmt.Sprintf("http://127.0.0.1:%d/admin/organizations/%s/plan", s.internal, s.org)
-	request, err := http.NewRequest(http.MethodPut, address, strings.NewReader(`{"plan":"hobby"}`))
+	request, err := http.NewRequest(http.MethodPut, address, strings.NewReader(`{"plan":"enterprise"}`))
 	if err != nil {
 		return err
 	}
@@ -508,16 +688,22 @@ func restBatch(s *stack, size int) func() (float64, error) {
 		for i := range size {
 			args = append(args, ulid.Make().String(), int64(i), strings.Repeat("x", 100))
 		}
-		started := time.Now()
-		status, payload, err := s.sql(map[string]any{"sql": sql, "args": args})
-		elapsed := float64(time.Since(started).Microseconds()) / 1000
-		if err != nil {
-			return 0, err
+		for attempt := 0; ; attempt++ {
+			started := time.Now()
+			status, payload, err := s.sql(map[string]any{"sql": sql, "args": args})
+			elapsed := float64(time.Since(started).Microseconds()) / 1000
+			if err != nil {
+				return 0, err
+			}
+			if status == 429 && attempt < 10 {
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			if err := require(status, payload, 200, "rest insert"); err != nil {
+				return 0, err
+			}
+			return elapsed, nil
 		}
-		if err := require(status, payload, 200, "rest insert"); err != nil {
-			return 0, err
-		}
-		return elapsed, nil
 	}
 }
 
@@ -535,11 +721,18 @@ func wireBatch(ctx context.Context, conn *pgx.Conn, size int) func() (float64, e
 		for i := range size {
 			args = append(args, ulid.Make().String(), int64(i), strings.Repeat("x", 100))
 		}
-		started := time.Now()
-		if _, err := conn.Exec(ctx, sql, args...); err != nil {
-			return 0, err
+		for attempt := 0; ; attempt++ {
+			started := time.Now()
+			_, err := conn.Exec(ctx, sql, args...)
+			if err != nil && attempt < 10 && strings.Contains(err.Error(), "tenant_busy") {
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			if err != nil {
+				return 0, err
+			}
+			return float64(time.Since(started).Microseconds()) / 1000, nil
 		}
-		return float64(time.Since(started).Microseconds()) / 1000, nil
 	}
 }
 
@@ -589,7 +782,8 @@ func run() error {
 	if err := s.publishPlan(); err != nil {
 		return err
 	}
-	status, payload, err := s.call("PUT", fmt.Sprintf("/v1/projects/%s/databases/%s", s.project, dbName), map[string]any{"homeRegion": "gru"})
+	status, payload, err := s.call("POST", fmt.Sprintf("/v1/projects/%s/databases", s.project),
+		map[string]any{"name": dbName, "homeRegion": "gru"})
 	if err != nil {
 		return err
 	}
@@ -605,6 +799,7 @@ func run() error {
 	}
 	sizes := []int{1, 50, 250, 1000}
 	cells := map[string]map[int][]float64{"rest": {}, "pg_wire": {}}
+	refused := map[int]bool{}
 	for _, size := range sizes {
 		batch := restBatch(s, size)
 		if err := warm(batch); err != nil {
@@ -622,6 +817,13 @@ func run() error {
 	defer conn.Close(ctx)
 	for _, size := range sizes {
 		batch := wireBatch(ctx, conn, size)
+		if _, err := batch(); err != nil {
+			if strings.Contains(err.Error(), "16384") {
+				refused[size] = true
+				continue
+			}
+			return err
+		}
 		if err := warm(batch); err != nil {
 			return err
 		}
@@ -634,6 +836,9 @@ func run() error {
 			cells["rest"][size] = append(cells["rest"][size], measure(batch, *batches)...)
 		}
 		for _, size := range sizes {
+			if refused[size] {
+				continue
+			}
 			batch := wireBatch(ctx, conn, size)
 			cells["pg_wire"][size] = append(cells["pg_wire"][size], measure(batch, *batches)...)
 		}
@@ -693,15 +898,26 @@ func writeReport(out, terrabase string, sizes []int, cells map[string]map[int][]
 	fmt.Fprintf(&b, "| Transport | Rows/batch | p50 ms | p95 ms | rows/s |\n| --- | --- | --- | --- | --- |\n")
 	for _, transport := range []string{"rest", "pg_wire"} {
 		for _, size := range sizes {
-			values := cells[transport][size]
-			fmt.Fprintf(&b, "| %s | %d | %.2f | %.2f | %.0f |\n", transport, size,
-				percentile(values, .5), percentile(values, .95), rowsPerSecond(size, values))
+			if values := cells[transport][size]; values != nil {
+				fmt.Fprintf(&b, "| %s | %d | %.2f | %.2f | %.0f |\n", transport, size,
+					percentile(values, .5), percentile(values, .95), rowsPerSecond(size, values))
+			} else {
+				fmt.Fprintf(&b, "| %s | %d | refused | refused | refused |\n", transport, size)
+			}
 		}
 	}
 	fmt.Fprintf(&b, "\n")
 	for _, transport := range []string{"rest", "pg_wire"} {
 		fmt.Fprintf(&b, "- a 250-row batch takes %.0f ms over %s.\n", percentile(cells[transport][250], .5),
 			map[string]string{"rest": "REST", "pg_wire": "the pg wire"}[transport])
+	}
+	for _, transport := range []string{"rest", "pg_wire"} {
+		for _, size := range sizes {
+			if cells[transport][size] == nil {
+				fmt.Fprintf(&b, "\nThe %s transport refused the %d-row batch: the statement exceeds the 16384-byte SQL limit (%d placeholders).\n",
+					transport, size, size*3)
+			}
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return err
