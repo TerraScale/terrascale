@@ -379,8 +379,10 @@ internal static partial class PostgresStatements
         }
 
         var set = SetPattern().Match(text);
-        var setting = Settable.FirstOrDefault(known => known.Equals(set.Groups[1].Value, StringComparison.OrdinalIgnoreCase));
-        var value = set.Groups[2].Value is ['\'', .. var quoted, '\''] ? quoted.Replace("''", "'", StringComparison.Ordinal) : set.Groups[2].Value;
+        var setting = Settable.FirstOrDefault(known => known.Equals(
+            set.Groups[1].Success ? set.Groups[1].Value : set.Groups[3].Value, StringComparison.OrdinalIgnoreCase));
+        var value = set.Groups[3].Success ? "DEFAULT"
+            : set.Groups[2].Value is ['\'', .. var quoted, '\''] ? quoted.Replace("''", "'", StringComparison.Ordinal) : set.Groups[2].Value;
         if (setting is null)
         {
             return new PgError("0A000", "SET supports only client_encoding, DateStyle, TimeZone, extra_float_digits, application_name, search_path and terrascale.write");
@@ -396,10 +398,35 @@ internal static partial class PostgresStatements
             return new PgError("22023", "terrascale.write is home, local or auto");
         }
 
-        // Session-local echo: the value changes nothing else.
-        settings[setting] = value;
+        // Times always render in UTC and dates in ISO; only the values the server supports are accepted.
+        var reset = value.Equals("DEFAULT", StringComparison.OrdinalIgnoreCase);
+        if (setting == "TimeZone" && !reset && !IsUtcZone(value))
+        {
+            return new PgError("22023", "only UTC and its aliases are supported time zones");
+        }
+
+        if (setting == "DateStyle" && !reset && !IsIsoDateStyle(value))
+        {
+            return new PgError("22023", "DateStyle is ISO, optionally with MDY, DMY or YMD");
+        }
+
+        // Session-local echo: the value changes nothing else. TimeZone always echoes UTC; DateStyle echoes its given field order.
+        settings[setting] = setting switch
+        {
+            "TimeZone" => "UTC",
+            "DateStyle" => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is [_, var order]
+                ? $"ISO, {order.ToUpperInvariant()}"
+                : "ISO, MDY",
+            _ => value,
+        };
         return new[] { new PgResult(null, [], "SET") };
     }
+
+    private static bool IsUtcZone(string value) => value.Trim().ToLowerInvariant() is
+        "utc" or "etc/utc" or "etc/uct" or "uct" or "gmt" or "etc/gmt" or "z" or "zulu" or "universal" or "etc/universal" or "greenwich";
+
+    private static bool IsIsoDateStyle(string value) => value.ToLowerInvariant().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        is ["iso"] or ["iso", "mdy" or "dmy" or "ymd"];
 
     /// <summary>A statement's result: types from declared types, else from the first non-null value.</summary>
     public static PgResult Result(PgStatement statement, SqlResult result)
@@ -649,7 +676,7 @@ internal static partial class PostgresStatements
     [GeneratedRegex(@"\A(?:precision|varying|with|without|time|zone)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TypeWords();
 
-    [GeneratedRegex(@"\ASET\s+(?:SESSION\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*(?:=|\s+TO\s+)\s*(.*)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    [GeneratedRegex(@"\A(?:SET\s+(?:SESSION\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*(?:=|\s+TO\s+)\s*(.*)|RESET\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex SetPattern();
 
     [GeneratedRegex(@"\ASHOW\s+(transaction\s+isolation\s+level|time\s+zone|[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -673,9 +700,32 @@ internal static partial class PostgresStatements
     [GeneratedRegex(@"\A(?:SAVEPOINT|RELEASE|ROLLBACK\s+(?:WORK\s+|TRANSACTION\s+)?TO)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SavepointPattern();
 
-    // Isolation and access modes are accepted and ignored: SQL transactions are serializable (relational-sql.md section 5).
-    [GeneratedRegex(@"\A(?:BEGIN|START\s+TRANSACTION)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    // Isolation modes are accepted and ignored: SQL transactions are serializable (native-sql.md). The access mode is
+    // enforced by the SQL session (SQLSTATE 25006); BeginReadOnly names it for the BEGIN the session runs.
+    [GeneratedRegex(@"\A(?:BEGIN|START\s+TRANSACTION)(?:\s+(?:WORK|TRANSACTION))?(?:\s*,?\s*(?:ISOLATION\s+LEVEL\s+)?(?:NOT\s+DEFERRED|DEFERRED|IMMEDIATE|EXCLUSIVE|SERIALIZABLE|REPEATABLE\s+READ|READ\s+COMMITTED|READ\s+UNCOMMITTED|READ\s+WRITE|READ\s+ONLY|READONLY))*\z",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BeginPattern();
+
+    /// <summary>Whether a BEGIN/START TRANSACTION statement opens READ ONLY. Call only on text BeginPattern matched,
+    /// so the statement is those keywords separated by whitespace and commas. The mode is enforced by the SQL session (SQLSTATE 25006).</summary>
+    public static bool BeginReadOnly(string text)
+    {
+        var words = text.Split([',', ' ', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Select(word => word.ToUpperInvariant()).ToList();
+        for (var i = 0; i < words.Count; i++)
+        {
+            switch (words[i])
+            {
+                case "READONLY":
+                case "READ" when i + 1 < words.Count && words[i + 1] == "ONLY":
+                    return true;
+                case "READ" when i + 1 < words.Count && words[i + 1] is "COMMITTED" or "UNCOMMITTED":
+                    i++; // part of an isolation level, not the access mode
+                    break;
+            }
+        }
+
+        return false;
+    }
 
     [GeneratedRegex(@"\A(?:COMMIT|END)(?:\s+(?:WORK|TRANSACTION))?\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CommitPattern();
