@@ -47,7 +47,7 @@ namespace TerraScale.Dashboard.Features.Usage
 
         private async Task<UsageToolReport> ReportAsync(AccountContext context, string databaseId, string range)
         {
-            context = await AccountScope.RefreshAsync(accounts, context, Cancellation);
+            context = await AccountScope.RefreshAsync(accounts, context, Cancellation, requireProject: !context.Organization!.ContainsMember(context.UserId));
             if (range is not ("1h" or "24h" or "7d" or "30d"))
             {
                 throw new AccountAccessException("Choose 1h, 24h, 7d or 30d.", 400);
@@ -59,7 +59,8 @@ namespace TerraScale.Dashboard.Features.Usage
             }
 
             var selection = UsageSelection.For(context, context.Project?.Id ?? "", databaseId, range);
-            var controls = await spending.ReadAsync(context, Cancellation);
+            context = selection.Context;
+            var controls = await spending.ReadAsync(context, Cancellation, requireProject: !selection.Member);
             var measured = await measurements.ReadAsync(selection, Cancellation);
             var plan = PlanCatalog.For(context.Organization!);
             var limits = PlanCatalog.Limits(context.Organization!);

@@ -294,6 +294,39 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             }
         }
 
+        [Test]
+        public async Task ProjectViewerReadsAnalyticsForTheirGrantedProjectWithoutOrganizationTotals()
+        {
+            var (platform, client, org, granted, sibling, collaborator) = await UsageCollaboratorAsync("viewer");
+            await using (platform)
+            {
+                using var page = await client.GetAsync("/analytics?project=" + granted);
+                await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                var html = await page.Content.ReadAsStringAsync();
+                await Assert.That(html).Contains("analytics-summary");
+                await Assert.That(html).DoesNotContain(sibling).And.DoesNotContain("Hidden usage sibling");
+                using var refused = await client.GetAsync("/analytics?project=" + sibling);
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+                await Assert.That(platform.Producer.Role(org, collaborator)).IsNull();
+                await Assert.That(platform.Producer.Failures).IsEmpty();
+            }
+        }
+
+        [Test]
+        public async Task ProjectViewerCannotReadUsageToolForAnotherProjectOfTheSameOrganization()
+        {
+            var (platform, client, org, granted, sibling, collaborator) = await UsageCollaboratorAsync("viewer");
+            await using (platform)
+            {
+                var secret = await HttpJourney.CreatePatAsync(client, "Analytics collaboration", platform.Principal("usage-collaborator").Password);
+                var refused = await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "get_usage", arguments = new { organizationId = org, projectId = sibling } });
+                await Assert.That(refused.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
+                await Assert.That(refused.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()).IsEqualTo("Project is unavailable.");
+                await Assert.That(platform.Producer.Role(org, collaborator)).IsNull();
+                await Assert.That(platform.Producer.Failures).IsEmpty();
+            }
+        }
+
         private static async Task<(PlatformScenario Platform, HttpClient Client, string OrganizationId, string GrantedProjectId, string SiblingProjectId, string CollaboratorId)> UsageCollaboratorAsync(
             string role)
         {
