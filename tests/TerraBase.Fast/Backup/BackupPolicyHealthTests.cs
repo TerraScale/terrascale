@@ -5,7 +5,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Turso;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -47,7 +46,9 @@ public sealed class BackupPolicyHealthTests
         await using var api = await ManagementApi.StartAsync(time: time, services: services =>
         {
             WithoutScheduler(services);
-            services.Replace(ServiceDescriptor.Singleton<IStorageEngine>(provider => new FailingCopyEngine(provider.GetRequiredService<TursoStorageEngine>())));
+            var engine = services.Single(descriptor => descriptor.ServiceType == typeof(IStorageEngine));
+            services[services.IndexOf(engine)] = ServiceDescriptor.Singleton<IStorageEngine>(provider =>
+                new FailingCopyEngine((IStorageEngine)engine.ImplementationFactory!(provider)));
         });
         var database = await api.CreateManagedDatabaseAsync();
         using var client = api.WithToken(api.ProjectToken(database.Project, "databases:read databases:write"));
