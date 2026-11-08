@@ -35,7 +35,7 @@ internal sealed class FileStorageUsage(IStorageEngine engine) : IFileStorageUsag
             {
                 if (++visited > 10_000)
                 {
-                    throw new QueryCapacityException("file storage accounting exceeded its bucket budget");
+                    throw new QueryCapacityException("file storage accounting exceeded its bucket budget") { Deterministic = true };
                 }
                 after = kind.Name;
                 if (!kind.Name.StartsWith(prefix, StringComparison.Ordinal))
@@ -51,7 +51,7 @@ internal sealed class FileStorageUsage(IStorageEngine engine) : IFileStorageUsag
                     {
                         if (++visited > 100_000)
                         {
-                            throw new QueryCapacityException("file storage accounting exceeded its object budget");
+                            throw new QueryCapacityException("file storage accounting exceeded its object budget") { Deterministic = true };
                         }
                         var file = Primitives.EntityPayload.Read(saved, TerraBaseJsonContext.Default.FileObject)!;
                         total = checked(total + file.Size);

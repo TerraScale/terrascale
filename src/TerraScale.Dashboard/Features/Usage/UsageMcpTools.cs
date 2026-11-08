@@ -119,7 +119,7 @@ namespace TerraScale.Dashboard.Features.Usage
             var error = measured.Scope.State switch
             {
                 UsageSourceState.Unauthorized => "TerraBase didn't accept this sign-in. Sign out and in again to load metered reads and writes.",
-                UsageSourceState.Unavailable => "Metered reads and writes could not be loaded. Try again shortly.",
+                UsageSourceState.Unavailable => "Usage is temporarily unavailable. Try again in a moment.",
                 _ => ""
             };
             var source = measured.Scope.State switch
@@ -130,12 +130,12 @@ namespace TerraScale.Dashboard.Features.Usage
                 UsageSourceState.Restricted => "The usage resource was not found or is not authorized for this account.",
                 UsageSourceState.QueryTooExpensive => "TerraBase could not complete this usage query within its resource limits; no zero usage is inferred.",
                 UsageSourceState.Unauthorized => error,
-                _ => "TerraBase metering is unavailable."
+                _ => "Usage is temporarily unavailable. Try again in a moment."
             };
             var allowanceError = complete && reads is not null || measured.Scope.State == UsageSourceState.NoProducer ? "" : measured.Monthly.Values.Any(value => value.State == UsageSourceState.Unauthorized)
                 ? "TerraBase didn't accept this sign-in, so this month's reads and writes didn't load. Sign out and in again."
                 : measured.Monthly.Values.Any(value => value.State == UsageSourceState.Unavailable) || complete
-                    ? "This month's reads and writes could not be loaded from TerraBase. Try again shortly." : "";
+                    ? "Usage is temporarily unavailable. Try again in a moment." : "";
             var scopeBytes = scope?.LogicalBytes;
             return new(context.Organization!.Id, context.Project?.Id ?? "", databaseId, plan?.Name ?? "No billing plan",
                 [Allowance("Operation units this month", plan?.OperationsAllowance, limits.MonthlyOperations,

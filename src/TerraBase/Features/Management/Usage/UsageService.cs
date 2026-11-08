@@ -44,11 +44,17 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
     private static readonly Validation QueryTooExpensive = new("query too expensive", "invalid_query");
 
+    internal static readonly Unavailable PastDeadline = new("usage exceeded its execution budget; retry", "capacity");
+
     public async ValueTask<DatabaseUsageResult> GetDatabaseUsageAsync(TenantContext database, UsageWindow window, CancellationToken cancellationToken)
     {
         try
         {
             return await DatabaseAsync(database, window, budget: null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (QueryCapacityException error) when (!error.Deterministic)
+        {
+            return PastDeadline;
         }
         catch (QueryCapacityException)
         {
@@ -100,8 +106,13 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
             {
                 List<ManagedDatabase> databases => await ProjectAsync(userId, organizationId, projectId, databases, window, budget, cancellationToken).ConfigureAwait(false),
                 NotFound error => error,
+                Validation error => error,
                 Unavailable error => error,
             };
+        }
+        catch (QueryCapacityException error) when (!error.Deterministic)
+        {
+            return PastDeadline;
         }
         catch (QueryCapacityException)
         {
@@ -132,7 +143,12 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
             }
 
             databases.AddRange(page.Items);
-            Count(budget, page.Items.Count);
+            budget.Listed += page.Items.Count;
+            if (budget.Listed > MaxDatabases)
+            {
+                return QueryTooExpensive;
+            }
+
             after = page.Next;
         }
         while (after is not null);
@@ -251,15 +267,6 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         }
     }
 
-    private static void Count(Budget budget, int listed)
-    {
-        budget.Listed += listed;
-        if (budget.Listed > MaxDatabases)
-        {
-            throw new QueryCapacityException("usage covers more databases than one request reads");
-        }
-    }
-
     private static UsagePoint[] Sum(UsageWindow window, IEnumerable<IReadOnlyList<UsagePoint>> series)
     {
         var sum = new UsagePoint[window.Count];
@@ -295,5 +302,5 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
     private readonly union OrganizationPage(OrganizationIds, Unavailable);
 
     // Every database of a project, or why they cannot be listed.
-    private readonly union ProjectDatabases(List<ManagedDatabase>, NotFound, Unavailable);
+    private readonly union ProjectDatabases(List<ManagedDatabase>, NotFound, Validation, Unavailable);
 }

@@ -13,7 +13,7 @@ internal static class ErrorResponse
         Unauthorized e => new Response(StatusCodes.Status401Unauthorized, e.Code, e.Message, op),
         Forbidden e => new Response(StatusCodes.Status403Forbidden, e.Code, e.Message, op),
         QuotaExceeded e => new Response(StatusCodes.Status429TooManyRequests, e.Code, e.Message, op, retryAfter: true),
-        Unavailable e => new Response(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message, op),
+        Unavailable e => new Response(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message, op, retryAfter: true),
         PayloadTooLarge e => new Response(StatusCodes.Status413PayloadTooLarge, e.Code, e.Message, op),
         UnsupportedMediaType e => new Response(StatusCodes.Status415UnsupportedMediaType, e.Code, e.Message, op),
         RequestTimeout e => new Response(StatusCodes.Status408RequestTimeout, e.Code, e.Message, op),

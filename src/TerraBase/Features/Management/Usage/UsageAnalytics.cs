@@ -30,6 +30,10 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         {
             return new Unavailable("analytics exceeded its execution budget", "capacity");
         }
+        catch (QueryCapacityException error) when (!error.Deterministic)
+        {
+            return new Unavailable("analytics exceeded its execution budget", "capacity");
+        }
         catch (QueryCapacityException)
         {
             return new Validation("query too expensive", "invalid_query");
@@ -131,7 +135,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             result.AddRange(page.Items);
             if (result.Count > UsageService.MaxDatabases)
             {
-                throw new QueryCapacityException("analytics covers more databases than one request reads");
+                throw new QueryCapacityException("analytics covers more databases than one request reads") { Deterministic = true };
             }
 
             after = page.Next;
@@ -146,11 +150,11 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         var points = databases.Sum(record => Placed(record, region)) * window.Usage.Count;
         if (points > MaxPoints)
         {
-            throw new QueryCapacityException("analytics exceeds its result bucket limit");
+            throw new QueryCapacityException("analytics exceeds its result bucket limit") { Deterministic = true };
         }
 
         return (memory.TryReserve(MemoryLane.Foreground, 16L * 1024 * 1024 + points * 2048L)
-            ?? throw new QueryCapacityException("analytics memory admission exhausted"), points);
+            ?? throw new QueryCapacityException("analytics memory admission exhausted") { Deterministic = true }, points);
     }
 
     private int Placed(ManagedDatabase record, string? region) =>
@@ -183,7 +187,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             _points += items * window.Usage.Count;
             if (_points > MaxPoints)
             {
-                throw new QueryCapacityException("analytics exceeds its result bucket limit");
+                throw new QueryCapacityException("analytics exceeds its result bucket limit") { Deterministic = true };
             }
 
             _reservations.Add(Reserve(items * window.Usage.Count * 2048L));
@@ -198,7 +202,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }, Reserve);
 
         private IMemoryReservation Reserve(long bytes) =>
-            memory.TryReserve(MemoryLane.Foreground, bytes) ?? throw new QueryCapacityException("analytics memory admission exhausted");
+            memory.TryReserve(MemoryLane.Foreground, bytes) ?? throw new QueryCapacityException("analytics memory admission exhausted") { Deterministic = true };
 
         public void Dispose()
         {
