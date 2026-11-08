@@ -16,7 +16,7 @@ type FileAccessPolicy struct {
 
 // FileAccessRules is a file bucket's declarative end-user permissions; missing grants deny access.
 type FileAccessRules struct {
-	Owner *string           `json:"owner"`
+	Owner *string          `json:"owner"`
 	Read  FileAccessPolicy `json:"read"`
 	Write FileAccessPolicy `json:"write"`
 }
