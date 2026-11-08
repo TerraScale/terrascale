@@ -19,4 +19,4 @@ database management scopes remain exclusive to ts-auth access tokens.
 Project closure still revokes operator keys and project deletion still refuses
 projects containing them. Their internal project index stores only key hashes;
 the customer list metadata, ordering sequence and response types are removed.
-This catalog change needs the deploy lane's batched format bump; no migration or format-version edit is included.
+This catalog change needs a batched format bump; no migration or format-version edit is included.

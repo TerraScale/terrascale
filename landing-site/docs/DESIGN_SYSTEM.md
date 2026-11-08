@@ -1085,5 +1085,5 @@ component patterns above are what define the look.
 
 Language selectors use the shared flat `.sdk-tabs` row, self-hosted official
 logos, a blue selected underline and visible keyboard focus. No per-tab boxes.
-See [SDK language tabs](../../docs/dashboard/sdk-language-tabs.md) for source
+See SDK language tabs for source
 paths, ARIA/keyboard behavior and the screenshot checklist across all sites.

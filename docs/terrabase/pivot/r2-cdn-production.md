@@ -13,7 +13,7 @@ resources; this is not an unlimited free ad-hoc SQL promise.
 
 ## Evidence and read-only live inspection
 
-[The 2026-10-23 benchmark](../../../benchmark/bench/2026-10-23-free-reads.md)
+The 2026-10-23 benchmark
 measured three repeats: 11 R2 GETs for 11 objects at each of 1, 10, 100 and
 1,000 readers; 0.999 cache hit ratio at 1,000 readers and zero origin payload
 reads. Every response came from CWB. Cross-location Tiered Cache savings

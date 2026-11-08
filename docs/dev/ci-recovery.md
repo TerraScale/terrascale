@@ -1,6 +1,6 @@
 # Recover CI after a missing push event
 
-Owner: CI/release lane. A missing GitHub push event does not qualify a commit.
+A missing GitHub push event does not qualify a commit.
 Recover the actual `main` head with:
 
 ```sh
@@ -50,7 +50,7 @@ Inspect the CI and Images run URLs and the final live readiness revision before
 reporting recovery. A successful dispatch request alone is not deployment proof.
 The focused gate regression fixtures live in `scripts/dashboard/ci/release-gate-test.py`.
 
-Use the [controlled missed-push drill](ci-recovery-drill.md) to prove recovery
+Use the controlled missed-push drill to prove recovery
 without a push CI run and record the exact revision and deployment evidence.
 
 Core service publication waits for the aggregate `test` job. When both services

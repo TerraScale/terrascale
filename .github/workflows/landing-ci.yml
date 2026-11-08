@@ -8,14 +8,12 @@ on:
       - '.github/workflows/landing-*.yml'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
-      - '!.cos/**'
   pull_request:
     paths:
       - 'landing-site/**'
       - '.github/workflows/landing-*.yml'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
-      - '!.cos/**'
   workflow_dispatch:
 
 permissions:

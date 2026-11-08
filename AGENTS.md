@@ -6,6 +6,7 @@
 
 - No PRs, reviews or merge queue. Push to `main`. Ignore outside contributors' PRs unless asked.
 - Fetch `origin` first. Branch from fresh `origin/main` in your own worktree or clone, outside shared checkouts. Commit small changes; no AI attribution.
+- Record non-obvious choices in the commit message as `DECISION: <choice>. Reason: <why>`.
 - Before pushing, build or type-check only the project you changed. Don't run test suites locally: GitHub CI runs them on every push to `main`. Rebase and push again if the push races. Never force-push or delete `main`.
 - Deploy only green main. If your push makes main red, fix or revert within about 30 minutes. For a red main you did not cause, wait for its owner's fix and rebase.
 - Never run anything on or SSH to mariogk-desktop.
@@ -17,11 +18,6 @@
 - A new feature adds at most one happy-path and one critical-failure test. Refactors, renames, docs and config changes add none. Deleting low-value tests is welcome.
 - Fast tests run fully parallel. Each single test finishes in under 10 s, each area's Fast suite in under 30 s, and every CI test job in under 5 minutes. Anything slower is a bug.
 - Prove flaky fixes with 5 repeats; benchmarks with 3 measured repeats in `benchmark/bench/`. For page changes, report before/after screenshots.
-
-### Decisions
-
-- Decide and continue. Record `DECISION: <choice>. Reason: <why>` in commits.
-- Block only for a user-only secret/login, new paid capacity, or deleting serving infrastructure or unrecoverable data.
 
 ### Secrets and hard gates
 
@@ -36,6 +32,14 @@
 
 # TerraScale monorepo
 
+## Development skills
+
+Step-by-step guides live in `.agents/skills/` (also linked from `.claude/skills/`):
+
+- `add-feature`: build a feature end to end (owner, contract, storage, SDKs, UI, docs, tests).
+- `add-endpoint`: add an HTTP endpoint with TerraScale.Endpoints.
+- `sdk-parity`: add or change an operation across the five SDKs.
+- `simple-ui`: design and build dashboard, auth and site screens.
 
 ## Layout and commands
 

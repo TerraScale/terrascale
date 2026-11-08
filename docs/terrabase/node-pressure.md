@@ -48,7 +48,7 @@ cloud instance/process identities and all safety counters. Its freshness bounds
 are two minutes old and five seconds ahead of the consumer clock. A producer
 sample's timestamp is its measurement time, never fetch time.
 
-**This endpoint does not enable autonomous scaling.** COS authorized telemetry
+**This endpoint does not enable autonomous scaling.** It ships telemetry
 first, with explicit unknowns. The consumer rejects null required counters and
 `state: "unknown"`, and its existing unknown-lag regression verifies a hold with
 no mutations. Preserving those failures keeps autoscaling gated. Substituting

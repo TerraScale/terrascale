@@ -10,7 +10,6 @@ on:
       - 'scripts/sdk/**'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
-      - '!.cos/**'
   pull_request:
     branches: [main]
     paths:
@@ -20,7 +19,6 @@ on:
       - 'scripts/sdk/**'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
-      - '!.cos/**'
   workflow_dispatch:
 
 permissions:

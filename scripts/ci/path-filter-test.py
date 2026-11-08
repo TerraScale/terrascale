@@ -192,7 +192,7 @@ cases += [("src/vendor/Turso.Data.Sqlite/.editorconfig", "modified", terrabase),
 instructions = ["AGENTS.md", "CLAUDE.md", "sdk/dotnet/AGENTS.md",
                 "src/TerraBase/CLAUDE.md", "src/TerraScale.Authentication/AGENTS.md",
                 "src/TerraScale.Endpoints/AGENTS.md", "scripts/terrabase/CLAUDE.md",
-                "docs/dev/testing.md", ".cos/brief.md"]
+                "docs/dev/testing.md"]
 cases += [(instructions, "modified", set()),
           (instructions + ["src/TerraBase/Program.cs"], "modified", terrabase),
           # auth-server and auth-client together release ts-auth after TerraBase.
@@ -237,7 +237,6 @@ cases += [(path, "modified", ci, started) for path, ci, started in [
     ("Directory.Packages.props", all_areas, {"images-ghcr.yml"}),
     ("Dockerfile", all_areas, set()),
     ("README.md", set(), set()),
-    (".cos/brief.md", set(), set()),
     (".github/dependabot.yml", set(), set()),
     (".github/workflows/ci.yml", all_areas, set()),
     (".github/workflows/dashboard-ci.yml", set(), {"images-ghcr.yml"}),

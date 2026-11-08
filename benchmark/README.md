@@ -12,9 +12,9 @@ formatting and runs the Fast suite. `make benchmark-build` also builds the
 
 - [`cmd/replica-lag`](cmd/replica-lag/main.go) measures SQL write acknowledgement
   to replica visibility, optionally timing replication notices.
-- [`region-sim`](region-sim/README.md) drives a local SQL cluster with the real CLI.
-- [`shape-tails`](shape-tails/README.md) measures SQL subscription delivery.
-- [`overlay-proof`](overlay-proof/README.md) proves sjc provisional, confirmed
+- `region-sim` drives a local SQL cluster with the real CLI.
+- `shape-tails` measures SQL subscription delivery.
+- `overlay-proof` proves sjc provisional, confirmed
   and revert states; [`cmd/overlay-bench`](cmd/overlay-bench/main.go) measures
   forwarded-write visibility on a region's live shape tail.
 - [`orm-matrix`](orm-matrix/) exercises PostgreSQL clients and ORMs.
@@ -48,9 +48,9 @@ Cloudflare analytics token from stdin and queries R2 operations for each
 recorded reader window. Pass it cleaned JSON-object records, then pass both
 receipt files to [`scripts/free-reads-report.py`](scripts/free-reads-report.py).
 Unavailable analytics remain unavailable. The method, limits and results are
-in [`bench/2026-11-04-f10-free-reads.md`](bench/2026-11-04-f10-free-reads.md).
+in `bench/2026-11-04-f10-free-reads.md`.
 The F12 rerun and CPU comparison are in
-[`bench/2026-11-04-f10-post-f12.md`](bench/2026-11-04-f10-post-f12.md); its
+`bench/2026-11-04-f10-post-f12.md`; its
 [`report generator`](scripts/free-reads-post-f12-report.py) takes the new
 cohorts, original cohorts, new R2 receipts and live deployment receipts in
 that order. The rerun calls `runFreeReads({ holdMs: 2000 })` from the shipped
@@ -66,5 +66,5 @@ Local replication runs are local evidence. Cloud runs must record verified per-r
 
 ## Two-region replica simulation
 
-[region-sim](region-sim/README.md) starts a gru home node and an sjc replica node locally and drives them with the
+region-sim starts a gru home node and an sjc replica node locally and drives them with the
 real `ts` CLI. It reports pass/fail and replica lag for each scenario (`make region-sim`).

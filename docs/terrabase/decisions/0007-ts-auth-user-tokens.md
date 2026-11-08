@@ -1,6 +1,6 @@
 # 0007: The Management API authenticates ts-auth access tokens
 
-- Status: accepted (human decision to authenticate with ts-auth tokens, 2026-10-05, TS-519). COS confirmed on
+- Status: accepted (human decision to authenticate with ts-auth tokens, 2026-10-05, TS-519). Confirmed on
   2026-10-05: no organization claim is required; the service credential stays, restricted to the loopback admin
   listener; the token contract for TS-491 below.
 - Scope: `src/TerraBase/Features/UserAuth`, `Features/Management`, `Features/Health/ReadyzEndpoint.cs`,
@@ -43,7 +43,7 @@ unchanged.
   access tokens, and on the loopback admin listener, which accepts only the management service
   credential. Each scheme refuses the other listener, so a token on the admin listener or the
   credential on the client listener gets `401`.
-- **Management service credential, admin listener only (COS, 2026-10-05).** The TS-529 bootstrap creates
+- **Management service credential, admin listener only (2026-10-05).** The TS-529 bootstrap creates
   the `terrascale` organization (projects `ts-auth`, `ts-dashboard`) before ts-auth exists, because
   ts-auth itself persists there, so a path that needs no ts-auth token must remain.
   - It replaces `dashboard-credential-file`, which is now an unknown setting (exit code `2`). Nothing
@@ -71,7 +71,7 @@ unchanged.
 - **Cache, refresh and readiness.** Keys are cached in memory.
   - Startup waits up to 10 seconds for the first fetch.
   - Until a fetch succeeds, every token gets `401`. A background loop retries every 2 seconds.
-    `/readyz` does not wait for the keys (COS decision 2026-10-10, TS-677): a database is ready when it
+    `/readyz` does not wait for the keys (decision 2026-10-10, TS-677): a database is ready when it
     can serve, and ts-auth, which stores its data here, could otherwise never become ready after a
     fresh start.
   - After the first success, the loop refreshes every 10 minutes. A failed refresh keeps the cached

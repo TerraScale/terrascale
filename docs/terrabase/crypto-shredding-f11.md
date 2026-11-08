@@ -31,7 +31,7 @@ records in bounded pages, including pending and expiring snapshots, and destroys
 a scope from source deletion. Each scope leaves the same permanent authority for regional and external-copy cleanup.
 
 This is a greenfield custody and push-format cutover. Old Tigris key objects and bucket snapshots are not a migration
-source. The deployment lane owns the required format bump and reset; historical restore points from the old format
+source. The required format bump and reset need the user's approval; historical restore points from the old format
 are outside the new guarantee and must not be presented as F11-protected.
 
 ## All persisted copies
@@ -119,13 +119,13 @@ confidentiality boundary.
 
 The Fast integration coverage retains one happy path (a real partner hold, an independent warm region cache and
 zero-GET warm decode and immediate post-delete decrypt rejection through an authenticated peer eviction) and one critical failure (custody failure returns 503 and durable deletion retries).
-The [live evidence](../../benchmark/bench/2026-11-05-f11-crypto-shredding.md) records the green deployment
+The live evidence records the green deployment
 `91b84926d`, all six nodes ready, and a gru database with sjc/fra replicas, a managed snapshot and a shape.
 DELETE returned 204 in 6.081s; subsequent regional reads, restore and key-release requests returned 404, both custody
 scopes returned 404 and native files were absent. The previously cached CDN URL returned 404 in all three regions
 by 72.153s after the response. This is an observed sampling upper bound for that inventory, not a fixed provider-outage
 completion guarantee. The proof account closed in 2.654s and its private files were removed.
 
-The [#1107 correction and fresh live proof](../../benchmark/bench/2026-11-05-cdn1107.md) records bounded admission,
+The #1107 correction and fresh live proof records bounded admission,
 checked Cloudflare acceptance and exact-URL verification. Seven previously cached URLs returned 404 in all three POPs
 by 43.299 seconds after DELETE; the original acceptance failure remains historical evidence.

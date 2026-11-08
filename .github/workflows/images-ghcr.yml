@@ -24,7 +24,6 @@ on:
       - '.github/workflows/images-ghcr.yml'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
-      - '!.cos/**'
   workflow_run:
     workflows: [CI]
     types: [completed]

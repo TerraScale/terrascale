@@ -10,7 +10,7 @@
 - Differential proof (R13): `tests/TerraBase.Slow/Sync/RouterDifferentialTests.cs` runs 10,000 random transactions in
   local mode (sjc, `TerraScale-Durability: home`) and home-only mode and requires the same final rows, or a
   `terrascale.conflicts` record for every difference; results in
-  [`benchmark/bench/2026-11-05-r13-router-differential.md`](../../../benchmark/bench/2026-11-05-r13-router-differential.md).
+  `benchmark/bench/2026-11-05-r13-router-differential.md`.
 
 ## Where a write goes
 

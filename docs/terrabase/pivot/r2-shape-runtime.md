@@ -34,7 +34,7 @@ failures, admission and account-wide budget in
 [r2-cdn-production.md](r2-cdn-production.md) remain required before F6 cleanup
 qualification; restart or queue saturation can still lose purge work.
 No storage-format change or historical-object migration occurs here. The
-pivot deploy lane owns the format bump and rebootstrap. F11 still owns
+format bump and rebootstrap need the user's approval. F11 still owns
 independently erasable keys; purge acceptance is not cryptographic erasure.
 No visual change.
 

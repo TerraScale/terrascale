@@ -65,6 +65,6 @@ throwaway account, each SDK's actual User-Agent or default HTTP-stack header
 manifest/key success, anonymous rejection, table-scope and absent-grant rejection,
 and the WAF guard. Delete the proof database and account afterward.
 
-[The live qualification](../../benchmark/bench/2026-11-05-shape-cdn.md) includes
+The live qualification includes
 all five SDK User-Agents/defaults, MISS/HIT pairs at GRU/SJC/FRA and authorization
 negative controls. F11 owns the separate post-delete eviction and erasure proof.

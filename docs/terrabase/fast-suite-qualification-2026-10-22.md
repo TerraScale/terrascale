@@ -127,4 +127,4 @@ Its source SHA256 is
 `470fd053fe739e98ccfcb9b1edc2d282440946ddbf6a87996ee59a2c390efb1c`.
 
 No workflows, storage format, production authentication, public API or migration
-behavior changed. Main image/deploy failures remain owned by the deploy lane.
+behavior changed.

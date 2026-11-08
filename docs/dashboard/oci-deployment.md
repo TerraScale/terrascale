@@ -47,4 +47,4 @@ curl -fsS https://dash.terrascale.tech/health/ready
 
 Match the commit after `+` in `version` to the reviewed image revision. A ready
 response does not qualify sign-in, persisted state or Stripe acceptance;
-retain those separate release gates. Workflow changes belong to the orch lane.
+retain those separate release gates.

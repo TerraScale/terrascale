@@ -16,7 +16,7 @@ In the Stripe Dashboard, select the TerraScale account and **live mode** (leave 
 4. Open **Settings → Billing → Invoices** (`https://dashboard.stripe.com/settings/billing/invoice`). Add the seller's tax IDs and select the default IDs, or Stripe's automatic tax-ID display where available. Confirm the legal name and address on the invoice template. Stripe Tax determines when reverse charge applies; do not add an unconditional reverse-charge footer to every invoice.
 5. The existing `setup-stripe` command configures the customer portal to let customers edit their name, billing address and tax IDs, as well as payment details. Run its live step only through the already approved live Stripe installation workflow. The live key remains the separate TS-812 user handoff; do not send a key here.
 
-Send these **non-secret** fields to COS in one reply:
+Send these **non-secret** fields to the account owner in one message:
 
 - Seller's exact registered legal name, business country and full registered invoice address.
 - Seller tax-ID type/country and number(s) that should appear on invoices.

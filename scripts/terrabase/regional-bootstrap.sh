@@ -2,7 +2,7 @@
 # Run inside this monorepo on a ts-heavy-any dev host. No production access.
 set -euo pipefail
 legacy_revision=b443b6ea83f519018c0d9f9d8f04e65c3df12724
-legacy_root="$PWD/.cos/legacy-b443"
+legacy_root="$PWD/.legacy-b443"
 mkdir -p "$legacy_root"
 git archive "$legacy_revision" | tar -x -C "$legacy_root"
 (

@@ -41,7 +41,7 @@ description: TerraScale UI standard — simple purpose, architecture, design and
 
 ## Tabs and segmented controls
 
-- SDK language switchers always use the shared `.sdk-tabs` component (stylesheet and keyboard handler) documented in [SDK language tabs](../../../docs/dashboard/sdk-language-tabs.md).
+- SDK language switchers always use the shared `.sdk-tabs` component (stylesheet and keyboard handler) documented in SDK language tabs.
 - Use a flat row with a self-hosted official language logo and name. Never nest boxed buttons inside another boxed control or rely on browser default button styling.
 - Show selection with one blue accent underline. Keep hover, selected and visible keyboard focus distinct in light and dark themes.
 - Select the first tab initially so the active language is visible on narrow screens.

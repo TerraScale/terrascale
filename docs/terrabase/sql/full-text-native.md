@@ -32,4 +32,4 @@ Normal application builds consume verified artifacts rather than rebuilding the 
 
 Native progress callbacks are installed and cleared only while the connection is idle. They must not reenter the engine. Their managed delegate remains rooted until cleared or deinitialized; exceptions abort without crossing the unmanaged boundary.
 
-Architecture-specific native smoke results do not imply managed Fast qualification on another architecture, hardware without the tested instruction set, or successful production rollout. Preserve the exact-source build receipts and separate runtime, managed-suite and live proofs. See [native SQL](native-sql.md), [resource admission](../qos.md) and [CI](../ci.md).
+Architecture-specific native smoke results do not imply managed Fast qualification on another architecture, hardware without the tested instruction set, or successful production rollout. Preserve the exact-source build receipts and separate runtime, managed-suite and live proofs. See [native SQL](native-sql.md), [resource admission](../qos.md) and CI.

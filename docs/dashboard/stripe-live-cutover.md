@@ -78,7 +78,7 @@ Verified Stripe sandbox deliveries remain required before live approval.
    compatibility shims. Confirm the resulting billing bindings, checkout
    records and organization entitlements contain no test references. Dashboard
    entity IDs must be plain ULIDs, and uniqueness must use TerraBase native
-   constraints rather than claim records. Bootstrap uses the current [SQL state schema](state-storage.md). Production resets require the assigned data lane and verified backup/recovery evidence.
+   constraints rather than claim records. Bootstrap uses the current [SQL state schema](state-storage.md). Production resets require the user's approval and verified backup/recovery evidence.
 4. Require the live audit to pass and verify credentials can read/write the
    existing TerraBase billing tables. Require their separate staging evidence before claiming in-place plan
    changes are financially qualified; the runtime mode gate is a removal gap.

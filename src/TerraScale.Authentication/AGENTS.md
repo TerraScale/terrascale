@@ -1,6 +1,6 @@
 # ts-auth
 
-Read the root [AGENTS.md](../../AGENTS.md). Shipping: follow the workspace [Shipping code section](/home/mariogk/Projects/TerraScale/AGENTS.md#shipping-code-user-2026-10-29-go-fast-break-things-fast-q-trunk-q-local-check).
+Read the root [AGENTS.md](../../AGENTS.md).
 
 ts-auth is the hosted identity provider. Prioritize security, tenant isolation, correctness and interoperability over convenience or performance. Contract: `docs/auth/platform-contract.md`.
 
@@ -40,6 +40,6 @@ ts-auth is the hosted identity provider. Prioritize security, tenant isolation, 
 
 - Auth Fast must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug.
 - Integration/end-to-end suites: `tests/TerraScale.Authentication.Fast` and `.Slow`; shared source utilities in `.TestHarness`. Cover changed behavior through real HTTP, authentication and ts-dotnet persistence boundaries; do not mock critical paths. Use isolated synthetic accounts and clean up. Delivery/federation use sandboxes or controlled services, never real users. Browser tests use Playwright Chromium.
-- Test only the happy path and critical paths (user order 2026-11-04; `docs/auth/fast-suite.md`). Fast has one happy-path test per public feature, plus sign-in, token/API-key validation, revocation, replay, cross-tenant denial, storage fail-closed and OpenAPI/Scalar. Slow keeps only heavy critical tests (TerraBase crash/recovery, regional outage, erasure). A new feature adds at most one happy-path and one critical-failure test; never add edge permutations, validation matrices or copy assertions.
+- Test only the happy path and critical paths. Fast has one happy-path test per public feature, plus sign-in, token/API-key validation, revocation, replay, cross-tenant denial, storage fail-closed and OpenAPI/Scalar. Slow keeps only heavy critical tests (TerraBase crash/recovery, regional outage, erasure). A new feature adds at most one happy-path and one critical-failure test; never add edge permutations, validation matrices or copy assertions.
 - Surface confirmed security defects immediately and add a minimal Fast regression.
 - Consult installed-version documentation for .NET, ASP.NET Core, OpenIddict, Datastar/CSP, OpenAPI, Scalar, OWASP auth/password/session/authorization guidance, RFC 9700 and OpenID Connect Core.

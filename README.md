@@ -74,8 +74,8 @@ here deploys or touches production.
 
 ## Docs
 
-- Dev-host toolchain and placement checks: [`docs/dev/host-toolchain.md`](docs/dev/host-toolchain.md)
-- Beta setup failure and recovery: [`docs/dev/beta-setup-recovery.md`](docs/dev/beta-setup-recovery.md)
+- Dev-host toolchain and placement checks: `docs/dev/host-toolchain.md`
+- Beta setup failure and recovery: `docs/dev/beta-setup-recovery.md`
 - TerraBase: [`docs/terrabase/README.md`](docs/terrabase/README.md)
 - ts-auth: [`docs/auth/README.md`](docs/auth/README.md)
 - Benchmarks: [`benchmark/README.md`](benchmark/README.md)

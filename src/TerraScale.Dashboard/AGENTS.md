@@ -17,4 +17,4 @@
 - Synthetic provider and subprocess fixtures live only in `tests/TerraScale.Dashboard.E2E/Demo/`; the production executable always builds the real application.
 - Each area's Fast suite must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug. Keep default parallelism.
 - Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. New features add at most one happy-path and one critical-failure test.
-- Changes limited to `AGENTS.md`/`CLAUDE.md` skip area Fast tests and proof gates in CI. Mixed commits keep the gates for the changed code.
+- Changes limited to `AGENTS.md`/`CLAUDE.md` skip area Fast tests in CI. Mixed commits keep the gates for the changed code.
