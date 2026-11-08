@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PlanRecommendation from '@/components/PlanRecommendation.svelte'
   import Icon from '@/components/Icon.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
@@ -53,15 +54,16 @@
         class="pricing-card"
         data-plan={plan.slug}
         data-popular={plan.popular}
-        class:is-popular={plan.popular}
         class:is-unavailable={!plan.available}
         style:--plan-accent={plan.accent}
-        style:--plan-accent-rgb={plan.accentRgb}
       >
-        <svelte:element this={planTag} class="pricing-card__name">
-          <span class="pricing-card__icon"><Icon name={plan.icon} className="pricing-card__icon-glyph" /></span>
-          {plan.name}
-        </svelte:element>
+        <div class="pricing-card__head">
+          <svelte:element this={planTag} class="pricing-card__name">
+            <span class="pricing-card__icon"><Icon name={plan.icon} className="pricing-card__icon-glyph" /></span>
+            {plan.name}
+          </svelte:element>
+          {#if plan.popular}<PlanRecommendation />{/if}
+        </div>
         <p class="pricing-card__price">
           <strong>{plan.billing.price}</strong>
           <span>{plan.billing.suffix}</span>
@@ -81,7 +83,7 @@
         {#if plan.href.startsWith('https://')}
           <ExternalLink
             href={plan.href}
-            class={`ts-btn ${plan.popular ? 'ts-btn-primary' : 'ts-btn-glass'} pricing-card__cta`}
+            class="ts-btn ts-btn-glass pricing-card__cta"
           >
             {plan.cta}
           </ExternalLink>
@@ -99,10 +101,6 @@
   /* The triad row below belongs to this section, so the plans keep a smaller gap to it. */
   .pricing-section {
     padding: var(--ts-space-16) clamp(16px, 2.5vw, 40px) var(--ts-space-20);
-    background:
-      radial-gradient(60% 50% at 70% 75%, rgba(var(--ts-primary-rgb), 0.12), transparent 70%),
-      radial-gradient(40% 40% at 15% 85%, rgba(var(--ts-secondary-rgb), 0.07), transparent 70%),
-      radial-gradient(35% 40% at 95% 60%, rgba(var(--ts-tertiary-rgb), 0.07), transparent 70%);
   }
 
   .pricing-section__head {
@@ -140,8 +138,6 @@
   }
 
   .pricing-card {
-    /* Icons and checks need >=3:1 on the surface; lift the tier accent toward white. */
-    --plan-ink: color-mix(in oklab, var(--plan-accent) 65%, white);
     position: relative;
     display: flex;
     flex-direction: column;
@@ -150,10 +146,8 @@
     padding: var(--ts-space-6);
     border: 1px solid var(--ts-divider);
     border-radius: var(--ts-radius-lg);
-    background:
-      radial-gradient(120% 60% at 0% 0%, rgba(var(--plan-accent-rgb), 0.14), transparent 60%),
-      var(--ts-bg-surface);
-    box-shadow: inset 0 2px 0 rgba(var(--plan-accent-rgb), 0.85);
+    background: var(--ts-bg-surface);
+    box-shadow: inset 0 2px 0 var(--plan-accent);
     transition:
       transform var(--ts-transition-normal),
       border-color var(--ts-transition-normal),
@@ -162,18 +156,15 @@
 
   .pricing-card:hover {
     transform: translateY(-3px);
-    border-color: rgba(var(--plan-accent-rgb), 0.45);
+    border-color: color-mix(in srgb, var(--plan-accent) 45%, transparent);
   }
 
-  .pricing-card.is-popular {
-    border-color: transparent;
-    background:
-      radial-gradient(120% 60% at 50% 0%, rgba(var(--ts-primary-rgb), 0.28), transparent 65%) padding-box,
-      linear-gradient(var(--ts-bg-surface), var(--ts-bg-surface)) padding-box,
-      linear-gradient(140deg, var(--ts-primary-light), var(--ts-secondary) 45%, var(--ts-tertiary)) border-box;
-    box-shadow:
-      0 0 0 1px rgba(var(--ts-primary-rgb), 0.25),
-      0 18px 50px -12px rgba(var(--ts-primary-rgb), 0.55);
+  .pricing-card__head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--ts-space-2) var(--ts-space-3);
+    min-height: 54px;
   }
 
   .pricing-card__icon {
@@ -182,8 +173,8 @@
     width: 28px;
     height: 28px;
     border-radius: var(--ts-radius-md);
-    background: rgba(var(--plan-accent-rgb), 0.18);
-    color: var(--plan-ink);
+    background: color-mix(in srgb, var(--plan-accent) 12%, transparent);
+    color: var(--plan-accent);
   }
 
   :global(.pricing-card__icon-glyph) {
@@ -199,7 +190,7 @@
     margin: 0;
     font-size: 17px;
     font-weight: 600;
-    color: var(--ts-text);
+    color: var(--plan-accent);
   }
 
   .pricing-card__desc {
@@ -222,13 +213,6 @@
     letter-spacing: -0.04em;
     font-variant-numeric: tabular-nums;
     color: var(--ts-text);
-  }
-
-  .is-popular .pricing-card__price strong {
-    background: linear-gradient(120deg, #fff 20%, var(--ts-primary-light));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
   }
 
   .pricing-card__price span {
@@ -262,7 +246,7 @@
     width: 14px;
     height: 14px;
     margin-top: 2px;
-    color: var(--plan-ink);
+    color: var(--plan-accent);
   }
 
   :global(.pricing-card__cta) {

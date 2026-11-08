@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PlanRecommendation from '@/components/PlanRecommendation.svelte'
   import Icon from '@/components/Icon.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict, locale } from '@/lib/i18n'
@@ -44,8 +45,9 @@
         <tr>
           <th scope="col">{compare.head}</th>
           {#each comparePlans as plan (plan.slug)}
-            <th scope="col" class:is-popular={plan.popular} style:--plan-accent={plan.accent}>
+            <th scope="col" style:--plan-accent={plan.accent}>
               <span class="detailed__plan">{plan.name}</span>
+              {#if plan.popular}<PlanRecommendation />{/if}
             </th>
           {/each}
         </tr>
@@ -54,8 +56,8 @@
         {#each limitRows as row (row.label)}
           <tr class:is-cadence={row.label === compare.billing}>
             <th scope="row">{row.label}</th>
-            {#each row.cells as cell, i}
-              <td class:is-popular={comparePlans[i].popular}>{cell}</td>
+            {#each row.cells as cell}
+              <td>{cell}</td>
             {/each}
           </tr>
         {/each}
@@ -67,8 +69,8 @@
         {#each entitlementRows as row (row.label)}
           <tr>
             <th scope="row">{row.label}</th>
-            {#each row.cells as cell, i}
-              <td class:is-popular={comparePlans[i].popular}>{cell}</td>
+            {#each row.cells as cell}
+              <td>{cell}</td>
             {/each}
           </tr>
         {/each}
@@ -197,6 +199,8 @@
   }
 
   .detailed__plan {
+    color: var(--plan-accent);
+    margin-block: var(--ts-space-1);
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -204,19 +208,11 @@
 
   .detailed__plan::before {
     content: '';
+    flex: none;
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background: var(--plan-accent);
-  }
-
-  .detailed__table .is-popular {
-    background: rgba(var(--ts-primary-rgb), 0.1);
-  }
-
-  .detailed__table thead th.is-popular {
-    box-shadow: inset 0 2px 0 var(--ts-primary);
-    color: var(--ts-primary-light);
   }
 
   .detailed__table tbody tr:hover {
