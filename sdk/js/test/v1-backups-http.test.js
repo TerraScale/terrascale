@@ -46,3 +46,12 @@ test("all backup routes retain source selectors, pagination and producer DTOs", 
   expect(requests[8]?.url.searchParams.get("destination")).toBe("customer");
   expect(JSON.stringify(client)).toBe("{}");
 });
+
+test("rewindPointInTime posts the instant and destination and returns the rewound database", async () => {
+  const rewound = { id: entity, projectId: project, name: "app", branchedFrom: null, createdAt: at, homeRegion: null };
+  const { client, requests } = await fixture((_request, response) => json(response, rewound, 200));
+  expect(await client.database("app").backups.rewindPointInTime({ pointInTime: at, destination: "customer" })).toEqual(rewound);
+  expect(requests.map(r => [r.method, r.url.pathname, r.body])).toEqual([
+    ["POST", `${base}/point-in-time/rewind`, JSON.stringify({ pointInTime: at, destination: "customer" })],
+  ]);
+});

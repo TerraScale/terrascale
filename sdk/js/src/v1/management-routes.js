@@ -1,4 +1,4 @@
-/** @typedef {"executeSql" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"executeSql" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
@@ -21,6 +21,7 @@ export const managementV1Routes = Object.freeze([
   route("getRestoreWindow", "GET", "/v1/projects/{project}/databases/{database}/point-in-time", 200),
   route("planPointInTime", "POST", "/v1/projects/{project}/databases/{database}/point-in-time/plan", 200),
   route("restorePointInTime", "POST", "/v1/projects/{project}/databases/{database}/point-in-time/restore", 202),
+  route("rewindPointInTime", "POST", "/v1/projects/{project}/databases/{database}/point-in-time/rewind", 200),
   route("getBackupDestination", "GET", "/v1/projects/{project}/backup-destination", 200),
   route("setBackupDestination", "PUT", "/v1/projects/{project}/backup-destination", 200),
   route("deleteBackupDestination", "DELETE", "/v1/projects/{project}/backup-destination", 204),
