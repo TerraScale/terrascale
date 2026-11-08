@@ -277,6 +277,15 @@ internal sealed class DatabaseBackupPurge(
             return progress with { ObjectsAbsentAt = null, Failure = "active_copies_pending" };
         }
 
+        var restoring = await catalog.ReadUncheckedAsync(
+            transaction => RestoreGenerationLeases.ActiveAsync(
+                transaction, job.Database.OrganizationId, job.Database.DatabaseId!, null, time.GetUtcNow(), token),
+            token).ConfigureAwait(false);
+        if (restoring.Count > 0)
+        {
+            return progress with { ObjectsAbsentAt = null, Failure = "restore_in_progress" };
+        }
+
         var prefix = BackupLayout.FileRoot(job.Database) + "/";
         var failed = progress.InventoryFailed;
         failed |= !await AttemptAsync(job, BackupDestinationNames.Platform, null, prefix, progress.ObjectsAbsentAt, token).ConfigureAwait(false);

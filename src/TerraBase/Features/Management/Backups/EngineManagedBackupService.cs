@@ -278,15 +278,18 @@ internal sealed class EngineManagedBackupService(
             };
         }
 
-        if (await pointInTime.PlanAsync(database, at, cancellationToken, destination).ConfigureAwait(false) is Validation outside)
+        var planned = await pointInTime.PlanAsync(database, at, cancellationToken, destination).ConfigureAwait(false);
+        if (planned is Validation outside)
         {
             return outside;
         }
 
+        var leased = planned is PointInTimePlan { Generation: { } generation } ? generation : (Ulid?)null;
+
         return await StartOperationAsync(
             organizationId, owner, RestoreKind.PointInTime, name,
             stopping => FromStagingRestoredAsync(userId, organizationId, database, at, destination, source.Name, name, ttlSeconds, stopping),
-            cancellationToken);
+            cancellationToken, leasedDatabaseId: database.DatabaseId, leasedGeneration: leased);
     }
 
     private async ValueTask<RestoreBackupResult> FromStagingRestoredAsync(
@@ -332,7 +335,8 @@ internal sealed class EngineManagedBackupService(
 
     private async ValueTask<StartRestoreResult> StartOperationAsync(
         string organizationId, DatabaseOwner owner, string kind, string? name,
-        Func<CancellationToken, ValueTask<RestoreBackupResult>> copy, CancellationToken cancellationToken, string? leasedBackupId = null)
+        Func<CancellationToken, ValueTask<RestoreBackupResult>> copy, CancellationToken cancellationToken, string? leasedBackupId = null,
+        string? leasedDatabaseId = null, Ulid? leasedGeneration = null)
     {
         var id = EntityIds.New(time).ToString();
         _ = _runningRestores.TryAdd(id, 0);
@@ -358,9 +362,14 @@ internal sealed class EngineManagedBackupService(
                 await PutLeaseAsync(transaction, organizationId, backupId, id, cancellationToken).ConfigureAwait(false);
             }
 
+            if (leasedDatabaseId is { } sourceId && leasedGeneration is { } sourceGeneration)
+            {
+                await PutGenerationLeaseAsync(transaction, organizationId, sourceId, sourceGeneration, id, cancellationToken).ConfigureAwait(false);
+            }
+
             var record = new RestoreOperationRecord(
                 id, organizationId, owner.ProjectId, owner.DatabaseId, null, kind, RestoreOperationState.Running, name, null, null,
-                time.GetUtcNow(), null, options.Region, options.MachineId, leasedBackupId);
+                time.GetUtcNow(), null, options.Region, options.MachineId, leasedBackupId, leasedDatabaseId, leasedGeneration);
             await PutRestoreOperationAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             return record;
         }, static error => error, cancellationToken).ConfigureAwait(false);
@@ -1263,6 +1272,12 @@ internal sealed class EngineManagedBackupService(
         {
             await transaction.DeleteAsync(BackupCatalog.Leases(record.OrganizationId), BackupCatalog.LeaseKey(backupId, record.Id), cancellationToken).ConfigureAwait(false);
         }
+
+        if (record.LeasedDatabaseId is { } databaseId && record.LeasedGeneration is { } generation)
+        {
+            await transaction.DeleteAsync(
+                BackupCatalog.GenerationLeases(record.OrganizationId), BackupCatalog.GenerationLeaseKey(databaseId, generation, record.Id), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private ValueTask PutLeaseAsync(IStorageTransaction transaction, string organizationId, string backupId, string operationId, CancellationToken cancellationToken) =>
@@ -1270,6 +1285,12 @@ internal sealed class EngineManagedBackupService(
             transaction, BackupCatalog.Leases(organizationId), BackupCatalog.LeaseKey(backupId, operationId),
             new BackupLease(backupId, operationId, time.GetUtcNow() + RestoreLeaseExpiry),
             TerraBaseJsonContext.Default.BackupLease, cancellationToken);
+
+    private ValueTask PutGenerationLeaseAsync(IStorageTransaction transaction, string organizationId, string databaseId, Ulid generation, string operationId, CancellationToken cancellationToken) =>
+        PutAsync(
+            transaction, BackupCatalog.GenerationLeases(organizationId), BackupCatalog.GenerationLeaseKey(databaseId, generation, operationId),
+            new RestoreGenerationLease(databaseId, generation, operationId, time.GetUtcNow() + RestoreLeaseExpiry),
+            TerraBaseJsonContext.Default.RestoreGenerationLease, cancellationToken);
 
     // A lease holds the sweep only while it can still be live: not yet expired and its operation still Running. A
     // settle that never committed is bounded by the expiry; an operation record that is gone or settled no longer copies.
@@ -1295,7 +1316,9 @@ internal sealed class EngineManagedBackupService(
     // sweep delete the source mid-copy. Only a lease whose operation is still Running is renewed; the settle deletes it.
     private async Task HeartbeatLeaseAsync(RestoreOperationRecord record, CancellationToken stopping)
     {
-        if (record.LeasedBackupId is not { } backupId)
+        var backupId = record.LeasedBackupId;
+        var leasedDatabaseId = record.LeasedDatabaseId;
+        if (backupId is null && leasedDatabaseId is null)
         {
             return;
         }
@@ -1310,7 +1333,15 @@ internal sealed class EngineManagedBackupService(
                     if (await GetRestoreOperationRecordAsync(transaction, record.OrganizationId, record.SourceDatabaseId, record.Id, CancellationToken.None)
                         .ConfigureAwait(false) is { State: RestoreOperationState.Running })
                     {
-                        await PutLeaseAsync(transaction, record.OrganizationId, backupId, record.Id, CancellationToken.None).ConfigureAwait(false);
+                        if (backupId is not null)
+                        {
+                            await PutLeaseAsync(transaction, record.OrganizationId, backupId, record.Id, CancellationToken.None).ConfigureAwait(false);
+                        }
+
+                        if (leasedDatabaseId is not null && record.LeasedGeneration is { } generation)
+                        {
+                            await PutGenerationLeaseAsync(transaction, record.OrganizationId, leasedDatabaseId, generation, record.Id, CancellationToken.None).ConfigureAwait(false);
+                        }
                     }
 
                     return new Done();

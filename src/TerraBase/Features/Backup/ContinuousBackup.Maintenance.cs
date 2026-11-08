@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
+using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -98,6 +100,13 @@ internal sealed partial class ContinuousBackup
         var cutoff = now - TimeSpan.FromDays(file.RetentionDays) - RetentionGrace;
         // Expire one pass early, including equality, so hourly scheduling fits inside the age cap.
         var expires = now - TimeSpan.FromDays(file.RetentionDays) - BaselineSlack + RetentionInterval;
+        var leased = await LeasedGenerationsAsync(file, now, cancellationToken).ConfigureAwait(false);
+        if (leased is null)
+        {
+            _logger.ZLogWarning($"Retention of {file.Prefix:@File} could not read restore leases; it retries next hour");
+            return;
+        }
+
         long size = 0;
         var measure = now - file.SizedAt >= SizeInterval;
         var complete = true;
@@ -105,7 +114,7 @@ internal sealed partial class ContinuousBackup
         {
             try
             {
-                if (!await RetainStoreAsync(file, store, cutoff, expires, cancellationToken).ConfigureAwait(false))
+                if (!await RetainStoreAsync(file, store, cutoff, expires, leased, cancellationToken).ConfigureAwait(false))
                 {
                     throw new IOException("backup expiry is incomplete; an object deletion was refused or failed");
                 }
@@ -200,16 +209,34 @@ internal sealed partial class ContinuousBackup
         }
     }
 
+    private async ValueTask<HashSet<Ulid>?> LeasedGenerationsAsync(ShippedFile file, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (file.Database is not { } database)
+        {
+            return [];
+        }
+
+        return await _catalog.ReadAsync(
+            async transaction => await RestoreGenerationLeases.ActiveAsync(
+                transaction, database.OrganizationId, database.DatabaseId!, null, now, cancellationToken).ConfigureAwait(false),
+            static _ => (HashSet<Ulid>?)null, cancellationToken).ConfigureAwait(false);
+    }
+
     // Inventories and deletions belong to one destination: partial uploads or a failed delete in the other destination
     // must remain discoverable on later passes. Bound deletion candidates, scanning the entire inventory to protect
     // snapshots beyond the batch. Hard-expired objects drain in batches of sixteen in the same pass.
-    private async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, CancellationToken cancellationToken)
+    private async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, HashSet<Ulid> leased, CancellationToken cancellationToken)
     {
         var complete = true;
         // Include orphan generations and the newest segment: a failing snapshot must not retain WAL forever.
         var expiredKeys = new List<string>(16);
         await foreach (var item in store.ListAsync(file.Prefix + "/wal/", null, cancellationToken).ConfigureAwait(false))
         {
+            if (BackupLayout.SegmentGeneration(item.Key) is not { } generation || leased.Contains(generation))
+            {
+                continue;
+            }
+
             if (BackupLayout.ParseSegment(item.Key) is not { } segment || segment.At > expires)
             {
                 continue;
@@ -231,7 +258,7 @@ internal sealed partial class ContinuousBackup
         SnapshotKey? oldest = null;
         await foreach (var item in store.ListAsync(BackupLayout.Snapshots(file.Prefix), null, cancellationToken).ConfigureAwait(false))
         {
-            if (BackupLayout.ParseSnapshot(item.Key) is not { } snapshot || snapshot.At >= cutoff)
+            if (BackupLayout.ParseSnapshot(item.Key) is not { } snapshot || snapshot.At >= cutoff || leased.Contains(snapshot.Generation))
             {
                 continue;
             }
@@ -282,6 +309,11 @@ internal sealed partial class ContinuousBackup
 
         foreach (var (generation, before) in kept)
         {
+            if (leased.Contains(generation))
+            {
+                continue;
+            }
+
             complete &= await DeleteSegmentsAsync(store, file, generation, before, cancellationToken).ConfigureAwait(false);
         }
 

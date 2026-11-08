@@ -447,7 +447,11 @@ time by itself.
 - Nothing after the replayed log proves T: an unshipped or missing final segment, a generation that ended (a hole, a
   dropped backlog, a shipper move or restart; the next generation's snapshot time restores), or a quiet period not yet
   closed by a later write or snapshot.
-- A snapshot or segment that disappears between listing and download (retention racing the restore).
+- A snapshot or segment that disappears between listing and download (retention racing the restore). Admitting a
+  point-in-time restore writes a generation lease (source database + the plan's generation, renewed every 5 minutes
+  while the restore runs, deleted when it settles); continuous-backup retention skips that generation's snapshot and
+  segment objects for the pass, and the database-deletion purge defers erasing continuous-backup objects (failure
+  reason `restore_in_progress`) until the lease is gone, so a running restore never loses an object it still reads.
 
 `409` `restore_point_unproven`: the history is there but T cannot be placed between two transactions, in a segment read
 after T: a transaction whose COMMIT row's second contains T (times are whole seconds), one without recorded times (a

@@ -53,6 +53,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(BackupPolicyRequest))]
 [JsonSerializable(typeof(BackupRecord))]
 [JsonSerializable(typeof(BackupLease))]
+[JsonSerializable(typeof(RestoreGenerationLease))]
 [JsonSerializable(typeof(BackupSchedule))]
 [JsonSerializable(typeof(RestoreOperationRecord))]
 [JsonSerializable(typeof(RestoreOperation))]
