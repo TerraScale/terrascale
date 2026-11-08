@@ -14,7 +14,12 @@ Decide recovery from the typed status and code, and from whether an operation ma
 | `401` / `403` | Obtain valid authorized access; do not auto-retry. `403` means the resource is yours but the key lacks a scope (`forbidden_scope`) or the client is outside its IP allowlist (`ip_not_allowed`). |
 | `404` | The resource does not exist **or your credential cannot reach it**; both answer the same, so another project's resources stay invisible. For `unknown_database`, check the project ID and database name and the key's project and database restriction. |
 | `409` / `412` | Resolve the conflict or the stale version before writing again. |
+| `421` | Wrong region: the database is served in another region. See [Wrong region](#wrong-region). |
 | `429` / `503` | Respect `Retry-After` where supplied; repeat only safe operations within a deadline. |
+
+## Wrong region
+
+A `421` with code `wrong_region` means the region you called does not serve the database: only its home region does. The response names the home in the `X-TerraBase-Database-Home` header, its `Location` header carries the same request URL in the home region, and the message reads `the database is served in <region>: send it to https://<host>`. Recover by sending the request to the home region — `ts db info <name>` prints a database's metadata, including its home region. The SDKs do not retry a `421` automatically: the .NET SDK raises `TerraBaseWrongRegionException` and the Go SDK returns an `*tb.APIError`, both carrying `HomeRegion` (and the regions that serve the database), so your code can resend there.
 
 ## Retry behavior
 
