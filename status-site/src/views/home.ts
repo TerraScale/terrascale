@@ -33,7 +33,8 @@ import {
   type RegionOverview,
 } from "../overview";
 import { VANTAGES, type Vantage } from "../probe/vantages";
-import { MAP_HEIGHT, MAP_WIDTH } from "./charts/geometry";
+import { legacyMapPoint } from "./charts/geometry";
+import { WORLD_MAP, project } from "./charts/world-map.generated";
 import { chartLegend, lineChart } from "./charts/line";
 import { sparkline } from "./charts/sparkline";
 import {
@@ -181,15 +182,26 @@ function map(view: Overview) {
   const named = (vantage: Vantage) => vantageLabel(view.monitoring.coverage, vantage);
   const label = `Region map: ${regions.map((entry) => `${entry.name} ${regionLabel(entry).toLowerCase()}`).join(", ")}`;
 
+  const points = new Map<string, { x: number; y: number }>();
+  for (const vantage of VANTAGES) {
+    const point = project(vantage.lat, vantage.lng);
+    points.set(vantage.code, vantage.region === null ? point : { x: point.x - 2.2, y: point.y + 2.2 });
+  }
+  const hubPoints = new Map(regions.map((entry) => [entry.code, legacyMapPoint(entry.mapX, entry.mapY)]));
+  const hubPoint = (entry: Pick<RegionOverview, "code" | "mapX" | "mapY">) =>
+    hubPoints.get(entry.code) ?? { x: 0, y: 0 };
+
   const arcs = live.flatMap((entry) =>
     VANTAGES.flatMap((vantage) => {
-      const dx = entry.mapX - vantage.mapX;
-      const dy = entry.mapY - vantage.mapY;
+      const origin = points.get(vantage.code) ?? { x: 0, y: 0 };
+      const hub = hubPoint(entry);
+      const dx = hub.x - origin.x;
+      const dy = hub.y - origin.y;
       const distance = Math.hypot(dx, dy);
       if (vantage.region === entry.code) return [];
-      const cx = (vantage.mapX + entry.mapX) / 2;
-      const cy = Math.min(vantage.mapY, entry.mapY) - distance * 0.22;
-      const d = `M ${vantage.mapX} ${vantage.mapY} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${entry.mapX} ${entry.mapY}`;
+      const cx = (origin.x + hub.x) / 2;
+      const cy = Math.min(origin.y, hub.y) - distance * 0.22;
+      const d = `M ${origin.x.toFixed(2)} ${origin.y.toFixed(2)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${hub.x.toFixed(2)} ${hub.y.toFixed(2)}`;
       const ping = entry.vantagePings[vantage.code] ?? null;
       const cardData = JSON.stringify({ rows: [["Latest", ms(ping)]] });
       return [
@@ -201,6 +213,7 @@ function map(view: Overview) {
   );
   const vantages = VANTAGES.map((vantage) => {
     const entry = coverage.get(vantage.code);
+    const origin = points.get(vantage.code) ?? { x: 0, y: 0 };
     const cardData = JSON.stringify({
       rows: [
         ["Requested", vantage.placement],
@@ -209,7 +222,7 @@ function map(view: Overview) {
         ["Coverage", VANTAGE_STATES[entry?.state ?? "missing"]],
       ],
     });
-    return html`<g class="st-vantage" transform="translate(${vantage.mapX} ${vantage.mapY})" tabindex="0" role="img" aria-label="Vantage point ${named(vantage)}" data-title="Vantage · ${named(vantage)}" data-card="${cardData}">
+    return html`<g class="st-vantage" transform="translate(${origin.x.toFixed(2)} ${origin.y.toFixed(2)})" tabindex="0" role="img" aria-label="Vantage point ${named(vantage)}" data-title="Vantage · ${named(vantage)}" data-card="${cardData}">
     <rect x="-1.3" y="-1.3" width="2.6" height="2.6" transform="rotate(45)"></rect>
   </g>`;
   });
@@ -228,13 +241,13 @@ function map(view: Overview) {
             ]),
           ],
     });
-    return html`<g class="st-hub" data-state="${stateAttr(entry.status)}"${planned ? raw(' data-lifecycle="planned"') : ""} transform="translate(${entry.mapX} ${entry.mapY})" tabindex="0" role="img" aria-label="${entry.name}: ${regionLabel(entry).toLowerCase()}" data-title="${entry.code} · ${entry.name}" data-card="${cardData}">
+    return html`<g class="st-hub" data-state="${stateAttr(entry.status)}"${planned ? raw(' data-lifecycle="planned"') : ""} transform="translate(${hubPoint(entry).x.toFixed(2)} ${hubPoint(entry).y.toFixed(2)})" tabindex="0" role="img" aria-label="${entry.name}: ${regionLabel(entry).toLowerCase()}" data-title="${entry.code} · ${entry.name}" data-card="${cardData}">
     <circle class="st-hub-pulse" r="2.4"></circle><circle class="st-hub-ring" r="2.4"></circle><circle r="1.1"></circle>
     <text x="3" y="1.1">${entry.code}</text>
   </g>`;
   });
   return html`<figure class="st-map-figure">
-  <svg class="st-map" viewBox="0 0 ${MAP_WIDTH} ${MAP_HEIGHT}" role="group" aria-label="${label}"><image href="${regionMap}" width="${MAP_WIDTH}" height="${MAP_HEIGHT}" aria-hidden="true"></image>${arcs}${vantages}${hubs}</svg>
+  <svg class="st-map" viewBox="0 0 ${WORLD_MAP.width} ${WORLD_MAP.height}" role="group" aria-label="${label}"><image href="${regionMap}" width="${WORLD_MAP.width}" height="${WORLD_MAP.height}" aria-hidden="true"></image>${arcs}${vantages}${hubs}</svg>
   <figcaption class="st-map-legend" aria-hidden="true">
     <span><span class="st-key st-key-hub"></span>Region</span>
     <span><span class="st-key st-key-vantage"></span>Vantage point</span>

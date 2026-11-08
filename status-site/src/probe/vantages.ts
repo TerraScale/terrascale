@@ -13,10 +13,8 @@ export interface Vantage {
       else is a coverage failure, never relabeled as this vantage.
       shortcut: hand-kept IATA lists, review only for actual regional colos. */
   colos: readonly string[];
-  /** Position in region map viewBox units (MAP_WIDTH × MAP_HEIGHT in
-      views/charts/geometry), just off the hub of the region it sits in. */
-  mapX: number;
-  mapY: number;
+  lat: number;
+  lng: number;
   /** The region hub it sits beside, which gets no probe path from it. */
   region: string | null;
 }
@@ -27,8 +25,8 @@ export const VANTAGES: readonly Vantage[] = [
     name: "US West",
     placement: "aws:us-west-1",
     colos: ["SJC", "SFO", "LAX", "SEA", "PDX"],
-    mapX: 18.8,
-    mapY: 31.4,
+    lat: 37.34,
+    lng: -121.89,
     region: "SJC",
   },
   {
@@ -36,8 +34,8 @@ export const VANTAGES: readonly Vantage[] = [
     name: "South America",
     placement: "aws:sa-east-1",
     colos: ["GRU", "GIG", "VCP", "EZE", "SCL", "BOG", "LIM"],
-    mapX: 47.4,
-    mapY: 62.4,
+    lat: -23.55,
+    lng: -46.63,
     region: "GRU",
   },
   {
@@ -63,8 +61,8 @@ export const VANTAGES: readonly Vantage[] = [
       "BRU",
       "DUB",
     ],
-    mapX: 69.3,
-    mapY: 23.6,
+    lat: 50.11,
+    lng: 8.68,
     region: "FRA",
   },
   {
@@ -72,8 +70,8 @@ export const VANTAGES: readonly Vantage[] = [
     name: "Asia Pacific",
     placement: "apac",
     colos: ["NRT", "KIX", "HND", "ICN", "HKG", "TPE", "SIN"],
-    mapX: 120.5,
-    mapY: 29.8,
+    lat: 35.68,
+    lng: 139.69,
     region: null,
   },
 ];
