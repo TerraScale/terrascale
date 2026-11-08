@@ -1,7 +1,8 @@
 using System.Net;
 
 namespace TerraScale.Dashboard.E2E.Features.Auth
-{    public sealed class SessionDeviceJourneyTests
+{
+    public sealed class SessionDeviceJourneyTests
     {
         [Test]
         public async Task SessionsTabShowsTheDeviceEachSessionWasCreatedOn()

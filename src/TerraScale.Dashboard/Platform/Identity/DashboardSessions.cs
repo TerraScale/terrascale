@@ -351,7 +351,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                         throw new IOException("Refreshed session identity is invalid.");
                     }
 
-                    refreshed = refreshed with { SessionExpiresAt = record.SessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null };
+                    refreshed = refreshed with { SessionExpiresAt = record.SessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null, Device = record.Device };
                     // ts-auth has rotated the secret, so losing this write would end the grant for good (the old secret is
                     // never replayed). Retry transient state failures; a write whose answer was lost is recognized on re-read.
                     for (var attempt = 0; ; attempt++)

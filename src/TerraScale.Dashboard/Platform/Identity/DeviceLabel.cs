@@ -4,14 +4,20 @@ namespace TerraScale.Dashboard.Platform.Identity
     {
         public static string Parse(string? userAgent)
         {
-            return Browser(userAgent) + " on " + OperatingSystem(userAgent);
+            var browser = Browser(userAgent);
+            var operatingSystem = OperatingSystem(userAgent);
+            if (browser is null)
+            {
+                return operatingSystem ?? "Unknown device";
+            }
+            return operatingSystem is null ? browser : browser + " on " + operatingSystem;
         }
 
-        private static string Browser(string? userAgent)
+        private static string? Browser(string? userAgent)
         {
             if (userAgent is null)
             {
-                return "Unknown browser";
+                return null;
             }
 
             if (userAgent.Contains("Firefox/", StringComparison.OrdinalIgnoreCase))
@@ -39,14 +45,14 @@ namespace TerraScale.Dashboard.Platform.Identity
                 return "Safari";
             }
 
-            return "Unknown browser";
+            return null;
         }
 
-        private static string OperatingSystem(string? userAgent)
+        private static string? OperatingSystem(string? userAgent)
         {
             if (userAgent is null)
             {
-                return "unknown OS";
+                return null;
             }
 
             if (userAgent.Contains("iPhone", StringComparison.OrdinalIgnoreCase) || userAgent.Contains("iPad", StringComparison.OrdinalIgnoreCase))
@@ -74,7 +80,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                 return "Linux";
             }
 
-            return "unknown OS";
+            return null;
         }
     }
 }
