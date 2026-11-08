@@ -1,41 +1,588 @@
 {
-  "producerRevision": "01ae001c7996de09e98b94265edc572d5785a7cb",
+  "producerRevision": "667e7e31c38600b60289a3e82326796ae8cdfb92",
   "routes": [
-    {"method":"GET","path":"/backupz","operation":"backupz","scopes":["anonymous"],"requestMediaTypes":[],"statuses":[200,503],"responseMediaType":"application/json","source":"src/TerraBase/Features/Backup/BackupHealthEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/healthz","operation":"healthz","scopes":["anonymous"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Health/HealthzEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/readyz","operation":"readyz","scopes":["anonymous"],"requestMediaTypes":[],"statuses":[200,503],"responseMediaType":"application/json","source":"src/TerraBase/Features/Health/ReadyzEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/v1/platform/databases","operation":"listPlatformDatabases","scopes":["platform-admin"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Platform/ListPlatformDatabasesEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/v1/projects/{project}/analytics","operation":"getProjectAnalytics","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Usage/GetProjectAnalyticsEndpoint.cs","request":"none"},
-    {"method":"DELETE","path":"/v1/projects/{project}/backup-destination","operation":"deleteBackupDestination","scopes":["databases:write"],"requestMediaTypes":[],"statuses":[204],"responseMediaType":"","source":"src/TerraBase/Features/Management/Backups/DeleteBackupDestinationEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/v1/projects/{project}/backup-destination","operation":"getBackupDestination","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/GetBackupDestinationEndpoint.cs","request":"none"},
-    {"method":"PUT","path":"/v1/projects/{project}/backup-destination","operation":"setBackupDestination","scopes":["databases:write"],"requestMediaTypes":["application/json"],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/SetBackupDestinationEndpoint.cs","request":"ProjectBackupDestinationRequest"},
-    {"method":"GET","path":"/v1/projects/{project}/databases","operation":"listDatabases","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs","request":"none"},
-    {"method":"POST","path":"/v1/projects/{project}/databases","operation":"createDatabase","scopes":["databases:write"],"requestMediaTypes":["application/json"],"statuses":[201],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs","request":"DatabaseRegionsRequest"},
-    {"method":"DELETE","path":"/v1/projects/{project}/databases/{database}","operation":"deleteDatabase","scopes":["databases:write"],"requestMediaTypes":[],"statuses":[204],"responseMediaType":"","source":"src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}","operation":"getDatabase","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs","request":"none"},
-    {"method":"PATCH","path":"/v1/projects/{project}/databases/{database}","operation":"updateDatabase","scopes":["databases:write"],"requestMediaTypes":["application/json"],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs","request":"DatabaseRegionsRequest"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/analytics","operation":"getDatabaseAnalytics","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Usage/GetDatabaseAnalyticsEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/backup-policy","operation":"getBackupPolicy","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/GetBackupPolicyEndpoint.cs","request":"none"},
-    {"method":"PUT","path":"/v1/projects/{project}/databases/{database}/backup-policy","operation":"setBackupPolicy","scopes":["databases:write"],"requestMediaTypes":["application/json"],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/SetBackupPolicyEndpoint.cs","request":"BackupPolicyRequest"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/backups","operation":"listBackups","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/ListBackupsEndpoint.cs","request":"none"},
-    {"method":"POST","path":"/v1/projects/{project}/databases/{database}/backups","operation":"createBackup","scopes":["databases:write"],"requestMediaTypes":[],"statuses":[201],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/CreateBackupEndpoint.cs","request":"none"},
-    {"method":"POST","path":"/v1/projects/{project}/databases/{database}/backups/{backup}/restore","operation":"restoreBackup","scopes":["databases:write"],"requestMediaTypes":["application/json"],"statuses":[201],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/RestoreBackupEndpoint.cs","request":"NameRequest"},
-    {"method":"POST","path":"/v1/projects/{project}/databases/{database}/branches","operation":"branchDatabase","scopes":["databases:write"],"requestMediaTypes":["application/json"],"statuses":[201],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs","request":"NameRequest"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/point-in-time","operation":"getRestoreWindow","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/GetRestoreWindowEndpoint.cs","request":"none"},
-    {"method":"POST","path":"/v1/projects/{project}/databases/{database}/point-in-time/plan","operation":"planPointInTime","scopes":["databases:read"],"requestMediaTypes":["application/json"],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/PlanPointInTimeEndpoint.cs","request":"PointInTimePlanRequest"},
-    {"method":"POST","path":"/v1/projects/{project}/databases/{database}/point-in-time/restore","operation":"restorePointInTime","scopes":["databases:write"],"requestMediaTypes":["application/json"],"statuses":[201],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Backups/RestorePointInTimeEndpoint.cs","request":"PointInTimeRestoreRequest"},
-    {"method":"POST","path":"/v1/projects/{project}/databases/{database}/sql/execute","operation":"executeSql","scopes":["sql:read"],"requestMediaTypes":["application/json"],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Sql/SqlExecuteEndpoint.cs","request":"SqlExecuteRequest","producerChange":"TerraScale/terrascale#420"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/tables/{table}/shape","operation":"readTableShape","scopes":["sql:read"],"requestMediaTypes":[],"statuses":[200,307],"responseMediaType":"application/json","source":"src/TerraBase/Features/Shapes/GetShapeEndpoint.cs","request":"ShapeRequest","producerChange":"dcd3fce5d"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest","operation":"getShapeManifest","scopes":["sql:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Shapes/GetShapeManifestEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/tables/{table}/shape/keys","operation":"getShapeKey","scopes":["sql:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Shapes/GetShapeKeyEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/tables/{table}/shape/ws","operation":"connectShapeHints","scopes":["sql:read"],"requestMediaTypes":[],"statuses":[101],"responseMediaType":"","source":"src/TerraBase/Features/Shapes/GetShapeHintEndpoint.cs","request":"ShapeHintAuth"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/sql/ws","operation":"connectSql","scopes":["sql:read"],"requestMediaTypes":[],"statuses":[101],"responseMediaType":"","source":"src/TerraBase/Features/Sql/SqlSocketEndpoint.cs","request":"SqlSocketRequest","producerChange":"2020a18ee"},
-    {"method":"GET","path":"/v1/projects/{project}/databases/{database}/usage","operation":"getDatabaseUsage","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Usage/GetDatabaseUsageEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/v1/projects/{project}/saved-queries","operation":"listSavedQueries","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Queries/ListSavedQueriesEndpoint.cs","request":"none"},
-    {"method":"POST","path":"/v1/projects/{project}/saved-queries","operation":"createSavedQuery","scopes":["databases:write"],"requestMediaTypes":["application/json"],"statuses":[201],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Queries/CreateSavedQueryEndpoint.cs","request":"SavedQueryRequest"},
-    {"method":"DELETE","path":"/v1/projects/{project}/saved-queries/{query}","operation":"deleteSavedQuery","scopes":["databases:write"],"requestMediaTypes":[],"statuses":[204],"responseMediaType":"","source":"src/TerraBase/Features/Management/Queries/DeleteSavedQueryEndpoint.cs","request":"none"},
-    {"method":"GET","path":"/v1/projects/{project}/saved-queries/{query}","operation":"getSavedQuery","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Queries/GetSavedQueryEndpoint.cs","request":"none"},
-    {"method":"PUT","path":"/v1/projects/{project}/saved-queries/{query}","operation":"updateSavedQuery","scopes":["databases:write"],"requestMediaTypes":["application/json"],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Queries/UpdateSavedQueryEndpoint.cs","request":"SavedQueryRequest"},
-    {"method":"GET","path":"/v1/projects/{project}/usage","operation":"getProjectUsage","scopes":["databases:read"],"requestMediaTypes":[],"statuses":[200],"responseMediaType":"application/json","source":"src/TerraBase/Features/Management/Usage/GetProjectUsageEndpoint.cs","request":"none"}
+    {
+      "method": "GET",
+      "path": "/backupz",
+      "operation": "backupz",
+      "scopes": [
+        "anonymous"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200,
+        503
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Backup/BackupHealthEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "operation": "healthz",
+      "scopes": [
+        "anonymous"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Health/HealthzEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/readyz",
+      "operation": "readyz",
+      "scopes": [
+        "anonymous"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200,
+        503
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Health/ReadyzEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/platform/databases",
+      "operation": "listPlatformDatabases",
+      "scopes": [
+        "platform-admin"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Platform/ListPlatformDatabasesEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/analytics",
+      "operation": "getProjectAnalytics",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Usage/GetProjectAnalyticsEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/backup-destination",
+      "operation": "deleteBackupDestination",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        204
+      ],
+      "responseMediaType": "",
+      "source": "src/TerraBase/Features/Management/Backups/DeleteBackupDestinationEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/backup-destination",
+      "operation": "getBackupDestination",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/GetBackupDestinationEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/projects/{project}/backup-destination",
+      "operation": "setBackupDestination",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/SetBackupDestinationEndpoint.cs",
+      "request": "ProjectBackupDestinationRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases",
+      "operation": "listDatabases",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases",
+      "operation": "createDatabase",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        201
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs",
+      "request": "DatabaseRegionsRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}",
+      "operation": "deleteDatabase",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        204
+      ],
+      "responseMediaType": "",
+      "source": "src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}",
+      "operation": "getDatabase",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/projects/{project}/databases/{database}",
+      "operation": "updateDatabase",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs",
+      "request": "DatabaseRegionsRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/analytics",
+      "operation": "getDatabaseAnalytics",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Usage/GetDatabaseAnalyticsEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/backup-policy",
+      "operation": "getBackupPolicy",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/GetBackupPolicyEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/backup-policy",
+      "operation": "setBackupPolicy",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/SetBackupPolicyEndpoint.cs",
+      "request": "BackupPolicyRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/backups",
+      "operation": "listBackups",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/ListBackupsEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/backups",
+      "operation": "createBackup",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        201
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/CreateBackupEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/backups/{backup}/restore",
+      "operation": "restoreBackup",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        202
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/RestoreBackupEndpoint.cs",
+      "request": "NameRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/branches",
+      "operation": "branchDatabase",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        201
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs",
+      "request": "NameRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/point-in-time",
+      "operation": "getRestoreWindow",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/GetRestoreWindowEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/point-in-time/plan",
+      "operation": "planPointInTime",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/PlanPointInTimeEndpoint.cs",
+      "request": "PointInTimePlanRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/point-in-time/restore",
+      "operation": "restorePointInTime",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        202
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/RestorePointInTimeEndpoint.cs",
+      "request": "PointInTimeRestoreRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/sql/execute",
+      "operation": "executeSql",
+      "scopes": [
+        "sql:read"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Sql/SqlExecuteEndpoint.cs",
+      "request": "SqlExecuteRequest",
+      "producerChange": "TerraScale/terrascale#420"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape",
+      "operation": "readTableShape",
+      "scopes": [
+        "sql:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200,
+        307
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Shapes/GetShapeEndpoint.cs",
+      "request": "ShapeRequest",
+      "producerChange": "dcd3fce5d"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest",
+      "operation": "getShapeManifest",
+      "scopes": [
+        "sql:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Shapes/GetShapeManifestEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape/keys",
+      "operation": "getShapeKey",
+      "scopes": [
+        "sql:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Shapes/GetShapeKeyEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape/ws",
+      "operation": "connectShapeHints",
+      "scopes": [
+        "sql:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        101
+      ],
+      "responseMediaType": "",
+      "source": "src/TerraBase/Features/Shapes/GetShapeHintEndpoint.cs",
+      "request": "ShapeHintAuth"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/sql/ws",
+      "operation": "connectSql",
+      "scopes": [
+        "sql:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        101
+      ],
+      "responseMediaType": "",
+      "source": "src/TerraBase/Features/Sql/SqlSocketEndpoint.cs",
+      "request": "SqlSocketRequest",
+      "producerChange": "2020a18ee"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/usage",
+      "operation": "getDatabaseUsage",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Usage/GetDatabaseUsageEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/saved-queries",
+      "operation": "listSavedQueries",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Queries/ListSavedQueriesEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/saved-queries",
+      "operation": "createSavedQuery",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        201
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Queries/CreateSavedQueryEndpoint.cs",
+      "request": "SavedQueryRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/saved-queries/{query}",
+      "operation": "deleteSavedQuery",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        204
+      ],
+      "responseMediaType": "",
+      "source": "src/TerraBase/Features/Management/Queries/DeleteSavedQueryEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/saved-queries/{query}",
+      "operation": "getSavedQuery",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Queries/GetSavedQueryEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/projects/{project}/saved-queries/{query}",
+      "operation": "updateSavedQuery",
+      "scopes": [
+        "databases:write"
+      ],
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Queries/UpdateSavedQueryEndpoint.cs",
+      "request": "SavedQueryRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/usage",
+      "operation": "getProjectUsage",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Usage/GetProjectUsageEndpoint.cs",
+      "request": "none"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/restores/{operation}",
+      "operation": "getRestoreOperation",
+      "scopes": [
+        "databases:read"
+      ],
+      "requestMediaTypes": [],
+      "statuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "source": "src/TerraBase/Features/Management/Backups/GetRestoreOperationEndpoint.cs",
+      "request": null
+    }
   ]
 }
