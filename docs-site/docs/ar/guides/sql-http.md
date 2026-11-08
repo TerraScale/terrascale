@@ -58,6 +58,17 @@ One request is one transaction. `BEGIN`, `COMMIT` and `ROLLBACK` are refused; `S
 
 Read-only requests run on a ready replica in the serving region; everything else is forwarded whole to the database's home in one hop. The answer carries `TerraScale-Write-Route` (`route=local|home; reason=…; commit=home|local`) and `Server-Timing`. Send `TerraScale-Write: home` for read-your-writes, `local` to prefer the region, or `auto` (the default). Send `TerraScale-Durability: home` to answer only after the home applied the write. Set the body field `durability` to `all` to answer only after every replica region holds the commit (a 10-second wait answers `503 unavailable`). See [multi-region writes and conflicts](/ar/guides/multi-region-writes-and-conflicts).
 
+## Export a database
+
+```
+GET https://api.terrascale.tech/v1/projects/{project}/databases/{database}/export
+Authorization: Bearer <access token>
+```
+
+The response is one SQL script (`application/sql`, `attachment`) holding the whole database: every table's schema and rows, then its indexes, views and triggers, wrapped in one transaction. The dump comes from a single read snapshot, so it is consistent — no half-applied writes appear in it. The same statements run back into a fresh database through `sql/execute` or the SDKs.
+
+Exports need the `sql:read` scope and are served by the database's home region. If an export fails partway, the connection is closed instead of returning a partial file, so retry the whole request.
+
 ## Limits
 
 Statements are at most 16 KiB each, the body at most 1 MiB, results at most 10,000 rows and 8 MiB, and at most 1,024 rows changed or 8 MiB of file growth per transaction — past them, `413 too_large` / SQLSTATE `54000`. Rate limits answer `429 tenant_busy` (SQLSTATE `53300`) with `Retry-After`; the plan's monthly write cap and SQL read fair use answer `429 quota_exceeded` (SQLSTATE `53100`). The full tables live on the [limits](/ar/limits) page.
