@@ -418,6 +418,7 @@ namespace TerraScale.Dashboard.E2E
             private int backupLists;
             private int backupCreates;
             private int backupRestores;
+            private int heldRestores;
             private readonly Dictionary<string, (string Kind, string Database, string Source)> restoreOperations = new(StringComparer.Ordinal);
             private int policyWrites;
             private int projectCreates;
@@ -647,6 +648,8 @@ namespace TerraScale.Dashboard.E2E
                     case "credential-conflict": State.ConflictCredentials = body.GetProperty("value").GetBoolean(); break;
                     case "role": Workspace.Role = body.GetProperty("value").GetString()!; break;
                     case "backup-failure": backupFailure = body.GetProperty("value").GetString()!; break;
+                    case "hold-restore": Interlocked.Exchange(ref heldRestores, 1); break;
+                    case "release-restore": Interlocked.Exchange(ref heldRestores, 0); break;
                     case "create-conflict": createConflict = body.GetProperty("value").GetString()!; break;
                     // Another TerraBase client placed a replica: the producer's placement is wider than the dashboard asked for.
                     case "api-region": ApiRegion = body.GetProperty("value").GetString()!; break;
@@ -1123,7 +1126,9 @@ namespace TerraScale.Dashboard.E2E
                     lock (gate)
                     {
                         return restoreOperations.TryGetValue(parts[6], out var operation) && operation.Source == current.Id
-                            ? Results.Json(new { operationId = parts[6], status = "completed", kind = operation.Kind, database = operation.Database, errorCode = (string?)null, errorMessage = (string?)null })
+                            ? Results.Json(heldRestores == 1
+                                ? new { operationId = parts[6], status = "running", kind = operation.Kind, database = (string?)null, errorCode = (string?)null, errorMessage = (string?)null }
+                                : new { operationId = parts[6], status = "completed", kind = operation.Kind, database = operation.Database, errorCode = (string?)null, errorMessage = (string?)null })
                             : Error(404, "not_found");
                     }
                 }

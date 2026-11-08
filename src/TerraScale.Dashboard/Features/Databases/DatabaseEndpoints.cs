@@ -319,6 +319,12 @@ namespace TerraScale.Dashboard.Features.Databases
                 return Results.Empty;
             }
 
+            if (tab == "backups" && http.Request.Headers["Datastar-Request"] == "true" && page.Backups?.Restore is not null)
+            {
+                await DatastarEvents.PatchElementsAsync(http, TerraScale.Dashboard.Features.Backups.RestoreStatusView.Create(page.Backups));
+                return Results.Empty;
+            }
+
             var result = DatabaseDetailView.Create(page);
             result.StatusCode = status;
             return result;

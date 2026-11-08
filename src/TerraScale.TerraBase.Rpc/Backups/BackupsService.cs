@@ -41,8 +41,14 @@ namespace TerraScale.TerraBase.Rpc.Backups
         /// <inheritdoc />
         public async UnaryResult<JsonElement> RestoreBackupAsync(string projectId, string database, string backupId, JsonElement request)
         {
+            return await CompletedAsync(projectId, database, await StartRestoreAsync(projectId, database, backupId, request));
+        }
+
+        /// <inheritdoc />
+        public async UnaryResult<JsonElement> StartRestoreAsync(string projectId, string database, string backupId, JsonElement request)
+        {
             var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/backups/" + Uri.EscapeDataString(backupId) + "/restore", RestApi.Json(request, BackupsJson.Default.JsonElement));
-            return await CompletedAsync(projectId, database, RestApi.Read(answer, BackupsJson.Default.JsonElement));
+            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
         }
 
         private static readonly TimeSpan PollDeadline = TimeSpan.FromMinutes(10);

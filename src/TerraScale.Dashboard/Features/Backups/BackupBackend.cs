@@ -114,14 +114,53 @@ namespace TerraScale.Dashboard.Features.Backups
             {
                 throw new HttpRequestException("Backup restoration returned an invalid database identity.");
             }
-            // The restore route returns the raw catalog record: null replicas is legitimate there.
-            // The managed GET body normalizes the actual current placement.
+
+            var placed = await RestoreTargetAsync(scope, home, databaseId, restored.Name, cancellationToken);
+            if (placed.Id != restored.Id || placed.CreatedAt != restored.CreatedAt)
+            {
+                throw new HttpRequestException("Backup restoration could not be confirmed in its project.");
+            }
+
+            return placed;
+        }
+
+        public async Task<ProducerRestoreOperation> StartRestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken)
+        {
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            var request = JsonSerializer.SerializeToElement(new BackupRestoreRequest(name), BackupBackendJson.Default.BackupRestoreRequest);
+            var operation = await CallAsync(scope, home, ["databases:read", "databases:write"], client => client.StartRestoreAsync(scope.ProjectId, database, backupId, request).ResponseAsync,
+                BackupBackendJson.Default.ProducerRestoreOperation, cancellationToken, "restore");
+            if (!TerraScaleIds.IsValid(operation.OperationId) || operation.Status is not ("running" or "completed" or "failed") ||
+                operation.Status != "running" && operation.Database is null)
+            {
+                throw new HttpRequestException("Backup restoration returned an invalid operation.");
+            }
+
+            return operation;
+        }
+
+        public async Task<ProducerRestoreOperation> RestoreOperationAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string operationId, CancellationToken cancellationToken)
+        {
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            var operation = await CallAsync(scope, home, ["databases:read"], client => client.GetRestoreOperationAsync(scope.ProjectId, database, operationId).ResponseAsync,
+                BackupBackendJson.Default.ProducerRestoreOperation, cancellationToken);
+            if (operation.OperationId != operationId || operation.Status is not ("running" or "completed" or "failed") ||
+                operation.Status != "running" && operation.Database is null)
+            {
+                throw new HttpRequestException("Backup restoration returned an invalid operation.");
+            }
+
+            return operation;
+        }
+
+        public async Task<ManagedDatabase> RestoreTargetAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string targetName, CancellationToken cancellationToken)
+        {
             var token = await AccessAsync(scope, ["databases:read"], cancellationToken);
-            var readback = await rpc.User<IManagementService>(token, home.Id).WithCancellationToken(cancellationToken).GetDatabaseAsync(scope.ProjectId, restored.Name);
+            var readback = await rpc.User<IManagementService>(token, home.Id).WithCancellationToken(cancellationToken).GetDatabaseAsync(scope.ProjectId, targetName);
             var placed = new ManagedDatabase(readback.Id, readback.ProjectId, readback.Name, readback.CreatedAt, readback.BranchedFrom,
                 readback.HomeRegion, readback.ReplicaRegions, readback.AllRegions);
-            if (placed.Id != restored.Id || placed.ProjectId != scope.ProjectId || placed.Name != restored.Name ||
-                placed.BranchedFrom != databaseId || placed.CreatedAt != restored.CreatedAt ||
+            if (!TerraScaleIds.IsValid(placed.Id) || placed.ProjectId != scope.ProjectId ||
+                placed.Id == databaseId || placed.BranchedFrom != databaseId || placed.Name != targetName ||
                 placed.HomeRegion != home.Id || placed.ReplicaRegions is null)
             {
                 throw new HttpRequestException("Backup restoration could not be confirmed in its project.");
@@ -130,12 +169,20 @@ namespace TerraScale.Dashboard.Features.Backups
             return placed;
         }
 
+        internal static string RestoreMessage(ProducerRestoreOperation operation)
+        {
+            return operation.ErrorCode switch
+            {
+                "database_limit" => "Your organization has reached its database limit. Remove an unused database or upgrade your plan, then restore again.",
+                "name_taken" => "That database name is already in use. Choose a different name for the restored database.",
+                _ => operation.ErrorMessage is { Length: > 0 } message ? message : "The restore could not be completed."
+            };
+        }
+
         private async Task<T> CallAsync<T>(DatabaseScope scope, DatabaseRegion home, string[] permissions, Func<IBackupsService, Task<JsonElement>> call,
             JsonTypeInfo<T> type, CancellationToken cancellationToken, string operation = "")
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            var client = await ClientAsync(scope, home, permissions, timeout.Token);
+            var client = await ClientAsync(scope, home, permissions, cancellationToken);
             try { return (await call(client)).Deserialize(type) ?? throw new JsonException("Invalid backup response."); }
             catch (TerraBaseException error) { throw Failure(error, operation); }
         }
@@ -202,6 +249,7 @@ namespace TerraScale.Dashboard.Features.Backups
     [JsonSerializable(typeof(ManagedDatabase))]
     [JsonSerializable(typeof(BackupPolicyRequest))]
     [JsonSerializable(typeof(BackupRestoreRequest))]
+    [JsonSerializable(typeof(ProducerRestoreOperation))]
     [JsonSerializable(typeof(BackupDestinationRequest))]
     internal sealed partial class BackupBackendJson : JsonSerializerContext;
 }

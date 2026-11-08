@@ -21,6 +21,9 @@ namespace TerraScale.TerraBase.Contracts.Backups
         /// <summary><c>POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore</c>.</summary>
         UnaryResult<JsonElement> RestoreBackupAsync(string projectId, string database, string backupId, JsonElement request);
 
+        /// <summary><c>POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore</c> returning the accepted operation without waiting for completion.</summary>
+        UnaryResult<JsonElement> StartRestoreAsync(string projectId, string database, string backupId, JsonElement request);
+
         /// <summary><c>GET /v1/projects/{project}/databases/{database}/restores/{operationId}</c>.</summary>
         UnaryResult<JsonElement> GetRestoreOperationAsync(string projectId, string database, string operationId);
 

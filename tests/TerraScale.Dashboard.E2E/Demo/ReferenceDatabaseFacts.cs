@@ -193,6 +193,21 @@ namespace TerraScale.Dashboard.E2E
             throw ReadOnly();
         }
 
+        public Task<ProducerRestoreOperation> StartRestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken ct)
+        {
+            throw ReadOnly();
+        }
+
+        public Task<ProducerRestoreOperation> RestoreOperationAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string operationId, CancellationToken ct)
+        {
+            throw ReadOnly();
+        }
+
+        public Task<ManagedDatabase> RestoreTargetAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string targetName, CancellationToken ct)
+        {
+            throw ReadOnly();
+        }
+
         private CapturedDatabase Database(DatabaseScope scope, DatabaseRegion home, string id)
         {
             return databases.TryGetValue(id, out var captured) && captured.OrganizationId == scope.OrganizationId && captured.ProjectId == scope.ProjectId &&
