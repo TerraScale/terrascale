@@ -6,6 +6,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Shapes;
+using System.Text.Json;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -35,7 +36,7 @@ public sealed class CdcRetentionTests
         await Assert.That(catalog.LastError).IsNull();
         await Assert.That(catalog.LastShippedAt).IsNotNull();
         var tenant = new TenantContext(host.Database.Organization, PlanTier.Enterprise, host.Database.Project, host.Database.Id);
-        await host.RestoreAsync(backupService.LastShipped(tenant)!.Value, "granted", token);
+        await RestoreAsync(host, backupService.LastShipped(tenant)!.Value, "granted", token);
         using var activeGrant = await data.GetAsync(ManagementApi.Uri((host.Database with { Name = "granted" }).Data + "/tables/people/read-grant"), token);
         await Assert.That(activeGrant.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the initial snapshot must preserve active grants");
         using var revoked = await data.DeleteAsync(ManagementApi.Uri(host.Database.Data + "/tables/people/read-grant"), token);
@@ -54,7 +55,7 @@ public sealed class CdcRetentionTests
         var kept = await slow.ReadAsync(slow.NextOffset);
         await Assert.That(kept.Ops.Any()).IsTrue();
         var restorable = host.Api.Server.Services.GetRequiredService<IContinuousBackup>().LastShipped(tenant)!.Value;
-        await host.RestoreAsync(restorable, "revoked", token);
+        await RestoreAsync(host, restorable, "revoked", token);
         using var restoredGrant = await data.GetAsync(ManagementApi.Uri((host.Database with { Name = "revoked" }).Data + "/tables/people/read-grant"), token);
         await Assert.That(restoredGrant.StatusCode).IsEqualTo(HttpStatusCode.NotFound).Because("backup replay must preserve grant revocations");
         var backup = store.BackupAnchor!.Value;
@@ -97,6 +98,23 @@ public sealed class CdcRetentionTests
             var count = await ScalarAsync(store, "SELECT count(*) FROM turso_cdc;", token);
             await Assert.That(count).IsLessThan(100L);
         }
+    }
+
+    private static async Task RestoreAsync(BackupShippingHost host, DateTimeOffset at, string name, CancellationToken token)
+    {
+        using var owner = host.Api.ProjectClient(host.Database.Project);
+        using var response = await owner.PostAsJsonAsync(ManagementApi.Uri($"{host.Database.Path}/point-in-time/restore"), new { pointInTime = at, name }, token);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted).Because(body.GetRawText());
+        await Assert.That(body.GetProperty("kind").GetString()).IsEqualTo("point-in-time");
+        await Assert.That(body.GetProperty("database").GetString()).IsEqualTo(name);
+        var operationId = body.GetProperty("operationId").GetString()!;
+        await TerraBaseTestServer.EventuallyAsync(async poll =>
+        {
+            using var status = await owner.GetAsync(ManagementApi.Uri($"{host.Database.Path}/restores/{operationId}"), poll);
+            var current = await status.Content.ReadFromJsonAsync<JsonElement>(poll);
+            return status.StatusCode == HttpStatusCode.OK && current.GetProperty("status").GetString() == "completed";
+        }, timeout: TimeSpan.FromSeconds(60));
     }
 
     private static async Task SweepAsync(TursoDatabaseStore store, string handle, DateTimeOffset now, CancellationToken token)
