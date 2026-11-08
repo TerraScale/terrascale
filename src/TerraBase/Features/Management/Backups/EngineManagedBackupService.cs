@@ -346,6 +346,11 @@ internal sealed class EngineManagedBackupService(
         {
             logger.ZLogWarning(error, $"Restore operation {record.Id:@OperationId} failed");
         }
+        catch (Exception) when (lifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            await SettleStoppedAsync(record).ConfigureAwait(false);
+            return;
+        }
 
         var settled = result switch
         {
@@ -359,29 +364,28 @@ internal sealed class EngineManagedBackupService(
             null => record with { State = RestoreOperationState.Failed, ErrorCode = "interrupted", ErrorMessage = "the process stopped while the restore was running" },
             BackupElsewhere => record with { State = RestoreOperationState.Failed, ErrorCode = "restore_failed", ErrorMessage = "the restore could not be completed" },
         };
-        settled = settled with { FinishedAt = time.GetUtcNow() };
+        await SettleAsync(record, settled with { FinishedAt = time.GetUtcNow() }, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private async Task SettleAsync(RestoreOperationRecord record, RestoreOperationRecord settled, CancellationToken cancellationToken)
+    {
         for (var attempt = 1; ; attempt++)
         {
+            if (lifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                return;
+            }
+
             try
             {
-                var settledResult = await catalog.WriteAsync<CatalogCheck>(async transaction =>
-                {
-                    if (await GetRestoreOperationRecordAsync(transaction, record.OrganizationId, record.SourceDatabaseId, record.Id, CancellationToken.None)
-                        .ConfigureAwait(false) is { State: RestoreOperationState.Running })
-                    {
-                        await PutRestoreOperationAsync(transaction, settled, CancellationToken.None).ConfigureAwait(false);
-                    }
-
-                    return new Done();
-                }, static error => error, CancellationToken.None).ConfigureAwait(false);
-                if (settledResult is Done)
+                if (await SettleOnceAsync(record, settled, cancellationToken).ConfigureAwait(false))
                 {
                     return;
                 }
 
                 logger.ZLogWarning($"Restore operation {record.Id:@OperationId} settle failed, attempt {attempt}");
             }
-            catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested)
+            catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested || cancellationToken.IsCancellationRequested)
             {
                 return;
             }
@@ -390,12 +394,43 @@ internal sealed class EngineManagedBackupService(
                 logger.ZLogWarning(error, $"Restore operation {record.Id:@OperationId} settle failed, attempt {attempt}");
             }
 
-            if (attempt >= 3)
+            var delay = TimeSpan.FromTicks((long)Math.Min(TimeSpan.FromMilliseconds(250).Ticks * Math.Pow(2, attempt - 1), TimeSpan.FromSeconds(5).Ticks));
+            await Task.Delay(delay, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> SettleOnceAsync(RestoreOperationRecord record, RestoreOperationRecord settled, CancellationToken cancellationToken) =>
+        await catalog.WriteAsync<CatalogCheck>(async transaction =>
+        {
+            if (await GetRestoreOperationRecordAsync(transaction, record.OrganizationId, record.SourceDatabaseId, record.Id, CancellationToken.None)
+                .ConfigureAwait(false) is { State: RestoreOperationState.Running })
             {
-                return;
+                await PutRestoreOperationAsync(transaction, settled, CancellationToken.None).ConfigureAwait(false);
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(200), CancellationToken.None).ConfigureAwait(false);
+            return new Done();
+        }, static error => error, cancellationToken).ConfigureAwait(false) is Done;
+
+    private async Task SettleStoppedAsync(RestoreOperationRecord record)
+    {
+        var interrupted = record with
+        {
+            State = RestoreOperationState.Failed,
+            ErrorCode = "interrupted",
+            ErrorMessage = "the process stopped while the restore was running",
+            FinishedAt = time.GetUtcNow(),
+        };
+        using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            await SettleOnceAsync(record, interrupted, stopping.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception error)
+        {
+            logger.ZLogWarning(error, $"Restore operation {record.Id:@OperationId} settle on stop failed");
         }
     }
 

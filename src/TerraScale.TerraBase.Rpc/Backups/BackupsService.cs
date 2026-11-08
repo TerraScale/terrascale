@@ -45,12 +45,22 @@ namespace TerraScale.TerraBase.Rpc.Backups
             return await CompletedAsync(projectId, database, RestApi.Read(answer, BackupsJson.Default.JsonElement));
         }
 
+        private static readonly TimeSpan PollDeadline = TimeSpan.FromMinutes(10);
+
         private async Task<JsonElement> CompletedAsync(string projectId, string database, JsonElement accepted)
         {
             var operationId = accepted.GetProperty("operationId").GetString()!;
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(Context.CallContext.CancellationToken);
+            deadline.CancelAfter(PollDeadline);
             while (true)
             {
-                var operation = RestApi.Read(await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/restores/" + Uri.EscapeDataString(operationId)), BackupsJson.Default.JsonElement);
+                var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/restores/" + Uri.EscapeDataString(operationId));
+                if (answer.Status == StatusCodes.Status404NotFound)
+                {
+                    throw RestApi.Fault(answer);
+                }
+
+                var operation = RestApi.Read(answer, BackupsJson.Default.JsonElement);
                 var status = operation.GetProperty("status").GetString();
                 if (status == "completed")
                 {
@@ -60,24 +70,35 @@ namespace TerraScale.TerraBase.Rpc.Backups
 
                 if (status == "failed")
                 {
-                    var code = operation.TryGetProperty("errorCode", out var error) && error.ValueKind == JsonValueKind.String ? error.GetString() : null;
-                    var message = operation.TryGetProperty("errorMessage", out var text) && text.ValueKind == JsonValueKind.String ? text.GetString() : null;
-                    var body = new MemoryStream();
-                    using (var writer = new Utf8JsonWriter(body))
-                    {
-                        writer.WriteStartObject();
-                        writer.WriteStartObject("error");
-                        writer.WriteString("code", code ?? "restore_failed");
-                        writer.WriteString("message", message ?? "the restore could not be completed");
-                        writer.WriteEndObject();
-                        writer.WriteEndObject();
-                    }
-
-                    throw RestApi.Fault(new RestAnswer(400, new HeaderDictionary(), body.ToArray()));
+                    throw RestApi.Fault(new RestAnswer(400, new HeaderDictionary(), RestoreError(operation)));
                 }
 
-                await Task.Delay(TimeSpan.FromMilliseconds(250), Context.CallContext.CancellationToken);
+                if (deadline.IsCancellationRequested)
+                {
+                    throw RestApi.Fault(new RestAnswer(504, new HeaderDictionary(),
+                        "{\"error\":{\"code\":\"restore_timeout\",\"message\":\"the restore did not finish in time\"}}"u8.ToArray()));
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250), deadline.Token);
             }
+        }
+
+        private static byte[] RestoreError(JsonElement operation)
+        {
+            var code = operation.TryGetProperty("errorCode", out var error) && error.ValueKind == JsonValueKind.String ? error.GetString() : null;
+            var message = operation.TryGetProperty("errorMessage", out var text) && text.ValueKind == JsonValueKind.String ? text.GetString() : null;
+            var body = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(body))
+            {
+                writer.WriteStartObject();
+                writer.WriteStartObject("error");
+                writer.WriteString("code", code ?? "restore_failed");
+                writer.WriteString("message", message ?? "the restore could not be completed");
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+            }
+
+            return body.ToArray();
         }
 
         /// <inheritdoc />
