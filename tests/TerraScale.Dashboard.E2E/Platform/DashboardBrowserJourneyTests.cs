@@ -42,13 +42,13 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await ShotAsync("databases");
                     await page.GetByRole(AriaRole.Button, new() { Name = "New database", Exact = true }).First.ClickAsync();
                     await page.Locator("#create-database[open]").WaitForAsync();
-                    foreach (var invalid in new[] { "Orders", "-orders", "orders-" })
+                    foreach (var invalid in new[] { "Orders", "-orders", "1orders" })
                     {
                         await page.Locator("#database-name").FillAsync(invalid);
-                        await Assert.That(await page.Locator("#database-name").EvaluateAsync<bool>("el => el.validity.patternMismatch")).IsTrue().Because("Native database names reject uppercase and edge hyphens");
+                        await Assert.That(await page.Locator("#database-name").EvaluateAsync<bool>("el => el.validity.patternMismatch")).IsTrue().Because("Native database names reject uppercase and a missing leading lowercase letter");
                     }
-                    await page.Locator("#database-name").FillAsync(name);
-                    await Assert.That(await page.Locator("#database-name").EvaluateAsync<bool>("el => el.checkValidity()")).IsTrue().Because("Native database names accept inner hyphens");
+                    await page.Locator("#database-name").FillAsync(name + "-x");
+                    await Assert.That(await page.Locator("#database-name").EvaluateAsync<bool>("el => el.checkValidity()")).IsTrue().Because("Native database names accept trailing hyphens");
                     var map = page.Locator("#create-database [data-select-id=\"database-home\"]");
                     var home = page.Locator("#database-home");
                     await map.GetByRole(AriaRole.Button, new() { Name = "San Francisco Bay Area (SJC)", Exact = true }).ClickAsync();
