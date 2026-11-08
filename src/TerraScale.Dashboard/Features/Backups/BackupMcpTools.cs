@@ -24,14 +24,14 @@ namespace TerraScale.Dashboard.Features.Backups
             return backups.CreateAsync(Scope(organizationId, projectId), databaseId, Cancellation);
         }
 
-        [McpServerTool(Name = "set_backup_policy", Title = "Set backup policy", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Save a database's full-backup schedule and retention. Shorter retention can expire existing snapshots; clearing or disabling the schedule reduces future recovery coverage. Incremental schedules are unavailable. Requires an owner or admin role.")]
+        [McpServerTool(Name = "set_backup_policy", Title = "Set backup policy", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Save a database's full-backup schedule and retention. Shorter retention can expire existing snapshots; clearing the schedule reduces future recovery coverage. Incremental schedules are unavailable. Requires an owner or admin role.")]
         public Task<BackupPolicyView> SetBackupPolicy(string databaseId,
             [Description("Five-field full-backup cron, up to 256 characters; empty clears the schedule.")] string fullBackupCron,
             [Description("Snapshot retention in days, from 1 to 35.")] int retentionDays,
-            [Description("Omit or pass an empty string. Incremental schedules are unavailable.")] string incrementalBackupCron = "", bool disabled = false,
+            [Description("Omit or pass an empty string. Incremental schedules are unavailable.")] string incrementalBackupCron = "",
             string? organizationId = null, string? projectId = null)
         {
-            return backups.SetPolicyAsync(Scope(organizationId, projectId), databaseId, fullBackupCron, incrementalBackupCron, retentionDays, disabled, Cancellation);
+            return backups.SetPolicyAsync(Scope(organizationId, projectId), databaseId, fullBackupCron, incrementalBackupCron, retentionDays, Cancellation);
         }
 
         [McpServerTool(Name = "restore_backup", Title = "Restore backup", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Restore a database backup into a new database; the source database is unchanged. Requires an owner or admin role and provisioning rights.")]

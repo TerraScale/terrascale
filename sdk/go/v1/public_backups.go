@@ -22,16 +22,14 @@ type DatabaseBackup struct {
 type BackupPolicy struct {
 	FullBackupCron *string    `json:"fullBackupCron"`
 	RetentionDays  int        `json:"retentionDays"`
-	Disabled       bool       `json:"disabled"`
 	UpdatedAt      *time.Time `json:"updatedAt"`
 }
 
 // BackupPolicyRequest changes policy. Nil cron removes scheduled snapshots;
-// retention is required; nil Disabled uses false.
+// retention is required.
 type BackupPolicyRequest struct {
 	FullBackupCron *string `json:"fullBackupCron"`
 	RetentionDays  int     `json:"retentionDays"`
-	Disabled       *bool   `json:"disabled,omitzero"`
 }
 
 // RestoreWindow is the selected destination's proven restore interval.

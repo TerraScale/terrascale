@@ -151,18 +151,18 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             var projected = (await CallAsync(replica, secret, "list_databases", new { organizationId = org, projectId = project })).GetProperty("databases");
             Check(projected.GetArrayLength() == 3 && projected.EnumerateArray().Any(database => database.GetProperty("id").GetString() == restoredId), "The other app replica reads committed producer identities without a process-local restore");
             using (var saved = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/policy", new()
-            { ["_csrf"] = csrf, ["databaseId"] = id, ["fullBackupCron"] = "0 3 * * *", ["incrementalBackupCron"] = "", ["retentionDays"] = "14", ["disabled"] = "1" }))
+            { ["_csrf"] = csrf, ["databaseId"] = id, ["fullBackupCron"] = "0 3 * * *", ["incrementalBackupCron"] = "", ["retentionDays"] = "14" }))
             {
                 Check(saved.StatusCode == HttpStatusCode.OK, "Native full policy uses the genuine PUT producer contract");
                 var policy = await JsonAsync(saved);
-                Check(policy.GetProperty("fullBackupCron").GetString() == "0 3 * * *" && policy.GetProperty("disabled").GetBoolean() && policy.TryGetProperty("updatedAt", out _), "The returned policy reflects the actual persisted schedule and pause state");
+                Check(policy.GetProperty("fullBackupCron").GetString() == "0 3 * * *" && policy.TryGetProperty("updatedAt", out _), "The returned policy reflects the actual persisted schedule");
             }
-            Check(!(await CallAsync(replica, secret, "get_database", new { databaseId = id })).GetProperty("backupsEnabled").GetBoolean(),
-                "A provider-confirmed paused policy projects disabled rather than its old state");
-            var resumed = await CallAsync(replica, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "", retentionDays = 35, disabled = false });
+            Check((await CallAsync(replica, secret, "get_database", new { databaseId = id })).GetProperty("backupsEnabled").GetBoolean(),
+                "A provider-confirmed schedule projects enabled rather than its old state");
+            var resumed = await CallAsync(replica, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "", retentionDays = 35 });
             Check(resumed.GetProperty("fullBackupCron").GetString() == "" && resumed.GetProperty("incrementalBackupCron").GetString() == "" &&
                 resumed.GetProperty("retentionDays").GetInt32() == 35, "Null producer schedules are projected as empty public strings; no incremental schedule is invented");
-            await CallAsync(replica, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "0 4 * * *", retentionDays = 7, disabled = false });
+            await CallAsync(replica, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "0 4 * * *", retentionDays = 7 });
             using (var healthy = await replica.GetAsync("/databases/" + id + "/backups"))
             {
                 var html = await healthy.Content.ReadAsStringAsync();

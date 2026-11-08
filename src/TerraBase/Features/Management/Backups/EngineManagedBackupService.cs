@@ -71,7 +71,7 @@ internal sealed class EngineManagedBackupService(
 
     private readonly DateTimeOffset _startedAt = time.GetUtcNow();
 
-    public static BackupPolicy DefaultPolicy { get; } = new("0 2 * * *", 7, false, null);
+    public static BackupPolicy DefaultPolicy { get; } = new("0 2 * * *", 7, null);
 
     public ValueTask<ListBackupsResult> ListBackupsAsync(
         string organizationId, string databaseId, string? after, int limit, CancellationToken cancellationToken) =>
@@ -125,7 +125,7 @@ internal sealed class EngineManagedBackupService(
             var policy = await GetPolicyAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false);
             var schedule = await GetAsync(transaction, BackupCatalog.Schedule(databaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, cancellationToken).ConfigureAwait(false);
             return new BackupPolicyStatus(
-                policy.FullBackupCron, policy.RetentionDays, policy.Disabled, policy.UpdatedAt,
+                policy.FullBackupCron, policy.RetentionDays, policy.UpdatedAt,
                 schedule?.LastSucceededAt,
                 schedule?.LastFailedAt,
                 schedule is { LastErrorCode: { } code, LastErrorMessage: { } message } ? new BackupPolicyError(code, message) : null,
@@ -135,7 +135,7 @@ internal sealed class EngineManagedBackupService(
 
     private static DateTimeOffset? NextDueAt(BackupPolicy policy, DateTimeOffset now)
     {
-        if (policy is not { Disabled: false, FullBackupCron: { } expression }
+        if (policy is not { FullBackupCron: { } expression }
             || !CronExpression.TryParse(expression, CronFormat.Standard, out var cron))
         {
             return null;
@@ -145,9 +145,9 @@ internal sealed class EngineManagedBackupService(
     }
 
     public async ValueTask<SetBackupPolicyResult> SetPolicyAsync(
-        string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, bool disabled, CancellationToken cancellationToken)
+        string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, CancellationToken cancellationToken)
     {
-        var policy = new BackupPolicy(fullBackupCron, retentionDays, disabled, time.GetUtcNow());
+        var policy = new BackupPolicy(fullBackupCron, retentionDays, time.GetUtcNow());
         var owner = DatabaseOwner.Of(database);
         return await catalog.WriteAsync<SetBackupPolicyResult>(async transaction =>
         {
@@ -1218,7 +1218,7 @@ internal sealed class EngineManagedBackupService(
     // last success is kept apart from the backups, so retention deleting it does not make it due again.
     private static DateTimeOffset? DueSince(BackupPolicy policy, BackupSchedule? schedule, DateTimeOffset createdAt, DateTimeOffset now)
     {
-        if (policy is not { Disabled: false, FullBackupCron: { } expression }
+        if (policy is not { FullBackupCron: { } expression }
             || !CronExpression.TryParse(expression, CronFormat.Standard, out var cron))
         {
             return null;

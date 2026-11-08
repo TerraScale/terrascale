@@ -855,7 +855,7 @@ namespace TerraScale.Dashboard.E2E
                     {
                         lock (gate)
                         {
-                            var stored = policies.GetValueOrDefault(source.Id) ?? new ProducerBackupPolicy("0 2 * * *", 7, false, null);
+                            var stored = policies.GetValueOrDefault(source.Id) ?? new ProducerBackupPolicy("0 2 * * *", 7, null);
                             var scheduleCron = stored.FullBackupCron;
                             return Results.Json(policyHealth == "fail"
                                 ? stored with { LastSucceededAt = DateTimeOffset.UtcNow.AddHours(-26), LastFailedAt = DateTimeOffset.UtcNow.AddMinutes(-30),
@@ -868,7 +868,7 @@ namespace TerraScale.Dashboard.E2E
                     Require(http.Request.Method == "PUT", "Producer full policy uses PUT");
                     var body = await JsonAsync(http);
                     Require(body.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal)
-                        .SequenceEqual(new[] { "disabled", "fullBackupCron", "retentionDays" }), "Producer accepts no invented incremental policy field");
+                        .SequenceEqual(new[] { "fullBackupCron", "retentionDays" }), "Producer accepts no invented incremental policy field");
                     var cron = body.GetProperty("fullBackupCron").GetString();
                     var days = body.GetProperty("retentionDays").GetInt32();
                     if (days is < 1 or > 35 || !string.IsNullOrWhiteSpace(cron) && !CronExpression.TryParse(cron.Trim(), CronFormat.Standard, out _))
@@ -877,7 +877,7 @@ namespace TerraScale.Dashboard.E2E
                     }
 
                     var policy = new ProducerBackupPolicy(string.IsNullOrWhiteSpace(cron) ? null : cron.Trim(), days,
-                        body.GetProperty("disabled").GetBoolean(), DateTimeOffset.UtcNow);
+                        DateTimeOffset.UtcNow);
                     lock (gate)
                     {
                         policies[source.Id] = policy;

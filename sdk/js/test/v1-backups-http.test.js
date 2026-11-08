@@ -3,7 +3,7 @@ import { entity, fixture, json, prefix, project } from "./helpers/v1-http.js";
 const base = `${prefix}/databases/app`;
 const at = "2026-10-22T10:00:00Z";
 const backup = { id: entity, databaseId: entity, status: "succeeded", trigger: "manual", sizeBytes: 123, createdAt: at };
-const policy = { fullBackupCron: null, retentionDays: 7, disabled: false, updatedAt: null };
+const policy = { fullBackupCron: null, retentionDays: 7, updatedAt: null };
 const window = { earliest: at, latest: at };
 const restored = { id: entity, projectId: project, name: "restored", branchedFrom: entity, createdAt: at, homeRegion: null };
 const operation = "01ARZ3NDEKTSV4RRFFQ69G5FA7";
@@ -26,7 +26,7 @@ test("all backup routes retain source selectors, pagination and producer DTOs", 
   expect(await backups.restore(entity, { name: "restored" })).toEqual(restored);
   expect(await backups.getRestoreOperation(operation)).toEqual(opDone);
   expect(await backups.getPolicy()).toEqual(policy);
-  expect(await backups.setPolicy({ disabled: false, retentionDays: 7, fullBackupCron: null })).toEqual(policy);
+  expect(await backups.setPolicy({ retentionDays: 7, fullBackupCron: null })).toEqual(policy);
   expect(await backups.window({ destination: "customer" })).toEqual(window);
   expect(await backups.plan({ pointInTime: at, destination: "customer" })).toEqual(replies[9]);
   expect(await backups.restorePointInTime({ pointInTime: at, name: "restored", destination: "platform" })).toEqual(restored);

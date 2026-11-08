@@ -18,9 +18,8 @@ public sealed record TerraBaseBackup(string Id, string DatabaseId, string Status
 /// <summary>Snapshot scheduling and retention policy.</summary>
 /// <param name="FullBackupCron">UTC cron, or null for no schedule.</param>
 /// <param name="RetentionDays">Retention in days, 1–35.</param>
-/// <param name="Disabled">Whether scheduling is paused.</param>
 /// <param name="UpdatedAt">Last save, or null for the default policy.</param>
-public sealed record TerraBaseBackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt);
+public sealed record TerraBaseBackupPolicy(string? FullBackupCron, int RetentionDays, DateTimeOffset? UpdatedAt);
 
 /// <summary>The inclusive continuous-backup restore window.</summary>
 /// <param name="Earliest">Oldest retained snapshot.</param>
@@ -88,7 +87,7 @@ internal static class TerraBaseRestore
             null, TerraBaseJsonContext.Wire.TerraBaseRestoreOperation, null, cancellationToken).ConfigureAwait(false)).Value;
 }
 
-internal sealed record TerraBaseBackupPolicyRequest(string? FullBackupCron, int RetentionDays, bool Disabled);
+internal sealed record TerraBaseBackupPolicyRequest(string? FullBackupCron, int RetentionDays);
 internal sealed record TerraBasePointInTimeRequest(DateTimeOffset PointInTime, string? Name, string? Destination);
 
 public sealed partial class TerraBaseDatabase
@@ -119,9 +118,9 @@ public sealed partial class TerraBaseDatabase
         (await connection.SendAsync(HttpMethod.Get, path + "/backup-policy", null, Json.TerraBaseBackupPolicy, null, cancellationToken).ConfigureAwait(false)).Value;
 
     /// <summary>Replaces the scheduling policy; null cron clears the schedule. Requires databases:write; sent once.</summary>
-    public async Task<TerraBaseBackupPolicy> SetBackupPolicyAsync(string? fullBackupCron, int retentionDays, bool disabled = false, CancellationToken cancellationToken = default) =>
+    public async Task<TerraBaseBackupPolicy> SetBackupPolicyAsync(string? fullBackupCron, int retentionDays, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Put, path + "/backup-policy",
-            TerraBaseConnection.Json(new TerraBaseBackupPolicyRequest(fullBackupCron, retentionDays, disabled), Json.TerraBaseBackupPolicyRequest),
+            TerraBaseConnection.Json(new TerraBaseBackupPolicyRequest(fullBackupCron, retentionDays), Json.TerraBaseBackupPolicyRequest),
             Json.TerraBaseBackupPolicy, null, cancellationToken).ConfigureAwait(false)).Value;
 
     /// <summary>Reads the restore window from platform (default) or customer backup. Requires databases:read.</summary>

@@ -127,7 +127,7 @@ namespace TerraScale.Dashboard.E2E
                     }
 
                     policy = new(saved.GetProperty("fullBackupCron").GetString(), saved.GetProperty("retentionDays").GetInt32(),
-                        saved.GetProperty("disabled").GetBoolean(), saved.TryGetProperty("updatedAt", out var updated) ? updated.GetDateTimeOffset() : null);
+                        saved.TryGetProperty("updatedAt", out var updated) ? updated.GetDateTimeOffset() : null);
                 }
                 var captured = new CapturedDatabase(listed.OrganizationId, listed.ProjectId, id, detail.GetProperty("region").GetString()!,
                     policy, new HashSet<string>(StringComparer.Ordinal) { principal.Subject });
@@ -183,7 +183,7 @@ namespace TerraScale.Dashboard.E2E
             throw ReadOnly();
         }
 
-        public Task<ProducerBackupPolicy> SetPolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, int retentionDays, bool disabled, CancellationToken ct)
+        public Task<ProducerBackupPolicy> SetPolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, int retentionDays, CancellationToken ct)
         {
             throw ReadOnly();
         }

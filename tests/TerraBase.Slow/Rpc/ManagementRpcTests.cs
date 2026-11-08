@@ -41,7 +41,7 @@ public sealed class ManagementRpcTests
         var snapshot = await backups.CreateAsync(project, DatabaseApi.Database);
         var snapshots = await backups.ListAsync(project, DatabaseApi.Database, null, 100);
         var policy = await backups.GetPolicyAsync(project, DatabaseApi.Database);
-        using var settings = JsonDocument.Parse("""{"fullBackupCron":"0 3 * * *","retentionDays":3,"disabled":false}""");
+        using var settings = JsonDocument.Parse("""{"fullBackupCron":"0 3 * * *","retentionDays":3}""");
         var savedPolicy = await backups.SetPolicyAsync(project, DatabaseApi.Database, settings.RootElement);
         await management.DeleteDatabaseAsync(project, renamed.Id);
         await management.DeleteDatabaseAsync(project, branch.Id);

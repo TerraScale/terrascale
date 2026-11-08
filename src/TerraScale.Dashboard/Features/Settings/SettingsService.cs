@@ -102,10 +102,10 @@ namespace TerraScale.Dashboard.Features.Settings
             await backups.CreateAsync(context, databaseId, cancellationToken);
         }
         public async Task SetBackupPolicyAsync(AccountContext context, string databaseId, string fullBackupCron,
-            string incrementalBackupCron, int retentionDays, bool disabled, CancellationToken cancellationToken)
+            string incrementalBackupCron, int retentionDays, CancellationToken cancellationToken)
         {
             context = await FreshAsync(context, true, cancellationToken);
-            await backups.SetPolicyAsync(context, databaseId, fullBackupCron, incrementalBackupCron, retentionDays, disabled, cancellationToken);
+            await backups.SetPolicyAsync(context, databaseId, fullBackupCron, incrementalBackupCron, retentionDays, cancellationToken);
         }
         public async Task RestoreBackupAsync(AccountContext context, string databaseId, string backupId, CancellationToken cancellationToken)
         {
