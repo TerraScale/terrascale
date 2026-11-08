@@ -136,7 +136,8 @@ public sealed class SecurityPageEndpoint(Sessions sessions, TotpCredentials mfa)
         }
 
         return await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is { } live
-            ? await SecurityFlow.PageAsync(this.HttpContext, mfa, live.User, null, cancellationToken)
+            ? await SecurityFlow.PageAsync(this.HttpContext, mfa, live.User, null, cancellationToken,
+                next: SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]))
             : SecurityFlow.SignIn(this.HttpContext);
     }
 }
@@ -167,11 +168,12 @@ public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, Au
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is null)
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
         {
             return SignInFlow.Refused(this.HttpContext);
         }
 
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is not { } live)
         {
             return SecurityFlow.SignIn(this.HttpContext);
@@ -191,7 +193,7 @@ public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, Au
 
         using var qr = QRCodeGenerator.GenerateQrCode(enrollment.ProvisioningUri, QRCodeGenerator.ECCLevel.M);
         var png = new PngByteQRCode(qr).GetGraphic(6);
-        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.TotpSetup, SignInFlow.Tenant(this.HttpContext))
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.TotpSetup, SignInFlow.Tenant(this.HttpContext), Next: next)
         {
             Account = live.User.Email,
             Secret = enrollment.Secret,
@@ -234,6 +236,7 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (await mfa.ConfirmAsync(live.User, (form.Code ?? string.Empty).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken) is not { } issued)
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or expired", "Enter the current code from your authenticator app, or start the setup again."),
@@ -247,7 +250,7 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
             BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token, tenant);
         }
 
-        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.RecoveryCodes, tenant) { Account = live.User.Email, RecoveryCodes = issued.Codes });
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.RecoveryCodes, tenant, Next: next) { Account = live.User.Email, RecoveryCodes = issued.Codes });
     }
 }
 
@@ -285,6 +288,7 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (await mfa.DisabledUserAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken)
             is not { } user)
         {
@@ -300,7 +304,7 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
             BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token, tenant);
         }
 
-        return await SecurityFlow.PageAsync(this.HttpContext, mfa, user, null, cancellationToken, notice: "Two-factor authentication is off.");
+        return await SecurityFlow.PageAsync(this.HttpContext, mfa, user, null, cancellationToken, notice: "Two-factor authentication is off.", next: next);
     }
 }
 
@@ -412,10 +416,10 @@ internal static class SecurityFlow
 
     /// <summary>The security page for <paramref name="user"/>.</summary>
     public static async Task<IResult> PageAsync(HttpContext context, TotpCredentials mfa, UserRecord user, (string Title, string Message)? error, CancellationToken cancellationToken,
-        int statusCode = StatusCodes.Status200OK, string? notice = null)
+        int statusCode = StatusCodes.Status200OK, string? notice = null, string? next = null)
     {
         var (enabled, remaining) = await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken);
-        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Security, SignInFlow.Tenant(context), Error: error?.Message)
+        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Security, SignInFlow.Tenant(context), Error: error?.Message, Next: next)
         {
             ErrorTitle = error?.Title,
             Account = user.Email,
