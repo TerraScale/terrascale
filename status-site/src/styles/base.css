@@ -1,4 +1,4 @@
-/* Font, reset, document defaults, and accessibility helpers. */
+/* Font, reset, page defaults, and accessibility helpers. */
 
 /* Geist is served from /fonts (OFL, see OFL-geist.txt). Sans is preloaded by the layout; swap shows the system fallback at once. */
 @font-face {

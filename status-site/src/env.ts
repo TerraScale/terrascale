@@ -35,10 +35,10 @@ export interface Env {
   SUBSCRIPTION_SECRET?: string;
   /** Cloudflare Email Sending, from the send_email binding in wrangler.jsonc. */
   EMAIL: EmailSender;
-  /** The data API canary's documents and scoped keys, as JSON keyed by
+  /** The Data API canary's databases and scoped keys, as JSON keyed by
       canary endpoint id (a Worker secret; see src/probe/canary.ts). */
   DATA_API_CANARY?: string;
-  /** TerraBase health and document API probes' origins and keys, as JSON
+  /** TerraBase health and SQL API probes' origins and keys, as JSON
       keyed by endpoint id (a Worker secret; see src/probe/terrabase.ts). */
   TERRABASE_PROBES?: string;
   /** Limits subscription requests per client. */

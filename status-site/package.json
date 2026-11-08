@@ -11,7 +11,7 @@
     "test": "vitest run",
     "predeploy": "npm run check && npm test",
     "deploy": "npm run build && npm run deploy:prebuilt",
-    "deploy:prebuilt": "env -u WRANGLER_CI_OVERRIDE_NAME -u WRANGLER_CI_MATCH_TAG wrangler deploy -c dist/ts_status_vantage_sfo/wrangler.json --experimental-provision=false --experimental-auto-create=false && env -u WRANGLER_CI_OVERRIDE_NAME -u WRANGLER_CI_MATCH_TAG wrangler deploy -c dist/ts_status_vantage_gru/wrangler.json --experimental-provision=false --experimental-auto-create=false && wrangler deploy -c dist/ts_status/wrangler.json --experimental-provision=false --experimental-auto-create=false",
+    "deploy:prebuilt": "wrangler deploy -c dist/ts_status_vantage_sfo/wrangler.json --experimental-provision=false --experimental-auto-create=false && wrangler deploy -c dist/ts_status_vantage_gru/wrangler.json --experimental-provision=false --experimental-auto-create=false && wrangler deploy -c dist/ts_status/wrangler.json --experimental-provision=false --experimental-auto-create=false",
     "db:bootstrap:local": "wrangler d1 execute ts-status --local --file schema.sql",
     "db:bootstrap:remote": "wrangler d1 execute ts-status --remote --file schema.sql",
     "audit:dependencies": "npm audit --ignore-scripts --audit-level=high",
@@ -19,7 +19,6 @@
     "predeploy:prebuilt": "npm run audit:dependencies"
   },
   "dependencies": {
-    "@terrascale/sdk": "0.0.3",
     "ulid": "3.0.2"
   },
   "devDependencies": {
@@ -31,11 +30,6 @@
     "vitest": "5.0.3",
     "wrangler": "4.152.0"
   },
-  "engines": {
-    "node": ">=22.0.0",
-    "npm": ">=11.0.0"
-  },
-  "packageManager": "npm@12.0.2",
   "overrides": {
     "@cloudflare/vite-plugin": {
       "vite": {
@@ -46,5 +40,10 @@
     "miniflare": {
       "undici": "7.30.1"
     }
-  }
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=11.0.0"
+  },
+  "packageManager": "npm@12.0.2"
 }

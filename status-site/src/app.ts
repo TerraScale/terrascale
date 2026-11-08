@@ -11,11 +11,11 @@ import { bootstrap } from "./db/bootstrap";
 import { isId } from "./ids";
 
 import { admin } from "./admin";
-import { regionLatencyDocument } from "./api/latency";
+import { regionLatencyPayload } from "./api/latency";
 import { deliverDue, runOutbox } from "./notify/outbox";
 import { subscriptions } from "./notify/subscribe";
-import { statuspage, type StatuspageDocument } from "./api/statuspage";
-import { incidentsDocument, latencyDocument, regionsDocument, statusDocument } from "./api/v1";
+import { statuspage, type StatuspageName } from "./api/statuspage";
+import { incidentsPayload, latencyPayload, regionsPayload, statusPayload } from "./api/v1";
 import { loadDays, loadDetails, loadPeriods } from "./db/details";
 import { loadHistory, loadIncident, loadMaintenance, loadRecent, loadSnapshot } from "./db/reads";
 import { byHour, DEFAULT_RANGE, isRange, RANGE_KEYS, rangeStart, type RangeKey } from "./domain/range";
@@ -41,7 +41,7 @@ import { historyPage, historyWindow } from "./views/history";
 import { homePage } from "./views/home";
 import { incidentPage } from "./views/incident";
 import { integrationsPage } from "./views/integrations";
-import { compactBarData, document, type Page } from "./views/layout";
+import { compactBarData, shell, type Page } from "./views/layout";
 import { MAINTENANCE_DAYS, maintenancePage } from "./views/maintenance";
 import { notFoundPage } from "./views/not-found";
 import { pingPage } from "./views/ping";
@@ -94,13 +94,13 @@ async function loadOverview(env: Env, now: number, range: RangeKey) {
   return overview(await loadSnapshot(env, snapshotWindow(now, range)), now, range);
 }
 
-/** One Statuspage-compatible document, or a 404 for a name it does not have. */
-async function statuspageDocument(env: Env, { now, origin }: RenderContext, name: string | undefined) {
+/** One Statuspage-compatible payload, or a 404 for a name it does not have. */
+async function statuspagePayload(env: Env, { now, origin }: RenderContext, name: string | undefined) {
   if (name === undefined || !Object.hasOwn(statuspage, name)) {
-    return json({ error: { code: "not_found", message: "No such document." } }, 404);
+    return json({ error: { code: "not_found", message: "No such file." } }, 404);
   }
   const [view, recent] = await Promise.all([loadOverview(env, now, "24h"), loadRecent(env, FEED_ENTRIES)]);
-  return json(statuspage[name as StatuspageDocument]({ view, ...recent, origin }));
+  return json(statuspage[name as StatuspageName]({ view, ...recent, origin }));
 }
 
 const route = createRouter<Route>({
@@ -209,20 +209,20 @@ const route = createRouter<Route>({
         startOfHour(now) - HOUR,
         true,
       );
-      return json(regionLatencyDocument(regions, new Measurements(periods), now, view.monitoring.coverage));
+      return json(regionLatencyPayload(regions, new Measurements(periods), now, view.monitoring.coverage));
     },
   },
   "/api/v1/status": {
     query: rangeQuery,
-    render: async (env, { now, query }) => json(statusDocument(await loadOverview(env, now, rangeOf(query)))),
+    render: async (env, { now, query }) => json(statusPayload(await loadOverview(env, now, rangeOf(query)))),
   },
   "/api/v1/incidents": {
     query: { limit: (value) => /^([1-9]\d?|100)$/.test(value) },
     render: async (env, { query }) =>
-      json(incidentsDocument(await loadRecent(env, Number(query.limit ?? FEED_ENTRIES)))),
+      json(incidentsPayload(await loadRecent(env, Number(query.limit ?? FEED_ENTRIES)))),
   },
   "/api/v1/regions": {
-    render: async (env, { now }) => json(regionsDocument(await loadOverview(env, now, "24h"))),
+    render: async (env, { now }) => json(regionsPayload(await loadOverview(env, now, "24h"))),
   },
   "/api/v1/latency": {
     query: { ...rangeQuery, component: isId },
@@ -238,17 +238,17 @@ const route = createRouter<Route>({
         rangeStart(range, now),
         byHour(range),
       );
-      return json(latencyDocument(component, new Measurements(periods), range, now));
+      return json(latencyPayload(component, new Measurements(periods), range, now));
     },
   },
-  "/api/v1/:document.json": {
-    render: (env, context) => statuspageDocument(env, context, `${context.params.document}.json`),
+  "/api/v1/:name.json": {
+    render: (env, context) => statuspagePayload(env, context, `${context.params.name}.json`),
   },
   "/api/v1/incidents/unresolved.json": {
-    render: (env, context) => statuspageDocument(env, context, "incidents/unresolved.json"),
+    render: (env, context) => statuspagePayload(env, context, "incidents/unresolved.json"),
   },
   "/api/v1/scheduled-maintenances/:which": {
-    render: (env, context) => statuspageDocument(env, context, `scheduled-maintenances/${context.params.which}`),
+    render: (env, context) => statuspagePayload(env, context, `scheduled-maintenances/${context.params.which}`),
   },
   "/feed.atom": {
     render: async (env, { now, origin }) =>
@@ -291,7 +291,7 @@ const route = createRouter<Route>({
 
 async function page(content: Page, context: RenderContext, status = 200): Promise<Response> {
   const body = await compactBarData(
-    context.fragment ? content.body.value : document(content, new Date(context.now).getUTCFullYear()).value,
+    context.fragment ? content.body.value : shell(content, new Date(context.now).getUTCFullYear()).value,
   );
   return new Response(body, {
     status,

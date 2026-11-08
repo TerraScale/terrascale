@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { isId } from "../ids";
-import { isConfigured, isTerraBaseConfig, notConfiguredSample, parseTerraBase, runTerraBase } from "./terrabase";
+import {
+  isConfigured,
+  isTerraBaseConfig,
+  notConfiguredSample,
+  parseTerraBase,
+  runTerraBase,
+  SQL_PROBE,
+} from "./terrabase";
 
 const origin = "https://api.terrascale.tech";
 const canary = {
@@ -8,20 +15,18 @@ const canary = {
   region: "gru",
   project: "01M4E7G1W82VKFPF5FJ9AVK1CQ",
   database: "canary",
-  collection: "canary",
-  document: "01M4E7G1W82VKFPF5FJ9AVK1D9",
   issuer: "https://auth.example.test/terrascale",
   key: `01M4E7G1W82VKFPF5FJ9AVK1CQ_${"a".repeat(52)}`,
 };
 
 describe("TerraBase probe config", () => {
   it("validates the new config and treats absent and malformed secrets differently", () => {
-    expect(isTerraBaseConfig("documents", canary)).toBe(true);
+    expect(isTerraBaseConfig(SQL_PROBE, canary)).toBe(true);
     expect(isTerraBaseConfig("health", { origin, region: "gru" })).toBe(true);
-    expect(isTerraBaseConfig("documents", { ...canary, key: "tbk1_retired" })).toBe(false);
-    expect(isConfigured("documents", { origin, region: "gru" })).toBe(false);
+    expect(isTerraBaseConfig(SQL_PROBE, { ...canary, key: "tbk1_retired" })).toBe(false);
+    expect(isConfigured(SQL_PROBE, { origin, region: "gru" })).toBe(false);
     expect(isConfigured("health", undefined)).toBe(false);
-    expect(isConfigured("documents", null)).toBe(true);
+    expect(isConfigured(SQL_PROBE, null)).toBe(true);
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(parseTerraBase(undefined)).toEqual({});
     for (const secret of ["not json", "[]", "null"]) expect(parseTerraBase(secret)).toBeNull();
@@ -42,9 +47,10 @@ describe("TerraBase probes", () => {
   const grant = { access_token: "header.payload.signature", token_type: "Bearer", expires_in: 900 };
   const sql = `${origin}/v1/projects/${canary.project}/databases/canary/sql/execute`;
   type Step = "INSERT" | "SELECT" | "COUNT" | "DELETE";
-  const result = (rows: unknown[][], affected = 0) => Response.json({
-    results: [{ columns: [], rows, rows_affected: affected, last_insert_rowid: null }],
-  });
+  const result = (rows: unknown[][], affected = 0) =>
+    Response.json({
+      results: [{ columns: [], rows, rows_affected: affected, last_insert_rowid: null }],
+    });
 
   /** A TerraBase SQL fake holding the canary rows; `fail` swaps one step's answer. */
   function fake(fail: Partial<Record<Step, Response>> = {}) {
@@ -53,8 +59,13 @@ describe("TerraBase probes", () => {
       if (String(input).endsWith("/oauth/token")) return Response.json(grant);
       const { sql: text, args } = (JSON.parse(String(init?.body)) as { statements: { sql: string; args: string[] }[] })
         .statements[0]!;
-      const step: Step = text.startsWith("INSERT") ? "INSERT" : text.startsWith("DELETE") ? "DELETE"
-        : text.includes("count(*)") ? "COUNT" : "SELECT";
+      const step: Step = text.startsWith("INSERT")
+        ? "INSERT"
+        : text.startsWith("DELETE")
+          ? "DELETE"
+          : text.includes("count(*)")
+            ? "COUNT"
+            : "SELECT";
       if (fail[step]) return fail[step]!;
       const [id, marker] = args;
       switch (step) {
@@ -73,7 +84,7 @@ describe("TerraBase probes", () => {
 
   it("inserts, reads, counts and deletes a fresh row with the exchanged token", async () => {
     const fetcher = fake();
-    expect(await runTerraBase("documents", canary, "round", fetcher)).toMatchObject({ ok: true });
+    expect(await runTerraBase(SQL_PROBE, canary, "round", fetcher)).toMatchObject({ ok: true });
     const statements = fetcher.mock.calls.slice(1).map(([url, init]) => {
       expect([init?.method, String(url)]).toEqual(["POST", sql]);
       return (JSON.parse(String(init?.body)) as { statements: { sql: string; args: unknown[] }[] }).statements;
@@ -105,7 +116,7 @@ describe("TerraBase probes", () => {
       [{ DELETE: Response.json({ error: { code: "internal_error" } }, { status: 500 }) }, "HTTP 500 internal_error"],
     ] as const) {
       const fetcher = fake(fail);
-      expect(await runTerraBase("documents", canary, "round", fetcher)).toEqual({ ok: false, latencyMs: null, error });
+      expect(await runTerraBase(SQL_PROBE, canary, "round", fetcher)).toEqual({ ok: false, latencyMs: null, error });
       expect(String(fetcher.mock.calls.at(-1)![1]?.body)).toContain("DELETE FROM");
     }
   });
@@ -114,33 +125,36 @@ describe("TerraBase probes", () => {
     const fetcher = fake({
       INSERT: Response.json({ error: { code: "operation_allowance", message: "upgrade" } }, { status: 429 }),
     });
-    expect(await runTerraBase("documents", canary, "round", fetcher)).toEqual({
+    expect(await runTerraBase(SQL_PROBE, canary, "round", fetcher)).toEqual({
       ok: null,
       latencyMs: null,
       error: "Canary quota exhausted",
     });
     expect(String(fetcher.mock.calls.at(-1)![1]?.body)).toContain("DELETE FROM");
     const spent = fake({ INSERT: Response.json({ error: { code: "quota_exceeded" } }, { status: 429 }) });
-    expect(await runTerraBase("documents", canary, "round", spent)).toMatchObject({ ok: null, error: "Canary quota exhausted" });
+    expect(await runTerraBase(SQL_PROBE, canary, "round", spent)).toMatchObject({
+      ok: null,
+      error: "Canary quota exhausted",
+    });
     const busy = fake({ INSERT: Response.json({ error: { code: "tenant_busy" } }, { status: 429 }) });
-    expect(await runTerraBase("documents", canary, "round", busy)).toMatchObject({
+    expect(await runTerraBase(SQL_PROBE, canary, "round", busy)).toMatchObject({
       ok: false,
       error: "HTTP 429 tenant_busy",
     });
   });
 
-  it("leaves documents unmeasured on grant 401, but judges API and anonymous readiness 401", async () => {
+  it("leaves SQL unmeasured on grant 401, but judges API and anonymous readiness 401", async () => {
     const rejected = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ error: "invalid_client" }, { status: 401 }));
-    expect(await runTerraBase("documents", canary, "round", rejected)).toEqual({
+    expect(await runTerraBase(SQL_PROBE, canary, "round", rejected)).toEqual({
       ok: null,
       latencyMs: null,
       error: "Canary credential invalid",
     });
     expect(rejected).toHaveBeenCalledTimes(1);
     const api = fake({ INSERT: Response.json({ error: { code: "invalid_token" } }, { status: 401 }) });
-    expect(await runTerraBase("documents", canary, "round", api)).toMatchObject({
+    expect(await runTerraBase(SQL_PROBE, canary, "round", api)).toMatchObject({
       ok: false,
       error: "HTTP 401 invalid_token",
     });
@@ -158,20 +172,20 @@ describe("TerraBase probes", () => {
         return store(input, init);
       });
       const tokens = () => fetcher.mock.calls.filter(([url]) => String(url).endsWith("/oauth/token")).length;
-      expect(await runTerraBase("documents", canary, "round", fetcher)).toEqual({
+      expect(await runTerraBase(SQL_PROBE, canary, "round", fetcher)).toEqual({
         ok: true,
         latencyMs: 100,
         error: null,
       });
-      await runTerraBase("documents", canary, "round", fetcher);
+      await runTerraBase(SQL_PROBE, canary, "round", fetcher);
       expect(tokens()).toBe(1);
       store.mockResolvedValueOnce(Response.json({ error: { code: "invalid_token" } }, { status: 401 }));
-      expect(await runTerraBase("documents", canary, "round", fetcher)).toMatchObject({ ok: false });
-      await runTerraBase("documents", canary, "round", fetcher);
+      expect(await runTerraBase(SQL_PROBE, canary, "round", fetcher)).toMatchObject({ ok: false });
+      await runTerraBase(SQL_PROBE, canary, "round", fetcher);
       expect(tokens()).toBe(2);
       // Within a round's use (20 s) of the 900 s token's expiry, the next round exchanges again.
       await vi.advanceTimersByTimeAsync(880_000);
-      await runTerraBase("documents", canary, "round", fetcher);
+      await runTerraBase(SQL_PROBE, canary, "round", fetcher);
       expect(tokens()).toBe(3);
     } finally {
       vi.useRealTimers();

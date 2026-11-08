@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "./app";
 import type { Env } from "./env";
-import { regionLatencyDocument } from "./api/latency";
+import { regionLatencyPayload } from "./api/latency";
 import { testD1, type TestD1 } from "./testing/d1";
 import { vantageBindings } from "./testing/vantages";
 
 const NOW = "2026-09-26T10:15:00Z";
-type RegionLatency = ReturnType<typeof regionLatencyDocument>;
+type RegionLatency = ReturnType<typeof regionLatencyPayload>;
 
 /** The seeded catalog, with the dashboard deferred, plus a warning and recent probes. */
 function seededEnv(): Env & { STATUS_DB: TestD1 } {
@@ -485,7 +485,7 @@ describe("app", () => {
     });
     expect(all.find((entry) => entry.id === "01M4E7G1W82VKFPF5FJ9AVK1CV")).toMatchObject({ note: "Coming soon" });
     const page = await (await app.fetch(request("/?fragment=main"), env, ctx)).text();
-    expect(page).toContain("Document API: No data uptime over the last 90 days, currently not configured");
+    expect(page).toContain("SQL API: No data uptime over the last 90 days, currently not configured");
     expect(page).toContain("Authentication: No data uptime over the last 90 days, currently pending launch");
     expect(page).toMatch(/data-state="none"><span class="ts-dot" aria-hidden="true"><\/span>Pending launch/);
     // Pending components stay out of the Statuspage format.
@@ -680,9 +680,9 @@ describe("app", () => {
     ["scheduled-maintenances.json", "scheduled_maintenances"],
     ["scheduled-maintenances/upcoming.json", "scheduled_maintenances"],
     ["scheduled-maintenances/active.json", "scheduled_maintenances"],
-  ])("serves %s only under v1", async (document, key) => {
+  ])("serves %s only under v1", async (path, key) => {
     const env = seededEnv();
-    const response = await app.fetch(request(`/api/v1/${document}`), env, ctx);
+    const response = await app.fetch(request(`/api/v1/${path}`), env, ctx);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/json");
     expect(response.headers.get("access-control-allow-origin")).toBe("*");
@@ -690,7 +690,7 @@ describe("app", () => {
     const data = await response.json();
     expect(data).toMatchObject({ page: { url: "https://status.test" } });
     expect(data).toHaveProperty(key);
-    const removed = await app.fetch(request(`/api/v2/${document}`), env, ctx);
+    const removed = await app.fetch(request(`/api/v2/${path}`), env, ctx);
     expect(removed.status).toBe(404);
     expect(removed.headers.has("location")).toBe(false);
   });

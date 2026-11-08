@@ -141,21 +141,18 @@ describe("clean D1 bootstrap", () => {
     }
   });
 
-  it("upgrades a store seeded before the dashboard probe, the by-key read route and single auth readiness", () => {
+  it("upgrades a store seeded before the dashboard probe and single auth readiness", () => {
     const sqlite = new DatabaseSync(":memory:");
     const pinned = '[{"path":"status","op":"eq","value":"ready"},{"path":"region","op":"eq","value":"gru"}]';
-    const document =
-      "https://api.terrascale.tech/v1/projects/01M4E7G1W82VKFPF5FJ9AVK1DT/databases/status_canary/collections/canary/documents/01M4E7G1W82VKFPF5FJ9AVK1DV";
-    // TerraBase is SQL-only: the anonymous read check moves on to the database route.
+    // TerraBase is SQL-only: the anonymous read check uses the database route.
     const database = "https://api.terrascale.tech/v1/projects/01M4E7G1W82VKFPF5FJ9AVK1DT/databases/status_canary";
     try {
       sqlite.exec(schema);
-      // The earlier seed: a deferred dashboard, a region-pinned auth check and its SJC/FRA copies, the old read route.
+      // The earlier seed: a deferred dashboard, a region-pinned auth check and its SJC/FRA copies.
       sqlite.exec(`
         DELETE FROM endpoints WHERE component_id = '01M4E7G1W82VKFPF5FJ9AVK1CV';
         UPDATE components SET lifecycle = 'planned' WHERE id = '01M4E7G1W82VKFPF5FJ9AVK1CV';
         UPDATE endpoints SET assertions = '${pinned}' WHERE id = '01M4E7G1W82VKFPF5FJ9AVK1D6';
-        UPDATE endpoints SET url = '${document}' WHERE id IN ('01M4E7G1W82VKFPF5FJ9AVK1DB', '01M4E7G1W82VKFPF5FJ9AVK1DC');
         UPDATE endpoints SET url = 'https://operator.test/read' WHERE id = '01M4E7G1W82VKFPF5FJ9AVK1E0';
         UPDATE regions SET ping_url = 'https://api.terrascale.tech/healthz', ping_label = 'TerraBase API, OCI gru' WHERE code IN ('SJC', 'FRA');
         INSERT INTO endpoints (id, component_id, region_code, cluster, provider, url) VALUES

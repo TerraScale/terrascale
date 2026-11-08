@@ -71,7 +71,7 @@ export function integrationsPage(view: Overview, origin: string): Page {
     ${first ? row("Latency", "Median and p95 per bucket, overall and per vantage, for one component.", `${origin}/api/v1/latency?component=${first.id}&range=24h`) : ""}
     ${row(
       "Statuspage-compatible",
-      "The Atlassian Statuspage format, for tools that already read status pages: status, summary, components, incidents (and /unresolved), scheduled-maintenances (and /upcoming, /active). Documents use the .json suffix.",
+      "The Atlassian Statuspage format, for tools that already read status pages: status, summary, components, incidents (and /unresolved), scheduled-maintenances (and /upcoming, /active). Each file uses the .json suffix.",
       `${origin}/api/v1/summary.json`,
       `curl -s ${origin}/api/v1/status.json | jq .status`,
     )}

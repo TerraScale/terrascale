@@ -103,7 +103,7 @@ function components(feed: Feed) {
   return list;
 }
 
-/** What every incident in a document is rendered from, built once. */
+/** What every incident in a payload is rendered from, built once. */
 interface Context {
   feed: Feed;
   names: Map<string, string>;
@@ -163,7 +163,7 @@ function maintenances(feed: Feed, keep: (entry: Incident) => boolean) {
   };
 }
 
-/** The payload of every Statuspage-compatible /api/v1 document, by file name. */
+/** The payload of every Statuspage-compatible /api/v1 file, by name. */
 export const statuspage = {
   "status.json": (feed: Feed) => ({ page: page(feed), status: status(feed) }),
   "components.json": (feed: Feed) => ({ page: page(feed), components: components(feed) }),
@@ -197,4 +197,4 @@ export const statuspage = {
     ),
 } as const;
 
-export type StatuspageDocument = keyof typeof statuspage;
+export type StatuspageName = keyof typeof statuspage;

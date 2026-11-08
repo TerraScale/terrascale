@@ -37,7 +37,8 @@ SERVICE_PROJECTS = ('ts-dashboard', 'ts-auth', 'ts-router', 'ts-status', 'ts-orc
 PROJECT = 'ts-status'
 CLI_CLIENT = '00000000000000000000000007'  # ts-auth's registered public ts-cli client.
 STATE = Path.home() / '.local/state/ts-status/canaries.json'
-DOCUMENT = '00000000000000000000000007'
+# The Data API fixture row; src/probe/canary.ts reads the same CANARY_ROW.
+ROW = '00000000000000000000000007'
 SCOPES = ['sql:read', 'sql:write']
 # The canary table: the Data API canary reads its fixture row, the write probe inserts and deletes rows.
 TABLE = 'CREATE TABLE IF NOT EXISTS "canary" (id TEXT PRIMARY KEY, canary TEXT NOT NULL)'
@@ -345,8 +346,7 @@ class Setup:
             self.state['databases'] = {r: d['id'] for r, d in databases.items()}
             self.save()
             configurations[region] = dict(origin=API, issuer=AUTH + '/terrascale', project=project,
-                                          database='status-canary-' + region, collection='canary',
-                                          document=DOCUMENT, key=key, region=region)
+                                          database='status-canary-' + region, key=key, region=region)
         for config in configurations.values():
             self.verify(config)
         return configurations
@@ -360,8 +360,8 @@ class Setup:
         def sql(text, args):
             return self.call(url, 'POST', {'statements': [{'sql': text, 'args': args}]}, token=token,
                              region=config['region'])['results'][0]
-        sql('INSERT OR REPLACE INTO "canary" (id, canary) VALUES (?, ?)', [DOCUMENT, 'Persistent status read canary'])
-        if sql('SELECT id FROM "canary" WHERE id = ?', [DOCUMENT])['rows'] != [[DOCUMENT]]:
+        sql('INSERT OR REPLACE INTO "canary" (id, canary) VALUES (?, ?)', [ROW, 'Persistent status read canary'])
+        if sql('SELECT id FROM "canary" WHERE id = ?', [ROW])['rows'] != [[ROW]]:
             raise RuntimeError('Fixture missing')
         # A canonical ULID using random bits; independent rows for concurrent executions.
         alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
@@ -390,7 +390,7 @@ def secret_payload(configurations, catalog):
             component = cluster['componentName']
             if component == 'Data API' and cluster['cluster'] == 'canary':
                 name = 'DATA_API_CANARY'
-            elif component == 'Document API':
+            elif component == 'SQL API':
                 name = 'TERRABASE_PROBES'
             else:
                 continue
@@ -401,7 +401,7 @@ def secret_payload(configurations, catalog):
             if code in configurations:
                 maps[name][endpoint] = configurations[code]
     if {c['region'] for c in maps['TERRABASE_PROBES'].values()} != set(configurations):
-        raise RuntimeError('Live status catalog lacks a discovered document region; coordinate catalog update')
+        raise RuntimeError('Live status catalog lacks a discovered SQL API region; coordinate catalog update')
     if not maps['DATA_API_CANARY']:
         raise RuntimeError('Live status catalog lacks the retained Data API canary')
     return maps

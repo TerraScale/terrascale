@@ -35,7 +35,7 @@ Every endpoint carries a check:
 - `blockedStatus`: a status something in front of the service is known to
   refuse probes with; it counts as a probe error, not an outage.
 - `kind` `canary` runs in the coordinator with a secret keyed by endpoint ID
-  (`DATA_API_CANARY`, or `TERRABASE_PROBES` with probe `documents`).
+  (`DATA_API_CANARY`, or `TERRABASE_PROBES` with the SQL probe).
 
 ## Add a region
 

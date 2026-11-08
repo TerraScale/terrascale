@@ -42,7 +42,7 @@ class RecoveryTests(unittest.TestCase):
         catalog = {'regions': [{'clusters': [
             dict(id=ID, componentName='Data API', cluster='gru', regionCode='GRU'),
             dict(id=ID[:-1] + '9', componentName='Data API', cluster='canary', regionCode='GRU'),
-            dict(id=ID[:-1] + 'A', componentName='Document API', cluster='gru', regionCode='GRU'),
+            dict(id=ID[:-1] + 'A', componentName='SQL API', cluster='gru', regionCode='GRU'),
         ]}]}
         payload = r.secret_payload({'gru': CONFIG}, catalog)
         self.assertEqual(list(json.loads(json.dumps(payload['DATA_API_CANARY'])) and payload['DATA_API_CANARY']), [ID[:-1] + '9'])
@@ -169,7 +169,7 @@ class RecoveryTests(unittest.TestCase):
                 raise RuntimeError('query failed')
             if text.startswith(('INSERT', 'DELETE')):
                 return {'results': [{'rows': [], 'rows_affected': 1}]}
-            return {'results': [{'rows': [[args[0]]] if args[0] == r.DOCUMENT else [['marker']], 'rows_affected': 0}]}
+            return {'results': [{'rows': [[args[0]]] if args[0] == r.ROW else [['marker']], 'rows_affected': 0}]}
         setup.call = call
         with patch.object(r.secrets, 'token_hex', return_value='marker'), redirect_stdout(io.StringIO()) as output:
             with self.assertRaises(RuntimeError):

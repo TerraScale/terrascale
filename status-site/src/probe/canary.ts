@@ -1,7 +1,6 @@
 /* Read-only Data API probe. DATA_API_CANARY maps endpoint ULIDs to a
-   pre-created fixture row and a database-scoped ts-auth client credential.
-   TerraBase is SQL-only: `collection` names the canary table and `document`
-   the fixture row's id. */
+   database-scoped ts-auth client credential; the probe reads the fixture
+   row scripts/recover-canaries.py keeps in the canary table. */
 
 import { isId } from "../ids";
 import { logEvent } from "../log";
@@ -24,12 +23,10 @@ export interface CanaryConfig {
   region: string;
   project: string;
   database: string;
-  collection: string;
-  document: string;
   /** Platform issuer, including /terrascale. */
   issuer: string;
   /** A ts-auth project key narrowed to this database: sql:read for the
-      Data API canary, plus sql:write for the Document API probe. */
+      Data API canary, plus sql:write for the SQL API probe. */
   key: string;
 }
 
@@ -48,9 +45,11 @@ const REGION_CODE = /^[a-z]{3}$/;
 /** A three-letter deployment region code, e.g. gru or sjc. */
 export const isRegionCode = (value: unknown): value is string => typeof value === "string" && REGION_CODE.test(value);
 
-export type DocumentProbeConfig = Omit<CanaryConfig, "document">;
+/** The canary table, quoted, and its fixture row's id (scripts/recover-canaries.py). */
+export const CANARY_TABLE = '"canary"';
+export const CANARY_ROW = "00000000000000000000000007";
 
-export function isDocumentProbeConfig(value: unknown): value is DocumentProbeConfig {
+export function isCanaryConfig(value: unknown): value is CanaryConfig {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const entry = value as Record<string, unknown>;
   try {
@@ -66,8 +65,6 @@ export function isDocumentProbeConfig(value: unknown): value is DocumentProbeCon
       isId(entry.project) &&
       typeof entry.database === "string" &&
       NAME.test(entry.database) &&
-      typeof entry.collection === "string" &&
-      NAME.test(entry.collection) &&
       typeof entry.key === "string" &&
       entry.key.length === 79 &&
       isId(entry.key.slice(0, 26)) &&
@@ -78,18 +75,9 @@ export function isDocumentProbeConfig(value: unknown): value is DocumentProbeCon
   }
 }
 
-export function isCanaryConfig(value: unknown): value is CanaryConfig {
-  return (
-    isDocumentProbeConfig(value) && "document" in value && typeof value.document === "string" && isId(value.document)
-  );
-}
-
 /** The database's SQL route: canaries read and write their own table. */
 export const sqlPath = (config: Pick<CanaryConfig, "project" | "database">): string =>
   `/v1/projects/${config.project}/databases/${config.database}/sql/execute`;
-
-/** The canary table, quoted: a valid name may hold a hyphen. */
-export const canaryTable = (config: Pick<CanaryConfig, "collection">): string => `"${config.collection}"`;
 
 /** The rows of the `index`th statement of a SQL result, or null when the body is not one. */
 export const sqlRows = (value: unknown, index = 0): unknown[][] | null => {
@@ -198,7 +186,7 @@ const ERROR_CODES = new Set([
   "forbidden_scope",
   "not_found",
   "unknown_database",
-  "unknown_collection",
+  "unknown_table",
   "unknown_route",
   "method_not_allowed",
   "conflict_unresolved",
@@ -465,14 +453,14 @@ export async function runCanary(
           "X-TerraScale-Region-Pin": config.region,
         },
         body: JSON.stringify({
-          statements: [{ sql: `SELECT id FROM ${canaryTable(config)} WHERE id = ?`, args: [config.document] }],
+          statements: [{ sql: `SELECT id FROM ${CANARY_TABLE} WHERE id = ?`, args: [CANARY_ROW] }],
         }),
         cache: "no-store",
       },
       terrabase.fetch,
       [200],
     );
-    if (!holdsRow(read, config.document)) throw new CanaryError("Invalid response");
+    if (!holdsRow(read, CANARY_ROW)) throw new CanaryError("Invalid response");
     return { ok: true, latencyMs: terrabase.slowest(), error: null };
   } catch (error) {
     if (!(error instanceof CanaryError)) throw error;

@@ -21,7 +21,7 @@ export function badge(label: string, state: TimelineState, message = STATE_LABEL
   const left = width(label);
   const right = width(message);
   const total = left + right;
-  // Unique per badge, so badges inlined into one document never share a clip.
+  // Unique per badge, so badges inlined into one page never share a clip.
   const clip = `ts-badge-${hash(`${label}:${message}`)}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${total}" height="20" role="img" aria-label="${escape(`${label}: ${message}`)}">
 <title>${escape(`${label}: ${message}`)}</title>

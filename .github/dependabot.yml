@@ -33,6 +33,7 @@ updates:
       - /docs-site/create-terrascale-app
       - /docs-site/examples/server-token-provider
       - /landing-site
+      - /status-site
       - /sdk/js
     schedule:
       interval: weekly

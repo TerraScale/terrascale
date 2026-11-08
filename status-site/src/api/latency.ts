@@ -19,7 +19,7 @@ const statuses: Record<TimelineState, "operational" | "degraded" | "down" | "pla
 
 const iso = (at: number | null) => (at === null ? null : new Date(at).toISOString());
 
-export function regionLatencyDocument(
+export function regionLatencyPayload(
   regions: readonly RegionOverview[],
   measurements: Measurements,
   now: number,

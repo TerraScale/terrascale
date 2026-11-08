@@ -1,0 +1,3 @@
+# The status Worker keeps its two-space TypeScript style inside the monorepo.
+[*]
+indent_size = 2

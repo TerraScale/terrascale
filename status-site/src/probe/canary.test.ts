@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { canarySample, holdsRow, isCanaryConfig, parseCanaries, runCanary, runTokenProbe } from "./canary";
+import { CANARY_ROW, canarySample, holdsRow, isCanaryConfig, parseCanaries, runCanary, runTokenProbe } from "./canary";
 import { CANARY_CREDENTIAL_INVALID } from "../domain/status";
 
 const canary = {
@@ -8,13 +8,13 @@ const canary = {
   region: "gru",
   project: "01M4E7G1W82VKFPF5FJ9AVK1DT",
   database: "status_canary",
-  collection: "canary",
-  document: "01M4E7G1W82VKFPF5FJ9AVK1DV",
   key: `01M4E7G1W82VKFPF5FJ9AVK1CQ_${"a".repeat(52)}`,
 };
 const token = "header.payload.signature";
-const rowsOf = (rows: unknown) => ({ results: [{ columns: [{ name: "id", decltype: "TEXT" }], rows, rows_affected: 0, last_insert_rowid: null }] });
-const document = rowsOf([[canary.document]]);
+const rowsOf = (rows: unknown) => ({
+  results: [{ columns: [{ name: "id", decltype: "TEXT" }], rows, rows_affected: 0, last_insert_rowid: null }],
+});
+const fixture = rowsOf([[CANARY_ROW]]);
 const grant = { access_token: token, token_type: "Bearer", expires_in: 900 };
 const fake = (body: unknown, status = 200) =>
   vi
@@ -34,8 +34,6 @@ describe("read-only Data API probe", () => {
       { issuer: undefined },
       { project: "project" },
       { database: "Canary" },
-      { collection: "1canary" },
-      { document: "document" },
       { key: "tb_fake_key" },
       { key: canary.key + "\n" },
       { key: `tsk_${"a".repeat(20)}_${"b".repeat(52)}` },
@@ -45,8 +43,8 @@ describe("read-only Data API probe", () => {
     try {
       expect(parseCanaries(undefined)).toEqual({});
       expect(parseCanaries("not json")).toEqual({});
-      expect(parseCanaries(JSON.stringify({ [canary.document]: canary, invalid: canary }))).toEqual({
-        [canary.document]: canary,
+      expect(parseCanaries(JSON.stringify({ [canary.project]: canary, invalid: canary }))).toEqual({
+        [canary.project]: canary,
       });
     } finally {
       error.mockRestore();
@@ -54,7 +52,7 @@ describe("read-only Data API probe", () => {
   });
 
   it("exchanges the key only at ts-auth and only reads the fixture row with its token", async () => {
-    const fetcher = fake(document);
+    const fetcher = fake(fixture);
     expect(await runCanary(canary, "round", fetcher)).toMatchObject({ ok: true, error: null });
     expect(fetcher).toHaveBeenCalledTimes(2);
     const [url, init] = fetcher.mock.calls[0]!;
@@ -71,7 +69,7 @@ describe("read-only Data API probe", () => {
     expect(readUrl).toBe(`${canary.origin}/v1/projects/${canary.project}/databases/status_canary/sql/execute`);
     expect(readInit).toMatchObject({ method: "POST", cache: "no-store", redirect: "manual" });
     expect(JSON.parse(String(readInit?.body))).toEqual({
-      statements: [{ sql: 'SELECT id FROM "canary" WHERE id = ?', args: [canary.document] }],
+      statements: [{ sql: 'SELECT id FROM "canary" WHERE id = ?', args: [CANARY_ROW] }],
     });
     expect(new Headers(readInit?.headers).get("authorization")).toBe(`Bearer ${token}`);
     expect(new Headers(readInit?.headers).get("X-TerraScale-Region-Pin")).toBe("gru");
@@ -88,7 +86,7 @@ describe("read-only Data API probe", () => {
   it("shares one exchange between concurrent probes of the same key", async () => {
     let grants = 0;
     const fetcher = vi.fn<typeof fetch>(async (url) => {
-      if (!String(url).endsWith("/oauth/token")) return Response.json(document);
+      if (!String(url).endsWith("/oauth/token")) return Response.json(fixture);
       grants++;
       await new Promise((resolve) => setTimeout(resolve, 10));
       return Response.json(grant);
@@ -104,7 +102,7 @@ describe("read-only Data API probe", () => {
     try {
       const minute = { ...grant, expires_in: 59 };
       const fetcher = vi.fn<typeof fetch>(async (url) =>
-        String(url).endsWith("/oauth/token") ? Response.json(minute) : Response.json(document),
+        String(url).endsWith("/oauth/token") ? Response.json(minute) : Response.json(fixture),
       );
       const exchanges = () => fetcher.mock.calls.filter(([url]) => String(url).endsWith("/oauth/token")).length;
       vi.setSystemTime(0);
@@ -125,9 +123,9 @@ describe("read-only Data API probe", () => {
       rowsOf([]),
       rowsOf([["bad"]]),
       rowsOf([[canary.project]]),
-      rowsOf([[canary.document], [canary.document]]),
+      rowsOf([[CANARY_ROW], [CANARY_ROW]]),
       rowsOf(null),
-      rowsOf([canary.document]),
+      rowsOf([CANARY_ROW]),
       { results: [] },
       {},
     ]) {
@@ -144,7 +142,7 @@ describe("read-only Data API probe", () => {
       .mockResolvedValueOnce(Response.json(grant))
       .mockResolvedValueOnce(new Response("bad json"));
     expect(await runCanary(canary, "round", fetcher)).toMatchObject({ ok: false, error: "Invalid JSON" });
-    expect(holdsRow(null, canary.document)).toBe(false);
+    expect(holdsRow(null, CANARY_ROW)).toBe(false);
   });
 
   it("does not contact TerraBase when config or token exchange fails", async () => {
@@ -176,7 +174,7 @@ describe("read-only Data API probe", () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ error: "invalid_client", error_description: canary.key }, { status: 401 }))
       .mockResolvedValueOnce(Response.json(grant))
-      .mockResolvedValueOnce(Response.json(document));
+      .mockResolvedValueOnce(Response.json(fixture));
     const result = await runCanary(canary, "round", fetcher);
     expect(result).toEqual({ ok: null, latencyMs: null, error: CANARY_CREDENTIAL_INVALID });
     expect(fetcher).toHaveBeenCalledTimes(1);

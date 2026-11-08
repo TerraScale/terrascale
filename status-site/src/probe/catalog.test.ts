@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { judge, parseSpec } from "../domain/assertions";
 import { judgeEndpoint } from "./round";
 import { testD1 } from "../testing/d1";
+import { SQL_PROBE } from "./terrabase";
 
 /* The seeded catalog: the deployment regions, and what is probed in each. */
 describe("probe catalog", () => {
@@ -121,14 +122,16 @@ describe("probe catalog", () => {
       ["01M4E7G1W82VKFPF5FJ9AVK1E0", "fra"],
     ] as const) {
       const row = endpoint(id);
-      expect(row.url).toBe("https://api.terrascale.tech/v1/projects/01M4E7G1W82VKFPF5FJ9AVK1DT/databases/status_canary");
+      expect(row.url).toBe(
+        "https://api.terrascale.tech/v1/projects/01M4E7G1W82VKFPF5FJ9AVK1DT/databases/status_canary",
+      );
       expect(JSON.parse(row.headers)).toEqual({ "X-TerraScale-Region-Pin": region });
       expect(row.expectStatus).toBe("401");
       expect(JSON.parse(row.assertions)).toEqual([{ path: "error.code", op: "eq", value: "invalid_key" }]);
     }
   });
 
-  it("runs the TerraBase document probes in the coordinator, one per region, with no origin or key in the catalog", () => {
+  it("runs the TerraBase SQL probes in the coordinator, one per region, with no origin or key in the catalog", () => {
     expect(
       sql
         .prepare("SELECT region_code, kind, probe, url FROM endpoints WHERE probe IS NOT NULL ORDER BY region_code")
@@ -137,7 +140,7 @@ describe("probe catalog", () => {
       ["FRA", "GRU", "SJC"].map((region_code) => ({
         region_code,
         kind: "canary",
-        probe: "documents",
+        probe: SQL_PROBE,
         url: "/v1/projects/{project}/databases/{database}/sql/execute",
       })),
     );

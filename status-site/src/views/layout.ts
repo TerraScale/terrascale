@@ -1,4 +1,4 @@
-/* The document shell: head, top bar, and footer. Vite emits the shared
+/* The page shell: head, top bar, and footer. Vite emits the shared
    stylesheet as a cacheable asset. */
 
 import mark from "../assets/mark.svg?raw";
@@ -93,9 +93,9 @@ function bottom(page: Page, year: number): Html {
 </footer>`;
 }
 
-/** The page document. ts-status is dark only: data-theme="dark" picks the
+/** The page shell. ts-status is dark only: data-theme="dark" picks the
     dark values of whichever design tokens file is in place. */
-export function document(page: Page, year: number): Html {
+export function shell(page: Page, year: number): Html {
   return html`<!doctype html>
 <html lang="en" data-theme="dark">
 <head>

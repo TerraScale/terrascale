@@ -1,0 +1,100 @@
+name: Status
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'status-site/**'
+      - '.github/workflows/status-ci.yml'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+  pull_request:
+    paths:
+      - 'status-site/**'
+      - '.github/workflows/status-ci.yml'
+      - '!**/AGENTS.md'
+      - '!**/CLAUDE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: status-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: status-site/.node-version
+          cache: npm
+          cache-dependency-path: status-site/package-lock.json
+      - name: Install dependencies
+        working-directory: status-site
+        run: npm ci --no-audit --no-fund
+      # Fast: types, Vitest, the canary recovery tests and lint; the build bakes this commit into VERSION.
+      - name: Check, test and build
+        working-directory: status-site
+        run: |
+          npm run check
+          npm test
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          npm run lint
+          npm run build
+      - name: Upload the verified build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: status-build
+          path: status-site/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    # Only main deploys, after the test job passed.
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: status-deploy
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: status-site/.node-version
+          cache: npm
+          cache-dependency-path: status-site/package-lock.json
+      # Installs the pinned wrangler only; the artifact below is the exact build that passed the test job.
+      - name: Install dependencies
+        working-directory: status-site
+        run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: status-build
+          path: status-site/dist
+      # The two vantage Workers first, then ts-status on status.terrascale.tech; D1 bootstraps from schema.sql on first use.
+      - name: Deploy the status Workers
+        working-directory: status-site
+        run: npm run deploy:prebuilt
+      # One check, no retry loop: the live VERSION must equal this commit.
+      - name: Prove the live revision
+        run: |
+          set -euo pipefail
+          live=$(curl -fsS https://status.terrascale.tech/health/version | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          test "$live" = "$GITHUB_SHA"
+          echo "live revision $live matches $GITHUB_SHA"

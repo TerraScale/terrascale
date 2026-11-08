@@ -150,7 +150,8 @@ export function incidentPage(detail: IncidentDetail, now: number): Page {
 
   const measured = latency(detail);
   const impact = incident.kind === "maintenance" ? "maintenance" : IMPACT_STATUS[incident.impact];
-  const components = incident.components.length === 0 ? ["All components"] : incident.components.map((id) => names.get(id) ?? id);
+  const components =
+    incident.components.length === 0 ? ["All components"] : incident.components.map((id) => names.get(id) ?? id);
 
   const body = html`<main id="main" class="ts-page st-incident"${incident.resolvedAt ? "" : html` data-live data-title="${incident.title} · TerraScale Status"`}>
   <nav aria-label="Breadcrumb"><ol class="st-breadcrumb"><li><a href="/">Status</a></li><li><a href="/history">History</a></li><li aria-current="page">${incident.title}</li></ol></nav>
@@ -189,7 +190,8 @@ export function incidentPage(detail: IncidentDetail, now: number): Page {
       <section class="ts-panel" aria-labelledby="affected-title">
         <h2 class="ts-label" id="affected-title">Affected components</h2>
         <ul class="st-affected">${components.map(
-          (name) => html`<li data-state="${impact}"><span class="ts-dot" aria-hidden="true"></span><strong>${name}</strong>${badge(STATE_LABELS[impact], impact)}</li>`,
+          (name) =>
+            html`<li data-state="${impact}"><span class="ts-dot" aria-hidden="true"></span><strong>${name}</strong>${badge(STATE_LABELS[impact], impact)}</li>`,
         )}</ul>
       </section>
       <section class="ts-panel st-follow">

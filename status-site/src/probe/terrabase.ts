@@ -10,34 +10,37 @@ import {
   CanaryError,
   CanaryMonitorError,
   canaryJson,
-  canaryTable,
-  isDocumentProbeConfig,
+  CANARY_TABLE,
+  isCanaryConfig,
   isRegionCode,
   forgetToken,
   readToken,
   sqlPath,
   sqlRows,
   timed,
-  type DocumentProbeConfig,
+  type CanaryConfig,
   type CanaryResult,
 } from "./canary";
 import { USER_AGENT } from "./check";
 import type { Sample } from "./round";
 
-export type TerraBaseProbe = "health" | "documents";
+/** The SQL probe's stored endpoints.probe value. Renaming it means rebuilding
+    endpoints, whose ON DELETE CASCADE children hold the status history. */
+export const SQL_PROBE = "documents";
+
+export type TerraBaseProbe = "health" | typeof SQL_PROBE;
 
 export interface TerraBaseConfig {
   /** The public API origin, e.g. https://api.terrascale.tech. */
   origin: string;
   /** The deployment region, enforced by TerraBase's region pin. */
   region: string;
-  /** Platform issuer, including /terrascale; required for document reads. */
+  /** Platform issuer, including /terrascale; required for SQL probes. */
   issuer?: string;
   /** Database-scoped ts-auth project key with sql:read and sql:write. */
   key?: string;
   project?: string;
   database?: string;
-  collection?: string;
 }
 
 /** A not configured endpoint's sample: unjudged, so it is neither up nor
@@ -55,11 +58,11 @@ export const notConfiguredSample = (endpointId: string): Sample => ({
 const isString = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 
 /** The write probe inserts and deletes its own canary rows. */
-const DOCUMENT_SCOPES = "sql:read sql:write";
+const SQL_SCOPES = "sql:read sql:write";
 
 const ROUTES = {
   readyz: "/readyz",
-  sql: (config: TerraBaseConfig) => sqlPath(config as DocumentProbeConfig),
+  sql: (config: TerraBaseConfig) => sqlPath(config as CanaryConfig),
 };
 
 /** Whether the secret configures an endpoint: it names it, with the key
@@ -94,8 +97,8 @@ export function isTerraBaseConfig(probe: TerraBaseProbe, value: unknown): value 
   switch (probe) {
     case "health":
       return entry.key === undefined || isString(entry.key);
-    case "documents":
-      return isDocumentProbeConfig(entry);
+    case SQL_PROBE:
+      return isCanaryConfig(entry);
   }
 }
 
@@ -154,11 +157,11 @@ export async function runTerraBase(
         if (ready.status !== "ready" || !isString(ready.version) || ready.region !== config.region) invalid();
         break;
       }
-      case "documents": {
-        headers.authorization = `Bearer ${await readToken(config as DocumentProbeConfig, fetcher, DOCUMENT_SCOPES)}`;
+      case SQL_PROBE: {
+        headers.authorization = `Bearer ${await readToken(config as CanaryConfig, fetcher, SQL_SCOPES)}`;
         // Fresh per region and round, so concurrent probes never collide.
         const id = newId();
-        const table = canaryTable(config as DocumentProbeConfig);
+        const table = CANARY_TABLE;
         const execute = (sql: string, args: unknown[]) =>
           call(ROUTES.sql(config), {
             method: "POST",
@@ -170,7 +173,9 @@ export async function runTerraBase(
           if (changed(await execute(`INSERT INTO ${table} (id, canary) VALUES (?, ?)`, [id, marker])) !== 1) invalid();
           const read = sqlRows(await execute(`SELECT canary FROM ${table} WHERE id = ?`, [id]));
           if (read?.length !== 1 || read[0]![0] !== marker) throw new CanaryError("Write not readable");
-          const found = sqlRows(await execute(`SELECT count(*) FROM ${table} WHERE id = ? AND canary = ?`, [id, marker]));
+          const found = sqlRows(
+            await execute(`SELECT count(*) FROM ${table} WHERE id = ? AND canary = ?`, [id, marker]),
+          );
           if (found?.[0]?.[0] !== 1) throw new CanaryError("Query missed the row");
         } catch (error) {
           failure = error;
@@ -188,7 +193,7 @@ export async function runTerraBase(
     return { ok: true, latencyMs: terrabase.slowest(), error: null };
   } catch (error) {
     if (!(error instanceof CanaryError)) throw error;
-    if (probe === "documents") forgetToken(config as DocumentProbeConfig, fetcher);
+    if (probe === SQL_PROBE) forgetToken(config as CanaryConfig, fetcher);
     return { ok: error instanceof CanaryMonitorError ? null : false, latencyMs: null, error: error.message };
   }
 }

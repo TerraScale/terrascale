@@ -120,11 +120,19 @@
     gap: var(--ts-s6);
     align-items: start;
   }
-  .st-overview .st-regions { grid-template-columns: minmax(0, 1fr); }
-  .st-overview .st-map { border: 0; }
-  .st-overview .st-map-legend { padding: var(--ts-s3); }
+  .st-overview .st-regions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .st-overview .st-map {
+    border: 0;
+  }
+  .st-overview .st-map-legend {
+    padding: var(--ts-s3);
+  }
   @media (max-width: 900px) {
-    .st-overview .st-region-layout { grid-template-columns: minmax(0, 1fr); }
+    .st-overview .st-region-layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   /* Mobile: stats in two columns, status banner stacks. */

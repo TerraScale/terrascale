@@ -175,6 +175,7 @@ terrabase = {"auth-server", "terrabase"}
 sdks = {f"sdk-{lang}-ci.yml" for lang in ("dotnet", "go", "js", "python", "rust")}
 go = {"sdk-go-ci.yml", "sdk-go-release.yml"}
 landing = {"landing-ci.yml", "landing-secret-scan.yml"}
+status = {"status-ci.yml"}
 # The vendored driver is built into TerraBase, which auth's integration tests start; libs never builds it.
 vendor_paths = (("src/vendor/Turso.Data.Sqlite/Connection.cs", terrabase), ("tests/Turso.Data.Sqlite.Tests/ConnectionTests.cs", {"terrabase"}),
                 ("scripts/vendor/audit/check.sh", {"terrabase"}))
@@ -223,6 +224,8 @@ cases += [(path, "modified", ci, started) for path, ci, started in [
     ("docs/auth/platform-api.openapi.yaml", {"auth"}, set()),
     ("docs-site/docs/index.md", set(), {"docs-ci.yml"}),
     ("landing-site/src/App.svelte", set(), landing),
+    ("status-site/src/app.ts", set(), status),
+    ("status-site/AGENTS.md", set(), set()),
     ("aspire/apphost.ts", set(), set()),
     ("benchmark/go/main.go", set(), set()),
     ("benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Program.cs", {"libs"}, set()),
@@ -242,6 +245,7 @@ cases += [(path, "modified", ci, started) for path, ci, started in [
     (".github/workflows/dashboard-ci.yml", set(), {"images-ghcr.yml"}),
     (".github/workflows/docs-deploy.yml", set(), {"docs-ci.yml"}),
     (".github/workflows/landing-ci.yml", set(), landing),
+    (".github/workflows/status-ci.yml", set(), status),
     (".github/workflows/sdk-fast.yml", set(), sdks),
     (".github/workflows/sdk-go-publish.yml", set(), go),
     (".github/workflows/slow.yml", set(), set())]]

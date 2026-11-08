@@ -6,7 +6,7 @@ import { overview, snapshotWindow } from "../overview";
 import { testD1 } from "../testing/d1";
 import { bars } from "./components";
 import { homePage } from "./home";
-import { compactBarData, document } from "./layout";
+import { compactBarData, shell } from "./layout";
 
 const now = Date.UTC(2026, 9, 23, 12);
 
@@ -42,7 +42,7 @@ describe("home HTML budget", () => {
       })),
     );
     const view = overview(snapshot, now, "90d");
-    const body = await compactBarData(document(homePage(view), 2026).value);
+    const body = await compactBarData(shell(homePage(view), 2026).value);
 
     expect(body).toContain("Response time");
     expect(body).toContain('class="st-map"');

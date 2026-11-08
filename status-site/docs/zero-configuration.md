@@ -6,7 +6,7 @@ Adopted 2026-10-09 (TS-795).
   machines boot. There are no feature flags, region activation steps, deploy
   toggles or kill switches.
 - OCI production secrets come from OCI Vault via instance principal; ts-status
-  uses Worker secrets and Cloudflare Workers Builds keeps its deployment token.
+  uses Worker secrets and GitHub Actions keeps its deployment token.
   Operators never copy production credentials by hand.
 - Each value has one correct setting in code. Production exposes no tuning
   knobs. Fakes, demo stores and authentication bypasses belong only in test

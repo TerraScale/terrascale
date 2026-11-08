@@ -237,6 +237,11 @@ terrabase-test-shard:
 landing-test-fast:
 	cd landing-site && npm ci --no-audit --no-fund && npm run build
 
+# Status Fast covers types, tests, the canary recovery tests, lint and the Worker build.
+.PHONY: status-test-fast
+status-test-fast:
+	cd status-site && npm ci --no-audit --no-fund && npm run check && npm test && python3 -m unittest discover -s scripts -p 'test_*.py' && npm run lint && npm run build
+
 # API-coupled SDKs retain independent Fast suites and release identities.
 .PHONY: sdk-test-fast sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast
 sdk-test-fast: sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast

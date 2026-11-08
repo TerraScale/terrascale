@@ -11,13 +11,14 @@ import type { IncidentImpact, IncidentKind, IncidentStatus } from "../domain/sta
 import type { Env } from "../env";
 import { isId, newId } from "../ids";
 import { choice, ids, instant, Invalid, optionalChoice, optionalString, string, type Body } from "../api/validate";
+import { SQL_PROBE } from "../probe/terrabase";
 
 export const KINDS: readonly IncidentKind[] = ["incident", "warning", "maintenance"];
 export const IMPACTS: readonly IncidentImpact[] = ["none", "minor", "major", "critical"];
 export const INCIDENT_STATUSES: readonly IncidentStatus[] = ["investigating", "identified", "monitoring", "resolved"];
 export const MAINTENANCE_STATUSES: readonly IncidentStatus[] = ["scheduled", "in_progress", "completed"];
 export const PROVIDERS = ["cloudflare", "other"] as const;
-export const PROBES = ["health", "documents", "management"] as const;
+export const PROBES = ["health", SQL_PROBE] as const;
 const FINAL: readonly IncidentStatus[] = ["resolved", "completed"];
 
 export const statusesOf = (kind: IncidentKind) => (kind === "maintenance" ? MAINTENANCE_STATUSES : INCIDENT_STATUSES);

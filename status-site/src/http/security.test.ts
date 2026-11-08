@@ -22,7 +22,11 @@ describe("response security", () => {
     const policy = "default-src 'none'; script-src 'sha256-example'; frame-ancestors *";
     const response = secure(
       new Response("widget", {
-        headers: { "content-security-policy": policy, "access-control-allow-origin": "*", "referrer-policy": "no-referrer" },
+        headers: {
+          "content-security-policy": policy,
+          "access-control-allow-origin": "*",
+          "referrer-policy": "no-referrer",
+        },
       }),
       true,
     );

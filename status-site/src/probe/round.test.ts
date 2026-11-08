@@ -348,8 +348,6 @@ describe("automatic incidents", () => {
             region: "gru",
             project: componentId,
             database: "canary",
-            collection: "canary",
-            document: endpointId,
             key: `${componentId}_${"a".repeat(52)}`,
           },
         }),
@@ -552,7 +550,7 @@ describe("observe", () => {
       results: [quota],
       values: null,
     };
-    expect(observe(docs, [sample], [{ id: "docs", name: "Document API" }], [])).toEqual([
+    expect(observe(docs, [sample], [{ id: "docs", name: "SQL API" }], [])).toEqual([
       expect.objectContaining({ state: "none", monitorFault: "Canary quota exhausted" }),
     ]);
   });

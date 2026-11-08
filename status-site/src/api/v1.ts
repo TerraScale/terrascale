@@ -18,7 +18,7 @@ const publicCertificate = (certificate: Certificate | null) =>
 const iso = (at: number | null) => (at === null ? null : new Date(at).toISOString());
 const states = (list: readonly { state: string }[]) => list.map((bucket) => bucket.state);
 
-export function statusDocument(view: Overview) {
+export function statusPayload(view: Overview) {
   return {
     generatedAt: iso(view.generatedAt),
     range: view.range,
@@ -49,14 +49,14 @@ export function statusDocument(view: Overview) {
   };
 }
 
-export function incidentsDocument(recent: Recent) {
+export function incidentsPayload(recent: Recent) {
   const updates = updatesByIncident(recent.updates);
   return {
     incidents: recent.incidents.map((incident) => ({ ...incident, updates: updates.get(incident.id) ?? [] })),
   };
 }
 
-export function regionsDocument(view: Overview) {
+export function regionsPayload(view: Overview) {
   return {
     generatedAt: iso(view.generatedAt),
     regions: view.regions.map(({ mapX: _x, mapY: _y, clusters, ...region }) => ({
@@ -78,12 +78,7 @@ export function regionsDocument(view: Overview) {
   };
 }
 
-export function latencyDocument(
-  component: ComponentOverview,
-  measurements: Measurements,
-  range: RangeKey,
-  now: number,
-) {
+export function latencyPayload(component: ComponentOverview, measurements: Measurements, range: RangeKey, now: number) {
   const { count, size } = RANGES[range];
   const start = rangeStart(range, now);
   const period = byHour(range) ? HOUR : DAY;
