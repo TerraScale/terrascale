@@ -29,10 +29,56 @@ func parseKeyRotation(args []string) (string, time.Duration, error) {
 	return args[0], grace, nil
 }
 
-func rotateKey(ctx context.Context, s *session, id string, grace time.Duration, out, diagnostics io.Writer) error {
-	key, err := s.user.RotateAPIKey(ctx, s.org, s.project, id, grace)
+// stepUpPollInterval is the CLI's bounded wait between proof consumptions.
+var stepUpPollInterval = 5 * time.Second
+
+// stepUp drives the hosted confirmation for one sensitive key operation: it
+// starts a proof, prints its approval URL and retries the mutation until the
+// proof is consumed, its deadline passes or the user interrupts. The proof
+// never leaves this function. A non-step-up failure of the retried request is
+// returned at once: its outcome may be unknown and must not repeat.
+func stepUp[T any](ctx context.Context, s *session, purpose, action string, operate func(*tsauth.User) (*T, error), diagnostics io.Writer) (*T, error) {
+	challenge, err := s.user.RequestStepUp(ctx, purpose)
 	if err != nil {
-		return keyOperationError(err, "Rotating API keys", s)
+		return nil, keyOperationError(err, action, s)
+	}
+	if _, err := fmt.Fprintf(diagnostics, "%s needs a fresh sign-in confirmation.\nOpen %s\nand confirm with your password or an email code; waiting until %s (Ctrl+C cancels).\n",
+		action, challenge.StepUpURL, challenge.ExpiresAt.UTC().Format(time.RFC3339)); err != nil {
+		return nil, keyOutputError(err)
+	}
+	proof := s.user.WithStepUpProof(challenge.Proof)
+	for {
+		result, err := operate(proof)
+		if err == nil {
+			return result, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		var api *tsauth.APIError
+		if !errors.As(err, &api) || api.Code != tsauth.ErrStepUpRequired {
+			return nil, keyOperationError(err, action, s)
+		}
+		if time.Now().After(challenge.ExpiresAt) {
+			return nil, &cliError{code: string(api.Code), status: api.Status,
+				message: action + " was not confirmed before its deadline; run the command again for a fresh confirmation."}
+		}
+		timer := time.NewTimer(stepUpPollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func rotateKey(ctx context.Context, s *session, id string, grace time.Duration, out, diagnostics io.Writer) error {
+	key, err := stepUp(ctx, s, tsauth.StepUpRotateAPIKey, "Rotating API keys", func(u *tsauth.User) (*tsauth.CreatedAPIKey, error) {
+		return u.RotateAPIKey(ctx, s.org, s.project, id, grace)
+	}, diagnostics)
+	if err != nil {
+		return err
 	}
 	// A mismatched or malformed success can contain sensitive remote content.
 	if key == nil || key.APIKey.ID != id || key.APIKey.OrganizationID != s.org || key.APIKey.ProjectID != s.project ||
@@ -54,17 +100,6 @@ func rotateKey(ctx context.Context, s *session, id string, grace time.Duration, 
 	return keyOutputError(err)
 }
 
-// keyConfirmationURL is the dashboard's API-keys page for one project; the
-// hosted sign-in confirmation runs there. The session's IDs are canonical
-// ULIDs resolved by open, not free text.
-func keyConfirmationURL(s *session) string {
-	address := "https://dash.terrascale.tech/api-keys?organizationId=" + s.org
-	if s.project != "" {
-		address += "&projectId=" + s.project
-	}
-	return address
-}
-
 // Preserve only source-confirmed codes/status, never remote messages or causes.
 func keyOperationError(err error, action string, s *session) error {
 	if err == nil {
@@ -84,11 +119,10 @@ func keyOperationError(err error, action string, s *session) error {
 	message := "API key operation failed; verify the selected project and permissions."
 	switch string(api.Code) {
 	case "step_up_required":
-		// The hosted confirmation needs a browser session on the dashboard;
-		// the CLI words this failure itself, so JSON errors keep the address.
+		// The hosted confirmation normally completes in stepUp; this is the
+		// defensive answer for requests that never started one.
 		return &cliError{code: string(api.Code), status: api.Status,
-			message: action + " needs a fresh sign-in confirmation. Open " + keyConfirmationURL(s) +
-				" and confirm with your password or an email code; the dashboard reveals the secret once."}
+			message: action + " needs a fresh sign-in confirmation; run the command again to start one."}
 	case "rotation_pending":
 		code, message = api.Code, "Previous rotation grace is active; wait until previous_secret_expires_at before rotating again."
 	case "authentication_conflict":

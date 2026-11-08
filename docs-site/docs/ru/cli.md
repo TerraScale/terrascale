@@ -208,11 +208,12 @@ key with an SDK's API key token exchange, as [getting started](/ru/getting-start
 shows.
 
 Creating or rotating a key needs a fresh sign-in confirmation with your password
-or an email code, which the CLI cannot host: the command answers
-`403 step_up_required` and prints the dashboard link
-(`https://dash.terrascale.tech/api-keys?organizationId=…&projectId=…`) where the
-confirmation and the one-time secret are shown. `keys list` and `keys revoke`
-work from the CLI without confirmation.
+or an email code, plus two-factor authentication when enrolled. The command
+prints the hosted confirmation URL and waits for you to approve it in a browser;
+after approval the one-time secret is printed in the terminal. Ctrl+C cancels
+the wait; an unconfirmed request expires after five minutes and the command
+exits with `403 step_up_required`. `keys list` and `keys revoke` work from the
+CLI without confirmation.
 
 ### Key lifetime and allowed networks
 
