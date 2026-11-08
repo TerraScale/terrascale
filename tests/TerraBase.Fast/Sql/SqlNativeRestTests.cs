@@ -86,6 +86,27 @@ public sealed class SqlNativeRestTests
     }
 
     [Test]
+    public async Task Full_outer_join_answers_a_feature_refusal()
+    {
+        await using var db = await StartSharedAsync();
+        await db.OkAsync(
+            "CREATE TABLE teams (id INTEGER PRIMARY KEY, name TEXT)",
+            "CREATE TABLE players (id INTEGER PRIMARY KEY, team INTEGER REFERENCES teams (id))");
+
+        var (status, body) = await db.PostAsync(db.Reader, Stmt("SELECT * FROM teams FULL JOIN players ON players.team = teams.id"));
+        var (spelled, spelledBody) = await db.PostAsync(db.Reader, Stmt("SELECT * FROM teams full outer join players on players.team = teams.id"));
+        var word = await db.OkAsync("SELECT * FROM teams JOIN players ON players.team = teams.id WHERE teams.name <> 'FULL JOIN'");
+        var rewritten = await db.RefusedAsync(db.Writer, Stmt("UPDATE players SET team = 1 WHERE team IN (SELECT team FROM teams FULL OUTER JOIN players USING (team))"));
+
+        var error = body.GetProperty("error");
+        await Assert.That((status, error.GetProperty("code").GetString(), error.GetProperty("sqlstate").GetString(), error.GetProperty("message").GetString()))
+            .IsEqualTo((HttpStatusCode.BadRequest, "sql_error", "0A000", "full outer join is not supported; use LEFT JOIN with UNION ALL"));
+        await Assert.That((spelled, spelledBody.GetProperty("error").GetProperty("sqlstate").GetString())).IsEqualTo((HttpStatusCode.BadRequest, "0A000"));
+        await Assert.That(word[0].GetProperty("rows").GetArrayLength()).IsEqualTo(0);
+        await Assert.That(rewritten.Code).IsEqualTo("sql_error");
+    }
+
+    [Test]
     public async Task A_request_is_one_transaction_and_a_failed_statement_rolls_all_of_it_back()
     {
         await using var db = await StartSharedAsync();
