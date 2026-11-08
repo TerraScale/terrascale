@@ -162,6 +162,16 @@ export class V1Databases {
     await this.#transport.call("deleteDatabase", { database: requireDatabaseSelector(name) }, { signal: options.signal });
   }
 
+  /**
+   * Deletes the database only while its immutable ID is still expectedId; a changed identity answers 409.
+   * @param {string} name @param {string} expectedId @param {V1RequestOptions} [options] @returns {Promise<void>}
+   */
+  async deleteIfId(name, expectedId, options = {}) {
+    mutationOptions(options);
+    await this.#transport.call("deleteDatabaseIfId", { database: requireDatabaseSelector(name), expectedId: requireId(expectedId) },
+      { signal: options.signal });
+  }
+
   /** @param {string} name @param {V1DatabaseBranchRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
   async branch(name, request, options = {}) {
     members(request, ["name"]);
@@ -169,6 +179,20 @@ export class V1Databases {
     const response = await this.#transport.call("branchDatabase", { database: requireDatabaseSelector(name) }, {
       body: stringifyExactJson({ name: requireName("database", request.name) }, "database branch"), signal: options.signal,
     });
+    return decodeManagedDatabase(response.value);
+  }
+
+  /**
+   * Branches a snapshot copy only while the source's immutable ID is still expectedId; a changed identity answers 409.
+   * @param {string} name @param {V1DatabaseBranchRequest} request @param {string} expectedId @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>}
+   */
+  async branchIfId(name, request, expectedId, options = {}) {
+    members(request, ["name"]);
+    mutationOptions(options);
+    const response = await this.#transport.call("branchDatabaseIfId",
+      { database: requireDatabaseSelector(name), expectedId: requireId(expectedId) }, {
+        body: stringifyExactJson({ name: requireName("database", request.name) }, "database branch"), signal: options.signal,
+      });
     return decodeManagedDatabase(response.value);
   }
 }

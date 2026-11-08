@@ -12,7 +12,9 @@
       "getDatabase": "src/TerraBase/Features/Management/GetManagedDatabaseEndpoint.cs",
       "updateDatabase": "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs",
       "deleteDatabase": "src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs",
-      "branchDatabase": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs"
+      "branchDatabase": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs",
+      "branchDatabaseIfId": "src/TerraBase/Features/Management/BranchManagedDatabaseIfIdEndpoint.cs",
+      "deleteDatabaseIfId": "src/TerraBase/Features/Management/DeleteManagedDatabaseIfIdEndpoint.cs"
     },
     "inputs": {
       "src/TerraBase/Features/ApiKeys/IApiKeyStore.cs": {
@@ -38,6 +40,12 @@
       },
       "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs": {
         "sha256": "b954951ef904a2205184b8878a26d94b820eebf526ee7d4149d9cb53d3e9f61f"
+      },
+      "src/TerraBase/Features/Management/BranchManagedDatabaseIfIdEndpoint.cs": {
+        "sha256": "cf9cfb1e60857fec7e81efa82121ef2915a19c1da86602e05b58931f43d32441"
+      },
+      "src/TerraBase/Features/Management/DeleteManagedDatabaseIfIdEndpoint.cs": {
+        "sha256": "177c500a4bb5d790c122eeeeb65edb7b9cba45218a244fe5d4c5079faf5c7db9"
       }
     }
   },
@@ -122,6 +130,21 @@
       ]
     },
     {
+      "operation": "deleteDatabaseIfId",
+      "producerOperationId": "deleteDatabaseIfId",
+      "sourcePath": "src/TerraBase/Features/Management/DeleteManagedDatabaseIfIdEndpoint.cs",
+      "sha256": "177c500a4bb5d790c122eeeeb65edb7b9cba45218a244fe5d4c5079faf5c7db9",
+      "method": "DELETE",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/if-id/{expectedId}",
+      "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
+      "permission": "databases:write",
+      "requestMediaTypes": [],
+      "responseMediaType": "",
+      "successStatuses": [
+        204
+      ]
+    },
+    {
       "operation": "branchDatabase",
       "producerOperationId": "branchDatabase",
       "sourcePath": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs",
@@ -137,10 +160,27 @@
       "successStatuses": [
         201
       ]
+    },
+    {
+      "operation": "branchDatabaseIfId",
+      "producerOperationId": "branchDatabaseIfId",
+      "sourcePath": "src/TerraBase/Features/Management/BranchManagedDatabaseIfIdEndpoint.cs",
+      "sha256": "cf9cfb1e60857fec7e81efa82121ef2915a19c1da86602e05b58931f43d32441",
+      "method": "POST",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/branches/if-id/{expectedId}",
+      "authorizationPolicy": "ApiKeyScopes.DatabasesWrite",
+      "permission": "databases:write",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        201
+      ]
     }
   ],
   "currentGeneratedOpenApi": "Unavailable: current route parity is source-bound, not runtime qualification.",
-  "routeCount": 6,
+  "routeCount": 8,
   "routes": [
     {
       "producer": "terrabase-csharp",
@@ -229,9 +269,43 @@
     {
       "producer": "terrabase-csharp",
       "client": "TerraBaseV1Client",
+      "operation": "deleteDatabaseIfId",
+      "method": "DELETE",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/if-id/{expectedId}",
+      "permission": "databases:write",
+      "requestMediaTypes": [],
+      "responseMediaType": "",
+      "successStatuses": [
+        204
+      ],
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "evidence": "current-handler-source"
+    },
+    {
+      "producer": "terrabase-csharp",
+      "client": "TerraBaseV1Client",
       "operation": "branchDatabase",
       "method": "POST",
       "pathTemplate": "/v1/projects/{project}/databases/{database}/branches",
+      "permission": "databases:write",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "responseMediaType": "application/json",
+      "successStatuses": [
+        201
+      ],
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "evidence": "current-handler-source"
+    },
+    {
+      "producer": "terrabase-csharp",
+      "client": "TerraBaseV1Client",
+      "operation": "branchDatabaseIfId",
+      "method": "POST",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/branches/if-id/{expectedId}",
       "permission": "databases:write",
       "requestMediaTypes": [
         "application/json"

@@ -266,6 +266,10 @@ class AsyncTerraScale:
         """Delete by name or ULID in the database's home region."""
         await self._send(_spec.delete_database(self.project, database))
 
+    async def delete_database_if_id(self, database: str, expected_id: str) -> None:
+        """Delete only when the name still resolves to expected_id; a changed identity answers 409."""
+        await self._send(_spec.delete_database_if_id(self.project, database, expected_id))
+
     def export_database(self, database: str) -> AsyncIterator[bytes]:
         """Stream the database as one SQL dump (BEGIN … COMMIT) with ``sql:read``.
 
@@ -362,6 +366,14 @@ class AsyncDatabase:
     async def branch(self, name: str) -> models.Database:
         """Create an independent copy named ``name``."""
         return await self._c._send(_spec.branch_database(*self._p, name))
+
+    async def branch_if_id(self, name: str, expected_id: str) -> models.Database:
+        """Branch only when the name still resolves to expected_id; a changed identity answers 409."""
+        return await self._c._send(_spec.branch_database_if_id(*self._p, name, expected_id))
+
+    async def delete_if_id(self, expected_id: str) -> None:
+        """Delete only when the name still resolves to expected_id; a changed identity answers 409."""
+        await self._c._send(_spec.delete_database_if_id(*self._p, expected_id))
 
     @overload
     async def query(self, sql: str, args: Args = None) -> builtins.list[Row]: ...

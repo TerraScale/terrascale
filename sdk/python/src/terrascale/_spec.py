@@ -197,6 +197,11 @@ def delete_database(project: str, db: str) -> Call:
     return Call("DELETE", _db(project, database_selector(db)), _none, success=(204,))
 
 
+def delete_database_if_id(project: str, db: str, expected_id: str) -> Call:
+    return Call("DELETE", _db(project, database_selector(db), "if-id", validate_id(expected_id, "expected database ID")),
+                _none, success=(204,))
+
+
 def fork_database(project: str, source: str, db: str, point_in_time: str | None, ttl_seconds: int | None) -> Call:
     body: dict[str, Any] = {"name": database_name(db)}
     route: tuple[str, ...] = ("branches",)
@@ -245,6 +250,11 @@ def clear_database_ttl(project: str, db: str) -> Call:
 
 def branch_database(project: str, db: str, branch: str) -> Call:
     return Call("POST", _db(project, db, "branches"),
+                lambda r: models.Database.from_json(r.json()), body={"name": database_name(branch)}, success=(201,))
+
+
+def branch_database_if_id(project: str, db: str, branch: str, expected_id: str) -> Call:
+    return Call("POST", _db(project, db, "branches", "if-id", validate_id(expected_id, "expected database ID")),
                 lambda r: models.Database.from_json(r.json()), body={"name": database_name(branch)}, success=(201,))
 
 

@@ -92,7 +92,7 @@ headers.
 
 `Database::create` creates a database; `create_with_placement` takes a `DatabasePlacement` naming its
 `home_region`. Without a home region the called region is the home. `Client::list_databases`,
-`Database::get_database`, `Client::rename_database`, `Database::branch_database` and backups/point-in-time restore
+`Database::get_database`, `Client::rename_database`, `Database::branch_database` (plus `branch_database_if_id`/`delete_database_if_id` guarded by the immutable database ID) and backups/point-in-time restore
 use the same project client.
 
 A database has one home region for writes and can have encrypted read replicas in other serving regions.

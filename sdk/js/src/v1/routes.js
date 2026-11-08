@@ -2,7 +2,7 @@ import { agentRoutes } from "./agent-routes.js";
 import { fileStorageRoutes } from "./file-storage-routes.js";
 import { managementV1Routes } from "./management-routes.js";
 // Current TerraBase database catalog routes.
-/** @typedef {import("./agent-routes.js").AgentOperation | import("./file-storage-routes.js").FileStorageOperation | import("./management-routes.js").ManagementOperation | "createDatabase" | "listDatabases" | "getDatabase" | "updateDatabase" | "deleteDatabase" | "branchDatabase"} V1Operation */
+/** @typedef {import("./agent-routes.js").AgentOperation | import("./file-storage-routes.js").FileStorageOperation | import("./management-routes.js").ManagementOperation | "createDatabase" | "listDatabases" | "getDatabase" | "updateDatabase" | "deleteDatabase" | "deleteDatabaseIfId" | "branchDatabase" | "branchDatabaseIfId"} V1Operation */
 /**
  * @typedef {object} V1Route
  * @property {V1Operation} operation
@@ -27,9 +27,11 @@ export const v1Routes = Object.freeze(/** @type {V1Route[]} */ ([
   { operation: "getDatabase", method: "GET", pathTemplate: database, permission: "databases:read", requestMediaTypes: [], successStatuses: [200] },
   { operation: "updateDatabase", method: "PATCH", pathTemplate: database, permission: "databases:write", requestMediaTypes: ["application/json"], successStatuses: [200] },
   { operation: "deleteDatabase", method: "DELETE", pathTemplate: database, permission: "databases:write", requestMediaTypes: [], successStatuses: [204] },
+  { operation: "deleteDatabaseIfId", method: "DELETE", pathTemplate: `${database}/if-id/{expectedId}`, permission: "databases:write", requestMediaTypes: [], successStatuses: [204] },
   { operation: "branchDatabase", method: "POST", pathTemplate: `${database}/branches`, permission: "databases:write", requestMediaTypes: ["application/json"], successStatuses: [201] },
+  { operation: "branchDatabaseIfId", method: "POST", pathTemplate: `${database}/branches/if-id/{expectedId}`, permission: "databases:write", requestMediaTypes: ["application/json"], successStatuses: [201] },
 ].map(route => ({
-  ...route, responseMediaType: route.operation === "deleteDatabase" ? "" : "application/json", idempotencyKey: "none",
+  ...route, responseMediaType: route.operation === "deleteDatabase" || route.operation === "deleteDatabaseIfId" ? "" : "application/json", idempotencyKey: "none",
   replaySafe: !route.permission.endsWith(":write"), contract: "docs/terrabase/api.md", contractText: [],
 }))).map(route => Object.freeze({
   ...route, requestMediaTypes: Object.freeze(route.requestMediaTypes),
@@ -43,7 +45,7 @@ export function v1Route(operation) {
 }
 /** @param {V1Route} route @param {Readonly<Record<string, string>>} params @returns {string} */
 export function v1RoutePath(route, params) {
-  return route.pathTemplate.replace(/\{([a-z_]+)\}/gu, (_match, name) => {
+  return route.pathTemplate.replace(/\{([a-zA-Z_]+)\}/gu, (_match, name) => {
     const value = params[name];
     if (value === undefined) throw new TypeError(`Missing path parameter ${name}.`);
     return encodeURIComponent(value);

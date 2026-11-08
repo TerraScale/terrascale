@@ -77,6 +77,19 @@ describe("public database catalog HTTP contracts", () => {
   });
 
   // HTTP fixtures verify the SDK contract, not server-side rename invariants.
+
+  test("branch and delete guard the immutable database identity", async () => {
+    const { databases, requests } = await fixture((request, response) => {
+      if (request.method === "DELETE") { response.writeHead(204).end(); return; }
+      json(response, database, 201);
+    });
+    expect(await databases.branchIfId("app", { name: "branch" }, id)).toEqual(database);
+    await expect(databases.deleteIfId("app", id)).resolves.toBeUndefined();
+    expect(requests.map(request => [request.method, request.url.pathname])).toEqual([
+      ["POST", `${prefix}/app/branches/if-id/${id}`], ["DELETE", `${prefix}/app/if-id/${id}`],
+    ]);
+    expect(requests.map(request => request.body)).toEqual(['{"name":"branch"}', ""]);
+  });
 });
 
 // Conflict metadata must survive catalog list/get and clear on a successful rename.

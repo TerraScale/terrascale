@@ -164,7 +164,7 @@ release qualification remain open gates.
 | SQL over HTTPS | `db.execute/query/batch` |
 | SQL over WebSocket | `db.connect()` |
 | Live table shapes | `db.shape(table)` |
-| Databases | `client.databases.create/list/get/rename/delete/branch` |
+| Databases | `client.databases.create/list/get/rename/delete/branch`, plus `deleteIfId`/`branchIfId` guarded by the database's immutable ID |
 | Backups and usage | `db.backups`, `db.metrics`, `client.metrics`, `client.backupDestination` |
 | Saved queries | `client.savedQueries` |
 | File buckets | `client.storage` |

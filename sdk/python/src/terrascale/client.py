@@ -278,6 +278,10 @@ class TerraScale:
         """Delete by name or ULID in the database's home region."""
         self._send(_spec.delete_database(self.project, database))
 
+    def delete_database_if_id(self, database: str, expected_id: str) -> None:
+        """Delete only when the name still resolves to expected_id; a changed identity answers 409."""
+        self._send(_spec.delete_database_if_id(self.project, database, expected_id))
+
     def export_database(self, database: str) -> Iterator[bytes]:
         """Stream the database as one SQL dump (BEGIN … COMMIT) with ``sql:read``.
 
@@ -384,6 +388,14 @@ class Database:
     def branch(self, name: str) -> models.Database:
         """Create an independent copy named ``name``."""
         return self._c._send(_spec.branch_database(*self._p, name))
+
+    def branch_if_id(self, name: str, expected_id: str) -> models.Database:
+        """Branch only when the name still resolves to expected_id; a changed identity answers 409."""
+        return self._c._send(_spec.branch_database_if_id(*self._p, name, expected_id))
+
+    def delete_if_id(self, expected_id: str) -> None:
+        """Delete only when the name still resolves to expected_id; a changed identity answers 409."""
+        self._c._send(_spec.delete_database_if_id(*self._p, expected_id))
 
     @overload
     def query(self, sql: str, args: Args = None) -> builtins.list[Row]: ...
