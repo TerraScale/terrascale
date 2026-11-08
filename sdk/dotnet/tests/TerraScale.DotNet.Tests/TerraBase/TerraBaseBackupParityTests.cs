@@ -59,4 +59,25 @@ public sealed class TerraBaseBackupParityTests
         await Assert.That(calls.Select(c => c.Method)).IsEquivalentTo(["POST", "GET", "GET", "PUT", "GET", "POST", "GET", "GET"]);
     }
 
+    [Test]
+    public async Task Rewind_point_in_time_posts_the_instant_and_returns_the_database()
+    {
+        (string Method, string Path, string? Body)? sent = null;
+        using var handler = new TerraBaseTestHandler(async (request, token) =>
+        {
+            sent = (request.Method.Method, request.RequestUri!.AbsolutePath,
+                request.Content is null ? null : await request.Content.ReadAsStringAsync(token));
+            return TerraBaseIntegrationFixture.Json(Restored, HttpStatusCode.OK);
+        });
+        using var http = new HttpClient(handler);
+        var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+        var rewound = await db.RewindPointInTimeAsync(new DateTimeOffset(2026, 10, 22, 10, 0, 0, TimeSpan.Zero), "customer");
+        await Assert.That(rewound.Name).IsEqualTo("copy");
+        await Assert.That(rewound.Id).IsEqualTo("01JA0000000000000000000004");
+        var wire = sent ?? throw new InvalidOperationException("rewind sent no request");
+        await Assert.That(wire.Method).IsEqualTo("POST");
+        await Assert.That(wire.Path).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/point-in-time/rewind");
+        await Assert.That(wire.Body).IsEqualTo("""{"pointInTime":"2026-10-22T10:00:00+00:00","destination":"customer"}""");
+    }
+
 }

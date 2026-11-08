@@ -135,6 +135,12 @@ public sealed partial class TerraBaseDatabase
             TerraBaseConnection.Json(new TerraBasePointInTimeRequest(pointInTime, null, destination), Json.TerraBasePointInTimeRequest),
             Json.TerraBasePointInTimePlan, null, cancellationToken).ConfigureAwait(false)).Value;
 
+    /// <summary>Rewinds this database in place to the selected instant from platform (default) or customer backup, discarding later changes in one transaction; the rewind itself is backed up. Requires databases:write; sent once.</summary>
+    public async Task<TerraBaseRestoredDatabase> RewindPointInTimeAsync(DateTimeOffset pointInTime, string? destination = null, CancellationToken cancellationToken = default) =>
+        (await connection.SendAsync(HttpMethod.Post, path + "/point-in-time/rewind",
+            TerraBaseConnection.Json(new TerraBasePointInTimeRequest(pointInTime, null, destination), Json.TerraBasePointInTimeRequest),
+            Json.TerraBaseRestoredDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
+
     /// <summary>Starts restoring platform (default) or customer backup into a new database, polls the operation to its ten-minute deadline and returns the restored database. Requires databases:write for the restore and databases:read for the poll; sent once.</summary>
     public async Task<TerraBaseRestoredDatabase> RestorePointInTimeAsync(DateTimeOffset pointInTime, string? name = null, string? destination = null, CancellationToken cancellationToken = default)
     {

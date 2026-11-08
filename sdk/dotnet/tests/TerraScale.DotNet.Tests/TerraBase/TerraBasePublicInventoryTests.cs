@@ -17,7 +17,7 @@ public sealed class TerraBasePublicInventoryTests
         using var inventory = JsonDocument.Parse(TerraBaseIntegrationFixture.ReadContract("current-public-routes.json"));
         await Assert.That(inventory.RootElement.GetProperty("serverCommit").GetString()).IsEqualTo("667e7e31c38600b60289a3e82326796ae8cdfb92");
         var expected = inventory.RootElement.GetProperty("operations").EnumerateArray().ToDictionary(r => r.GetProperty("operation").GetString()!, r => r);
-        await Assert.That(expected.Count).IsEqualTo(39);
+        await Assert.That(expected.Count).IsEqualTo(40);
         (string Method, string Path)? sent = null;
         var requests = 0;
         using var handler = new TerraBaseTestHandler((request, _) =>
@@ -72,6 +72,7 @@ public sealed class TerraBasePublicInventoryTests
             ("readyz", () => health.GetReadinessAsync()),
             ("restoreBackup", () => db.RestoreBackupAsync(EntityId)),
             ("restorePointInTime", () => db.RestorePointInTimeAsync(DateTimeOffset.UnixEpoch)),
+            ("rewindPointInTime", () => db.RewindPointInTimeAsync(DateTimeOffset.UnixEpoch)),
             ("executeSql", () => sql.ExecuteAsync("SELECT 1")),
             ("setBackupDestination", () => project.SetBackupDestinationAsync(new("https://s3.example.test", "region", "bucket", "fake-id", "fake-secret", "both"))),
             ("setBackupPolicy", () => db.SetBackupPolicyAsync(null, 7)),
