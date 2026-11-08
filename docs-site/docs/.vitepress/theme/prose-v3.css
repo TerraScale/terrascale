@@ -13,11 +13,10 @@
 
 /* Links use --ts-link (dark spec #6b93ff) with a soft underline. */
 .vp-doc a:not(.header-anchor) { text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--ts-link) 40%, transparent); text-underline-offset: 3px; }
-.vp-doc :not(pre) > code { overflow-wrap: anywhere; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-sm); }
+.vp-doc :not(pre) > code { overflow-wrap: anywhere; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-sm); -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 
-/* Tables: full width, hairline rows. */
-.vp-doc table { width: 100%; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); }
-.vp-doc td { line-height: 1.5; padding-block: 8px; }
+.vp-doc td { line-height: 1.7; padding-block: 8px; }
+.vp-doc :is(th, td) :not(pre) > code { padding-block: 1px; }
 
 /* Code groups: tabs on a hairline header, native radio + label behaviour unchanged. */
 .vp-code-group { margin: 16px 0; border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); background: var(--ts-surface); overflow: hidden; }
@@ -37,9 +36,11 @@
 
 
 .vp-doc div[class*='language-'] { border: 1px solid var(--ts-line); }
-.vp-doc div[class*='language-'] > button.copy { opacity: 1; border-color: var(--ts-line-strong); }
-.vp-doc div[class*='language-'] pre { padding: 20px 0; }
+.vp-doc div[class*='language-'] > button.copy { top: 10px; right: 12px; width: 32px; height: 32px; opacity: 1; border-color: var(--ts-line-strong); border-radius: var(--ts-radius-sm); }
+.vp-doc div[class*='language-'] pre { padding: 48px 0 20px; }
 .vp-doc div[class*='language-'] code { padding: 0 16px; }
+.vp-doc div[class*='language-'] > span.lang { top: 19px; right: auto; left: 16px; z-index: 3; }
+.vp-doc div[class*='language-']:is(:hover, :focus-within) > button.copy + span.lang { opacity: 1; }
 .vp-code-group .tabs { margin: 0; padding: 0 8px; box-shadow: none; }
 .vp-code-group .tabs label::after { display: none; }
 .vp-code-group .tabs input:checked + label { box-shadow: inset 0 -2px 0 var(--ts-link); }
