@@ -3,6 +3,7 @@ using TerraScale.Dashboard.Platform.TsAuth;
 using System.Text;
 using System.Text.Json;
 using TUnit.Assertions.Enums;
+using TerraScale.Dashboard.E2E.Features.Databases;
 using TerraScale.Dashboard.Features.ApiKeys;
 using Microsoft.AspNetCore.Builder;
 
@@ -165,6 +166,113 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             using (var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/" + keyId + "/revoke", new() { ["_csrf"] = csrf }))
             {
                 await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            }
+        }
+
+        // ts-auth's key rule: the live project's member role carries key operations without any organization role;
+        // the project CIDR allowlist stays admin-only. Viewer lists but cannot create.
+        [Test]
+        public async Task ProjectMemberWithoutOrganizationRoleManagesKeys()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            using var client = scenario.CreateClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+            using var identity = await client.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
+            var organizationId = identity!.RootElement.GetProperty("organizationId").GetString()!;
+            var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var email = "project-member-" + suffix + "@example.test";
+            using var member = scenario.CreateClient();
+            using (var joined = await HttpJourney.LoginAsync(member, email, "Member-" + suffix, signUp: true))
+            {
+                await Assert.That(joined.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            using var memberIdentity = await member.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
+            var memberId = memberIdentity!.RootElement.GetProperty("userId").GetString()!;
+            lock (scenario.Workspace.Gate)
+            {
+                scenario.Workspace.Organizations[organizationId].Members[memberId] = new()
+                { UserId = memberId, Name = "Project member", Email = email, Role = "member", Status = "active" };
+            }
+
+            var scope = "?organizationId=" + organizationId + "&projectId=" + projectId;
+            using (var switched = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/switch-project", new()
+            { ["_csrf"] = await HttpJourney.CsrfAsync(member, "/profile"), ["projectId"] = projectId, ["returnUrl"] = "/api-keys" }))
+            {
+                await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            var csrf = await HttpJourney.CsrfAsync(member, "/api-keys" + scope);
+            string keyId;
+            using (var created = await HttpJourney.PostConfirmedFormAsync(member, "/api/v1/dashboard/credentials/key" + scope, new()
+            { ["_csrf"] = csrf, ["name"] = "Member key", ["scopes"] = "sql:read" }))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+                keyId = json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
+            }
+
+            using (var page = await member.GetAsync("/api-keys" + scope))
+            {
+                var html = await page.Content.ReadAsStringAsync();
+                await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(html).Contains("Create key");
+                await Assert.That(html).DoesNotContain("Save network access");
+            }
+
+            using (var revoked = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/credentials/" + keyId + "/revoke" + scope, new() { ["_csrf"] = csrf }))
+            {
+                await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            }
+        }
+
+        [Test]
+        public async Task ProjectViewerCannotCreateKeys()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            using var client = scenario.CreateClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+            using var identity = await client.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
+            var organizationId = identity!.RootElement.GetProperty("organizationId").GetString()!;
+            var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var email = "project-viewer-" + suffix + "@example.test";
+            using var viewer = scenario.CreateClient();
+            using (var joined = await HttpJourney.LoginAsync(viewer, email, "Viewer-" + suffix, signUp: true))
+            {
+                await Assert.That(joined.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            using var viewerIdentity = await viewer.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
+            var viewerId = viewerIdentity!.RootElement.GetProperty("userId").GetString()!;
+            lock (scenario.Workspace.Gate)
+            {
+                scenario.Workspace.Organizations[organizationId].Members[viewerId] = new()
+                { UserId = viewerId, Name = "Project viewer", Email = email, Role = "viewer", Status = "active" };
+            }
+
+            var scope = "?organizationId=" + organizationId + "&projectId=" + projectId;
+            using (var switched = await HttpJourney.PostFormAsync(viewer, "/api/v1/dashboard/switch-project", new()
+            { ["_csrf"] = await HttpJourney.CsrfAsync(viewer, "/profile"), ["projectId"] = projectId, ["returnUrl"] = "/api-keys" }))
+            {
+                await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            var csrf = await HttpJourney.CsrfAsync(viewer, "/api-keys" + scope);
+            using (var refused = await HttpJourney.PostConfirmedFormAsync(viewer, "/api/v1/dashboard/credentials/key" + scope, new()
+            { ["_csrf"] = csrf, ["name"] = "Viewer key", ["scopes"] = "sql:read" }))
+            {
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                using var json = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+                await Assert.That(json.RootElement.GetProperty("detail").GetString()).Contains("Project member access is required.");
+            }
+
+            using (var listed = await viewer.GetAsync("/api/v1/dashboard/credentials" + scope))
+            {
+                await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                using var json = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
+                await Assert.That(json.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(0);
             }
         }
 

@@ -103,9 +103,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
         internal TsAuthPlatformCreateApiKey PrepareCreate(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, IReadOnlyList<string> allowedCidrs)
         {
-            if (!context.CanManage)
+            if (!context.CanManageKeys)
             {
-                throw new AccountAccessException("Organization management access is required.");
+                throw new AccountAccessException("Project member access is required.");
             }
 
             name = name.Trim();
@@ -141,9 +141,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         // Replaces the key's allowlist at ts-auth (same role as creating a key); an empty list allows any IP.
         public async Task<ProjectCredential> SetAllowedCidrsAsync(AccountContext context, string keyId, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
         {
-            if (!context.CanManage)
+            if (!context.CanManageKeys)
             {
-                throw new AccountAccessException("Organization management access is required.");
+                throw new AccountAccessException("Project member access is required.");
             }
 
             if (!TerraScaleIds.IsValid(keyId))
@@ -170,7 +170,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
         public async Task<IReadOnlyList<string>> SetProjectAllowedCidrsAsync(AccountContext context, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
         {
-            if (!context.CanManage)
+            if (!context.CanManageProjectCidrs)
             {
                 throw new AccountAccessException("Project admin access is required.");
             }
@@ -188,9 +188,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
         public async Task<bool> RevokeAsync(AccountContext context, string keyId, CancellationToken cancellationToken)
         {
-            if (!context.CanManage)
+            if (!context.CanManageKeys)
             {
-                throw new AccountAccessException("Organization management access is required.");
+                throw new AccountAccessException("Project member access is required.");
             }
 
             if (!TerraScaleIds.IsValid(keyId))
@@ -240,9 +240,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         // ts-auth keeps the old secret valid for previousSecretTtl seconds (at most one day) and returns the new secret once.
         public async Task<CreatedProjectCredential> RotateAsync(AccountContext context, string keyId, int previousSecretTtl, CancellationToken cancellationToken, string stepUpProof = "")
         {
-            if (!context.CanManage)
+            if (!context.CanManageKeys)
             {
-                throw new AccountAccessException("Organization management access is required.");
+                throw new AccountAccessException("Project member access is required.");
             }
 
             if (previousSecretTtl is < 0 or > MaxPreviousSecretTtl)
