@@ -21,7 +21,21 @@
       "operation": "forkDatabase",
       "method": "POST",
       "pathTemplate": "/v1/projects/{project}/databases/{database}/point-in-time/restore",
-      "successStatus": 201,
+      "successStatus": 202,
+      "authorization": "Bearer project access token"
+    },
+    {
+      "operation": "getRestoreOperation",
+      "method": "GET",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}/restores/{operation}",
+      "successStatus": 200,
+      "authorization": "Bearer project access token"
+    },
+    {
+      "operation": "getDatabase",
+      "method": "GET",
+      "pathTemplate": "/v1/projects/{project}/databases/{database}",
+      "successStatus": 200,
       "authorization": "Bearer project access token"
     },
     {

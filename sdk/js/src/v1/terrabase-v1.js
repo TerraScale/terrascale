@@ -6,6 +6,7 @@ import { requireDatabaseSelector, requireName } from "./ids.js";
 import { executeSql, sqlRowObjects, sqlStatement } from "./sql-execute.js";
 import { V1TableShape } from "./table-shape.js";
 import { decodeManagedDatabase, region, requirePlacement, requireTtlSeconds, V1Databases } from "./catalog.js";
+import { awaitRestoreOperation, restoreOperation } from "./backups.js";
 import { TerraBaseV1Error } from "./errors.js";
 import { members } from "./management-validation.js";
 import { object, string } from "./decode.js";
@@ -214,13 +215,18 @@ export class TerraBaseV1Client {
     if (options.pointInTime !== undefined && (typeof options.pointInTime !== "string" ||
         !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(options.pointInTime) ||
         !Number.isFinite(Date.parse(options.pointInTime)))) throw new TypeError("pointInTime must be an RFC 3339 instant.");
-    const response = await this.#projectTransport(project).call(options.pointInTime === undefined ? "branchDatabase" : "restorePointInTime", {
-      database: requireDatabaseSelector(source),
-    }, { body: stringifyExactJson({ name: requireName("database", name),
+    const transport = this.#projectTransport(project);
+    const params = { database: requireDatabaseSelector(source) };
+    const body = stringifyExactJson({ name: requireName("database", name),
       ...(options.pointInTime === undefined ? {} : { pointInTime: options.pointInTime }),
       ...(options.ttlSeconds === undefined ? {} : { ttlSeconds: options.ttlSeconds }),
-    }, "database fork"), signal: options.signal });
-    return decodeManagedDatabase(response.value);
+    }, "database fork");
+    const response = await transport.call(options.pointInTime === undefined ? "branchDatabase" : "restorePointInTime", params,
+      { body, signal: options.signal });
+    if (options.pointInTime === undefined) return decodeManagedDatabase(response.value);
+    const done = await awaitRestoreOperation(transport, params, restoreOperation(response.value), { signal: options.signal });
+    return decodeManagedDatabase((await transport.call("getDatabase", { database: requireDatabaseSelector(done.database) },
+      { signal: options.signal })).value);
   }
 
   /** @param {string} project @param {string} database @param {number} ttlSeconds @param {V1RequestOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
