@@ -74,6 +74,12 @@ export const es: Messages = {
     cta: 'Crear cuenta',
   },
 
+  homeStats: {
+    regions: 'Serving regions',
+    writeRegion: 'Write region per database',
+    statements: 'Statements per transaction',
+  },
+
 
   features: {
     titleLead: 'Bases de datos SQL',
