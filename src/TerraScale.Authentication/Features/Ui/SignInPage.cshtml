@@ -98,6 +98,7 @@ case SignInStep.Email:
 {
 <button type="submit" class="@(Model.Theme.Passcode ? "secondary" : "")" formaction="/ui/@Model.Slug/sign-in/password"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@(Model.Theme.Passcode ? "Use a password instead" : "Continue with a password")</button>
 }
+<button type="button" id="passkey-sign-in" class="secondary" hidden data-options="/ui/@Model.Slug/sign-in/passkey/options" data-verify="/ui/@Model.Slug/sign-in/passkey"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-lock-keyhole"></use></svg>Sign in with a passkey</button>
 </div>
 </form>
 @if (Model.Slug != TerraScale.Authentication.Features.Oidc.OidcIssuer.InstanceId && Model.Theme.Providers.Count > 0)
