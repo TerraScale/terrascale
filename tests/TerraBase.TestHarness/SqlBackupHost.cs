@@ -117,8 +117,15 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvid
     public async Task<string> RestoreAsync(DateTimeOffset at, string name, CancellationToken cancellationToken)
     {
         using var response = await Api.Client.PostAsJsonAsync(ManagementApi.Uri($"{Database.Path}/point-in-time/restore"), new { pointInTime = at, name }, cancellationToken);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(body);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted).Because(body.GetRawText());
+        var operationId = body.GetProperty("operationId").GetString()!;
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var status = await Api.Client.GetAsync(ManagementApi.Uri($"{Database.Path}/restores/{operationId}"), token);
+            var current = await status.Content.ReadFromJsonAsync<JsonElement>(token);
+            return status.StatusCode == HttpStatusCode.OK && current.GetProperty("status").GetString() == "completed";
+        }, timeout: TimeSpan.FromSeconds(60));
         return name;
     }
 

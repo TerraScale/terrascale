@@ -46,7 +46,8 @@ public sealed class ManagementRpcTests
         await management.DeleteDatabaseAsync(project, renamed.Id);
         await management.DeleteDatabaseAsync(project, branch.Id);
         using var restore = JsonDocument.Parse("""{"name":"restored"}""");
-        var restored = await backups.RestoreBackupAsync(project, DatabaseApi.Database, snapshot.GetProperty("id").GetString()!, restore.RootElement);
+        var restoreOperation = await backups.RestoreBackupAsync(project, DatabaseApi.Database, snapshot.GetProperty("id").GetString()!, restore.RootElement);
+        var restored = await backups.GetRestoreOperationAsync(project, DatabaseApi.Database, restoreOperation.GetProperty("operationId").GetString()!);
         var readback = await management.GetDatabaseAsync(project, "restored");
         await management.DeleteDatabaseAsync(project, readback.Id);
 
@@ -63,7 +64,7 @@ public sealed class ManagementRpcTests
         await Assert.That(snapshots.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString())).Contains(snapshot.GetProperty("id").GetString());
         await Assert.That(policy.GetProperty("retentionDays").GetInt32()).IsGreaterThan(0);
         await Assert.That(savedPolicy.GetProperty("retentionDays").GetInt32()).IsEqualTo(3);
-        await Assert.That(restored.GetProperty("id").GetString()).IsEqualTo(readback.Id);
+        await Assert.That(restored.GetProperty("status").GetString()).IsEqualTo("completed");
         await Assert.That(readback.BranchedFrom).IsEqualTo(source.Id);
     }
 

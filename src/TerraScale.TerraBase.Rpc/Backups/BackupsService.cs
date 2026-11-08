@@ -45,6 +45,13 @@ namespace TerraScale.TerraBase.Rpc.Backups
         }
 
         /// <inheritdoc />
+        public async UnaryResult<JsonElement> GetRestoreOperationAsync(string projectId, string database, string operationId)
+        {
+            var answer = await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/restores/" + Uri.EscapeDataString(operationId));
+            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
+        }
+
+        /// <inheritdoc />
         public async UnaryResult<JsonElement> GetDestinationAsync(string projectId)
         {
             var answer = await api.SendAsync(Context, "GET", RestPaths.Project(projectId) + "/backup-destination");
