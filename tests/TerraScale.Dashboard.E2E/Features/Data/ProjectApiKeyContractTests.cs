@@ -53,8 +53,20 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var key = (await service.ListAsync(context, CancellationToken.None)).Single();
             await Assert.That(key.DatabaseId).IsEqualTo(DatabaseId);
             await Assert.That(ApiKeyService.CredentialMetadata(key).DatabaseName).IsEqualTo("Deleted database");
-            await service.RevokeAsync(context, KeyId, CancellationToken.None);
+            await Assert.That(await service.RevokeAsync(context, KeyId, CancellationToken.None)).IsTrue();
             await Assert.That(wire.Methods).IsEquivalentTo(new[] { HttpMethod.Get, HttpMethod.Get, HttpMethod.Delete }, CollectionOrdering.Matching);
+        }
+
+        // Repeated revokes succeed (revoke_api_key is Idempotent); ts-auth's 404 is scoped to this
+        // organization and project, so it means "already revoked here" and never leaks other tenants'.
+        [Test]
+        public async Task RepeatedRevokeSucceedsInsteadOfSurfacingNotFound()
+        {
+            using var wire = new Wire();
+            var service = new ApiKeyService(wire, TimeProvider.System, new TsAuthClient(wire.CreateClient("platform")));
+            await Assert.That(await service.RevokeAsync(Context(), KeyId, CancellationToken.None)).IsTrue();
+            await Assert.That(await service.RevokeAsync(Context(), KeyId, CancellationToken.None)).IsFalse();
+            await Assert.That(wire.Methods).IsEquivalentTo(new[] { HttpMethod.Get, HttpMethod.Delete, HttpMethod.Get }, CollectionOrdering.Matching);
         }
 
         [Test]
@@ -163,6 +175,54 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var app = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1");
             await app.StartAsync();
             return app;
+        }
+
+        // A refused allowlist edit keeps what the user typed, shows the reason inline next to the field,
+        // and reopens the edited key's dialog (ku TS-1233).
+        [Test]
+        public async Task InvalidAllowedCidrsEditKeepsTheSubmittedTextAndReopensTheDialog()
+        {
+            var environment = new DemoEnvironment();
+            await environment.InitializeAsync();
+            await using var app = await StartAsync(environment, fixture.Root);
+            using var client = new HttpClient(new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = TestHttps.Validate,
+                AllowAutoRedirect = false,
+                CookieContainer = new CookieContainer()
+            })
+            { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(30) };
+            using var login = await HttpJourney.LoginAsync(client);
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            var csrf = await HttpJourney.CsrfAsync(client, "/api-keys");
+            string keyId;
+            using (var created = await HttpJourney.PostConfirmedFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+            { ["_csrf"] = csrf, ["name"] = "Draft " + Guid.NewGuid().ToString("N")[..8], ["scopes"] = "sql:read" }))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+                keyId = json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
+            }
+
+            using (var refused = await PostHtmlFormAsync(client, "/api/v1/dashboard/credentials/allowed-cidrs", new()
+            { ["_csrf"] = csrf, ["keyId"] = keyId, ["allowedCidrs"] = "203.0.113.0/24\n999.999.999.999" }))
+            {
+                var html = await refused.Content.ReadAsStringAsync();
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+                await Assert.That(html).Contains("203.0.113.0/24\n999.999.999.999");
+                await Assert.That(html).Contains("id=\"cidrs-" + keyId + "-error\"");
+                await Assert.That(html).Contains("data-init=\"el.showModal()\"");
+            }
+        }
+
+        // The browser form journey: a same-origin navigational post the dashboard answers with HTML.
+        private static async Task<HttpResponseMessage> PostHtmlFormAsync(HttpClient client, string path, Dictionary<string, string> body)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(body) };
+            request.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+            request.Headers.Add("Accept", "text/html");
+            request.Headers.Add("Sec-Fetch-Mode", "navigate");
+            return await client.SendAsync(request);
         }
 
         [Test]

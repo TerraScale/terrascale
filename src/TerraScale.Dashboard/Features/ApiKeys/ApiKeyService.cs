@@ -186,19 +186,34 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return saved;
         }
 
-        public async Task RevokeAsync(AccountContext context, string keyId, CancellationToken cancellationToken)
+        // Idempotent, as revoke_api_key promises: ts-auth answers 404 only for ids outside this caller's
+        // organization and project — already revoked, never issued or another tenant's alike — so that answer
+        // is success and reveals nothing. Returns true only when this call revoked the key.
+        public async Task<bool> RevokeAsync(AccountContext context, string keyId, CancellationToken cancellationToken)
         {
             if (!context.CanManage)
             {
                 throw new AccountAccessException("Organization management access is required.");
             }
 
+            if (!TerraScaleIds.IsValid(keyId))
+            {
+                return false;
+            }
+
             var scope = DatabaseService.Scope(context);
             var client = Client();
-            var key = await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken);
-            if (Map(context, key).Id != keyId)
+            try
             {
-                throw new HttpRequestException("Credential lookup returned a different key.");
+                var key = await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken);
+                if (Map(context, key).Id != keyId)
+                {
+                    throw new HttpRequestException("Credential lookup returned a different key.");
+                }
+            }
+            catch (HttpRequestException absent) when (absent.StatusCode == HttpStatusCode.NotFound)
+            {
+                return false;
             }
 
             try { await client.RevokeProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
@@ -206,9 +221,11 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             {
                 // A failed answer may hide a committed delete: report the key's real state, not the transport error.
                 try { await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
-                catch (HttpRequestException missing) when (missing.StatusCode == HttpStatusCode.NotFound) { return; }
+                catch (HttpRequestException missing) when (missing.StatusCode == HttpStatusCode.NotFound) { return false; }
                 throw;
             }
+
+            return true;
         }
 
         // After ts-auth committed a create or revoke: the dashboard records who made it and from where.
@@ -479,6 +496,8 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     {
         private static readonly string[] FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
         public string Warning { get; init; } = "";
+        // The key whose allowlist dialog reopens with DraftAllowedCidrs after a refused edit.
+        public string DraftKeyCidrs { get; init; } = "";
         public static string Lines(IReadOnlyList<string>? cidrs)
         {
             return string.Join('\n', cidrs ?? []);
