@@ -245,6 +245,11 @@ internal sealed class EngineManagedBackupService(
             };
         }
 
+        if (await pointInTime.PlanAsync(database, at, cancellationToken, destination).ConfigureAwait(false) is Validation outside)
+        {
+            return outside;
+        }
+
         return await StartOperationAsync(
             organizationId, owner, RestoreKind.PointInTime, name,
             stopping => FromStagingRestoredAsync(userId, organizationId, database, at, destination, source.Name, name, ttlSeconds, stopping),
@@ -355,16 +360,43 @@ internal sealed class EngineManagedBackupService(
             BackupElsewhere => record with { State = RestoreOperationState.Failed, ErrorCode = "restore_failed", ErrorMessage = "the restore could not be completed" },
         };
         settled = settled with { FinishedAt = time.GetUtcNow() };
-        _ = await catalog.WriteAsync<CatalogCheck>(async transaction =>
+        for (var attempt = 1; ; attempt++)
         {
-            if (await GetRestoreOperationRecordAsync(transaction, record.OrganizationId, record.SourceDatabaseId, record.Id, CancellationToken.None)
-                .ConfigureAwait(false) is { State: RestoreOperationState.Running })
+            try
             {
-                await PutRestoreOperationAsync(transaction, settled, CancellationToken.None).ConfigureAwait(false);
+                var settledResult = await catalog.WriteAsync<CatalogCheck>(async transaction =>
+                {
+                    if (await GetRestoreOperationRecordAsync(transaction, record.OrganizationId, record.SourceDatabaseId, record.Id, CancellationToken.None)
+                        .ConfigureAwait(false) is { State: RestoreOperationState.Running })
+                    {
+                        await PutRestoreOperationAsync(transaction, settled, CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    return new Done();
+                }, static error => error, CancellationToken.None).ConfigureAwait(false);
+                if (settledResult is Done)
+                {
+                    return;
+                }
+
+                logger.ZLogWarning($"Restore operation {record.Id:@OperationId} settle failed, attempt {attempt}");
+            }
+            catch (OperationCanceledException) when (lifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception error)
+            {
+                logger.ZLogWarning(error, $"Restore operation {record.Id:@OperationId} settle failed, attempt {attempt}");
             }
 
-            return new Done();
-        }, static error => error, CancellationToken.None).ConfigureAwait(false);
+            if (attempt >= 3)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(200), CancellationToken.None).ConfigureAwait(false);
+        }
     }
 
     public ValueTask<RestoreBackupResult> RewindPointInTimeAsync(

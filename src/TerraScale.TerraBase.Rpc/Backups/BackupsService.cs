@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using MagicOnion;
 using MagicOnion.Server;
+using Microsoft.AspNetCore.Http;
 using TerraScale.TerraBase.Contracts.Backups;
 
 namespace TerraScale.TerraBase.Rpc.Backups
@@ -41,7 +42,42 @@ namespace TerraScale.TerraBase.Rpc.Backups
         public async UnaryResult<JsonElement> RestoreBackupAsync(string projectId, string database, string backupId, JsonElement request)
         {
             var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/backups/" + Uri.EscapeDataString(backupId) + "/restore", RestApi.Json(request, BackupsJson.Default.JsonElement));
-            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
+            return await CompletedAsync(projectId, database, RestApi.Read(answer, BackupsJson.Default.JsonElement));
+        }
+
+        private async Task<JsonElement> CompletedAsync(string projectId, string database, JsonElement accepted)
+        {
+            var operationId = accepted.GetProperty("operationId").GetString()!;
+            while (true)
+            {
+                var operation = RestApi.Read(await api.SendAsync(Context, "GET", RestPaths.Database(projectId, database) + "/restores/" + Uri.EscapeDataString(operationId)), BackupsJson.Default.JsonElement);
+                var status = operation.GetProperty("status").GetString();
+                if (status == "completed")
+                {
+                    var target = operation.GetProperty("database").GetString()!;
+                    return RestApi.Read(await api.SendAsync(Context, "GET", RestPaths.Database(projectId, target)), BackupsJson.Default.JsonElement);
+                }
+
+                if (status == "failed")
+                {
+                    var code = operation.TryGetProperty("errorCode", out var error) && error.ValueKind == JsonValueKind.String ? error.GetString() : null;
+                    var message = operation.TryGetProperty("errorMessage", out var text) && text.ValueKind == JsonValueKind.String ? text.GetString() : null;
+                    var body = new MemoryStream();
+                    using (var writer = new Utf8JsonWriter(body))
+                    {
+                        writer.WriteStartObject();
+                        writer.WriteStartObject("error");
+                        writer.WriteString("code", code ?? "restore_failed");
+                        writer.WriteString("message", message ?? "the restore could not be completed");
+                        writer.WriteEndObject();
+                        writer.WriteEndObject();
+                    }
+
+                    throw RestApi.Fault(new RestAnswer(400, new HeaderDictionary(), body.ToArray()));
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250), Context.CallContext.CancellationToken);
+            }
         }
 
         /// <inheritdoc />
@@ -91,7 +127,7 @@ namespace TerraScale.TerraBase.Rpc.Backups
         public async UnaryResult<JsonElement> RestorePointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request)
         {
             var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/point-in-time/restore", RestApi.Json(request, BackupsJson.Default.TerraBasePointInTimeRequest));
-            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
+            return await CompletedAsync(projectId, database, RestApi.Read(answer, BackupsJson.Default.JsonElement));
         }
 
         /// <inheritdoc />
