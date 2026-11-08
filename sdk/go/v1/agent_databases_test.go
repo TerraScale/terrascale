@@ -177,7 +177,13 @@ func TestAgentDatabaseLifecycleContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	var want tb.ScopedKey
-	if err := json.Unmarshal(f.Happy[8].Response, &want); err != nil || !reflect.DeepEqual(key, &want) {
+	var scoped json.RawMessage
+	for _, recording := range f.Happy {
+		if recording.Name == "scoped" {
+			scoped = recording.Response
+		}
+	}
+	if scoped == nil || json.Unmarshal(scoped, &want) != nil || !reflect.DeepEqual(key, &want) {
 		t.Fatal("scoped key does not match fixture")
 	}
 	readKey, err := c.CreateScopedKey(t.Context(), tb.ScopedKeyRequest{Database: f.Database, Access: tb.ScopedKeyRead})

@@ -87,7 +87,8 @@ public sealed partial class TerraBaseSqlClient
         var operation = await ProjectConnection(project).SendAsync(HttpMethod.Post, path,
             TerraBaseConnection.Json(new TerraBaseAgentDatabaseRequest(name, pointInTime, ttlSeconds), json.TerraBaseAgentDatabaseRequest),
             json.TerraBaseRestoreOperation, null, cancellationToken).ConfigureAwait(false);
-        return await TerraBaseRestore.CompleteAsync(ProjectConnection(project), DatabasePath(project, source), DatabasesPath(project),
+        return await TerraBaseRestore.CompleteAsync(ProjectConnection(project), DatabasePath(project, source),
+            "/v1/projects/" + TerraBaseConnection.Segment(project, nameof(project)),
             operation.Value, json.TerraBaseManagedDatabase, cancellationToken).ConfigureAwait(false);
     }
 
