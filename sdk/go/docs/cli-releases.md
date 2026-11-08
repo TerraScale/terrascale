@@ -48,8 +48,7 @@ deploy switch. The path is:
 
 1. Push the change to main; SDK Go Fast runs in GitHub Actions.
 2. The `SDK Go Release` workflow fires on every main push that touches the Go
-   SDK paths. It waits for a green main revision — the pushed commit, or the
-   newest unreleased ancestor since the last `sdk/go/v0.0.X` tag. Its
+   SDK paths. It waits until the pushed commit's other push workflows are green. Its
    `autorelease` job runs `python3 scripts/sdk/build-release.py go`: the release
    gates, all six GoReleaser targets (version = highest existing
    `sdk/go/v0.0.X` tag + 1) and `python3 scripts/test-release.py`. It then
