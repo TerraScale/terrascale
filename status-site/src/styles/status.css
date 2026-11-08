@@ -45,8 +45,7 @@
 }
 
 /* The logo: blue mark and light wordmark (the dark-UI logo). */
-.st-brand,
-.st-foot-brand {
+.st-brand {
   display: flex;
   color: var(--ts-ink);
 }
@@ -59,10 +58,6 @@
 .st-logo {
   width: auto;
   height: 22px;
-}
-
-.st-foot-brand .st-logo {
-  height: 18px;
 }
 
 .st-logo-mark {
@@ -813,31 +808,6 @@
 .st-incident-body {
   color: var(--ts-ink-2);
   white-space: pre-line;
-}
-
-/* The footer: logo, ©, links, and the live status link. */
-.st-foot {
-  border-top: 1px solid var(--ts-line);
-}
-
-.st-foot > .st-frame {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--ts-s3) var(--ts-s5);
-  padding-block: var(--ts-s6);
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-sm);
-}
-
-.st-foot nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ts-s2) var(--ts-s4);
-}
-
-.st-foot nav a {
-  color: var(--ts-ink-2);
 }
 
 .st-status-link {

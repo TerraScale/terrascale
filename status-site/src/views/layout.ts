@@ -46,10 +46,6 @@ export interface Page {
   status?: Status;
 }
 
-function links(page: Page): Html {
-  return html`${NAV.map((item) => html`<a href="${item.href}"${page.path === item.href ? raw(' aria-current="page"') : ""}>${item.label}</a>`)}`;
-}
-
 /* The sticky, frosted top bar. Wide screens show the page links inline;
    phones fold them into a menu that works without scripts. The time zone
    control needs the client script, so it starts hidden. */
