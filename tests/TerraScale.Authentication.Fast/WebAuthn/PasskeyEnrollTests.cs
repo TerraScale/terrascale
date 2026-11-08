@@ -72,7 +72,7 @@ public sealed class PasskeyEnrollTests(TerraBaseFixture fixture)
         return (options.GetProperty("challenge").GetString()!, options.GetProperty("options").GetProperty("challenge").GetString()!);
     }
 
-    private static object Attestation(string sealedChallenge, string ceremonyChallenge, byte[] credentialId, ECDsa ecdsa)
+    internal static object Attestation(string sealedChallenge, string ceremonyChallenge, byte[] credentialId, ECDsa ecdsa)
     {
         var parameters = ecdsa.ExportParameters(false);
         var cose = new List<byte> { 0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20 };
