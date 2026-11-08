@@ -10,8 +10,9 @@ public sealed class PasskeyRenameEndpoint(PasskeyCredentials passkeys, PlatformA
     {
         Patch("/v1/terrascale/account/passkeys/{id}");
         this.Describe("rename_passkey", "Rename a passkey",
-            "Changes the caller-chosen name of one enrolled passkey, 1 to 64 characters. The write is conditional on the account's authentication state and the stored passkey list; a concurrent change answers 409 version_conflict, an unknown id 404 passkey_not_found.",
+            "Changes the caller-chosen name of one enrolled passkey, 1 to 64 characters. The write is conditional on the account's authentication state and the stored passkey list; a concurrent change answers 409 version_conflict, an unknown id 404 passkey_not_found, a stale account state 403 passkey_denied.",
             "Members", typeof(PasskeyRenameRequest), StatusCodes.Status200OK, typeof(PasskeyItemBody), roleChecked: false, scoped: false, conflict: true);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
     }
 

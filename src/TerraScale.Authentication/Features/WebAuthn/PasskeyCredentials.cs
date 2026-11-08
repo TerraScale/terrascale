@@ -74,7 +74,8 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
             AuthStamp = user.User.AuthStamp,
             Entries = [.. current.Record.Entries.Select(existing => existing.CredentialId == credentialId ? renamed : existing)],
         };
-        return await this.WriteAsync(user, current, record, [], cancellationToken).ConfigureAwait(false) is null ? null : renamed;
+        await this.WriteAsync(user, current, record, [], cancellationToken).ConfigureAwait(false);
+        return renamed;
     }
 
     public async Task<PasskeyCredentialEntry?> DeleteAsync(UserRecord caller, string credentialId, CancellationToken cancellationToken = default)
@@ -102,10 +103,11 @@ public sealed class PasskeyCredentials(AuthStore store, Users users, AttemptLimi
         var release = claim is { } held
             ? new[] { AuthStore.Release(user.User.InstanceId, CredentialClaimKind, credentialId, held.Version) }
             : Array.Empty<StoreOperation>();
-        return await this.WriteAsync(user, current, record, release, cancellationToken).ConfigureAwait(false) is null ? entry : null;
+        await this.WriteAsync(user, current, record, release, cancellationToken).ConfigureAwait(false);
+        return entry;
     }
 
-    private async Task<IReadOnlyList<PasskeyCredentialEntry>?> WriteAsync((UserRecord User, string Version) user, (PasskeyCredentialRecord Record, string Version) current,
+    private async Task<IReadOnlyList<PasskeyCredentialEntry>> WriteAsync((UserRecord User, string Version) user, (PasskeyCredentialRecord Record, string Version) current,
         PasskeyCredentialRecord record, IReadOnlyList<StoreOperation> extra, CancellationToken cancellationToken)
     {
         var epoch = new JsonObject
