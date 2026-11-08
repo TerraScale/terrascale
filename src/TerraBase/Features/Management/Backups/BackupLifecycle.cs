@@ -35,8 +35,6 @@ internal static class BackupState
 /// <param name="SizeBytes">Bytes the snapshot occupies, once registered.</param>
 /// <param name="Order">Its key in the database's backup list, once registered.</param>
 /// <param name="Region">The region holding the snapshot file; absent records cannot be routed for restore.</param>
-/// <param name="LeasedByOperationId">The restore operation whose copy still reads the snapshot, while its lease holds.</param>
-/// <param name="LeasedUntil">When the lease expires at the latest, so it can never pin storage forever.</param>
 internal sealed record BackupRecord(
     string Id,
     string OrganizationId,
@@ -48,9 +46,7 @@ internal sealed record BackupRecord(
     DateTimeOffset? CompletedAt,
     long SizeBytes,
     string? Order,
-    string? Region,
-    string? LeasedByOperationId = null,
-    DateTimeOffset? LeasedUntil = null)
+    string? Region)
 {
     /// <summary>
     /// The engine database that holds the snapshot: in the organization's directory, next to the backed-up database in its
@@ -68,6 +64,16 @@ internal sealed record BackupRecord(
 /// <param name="LastErrorCode">A stable code for the failed attempt, when one is known; null when its cause is unknown.</param>
 /// <param name="LastErrorMessage">A safe description of the failed attempt; never internal paths or secrets.</param>
 internal sealed record BackupSchedule(DateTimeOffset? LastSucceededAt, DateTimeOffset? LastFailedAt, string? LastErrorCode, string? LastErrorMessage);
+
+/// <summary>
+/// A running restore's hold on a backup snapshot: written in the transaction that admits the restore, renewed while its
+/// copy runs and deleted when it settles; its expiry bounds a lease whose holder never comes back. One backup can hold
+/// several leases at once, one per restoring operation.
+/// </summary>
+/// <param name="BackupId">The leased backup.</param>
+/// <param name="OperationId">The restore operation whose copy still reads the snapshot.</param>
+/// <param name="Until">When the lease expires unless renewed.</param>
+internal sealed record BackupLease(string BackupId, string OperationId, DateTimeOffset Until);
 
 /// <summary>
 /// Where the lifecycle lives in the catalog. Backups are kept under their organization, not under the database, so
@@ -92,4 +98,10 @@ internal static class BackupCatalog
 
     /// <summary>The <see cref="BackupSchedule"/> of a database, deleted with it.</summary>
     public static string Schedule(string databaseId) => SystemCatalog.DatabaseState(databaseId) + "backup_schedule";
+
+    /// <summary>The <see cref="BackupLease"/> records of an organization, keyed by backup id then operation id.</summary>
+    public static string Leases(string organizationId) => $"organizations/{organizationId}/backup_leases";
+
+    /// <summary>The key of one operation's lease on one backup.</summary>
+    public static string LeaseKey(string backupId, string operationId) => $"{backupId}/{operationId}";
 }

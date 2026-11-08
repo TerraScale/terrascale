@@ -38,23 +38,33 @@ public sealed class BackupLeaseTests
         await Assert.That(operation.GetProperty("status").GetString()).IsEqualTo("running");
         await gate.Entered.WaitAsync(cancellationToken);
 
+        using var second = await host.Api.Client.PostAsJsonAsync(
+            ManagementApi.Uri($"{host.Database.Path}/backups/{backupId}/restore"), new { name = "also-leased" }, cancellationToken);
+        await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+        var secondId = (await second.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("operationId").GetString();
+        await TerraBaseTestServer.EventuallyAsync(async token => (await LeasesAsync(catalog, host, backupId!, token)).Count == 2, timeout: TimeSpan.FromSeconds(30));
+
         var backups = host.Api.Server.Services.GetRequiredService<IManagedBackupService>();
         await backups.RunScheduleAsync(cancellationToken);
         var held = await RecordAsync(catalog, host, backupId!, cancellationToken);
         await Assert.That(held?.State).IsEqualTo(BackupState.Registered);
-        await Assert.That(held?.LeasedByOperationId).IsEqualTo(operationId);
+        await Assert.That((await LeasesAsync(catalog, host, backupId!, cancellationToken)).Select(lease => lease.OperationId))
+            .IsEquivalentTo([operationId, secondId]);
 
         gate.Release();
-        await TerraBaseTestServer.EventuallyAsync(async token =>
+        foreach (var id in new[] { operationId, secondId })
         {
-            using var status = await host.Api.Client.GetAsync(ManagementApi.Uri($"{host.Database.Path}/restores/{operationId}"), token);
-            return status.StatusCode == HttpStatusCode.OK
-                && (await status.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("status").GetString() == "completed";
-        }, timeout: TimeSpan.FromSeconds(30));
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+            {
+                using var status = await host.Api.Client.GetAsync(ManagementApi.Uri($"{host.Database.Path}/restores/{id}"), token);
+                return status.StatusCode == HttpStatusCode.OK
+                    && (await status.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("status").GetString() == "completed";
+            }, timeout: TimeSpan.FromSeconds(30));
+        }
 
         var released = await RecordAsync(catalog, host, backupId!, cancellationToken);
         await Assert.That(released?.State).IsEqualTo(BackupState.Registered);
-        await Assert.That(released?.LeasedByOperationId).IsNull();
+        await Assert.That(await LeasesAsync(catalog, host, backupId!, cancellationToken)).IsEmpty();
 
         await backups.RunScheduleAsync(cancellationToken);
         await Assert.That(await RecordAsync(catalog, host, backupId!, cancellationToken)).IsNull();
@@ -64,6 +74,15 @@ public sealed class BackupLeaseTests
         await catalog.ReadAsync(
             transaction => GetAsync(transaction, BackupCatalog.Records(host.Database.Organization), backupId, TerraBaseJsonContext.Default.BackupRecord, cancellationToken),
             _ => (BackupRecord?)null, cancellationToken);
+
+    private static async ValueTask<List<BackupLease>> LeasesAsync(SystemCatalog catalog, SqlBackupHost host, string backupId, CancellationToken cancellationToken)
+    {
+        var leases = await catalog.ReadAsync(
+            transaction => SystemCatalog.ListAllAsync(
+                transaction, BackupCatalog.Leases(host.Database.Organization), TerraBaseJsonContext.Default.BackupLease, cancellationToken),
+            static _ => new List<BackupLease>(), cancellationToken);
+        return [.. leases.Where(lease => lease.BackupId == backupId)];
+    }
 
     /// <summary>Rewrites the backup's completion, and its retention index entry, to two days before the frozen clock, so the next retention pass wants it gone.</summary>
     private static async ValueTask AgePastRetentionAsync(SqlBackupHost host, SystemCatalog catalog, string backupId, CancellationToken cancellationToken)
