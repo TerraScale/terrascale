@@ -27,6 +27,7 @@
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/point-in-time/plan", "operation": "planPointInTime", "source": "src/TerraBase/Features/Management/Backups/PlanPointInTimeEndpoint.cs", "line": 22},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/point-in-time/restore", "operation": "restorePointInTime", "source": "src/TerraBase/Features/Management/Backups/RestorePointInTimeEndpoint.cs", "line": 17},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/point-in-time/rewind", "operation": "rewindPointInTime", "source": "src/TerraBase/Features/Management/Backups/RewindPointInTimeEndpoint.cs", "line": 14},
+    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/export", "operation": "exportDatabase", "source": "src/TerraBase/Features/Sql/Export/ExportDatabaseEndpoint.cs", "line": 16},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/sql/execute", "operation": "executeSql", "contract": "sql-execute.md"},
     {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/usage", "operation": "getDatabaseUsage", "source": "src/TerraBase/Features/Management/Usage/GetDatabaseUsageEndpoint.cs", "line": 23},
     {"method": "GET", "path": "/v1/projects/{project}/saved-queries", "operation": "listSavedQueries", "source": "src/TerraBase/Features/Management/Queries/ListSavedQueriesEndpoint.cs", "line": 14},

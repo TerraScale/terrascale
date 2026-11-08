@@ -243,6 +243,10 @@ def branch_database(project: str, db: str, branch: str) -> Call:
 
 # SQL ---------------------------------------------------------------------
 
+def export_database(project: str, db: str) -> Call:
+    return Call("GET", _db(project, db, "export"), _none, headers={"Accept": "text/plain"}, replay_safe=True)
+
+
 def execute(project: str, db: str, statements: list[dict[str, Any]]) -> Call:
     return Call("POST", _db(project, db, "sql", "execute"), lambda r: sql_results(r.json(), len(statements)),
                 body={"statements": statements})

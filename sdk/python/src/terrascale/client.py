@@ -5,7 +5,7 @@ from __future__ import annotations
 import builtins
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, TypeVar, overload
 
 import httpx
@@ -172,6 +172,45 @@ class TerraScale:
                 continue
             raise err
 
+    def _stream(self, call: Call) -> Iterator[bytes]:
+        """Send a replay-safe GET and yield its body in chunks; the response closes when the iterator does."""
+        url = call.url(self.base_url)
+        attempt = 0
+        refreshed = False
+        while True:
+            token = self._bearer()
+            headers = {**self._headers, **call.headers, "Authorization": f"Bearer {token}"}
+            request = httpx.Request(call.method, url, headers=headers)
+            try:
+                response = self._http.send(request, auth=None, stream=True, follow_redirects=False)
+            except httpx.TransportError as exc:
+                attempt += 1
+                if attempt >= self._max_attempts:
+                    raise _spec.transport_failure(call.method, attempt, exc) from exc
+                time.sleep(_spec.backoff(attempt, None))
+                continue
+            if 200 <= response.status_code < 300:
+                break
+            err = _error(response)
+            response.close()
+            if response.status_code == 401 and err.code in {"key_revoked", "key_expired"}:
+                if self._source is not None:
+                    self._source.reject(err)
+                raise err
+            if response.status_code == 401 and self._source is not None and not refreshed:
+                self._source.invalidate(token)
+                refreshed = True
+                continue
+            attempt += 1
+            if attempt < self._max_attempts and _spec.retryable(err.status, err.code):
+                time.sleep(_spec.backoff(attempt, err.retry_after))
+                continue
+            raise err
+        try:
+            yield from response.iter_bytes()
+        finally:
+            response.close()
+
     # Databases -----------------------------------------------------------
 
     def database(self, name: str) -> Database:
@@ -232,6 +271,14 @@ class TerraScale:
     def delete_database(self, database: str) -> None:
         """Delete by name or ULID in the database's home region."""
         self._send(_spec.delete_database(self.project, database))
+
+    def export_database(self, database: str) -> Iterator[bytes]:
+        """Stream the database as one SQL dump (BEGIN … COMMIT) with ``sql:read``.
+
+        The database's home region serves the export; consume the iterator to
+        read the dump and close it when done.
+        """
+        return self._stream(_spec.export_database(self.project, _spec.database_selector(database)))
 
     def create_scoped_key(
         self, database: str, access: str, *, project: str | None = None, ttl_seconds: int | None = None,

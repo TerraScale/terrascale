@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any, TypeVar, overload
 
 import httpx
@@ -159,6 +159,46 @@ class AsyncTerraScale:
                 continue
             raise err
 
+    async def _stream(self, call: Call) -> AsyncIterator[bytes]:
+        """Send a replay-safe GET and yield its body in chunks; the response closes when the iterator does."""
+        url = call.url(self.base_url)
+        attempt = 0
+        refreshed = False
+        while True:
+            token = await self._bearer()
+            headers = {**self._headers, **call.headers, "Authorization": f"Bearer {token}"}
+            request = httpx.Request(call.method, url, headers=headers)
+            try:
+                response = await self._http.send(request, auth=None, stream=True, follow_redirects=False)
+            except httpx.TransportError as exc:
+                attempt += 1
+                if attempt >= self._max_attempts:
+                    raise _spec.transport_failure(call.method, attempt, exc) from exc
+                await asyncio.sleep(_spec.backoff(attempt, None))
+                continue
+            if 200 <= response.status_code < 300:
+                break
+            err = _error(response)
+            await response.aclose()
+            if response.status_code == 401 and err.code in {"key_revoked", "key_expired"}:
+                if self._source is not None:
+                    self._source.reject(err)
+                raise err
+            if response.status_code == 401 and self._source is not None and not refreshed:
+                self._source.invalidate(token)
+                refreshed = True
+                continue
+            attempt += 1
+            if attempt < self._max_attempts and _spec.retryable(err.status, err.code):
+                await asyncio.sleep(_spec.backoff(attempt, err.retry_after))
+                continue
+            raise err
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+
     # Databases -----------------------------------------------------------
 
     def database(self, name: str) -> AsyncDatabase:
@@ -219,6 +259,14 @@ class AsyncTerraScale:
     async def delete_database(self, database: str) -> None:
         """Delete by name or ULID in the database's home region."""
         await self._send(_spec.delete_database(self.project, database))
+
+    def export_database(self, database: str) -> AsyncIterator[bytes]:
+        """Stream the database as one SQL dump (BEGIN … COMMIT) with ``sql:read``.
+
+        The database's home region serves the export; consume the iterator to
+        read the dump and close it when done.
+        """
+        return self._stream(_spec.export_database(self.project, _spec.database_selector(database)))
 
     async def create_scoped_key(
         self, database: str, access: str, *, project: str | None = None, ttl_seconds: int | None = None,

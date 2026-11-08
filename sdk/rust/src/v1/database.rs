@@ -1,10 +1,11 @@
 //! A database handle and its management metadata.
 
+use futures_util::StreamExt;
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
 use super::client::{Client, Req};
-use super::errors::Result;
+use super::errors::{Error, Result};
 use super::ids::check_name;
 
 /// A handle to one database by current name or immutable ULID. Performs no I/O.
@@ -29,6 +30,23 @@ impl Database {
     #[must_use]
     pub fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// Streams the database as one SQL dump (BEGIN … COMMIT) from one read
+    /// snapshot; the same SQL dialect runs it back into a fresh database.
+    /// Requires `sql:read`; the database's home region serves the export.
+    pub async fn export(&self) -> Result<impl futures_util::Stream<Item = Result<bytes::Bytes>>> {
+        check_name("database", &self.name)?;
+        let response = self
+            .client
+            .send_stream(Req::new(
+                Method::GET,
+                vec!["v1", "databases", &self.name, "export"],
+            ))
+            .await?;
+        Ok(response
+            .bytes_stream()
+            .map(|chunk| chunk.map_err(|e| Error::Transport(super::client::describe(&e)))))
     }
 
     /// Creates this database through the project management API.

@@ -114,3 +114,17 @@ def test_error_mapping() -> None:
     assert str(err) == "409 unique_violation: dup"
     err = terrascale.errors.error_for(502, b"<html>")
     assert type(err) is terrascale.APIError and err.code == "http_502"
+
+
+def test_export_database_streams_the_sql_dump(ts: TerraScale, fake: Fake) -> None:
+    ts.create_database("main")
+    dump = b"BEGIN;\nINSERT INTO \"todos\" VALUES (1,'ship');\nCOMMIT;"
+
+    chunks = list(ts.export_database("main"))
+
+    assert b"".join(chunks) == dump
+    request = fake.requests[-1]
+    assert request.method == "GET"
+    assert request.url.path == f"/v1/projects/{PROJECT}/databases/main/export"
+    assert request.headers["accept"] == "text/plain"
+    assert request.headers["authorization"] == "Bearer tok-1"

@@ -146,6 +146,14 @@ public sealed class TerraBaseSqlDatabase
     }
 
     /// <summary>
+    /// Streams the database as one SQL dump (BEGIN, every user table's CREATE TABLE and rows, then indexes, views and
+    /// triggers, then COMMIT) from one read snapshot; the same SQL dialect runs it back into a fresh database. Needs
+    /// sql:read; the database's home region serves the export. The caller owns and disposes the stream.
+    /// </summary>
+    public Task<Stream> ExportDatabaseAsync(CancellationToken cancellationToken = default) =>
+        connection.OpenStreamAsync(path + "/export", "text/plain", cancellationToken);
+
+    /// <summary>
     /// Opens a SQL WebSocket session for interactive transactions. The caller owns and disposes it. It connects with its
     /// own connection, not the client's HttpClient.
     /// </summary>
