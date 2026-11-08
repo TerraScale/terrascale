@@ -405,14 +405,27 @@ internal sealed partial class EngineManagementService(
             };
         }
 
+        // The fan-out must use the placement the commit acted on: a placement change committing in between would
+        // otherwise leave the regions it added un-notified until their own sweeps.
+        ManagedDatabase? committed = null;
+        bool Unregistered(ManagedDatabase record)
+        {
+            committed = record;
+            return true;
+        }
+
         return await DeleteRecordedAsync(
             deletable.Storage,
             async (transaction, token) =>
-                await UnregisterDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, token).ConfigureAwait(false) is TenantContext,
+                await UnregisterDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, options.Region, token).ConfigureAwait(false) switch
+                {
+                    DeletableDatabase unregistered => Unregistered(unregistered.Record),
+                    _ => false,
+                },
             cancellationToken).ConfigureAwait(false) switch
         {
             bool deleted => !deleted ? ManagementErrors.NotFound
-                : await ForgetReplicaRegionsAsync(deletable.Storage, deletable.Record, CancellationToken.None).ConfigureAwait(false),
+                : await ForgetReplicaRegionsAsync(deletable.Storage, committed ?? deletable.Record, CancellationToken.None).ConfigureAwait(false),
             Unavailable refused => refused,
         };
     }
@@ -422,13 +435,25 @@ internal sealed partial class EngineManagementService(
     // sweep, and the merged listing serves only what a reachable home still lists.
     private async ValueTask<DeleteDatabaseResult> ForgetReplicaRegionsAsync(TenantContext storage, ManagedDatabase record, CancellationToken cancellationToken)
     {
-        var peers = (await regionPeers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false))
-            .Where(peer => record.AllRegions || record.Replicas.Contains(peer.Region, StringComparer.Ordinal))
-            .Select(peer => remote.ForgetAsync(peer.Address, storage.OrganizationId, storage.ProjectId!, storage.DatabaseId!, cancellationToken))
-            .ToArray();
-        if (peers.Length > 0)
+        try
         {
-            await Task.WhenAll(peers).ConfigureAwait(false);
+            var pushes = (await regionPeers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false))
+                .Where(peer => record.AllRegions || record.Replicas.Contains(peer.Region, StringComparer.Ordinal))
+                .Select(peer => remote.ForgetAsync(peer.Region, peer.Address, storage.OrganizationId, storage.ProjectId!, storage.DatabaseId!, cancellationToken))
+                .ToArray();
+            if (pushes.Length > 0)
+            {
+                await Task.WhenAll(pushes).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception error)
+        {
+            // The delete already committed: the push must not turn its answer into a 500 or skip key destruction.
+            logger.ZLogWarning(error, $"Telling replica regions to forget deleted database {storage.DatabaseId:@Database} failed ({error.GetType().Name:@Error}); their own sweeps forget it");
         }
 
         return await shredding.Value.DestroyAsync(storage, cancellationToken).ConfigureAwait(false) ? new Done()
@@ -517,15 +542,26 @@ internal sealed partial class EngineManagementService(
         return CheckDeletionPlacement(database, region) is Conflict refused ? refused : new DeletableDatabase(tenant with { DatabaseId = database.Id }, database);
     }
 
+    // Re-reads the database inside the commit transaction, so the record it returns — and its placement — is the one
+    // the delete acted on, not whatever an earlier read outside the transaction saw.
     private async ValueTask<UnregisterResult> UnregisterDatabaseAsync(
-        IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, string region, CancellationToken cancellationToken) =>
-        await DeletableAsync(transaction, userId, organizationId, projectId, databaseId, region, cancellationToken).ConfigureAwait(false) switch
+        IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, string region, CancellationToken cancellationToken)
+    {
+        var deletable = await DeletableAsync(transaction, userId, organizationId, projectId, databaseId, region, cancellationToken).ConfigureAwait(false) switch
         {
-            DeletableDatabase deletable => await UnregisterRecordAsync(transaction, deletable.Storage, deletable.Record, cancellationToken, customerDeletion: true).ConfigureAwait(false),
+            DeletableDatabase found => (UnregisterResult)found,
             NotFound error => error,
             Forbidden error => error,
             Conflict error => error,
         };
+        if (deletable is DeletableDatabase record)
+        {
+            _ = await UnregisterRecordAsync(transaction, record.Storage, record.Record, cancellationToken, customerDeletion: true).ConfigureAwait(false);
+            return record;
+        }
+
+        return deletable;
+    }
 
     private async ValueTask<TenantContext> UnregisterRecordAsync(
         IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool customerDeletion = false)
@@ -1125,7 +1161,7 @@ internal sealed partial class EngineManagementService(
 
     private readonly union DeletableDatabaseResult(DeletableDatabase, NotFound, Forbidden, Conflict, Unavailable);
 
-    private readonly union UnregisterResult(TenantContext, NotFound, Forbidden, Conflict);
+    private readonly union UnregisterResult(DeletableDatabase, NotFound, Forbidden, Conflict);
 }
 
 internal sealed record DatabaseOwner(string OrganizationId, string ProjectId, string DatabaseId)
