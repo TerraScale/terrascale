@@ -35,6 +35,14 @@ internal static class HomeForwarding
         {
             if (await HomeOfAsync(context).ConfigureAwait(false) is { } home)
             {
+                if (context.WebSockets.IsWebSocketRequest)
+                {
+                    // A WebSocket cannot follow a 421 or a stripped upgrade: the session is relayed to the home
+                    // for its whole life instead of forwarded (docs/terrabase/cross-region.md).
+                    await context.RequestServices.GetRequiredService<HomeSocketRelay>().RunAsync(context, home, context.RequestAborted).ConfigureAwait(false);
+                    return;
+                }
+
                 await ForwardAsync(context, home).ConfigureAwait(false);
                 return;
             }
@@ -43,6 +51,9 @@ internal static class HomeForwarding
         });
         return app;
     }
+
+    /// <summary>Whether <paramref name="name"/> travels with a request sent to a peer.</summary>
+    internal static bool IsForwardable(string name) => !Unforwarded.Contains(name) && !name.StartsWith(':');
 
     internal static string Host(string region) => region + ".api.terrascale.tech";
 
@@ -84,6 +95,21 @@ internal static class HomeForwarding
                 var peer = (await services.GetRequiredService<IRegionPeers>().OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
                     .FirstOrDefault(candidate => candidate.Region == shapeHome);
                 return peer is null ? null : new HomeNode(shapeHome, peer.Address);
+            }
+
+            // A session WebSocket whose record is here but places the database elsewhere never reaches the endpoint:
+            // the placement check answers 421 first, and a WebSocket cannot follow that. Relay the whole socket to the
+            // home instead. A replica region keeps serving the socket itself (ReplicaReads), as every route does.
+            if (database is not null && context.WebSockets.IsWebSocketRequest
+                && await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase socketDatabase
+                && socketDatabase.Home(services.GetRequiredService<TerraBaseOptions>().Region) is { } socketHome
+                && socketHome != services.GetRequiredService<TerraBaseOptions>().Region
+                && (!(socketDatabase.AllRegions || socketDatabase.Replicas.Contains(services.GetRequiredService<TerraBaseOptions>().Region))
+                    || context.GetEndpoint()?.Metadata.GetMetadata<Management.DatabaseRegions.ReplicaReads>() is null))
+            {
+                var peer = (await services.GetRequiredService<IRegionPeers>().OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
+                    .FirstOrDefault(candidate => candidate.Region == socketHome);
+                return peer is null ? null : new HomeNode(socketHome, peer.Address);
             }
 
             if (database is null

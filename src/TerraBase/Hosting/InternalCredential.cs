@@ -58,4 +58,13 @@ internal sealed class InternalCredential
         }
     }
 
+    /// <summary>Signs a WebSocket upgrade to a peer with the peer credential.</summary>
+    internal void Sign(System.Net.WebSockets.ClientWebSocketOptions options)
+    {
+        if (CorrelationKey is not null)
+        {
+            options.SetRequestHeader(HeaderName, CorrelationKey);
+        }
+    }
+
 }
