@@ -394,7 +394,7 @@ paths:
                         name: { type: [string, 'null'], description: Caller-chosen label. }
                         aaguid: { type: string, description: 'Authenticator model identifier, display only.' }
                         created_at: { type: string, format: date-time }
-                        last_used_at: { type: [string, 'null'], format: date-time, description: Last successful assertion, or null before the first one. }
+                        last_used_at: { type: [string, 'null'], format: date-time, description: 'Last successful assertion, or null before the first one.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/Unavailable' }
@@ -435,7 +435,7 @@ paths:
                   name: { type: [string, 'null'], description: Caller-chosen label. }
                   aaguid: { type: string, description: 'Authenticator model identifier, display only.' }
                   created_at: { type: string, format: date-time }
-                  last_used_at: { type: [string, 'null'], format: date-time, description: Last successful assertion, or null before the first one. }
+                  last_used_at: { type: [string, 'null'], format: date-time, description: 'Last successful assertion, or null before the first one.' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
