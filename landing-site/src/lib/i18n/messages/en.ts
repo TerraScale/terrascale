@@ -72,6 +72,12 @@ export const en = {
     cta: 'Create account',
   },
 
+  homeStats: {
+    regions: 'Serving regions',
+    writeRegion: 'Write region per database',
+    statements: 'Statements per transaction',
+  },
+
 
   features: {
     titleLead: 'SQL databases',

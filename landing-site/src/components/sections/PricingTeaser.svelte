@@ -19,44 +19,46 @@
 </script>
 
 <section class="pricing-teaser" id="pricing" use:reveal>
-  <div class="pricing-teaser__head">
-    <div class="pricing-teaser__intro">
-      <h2 class="pricing-teaser__title">{$dict.pricingTeaser.title}</h2>
-    </div>
-    <RouteLink href="/pricing" class="ts-btn ts-btn-glass">
-      {$dict.pricingTeaser.cta}
-      <Icon name="arrowRight" className="pricing-teaser__cta-icon" />
-    </RouteLink>
-  </div>
-
-  <div class="pricing-teaser__grid">
-    {#each plans as plan (plan.slug)}
-      <RouteLink
-        href={`/pricing#${plan.slug}`}
-        class="pricing-teaser__plan"
-        style={`--plan-accent: ${plan.accent}`}
-      >
-        <div class="pricing-teaser__plan-head">
-          <h3 class="pricing-teaser__name">
-            <span class="pricing-teaser__icon"><Icon name={plan.icon} className="pricing-teaser__icon-glyph" /></span>
-            {plan.name}
-          </h3>
-          {#if plan.popular}<PlanRecommendation />{/if}
-        </div>
-        <p class="pricing-teaser__price">
-          <strong>{plan.billing.price}</strong>
-          <span>{plan.billing.suffix}</span>
-        </p>
-        <p class="pricing-teaser__limits">{plan.cadences}</p>
-        <p class="pricing-teaser__limits">{plan.summary}</p>
+  <div class="ts-container">
+    <div class="pricing-teaser__head">
+      <div class="pricing-teaser__intro">
+        <h2 class="pricing-teaser__title">{$dict.pricingTeaser.title}</h2>
+      </div>
+      <RouteLink href="/pricing" class="ts-btn ts-btn-glass">
+        {$dict.pricingTeaser.cta}
+        <Icon name="arrowRight" className="pricing-teaser__cta-icon" />
       </RouteLink>
-    {/each}
+    </div>
+
+    <div class="pricing-teaser__grid">
+      {#each plans as plan (plan.slug)}
+        <RouteLink
+          href={`/pricing#${plan.slug}`}
+          class="pricing-teaser__plan"
+          style={`--plan-accent: ${plan.accent}`}
+        >
+          <div class="pricing-teaser__plan-head">
+            <h3 class="pricing-teaser__name">
+              <span class="pricing-teaser__icon"><Icon name={plan.icon} className="pricing-teaser__icon-glyph" /></span>
+              {plan.name}
+            </h3>
+            {#if plan.popular}<PlanRecommendation />{/if}
+          </div>
+          <p class="pricing-teaser__price">
+            <strong>{plan.billing.price}</strong>
+            <span>{plan.billing.suffix}</span>
+          </p>
+          <p class="pricing-teaser__limits">{plan.cadences}</p>
+          <p class="pricing-teaser__limits">{plan.summary}</p>
+        </RouteLink>
+      {/each}
+    </div>
   </div>
 </section>
 
 <style>
   .pricing-teaser {
-    padding: var(--ts-space-20) clamp(16px, 2.5vw, 40px);
+    padding: var(--ts-space-20) 0;
     border-top: 1px solid var(--ts-divider);
   }
 

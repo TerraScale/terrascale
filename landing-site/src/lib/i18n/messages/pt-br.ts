@@ -74,6 +74,12 @@ export const ptBr: Messages = {
     cta: 'Criar conta',
   },
 
+  homeStats: {
+    regions: 'Regiões em operação',
+    writeRegion: 'Região de escrita por banco de dados',
+    statements: 'Instruções por transação',
+  },
+
 
   features: {
     titleLead: 'Bancos de dados SQL',
