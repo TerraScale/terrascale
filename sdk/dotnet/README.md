@@ -182,8 +182,9 @@ HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See 
 `Project(projectId)` creates, lists, reads, renames and deletes databases and reads usage, analytics, saved queries and
 backup destinations; `Database(projectId, name)` reads usage and analytics, branches (including `BranchIfIdAsync`/`DeleteIfIdAsync` guarded by the immutable database ID), backs up and restores, and
 deploys and invokes functions. `TerraBaseManagementClient` covers the Management API: organizations, the current
-organization, plans, projects, databases, branches, members, invitations, ownership transfer, audit retention and
-audit events. `TerraBaseRegionsClient` reads the anonymous [serving-region catalog](contracts/terrabase/regions.md).
+organization, plans, projects (including close and erase), history erasure, members, invitations, ownership transfer,
+audit retention and audit events. Databases and branches are not management operations; they live on
+`TerraBaseDatabaseClient` above. `TerraBaseRegionsClient` reads the anonymous [serving-region catalog](contracts/terrabase/regions.md).
 `TerraBaseHealthClient` reads the anonymous health probes.
 
 ```csharp

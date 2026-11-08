@@ -52,7 +52,18 @@ These operations appear under the `Backups` tag in OpenAPI. `P` below is `/v1/pr
 | PUT | `P/backup-destination` | `setBackupDestination` | `databases:write` | 200 |
 | DELETE | `P/backup-destination` | `deleteBackupDestination` | `databases:write` | 204, no body |
 | GET | `D/point-in-time` | `getRestoreWindow` | `databases:read` | 200 |
-| POST | `D/point-in-time/restore` | `restorePointInTime` | `databases:write` | 201 |
+| POST | `D/point-in-time/restore` | `restorePointInTime` | `databases:write` | 202, `RestoreOperation` |
+| GET | `D/backups` | `listBackups` | `databases:read` | 200 |
+| POST | `D/backups` | `createBackup` | `databases:write` | 201 |
+| POST | `D/backups/{backup}/restore` | `restoreBackup` | `databases:write` | 202, `RestoreOperation` |
+| GET | `D/restores/{operation}` | `getRestoreOperation` | `databases:read` | 200 |
+| GET | `D/backup-policy` | `getBackupPolicy` | `databases:read` | 200 |
+| PUT | `D/backup-policy` | `setBackupPolicy` | `databases:write` | 200 |
+
+Both restore routes answer `202` with a `RestoreOperation` and
+`Location: …/databases/{database}/restores/{operation}`. Poll `GET D/restores/{operation}`: it reports `running`,
+`completed` (its `database` names the new database) or `failed`. The restore runs in the background; the answer never
+holds the new database itself.
 
 The signed `project_id` must match `{project}`. Missing or invalid project credentials return 401;
 missing scope returns 403; another project or a database outside the token's narrowing returns 404.
@@ -110,9 +121,10 @@ Restore selection is explicit and never falls back between buckets:
 Each source's window comes from its own stored objects, so old platform backups stay restorable after switching to
 customer-only. An invalid selector returns 400; a disabled or empty source, including an unset customer destination,
 returns 404. Window and restore bucket transport failures return a sanitized 503. Malformed window listings
-also return 503; corrupt snapshot or key material during restoration remains an integrity failure. A successful restore returns
-the new database and `Location: /v1/projects/{project}/databases/{restored-name}`; a hidden legacy request retains its
-organization route and restored database ID in `Location`.
+also return 503; corrupt snapshot or key material during restoration remains an integrity failure. A restore request answers
+`202` with a `RestoreOperation` and `Location: /v1/projects/{project}/databases/{database}/restores/{operation}`; the
+restored database's name comes from polling `GET …/restores/{operation}` until it reports `completed` (its `database`
+field) or `failed`. A hidden legacy request retains its organization route and the source database's ID in `Location`.
 Encryption and `TBK1` objects are unchanged; restoring either source still requires the master key (`TERRABASE_MASTER_KEY`).
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
 and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload (a drop with
