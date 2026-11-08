@@ -228,10 +228,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 throw new AccountAccessException("Type the current database name to confirm the rename.", 422);
             }
 
-            if (!TerraScale.Dashboard.Features.Databases.DatabaseRenameName.IsValid(name))
-            {
-                throw new AccountAccessException("Start with a lowercase letter, then use lowercase letters, digits, underscores or hyphens; at most 63 characters. Device names are reserved.", 422);
-            }
+            name = ValidName(name);
 
             if (name == database.Name && database.ConflictOf is null)
             {
