@@ -173,8 +173,10 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 }
                 else
                 {
+                    await Assert.That(await page.Locator("input[name=plan][value=free]").IsCheckedAsync()).IsTrue().Because("Free is the default selection");
+                    await Assert.That(await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=free]") }).InnerTextAsync()).Contains("No card required");
                     await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Free");
-                    checks.Add("free personal onboarding bypass");
+                    checks.Add("free personal onboarding through the default Free card");
                 }
                 await page.GetByRole(AriaRole.Heading, new() { Name = "Create your first project", Exact = true }).WaitForAsync();
                 await BrowserAudit.AssertAccessibleAsync(page, "onboarding project accessibility");

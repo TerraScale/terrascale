@@ -23,6 +23,8 @@ namespace TerraScale.Dashboard.Common.Accounts
 
         public string BillingDescription => CheckoutIntervals.Contains("annual")
             ? (CheckoutIntervals.Contains("monthly") ? "Billed monthly, or " : "Billed yearly at ") + AnnualPrice + " a year" : "Billed monthly";
+        // The payment step's plan card: Free never reaches checkout, so it states its condition instead of a billing line.
+        public string CheckoutDescription => PriceCents == 0 ? "No card required" : BillingDescription;
         public string MonthlyPrice => MoneyFormat.Money(PriceCents);
         public string AnnualPrice => MoneyFormat.Money(AnnualPriceCents);
         public string Price => CheckoutInterval == "annual" ? AnnualPrice : MonthlyPrice;

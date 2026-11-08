@@ -20,12 +20,15 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
             var secret = await HttpJourney.CreatePatAsync(browser, "Native MCP onboarding");
             var status = await Tool(replica, secret, "get_onboarding", new { });
             Progress(status, "account-information", 0);
-            Check(status.GetProperty("plans").GetArrayLength() == 3 && status.GetProperty("plans").EnumerateArray().All(plan =>
+            var offered = status.GetProperty("plans").EnumerateArray().ToArray();
+            Check(offered.Length == 4 && offered[0].GetProperty("key").GetString() == "free" && offered[0].GetProperty("priceCents").GetInt64() == 0 &&
+                offered[0].GetProperty("price").GetString()!.EndsWith("$0.00 / month", StringComparison.Ordinal) &&
+                offered.Skip(1).All(plan =>
                 plan.GetProperty("priceCents").GetInt64() > 0 &&
                 plan.GetProperty("annualPriceCents").GetInt64() == plan.GetProperty("priceCents").GetInt64() * 10 &&
                 plan.GetProperty("billingIntervals").EnumerateArray().Select(interval => interval.GetString()).SequenceEqual(new[] { "month", "year" }) &&
                 plan.GetProperty("price").GetString()!.EndsWith(" / month", StringComparison.Ordinal)),
-                "The payment step advertises only the three paid onboarding plans with their published monthly and yearly prices");
+                "The payment step offers Free first at $0.00, then the three paid onboarding plans with their published monthly and yearly prices");
             await SafeError(replica, secret, new { step = "project", name = "Premature", region = "GRU" }, "Complete the current setup step first.");
             await SafeError(replica, secret, new { step = "account-information", displayName = "\u0001" }, "Enter a valid name.");
             Progress(await Tool(replica, secret, "get_onboarding", new { }), "account-information", 0);
@@ -38,7 +41,7 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
                 changed.GetProperty("userId").GetString() == original.GetProperty("userId").GetString(),
                 "The second native HTTP replica rereads the saved name while preserving the immutable public account and provider subject");
             Progress(await Tool(browser, secret, "get_onboarding", new { }), "payment-method", 1);
-            Saved(await Tool(replica, secret, "save_onboarding_step", new { step = "payment-method", continueOnFree = true }), "project");
+            Saved(await Tool(replica, secret, "save_onboarding_step", new { step = "payment-method", plan = "free" }), "project");
             Progress(await Tool(browser, secret, "get_onboarding", new { }), "project", 2);
             await SafeError(replica, secret, new { step = "project", name = "Native MCP project", region = "foreign-region" }, "Choose a supported project region.");
             Progress(await Tool(replica, secret, "get_onboarding", new { }), "project", 2);
@@ -60,6 +63,44 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
             var repeated = await Tool(replica, secret, "save_onboarding_step", new { step = "account-information", displayName = "Cannot replace completed setup" });
             Check(repeated.GetProperty("completed").GetBoolean() && (await Identity(browser)).GetProperty("name").GetString() == "Native MCP account",
                 "Saving completed setup is a no-op, as in the original Go service");
+        }
+
+        [Test]
+        public async Task PaymentStepDefaultsToFreePlanWithoutCheckout()
+        {
+            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            using var browser = scenario.CreateClient();
+            using var login = await HttpJourney.LoginAsync(browser, returnTo: "/onboarding", signUp: true);
+            Check(login.StatusCode == HttpStatusCode.SeeOther, "Hosted sign-up starts a native account at onboarding");
+            await SaveAsync(new() { ["step"] = "account-information", ["displayName"] = "Free default" });
+            var html = await PageAsync();
+            var cards = System.Text.RegularExpressions.Regex.Matches(html, "class=\"ts-onboarding-plan\"").Count;
+            var firstCardStart = html.IndexOf("ts-onboarding-plan\"", StringComparison.Ordinal);
+            var firstCard = html[firstCardStart..html.IndexOf("</label>", firstCardStart, StringComparison.Ordinal)];
+            Check(cards == 4 && firstCard.Contains("value=\"free\"", StringComparison.Ordinal) && firstCard.Contains("checked=\"checked\"", StringComparison.Ordinal),
+                "The payment step renders the Free card first, selected by default");
+            Check(html.Contains("Continue on Free", StringComparison.Ordinal) && !html.Contains("name=\"bypass\"", StringComparison.Ordinal),
+                "The single primary action follows the Free selection and the bypass field is gone");
+            using var saved = await HttpJourney.PostFormAsync(browser, "/onboarding/step",
+                new() { ["_csrf"] = await HttpJourney.CsrfAsync(browser, "/onboarding"), ["step"] = "payment-method", ["plan"] = "free" });
+            Check(saved.StatusCode == HttpStatusCode.SeeOther && saved.Headers.Location?.OriginalString == "/onboarding",
+                "Submitting the default selection advances onboarding without a checkout redirect");
+            html = await PageAsync();
+            Check(html.Contains("Create your first project", StringComparison.Ordinal) && !html.Contains("ts-onboarding-plan\"", StringComparison.Ordinal),
+                "The account lands on the project step on Free with no checkout");
+
+            async Task<string> PageAsync()
+            {
+                using var page = await browser.GetAsync("/onboarding");
+                return await page.Content.ReadAsStringAsync();
+            }
+
+            async Task SaveAsync(Dictionary<string, string> form)
+            {
+                form["_csrf"] = await HttpJourney.CsrfAsync(browser, "/onboarding");
+                using var response = await HttpJourney.PostFormAsync(browser, "/onboarding/step", form);
+                Check(response.StatusCode == HttpStatusCode.SeeOther, "Native onboarding advances the current account step: " + form["step"]);
+            }
         }
 
         private static async Task<JsonElement> Tool(HttpClient client, string secret, string name, object arguments)

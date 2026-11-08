@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects
             using var relogin = await HttpJourney.LoginAsync(resumed, returnTo: "/onboarding");
             await Assert.That(relogin.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(await resumed.GetStringAsync("/onboarding?payment=canceled")).Contains("Payment setup canceled");
-            await SaveStepAsync(resumed, new() { ["step"] = "payment-method", ["bypass"] = "1" });
+            await SaveStepAsync(resumed, new() { ["step"] = "payment-method", ["plan"] = "free" });
             using var invalid = await PostStepAsync(first, new() { ["step"] = "project", ["name"] = "Audit project", ["region"] = "ZZZ" });
             await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             var draft = await invalid.Content.ReadAsStringAsync();
@@ -85,7 +85,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects
             using var verified = await HttpJourney.LoginAsync(client, email, password, "/onboarding", signUp: true);
             await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await SaveStepAsync(client, new() { ["step"] = "account-information", ["displayName"] = "Audit setup" });
-            await SaveStepAsync(client, new() { ["step"] = "payment-method", ["bypass"] = "1" });
+            await SaveStepAsync(client, new() { ["step"] = "payment-method", ["plan"] = "free" });
         }
 
         private static async Task CreateProjectAsync(HttpClient client, HttpClient producer, string name)

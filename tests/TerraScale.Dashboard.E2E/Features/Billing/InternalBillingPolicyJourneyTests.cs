@@ -195,7 +195,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             foreach (var fields in new Dictionary<string, string>[]
             {
                 new() { ["step"] = "account-information", ["displayName"] = "Second Owner" },
-                new() { ["step"] = "payment-method", ["bypass"] = "1" },
+                new() { ["step"] = "payment-method", ["plan"] = "free" },
                 new() { ["step"] = "project", ["name"] = "Personal", ["region"] = "GRU" }
             })
             {
