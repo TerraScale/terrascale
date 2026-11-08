@@ -91,7 +91,7 @@ export const getStartedLink = {
   icon: 'arrowRight' as AppIconName,
 }
 
-export type FooterColumnKey = 'product' | 'company' | 'resources'
+export type FooterColumnKey = 'product' | 'company' | 'resources' | 'support'
 
 export type FooterColumn = {
   key: FooterColumnKey
@@ -105,7 +105,6 @@ export const footerColumns: FooterColumn[] = [
       { key: 'features', href: '/#features' },
       { key: 'pricing', href: '/pricing' },
       { key: 'changelog', href: 'https://docs.terrascale.tech/changelog/' },
-      { key: 'documentation', href: 'https://docs.terrascale.tech' },
     ],
   },
   {
@@ -121,8 +120,14 @@ export const footerColumns: FooterColumn[] = [
   {
     key: 'resources',
     links: [
+      { key: 'documentation', href: 'https://docs.terrascale.tech' },
       { key: 'apiReference', href: 'https://api.terrascale.tech/scalar/' },
       { key: 'status', href: 'https://status.terrascale.tech' },
+    ],
+  },
+  {
+    key: 'support',
+    links: [
       { key: 'support', href: 'https://docs.terrascale.tech/legal/support' },
       { key: 'supportEmail', href: 'mailto:support@terrascale.tech' },
     ],

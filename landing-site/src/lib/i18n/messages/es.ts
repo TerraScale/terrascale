@@ -30,6 +30,7 @@ export const es: Messages = {
 
   footer: {
     rightsReserved: 'Todos los derechos reservados.',
+    tagline: 'Base de datos multirregión',
     columns: {
       product: {
         title: 'Producto',
@@ -37,7 +38,6 @@ export const es: Messages = {
           features: 'Características',
           pricing: 'Precios',
           changelog: 'Changelog',
-          documentation: 'Documentación',
         },
       },
       company: {
@@ -54,9 +54,14 @@ export const es: Messages = {
       resources: {
         title: 'Recursos',
         links: {
-          docs: 'Docs',
+          documentation: 'Documentación',
           apiReference: 'Referencia de la API',
           status: 'Estado',
+        },
+      },
+      support: {
+        title: 'Soporte',
+        links: {
           support: 'Soporte',
           supportEmail: 'Contacto: support@terrascale.tech',
         },
