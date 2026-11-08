@@ -88,6 +88,47 @@ paths:
                   error_description:
                     type: [string, 'null']
         '503': { $ref: './platform-api.openapi.yaml#/components/responses/Unavailable' }
+  /v1/terrascale/account/providers/{provider}/code:
+    post:
+      operationId: account_send_unlink_code
+      tags: [Account]
+      summary: Email me a code to unlink a provider
+      description: |
+        Requires a live platform sign-in token and a provider linked to the account; anything else
+        answers as an unknown provider. Emails a sign-in code to the account's verified email,
+        subject to the sign-in mail limits; use it with DELETE /v1/terrascale/account/providers/{provider}.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: Provider to email an unlink code for.
+          schema:
+            type: string
+            enum: [github, google]
+      responses:
+        '202':
+          description: A sign-in code was accepted for delivery to the account's verified email.
+        '401': { $ref: './platform-api.openapi.yaml#/components/responses/Unauthorized' }
+        '429':
+          description: Sign-in code or IP budget exhausted.
+          headers:
+            Retry-After:
+              description: Minimum delay in whole seconds before retrying.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    const: rate_limited
+                  error_description:
+                    type: [string, 'null']
+        '503': { $ref: './platform-api.openapi.yaml#/components/responses/Unavailable' }
 components:
   securitySchemes:
     platformUser:
