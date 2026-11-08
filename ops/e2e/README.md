@@ -77,7 +77,7 @@ planned steps and makes no network call and does not read the secret file.
 - `dotnet`: .NET SDK per the repo pin; packs `sdk/dotnet` from this monorepo
   checkout into the temp dir (the package is not on NuGet) and references it
   from a fresh console project.
-- `rust`: cargo 1.99+; uses the git dependency the page documents (the crate
+- `rust`: cargo 1.99+; uses the git dependency the page pins (the crate
   is not on crates.io).
 
 The quick-start samples come from the docs pages at run time; nothing is
