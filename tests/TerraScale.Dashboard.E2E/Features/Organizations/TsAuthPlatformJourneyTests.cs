@@ -261,6 +261,60 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         }
 
         [Test]
+        public async Task ProjectViewerReadsUsageForTheirGrantedProjectWithoutOrganizationTotals()
+        {
+            var (platform, client, org, granted, sibling, collaborator) = await UsageCollaboratorAsync("viewer");
+            await using (platform)
+            {
+                using var page = await client.GetAsync("/usage?project=" + granted);
+                await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                var html = await page.Content.ReadAsStringAsync();
+                await Assert.That(html).Contains("Granted usage");
+                await Assert.That(html).Contains("usage-history");
+                await Assert.That(html).DoesNotContain("plan allowance").And.DoesNotContain("Spending").And.DoesNotContain(sibling);
+                using var settings = await client.GetAsync("/usage?tab=settings&project=" + granted);
+                await Assert.That(settings.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                await Assert.That(platform.Producer.Role(org, collaborator)).IsNull();
+                await Assert.That(platform.Producer.Failures).IsEmpty();
+            }
+        }
+
+        [Test]
+        public async Task ProjectViewerCannotReadUsageForAnotherProjectOfTheSameOrganization()
+        {
+            var (platform, client, org, granted, sibling, collaborator) = await UsageCollaboratorAsync("viewer");
+            await using (platform)
+            {
+                using var refused = await client.GetAsync("/usage?project=" + sibling);
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+                using var organizationWide = await client.GetAsync("/usage?organizationId=" + org);
+                await Assert.That(organizationWide.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                await Assert.That(platform.Producer.Role(org, collaborator)).IsNull();
+                await Assert.That(platform.Producer.Failures).IsEmpty();
+            }
+        }
+
+        private static async Task<(PlatformScenario Platform, HttpClient Client, string OrganizationId, string GrantedProjectId, string SiblingProjectId, string CollaboratorId)> UsageCollaboratorAsync(
+            string role)
+        {
+            var platform = await PlatformScenario.StartAsync();
+            var owner = platform.Principal("usage-owner");
+            var collaborator = platform.Principal("usage-collaborator");
+            var organization = platform.Producer.AddOrganization("Usage collaboration", owner.Subject);
+            var granted = platform.Producer.AddProject(organization, "Granted usage", owner.Subject);
+            var sibling = platform.Producer.AddProject(organization, "Hidden usage sibling", owner.Subject);
+            platform.Producer.AddCollaborator(organization, collaborator.Subject, granted, role);
+            platform.SeedDatabase(new(AccountService.NewId(), granted, "usage-db", DateTimeOffset.UtcNow, HomeRegion: "gru", ReplicaRegions: []));
+            var client = platform.Client();
+            using (var login = await HttpJourney.LoginAsync(client, collaborator.Email, collaborator.Password))
+            {
+                await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            return (platform, client, organization, granted, sibling, collaborator.Subject);
+        }
+
+        [Test]
         public async Task FirstSignInOnTwoReplicasCreatesOnePersonalWorkspaceAndFollowsTsAuthMembership()
         {
             await using var platform = await PlatformScenario.StartAsync();

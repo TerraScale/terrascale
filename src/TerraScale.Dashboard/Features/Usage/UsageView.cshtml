@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Usage.UsagePage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
-<main class="ts-page ts-usage"><header class="ts-usage-header"><h1>Usage</h1></header><div class="ts-toolbar"><nav class="ts-tabs" aria-label="Usage sections">@foreach (var tab in new[] { (Key: "overview", Label: "Overview"), (Key: "settings", Label: Model.InternalBill is not null ? "Report-only cap" : "Spending") }) { <a class="ts-tab" href="@Model.ProjectHref(Model.Selection.Context.Project?.Id ?? "", tab.Key)" aria-current="@(tab.Key == Model.Tab ? "page" : null)"><span>@tab.Label</span></a> }</nav>
+<main class="ts-page ts-usage"><header class="ts-usage-header"><h1>Usage</h1></header><div class="ts-toolbar"><nav class="ts-tabs" aria-label="Usage sections">@foreach (var tab in Model.Selection.Member ? new[] { (Key: "overview", Label: "Overview"), (Key: "settings", Label: Model.InternalBill is not null ? "Report-only cap" : "Spending") } : new[] { (Key: "overview", Label: "Overview") }) { <a class="ts-tab" href="@Model.ProjectHref(Model.Selection.Context.Project?.Id ?? "", tab.Key)" aria-current="@(tab.Key == Model.Tab ? "page" : null)"><span>@tab.Label</span></a> }</nav>
 @if (Model.Tab == "overview")
 {
     <form class="ts-filters ts-usage-filters" method="get" action="/usage" role="search" aria-label="Filter usage"><input type="hidden" name="tab" value="overview" />

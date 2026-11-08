@@ -31,8 +31,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 throw new AccountAccessException("Project is unavailable.", 404);
             }
 
-            if (organization.RoleFor(fresh.UserId).Length == 0 && !(requireProject && !organization.MfaRequired &&
-                organization.Status == "active" && !organization.Archived && (project?.Role is "viewer" or "member" or "admin")))
+            if (organization.RoleFor(fresh.UserId).Length == 0 && !(requireProject && ProjectCollaborator.Allows(organization, project)))
             {
                 throw new AccountAccessException("Organization membership is required.");
             }

@@ -56,7 +56,7 @@ namespace TerraScale.Dashboard.Features.Usage
 
         public async Task<UsagePage> LoadAsync(ShellModel shell, UsageSelection selection, string tab, string saved, CancellationToken cancellationToken)
         {
-            var controls = await spending.ReadAsync(selection.Context, cancellationToken);
+            var controls = await spending.ReadAsync(selection.Context, cancellationToken, requireProject: !selection.Member);
             var usageRead = tab == "overview" || selection.Context.Organization!.InternalBilling is not null ? measurements.ReadAsync(selection, cancellationToken) : Task.FromResult(new UsageMeasurements(new(UsageSourceState.NotMetered), new Dictionary<string, UsageObservation>()));
             var result = await usageRead;
             var plan = PlanCatalog.For(selection.Context.Organization!);
