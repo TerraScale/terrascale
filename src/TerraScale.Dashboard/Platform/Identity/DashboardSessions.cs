@@ -16,7 +16,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                 await EndAsync(context);
             }
 
-            record = record with { SessionExpiresAt = time.GetUtcNow().AddHours(12), RefreshLease = "", RefreshLeaseUntil = null };
+            record = record with { SessionExpiresAt = time.GetUtcNow().AddHours(12), RefreshLease = "", RefreshLeaseUntil = null, Device = DeviceLabel.Parse(context.Request.Headers.UserAgent) };
             var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
             var credentials = await identity.ReadAsync(context.RequestAborted);
             var encrypted = Seal(record, credentials.SessionEncryptionKey);
@@ -234,7 +234,7 @@ namespace TerraScale.Dashboard.Platform.Identity
 
                 var expiry = record.SessionExpiresAt ?? record.ExpiresAt;
                 if (expiry <= time.GetUtcNow()) { await DeleteStrictAsync("sessions", id, context.RequestAborted); stale.Add(id); continue; }
-                result.Add(new(id, id == current, expiry));
+                result.Add(new(id, id == current, record.Device is { Length: > 0 } ? record.Device : "Unknown device", expiry));
             }
             if (stale.Count != 0)
             {
@@ -351,7 +351,7 @@ namespace TerraScale.Dashboard.Platform.Identity
                         throw new IOException("Refreshed session identity is invalid.");
                     }
 
-                    refreshed = refreshed with { SessionExpiresAt = record.SessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null };
+                    refreshed = refreshed with { SessionExpiresAt = record.SessionExpiresAt, RefreshLease = "", RefreshLeaseUntil = null, Device = record.Device };
                     // ts-auth has rotated the secret, so losing this write would end the grant for good (the old secret is
                     // never replayed). Retry transient state failures; a write whose answer was lost is recognized on re-read.
                     for (var attempt = 0; ; attempt++)
@@ -624,7 +624,8 @@ namespace TerraScale.Dashboard.Platform.Identity
     }
 
     public sealed record SessionRecord(string UserId, string Name, string Email, string AccessToken, string? RefreshToken, DateTimeOffset ExpiresAt,
-        DateTimeOffset? SessionExpiresAt = null, string RefreshLease = "", DateTimeOffset? RefreshLeaseUntil = null, string? IdToken = null)
+        DateTimeOffset? SessionExpiresAt = null, string RefreshLease = "", DateTimeOffset? RefreshLeaseUntil = null, string? IdToken = null,
+        string? Device = null)
     {
         public override string ToString()
         {
@@ -633,5 +634,5 @@ namespace TerraScale.Dashboard.Platform.Identity
     }
 
     public sealed record SealedSession(string Nonce, string Ciphertext, string Tag);
-    public sealed record DashboardSessionInfo(string Id, bool Current, DateTimeOffset ExpiresAt);
+    public sealed record DashboardSessionInfo(string Id, bool Current, string Device, DateTimeOffset ExpiresAt);
 }
