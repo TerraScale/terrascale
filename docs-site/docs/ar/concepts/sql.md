@@ -122,8 +122,7 @@ with read or read-write access. The database is deleted on expiry. See [agent da
 
 ## Recovery and deletion
 
-Point-in-time recovery restores into a new database within the source's recovery window and needs a free database slot. In-place point-in-time
-restore is coming. Database deletion destroys backup data keys, making retained encrypted backups unreadable;
+Point-in-time recovery restores into a new database within the source's recovery window and needs a free database slot. A rewind restores an earlier state in place: one transaction replaces every table, index, view and trigger, keeping the database's id, name and credentials and discarding later changes; see [backups and restore](/ar/guides/backups-and-restore). Database deletion destroys backup data keys, making retained encrypted backups unreadable;
 physical cleanup is separate. This does not apply to deleting individual SQL rows. Independent forks remain available.
 
 ## Usage caps
