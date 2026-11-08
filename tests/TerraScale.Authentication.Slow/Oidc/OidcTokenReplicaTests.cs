@@ -34,14 +34,28 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
         var codeRace = await Race(index => oidc.RedeemCodeAsync(code, verifier, client: index % 2 == 0 ? oidc.Client : replica.Client));
         await Assert.That(Outcomes(codeRace)).IsEqualTo(Expected);
         var codeWinner = JsonSerializer.Deserialize<JsonElement>(codeRace.Single(result => result.Status == HttpStatusCode.OK).Body);
-        await AssertAccessWorksAsync(oidc, codeWinner, replica.Client);
         foreach (var loser in codeRace.Where(result => result.Status != HttpStatusCode.OK))
         {
-            await AssertConflictNoticeAsync(JsonSerializer.Deserialize<JsonElement>(loser.Body));
+            await AssertReplayNoticeAsync(JsonSerializer.Deserialize<JsonElement>(loser.Body));
         }
-        var refreshParent = await CurrentTokenAsync(oidc, TokenTypeIdentifiers.RefreshToken);
+        var refreshParent = await CurrentTokenAsync(oidc, TokenTypeIdentifiers.RefreshToken, parent.GetProperty("authorizationId").GetString()!);
         await AssertLineageAsync(oidc, parent, refreshParent);
-        var refreshToken = codeWinner.GetProperty("refresh_token").GetString()!;
+        using var endedAccess = await oidc.UserInfoAsync(codeWinner.GetProperty("access_token").GetString()!, replica.Client);
+        await Assert.That(endedAccess.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        using var endedRefresh = await oidc.RefreshAsync(codeWinner.GetProperty("refresh_token").GetString()!, replica.Client);
+        await Assert.That(endedRefresh.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await OidcHarness.ErrorAsync(endedRefresh)).IsEqualTo("invalid_grant");
+
+        var (verifier2, challenge2) = OidcHarness.Pkce();
+        using var secondRedeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge2), verifier2);
+        await Assert.That(secondRedeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var second = await OidcHarness.JsonAsync(secondRedeemed);
+        var endedAuthorizationId = refreshParent.GetProperty("authorizationId").GetString()!;
+        var secondParent = (await oidc.Database.RowsAsync(AuthStore.OidcTokenTable)).Single(rowData =>
+            rowData.Body.GetProperty("type").GetString() == TokenTypeIdentifiers.RefreshToken
+            && rowData.Body.GetProperty("status").GetString() == "valid"
+            && rowData.Body.GetProperty("authorizationId").GetString() != endedAuthorizationId).Body;
+        var refreshToken = second.GetProperty("refresh_token").GetString()!;
         var refreshRace = await Race(index => oidc.RefreshAsync(refreshToken, index % 2 == 0 ? oidc.Client : replica.Client));
         await Assert.That(Outcomes(refreshRace)).IsEqualTo(Expected);
         var winner = JsonSerializer.Deserialize<JsonElement>(refreshRace.Single(result => result.Status == HttpStatusCode.OK).Body);
@@ -49,7 +63,7 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
         {
             await Assert.That(JsonSerializer.Deserialize<JsonElement>(loser.Body).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
         }
-        await AssertLineageAsync(oidc, refreshParent, await CurrentTokenAsync(oidc, TokenTypeIdentifiers.RefreshToken));
+        await AssertLineageAsync(oidc, secondParent, await CurrentTokenAsync(oidc, TokenTypeIdentifiers.RefreshToken, secondParent.GetProperty("authorizationId").GetString()!));
         using var afterRace = await oidc.RefreshAsync(winner.GetProperty("refresh_token").GetString()!, replica.Client);
         await Assert.That(afterRace.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(await OidcHarness.ErrorAsync(afterRace)).IsEqualTo("invalid_grant");
@@ -88,11 +102,10 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
         await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
-    private static async Task AssertConflictNoticeAsync(JsonElement error)
+    private static async Task AssertReplayNoticeAsync(JsonElement error)
     {
         await Assert.That(error.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
-        await Assert.That(error.GetProperty("error_description").GetString()).Contains("another region");
-        await Assert.That(error.GetProperty("error_description").GetString()).Contains("Sign in again or use the latest credential");
+        await Assert.That(error.GetProperty("error_description").GetString()).IsEqualTo(CredentialLineage.ReplayNotice);
         foreach (var token in new[] { "access_token", "refresh_token", "id_token" })
         {
             await Assert.That(error.TryGetProperty(token, out _)).IsFalse();
@@ -105,9 +118,10 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
-    private static async Task<JsonElement> CurrentTokenAsync(OidcHarness oidc, string type) =>
+    private static async Task<JsonElement> CurrentTokenAsync(OidcHarness oidc, string type, string? authorizationId = null) =>
         (await oidc.Database.RowsAsync(AuthStore.OidcTokenTable)).Single(rowData =>
-            rowData.Body.GetProperty("type").GetString() == type && rowData.Body.GetProperty("status").GetString() == "valid").Body;
+            rowData.Body.GetProperty("type").GetString() == type && rowData.Body.GetProperty("status").GetString() == "valid"
+            && (authorizationId is null || rowData.Body.GetProperty("authorizationId").GetString() == authorizationId)).Body;
 
     private static async Task AssertLineageAsync(OidcHarness oidc, JsonElement parent, JsonElement child)
     {

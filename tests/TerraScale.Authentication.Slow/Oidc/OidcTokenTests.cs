@@ -58,8 +58,7 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         var error = await OidcHarness.JsonAsync(replay);
         await Assert.That(error.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
-        await Assert.That(error.GetProperty("error_description").GetString()).Contains("This sign-in has ended");
-        await Assert.That(error.GetProperty("error_description").GetString()).DoesNotContain("latest credential");
+        await Assert.That(error.GetProperty("error_description").GetString()).IsEqualTo(CredentialLineage.ReplayNotice);
 
         await using var fresh = await oidc.StartReplicaAsync();
         foreach (var client in new[] { oidc.Client, replica.Client, fresh.Client })
