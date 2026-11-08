@@ -341,7 +341,7 @@ internal sealed class EngineManagedBackupService(
 
             var record = new RestoreOperationRecord(
                 id, organizationId, owner.ProjectId, owner.DatabaseId, null, kind, RestoreOperationState.Running, name, null, null,
-                time.GetUtcNow(), null, options.Region);
+                time.GetUtcNow(), null, options.Region, options.MachineId);
             await PutRestoreOperationAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             return record;
         }, static error => error, cancellationToken).ConfigureAwait(false);
@@ -484,6 +484,7 @@ internal sealed class EngineManagedBackupService(
         foreach (var record in running ?? [])
         {
             if (record.State != RestoreOperationState.Running || record.Region != options.Region
+                || record.Node is not null && record.Node != options.MachineId
                 || record.CreatedAt >= _startedAt || _runningRestores.ContainsKey(record.Id))
             {
                 continue;

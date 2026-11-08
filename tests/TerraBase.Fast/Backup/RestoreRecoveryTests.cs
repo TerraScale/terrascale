@@ -20,12 +20,13 @@ public sealed class RestoreRecoveryTests
         await using var host = await SqlBackupHost.StartAsync(cancellationToken);
         var server = host.Api.Server;
         var region = server.Services.GetRequiredService<TerraBaseOptions>().Region;
+        var node = server.Services.GetRequiredService<TerraBaseOptions>().MachineId;
         var source = host.Database;
         var started = server.Services.GetRequiredService<TimeProvider>().GetUtcNow().AddHours(-1);
 
         var operation = new RestoreOperationRecord(
             EntityIds.New().ToString(), source.Organization, source.Project, source.Id, null,
-            RestoreKind.Backup, RestoreOperationState.Running, "stranded", null, null, started, null, region);
+            RestoreKind.Backup, RestoreOperationState.Running, "stranded", null, null, started, null, region, node);
         var target = new ManagedDatabase(EntityIds.New().ToString(), source.Project, "stranded", source.Id, started.AddMinutes(1));
 
         var store = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
