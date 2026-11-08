@@ -232,11 +232,11 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
             using var client = scenario.CreateClient();
-            await DatabaseJourney.NativeWorkspaceAsync(client);
+            var account = await DatabaseJourney.NativeWorkspaceAsync(client);
             using var identity = await client.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
             var organizationId = identity!.RootElement.GetProperty("organizationId").GetString()!;
             var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
-            var ownerSecret = await HttpJourney.CreatePatAsync(client, "TUnit project cidrs owner");
+            var ownerSecret = await HttpJourney.CreatePatAsync(client, "TUnit project cidrs owner", account.Password);
             var scope = new { organizationId, projectId };
             var set = (await HttpJourney.McpAsync(client, ownerSecret, "tools/call", new
             { name = "set_project_allowed_cidrs", arguments = new { allowedCidrs = new[] { "203.0.113.0/24", "198.51.100.7", "2001:db8::/48" }, organizationId, projectId } }))
@@ -271,7 +271,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             }
 
-            var memberSecret = await HttpJourney.CreatePatAsync(member, "TUnit project cidrs member");
+            var memberSecret = await HttpJourney.CreatePatAsync(member, "TUnit project cidrs member", "Cidr-" + suffix);
             var refused = (await HttpJourney.McpAsync(member, memberSecret, "tools/call", new
             { name = "set_project_allowed_cidrs", arguments = new { allowedCidrs = Array.Empty<string>(), organizationId, projectId } }))
                 .GetProperty("result");
