@@ -28,6 +28,7 @@ internal static class ManagementExtensions
         services.AddSingleton<IDatabaseFileCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<SystemCatalog>();
         services.AddSingleton<PlanFanout>();
+        services.AddSingleton<EnrollmentFanout>();
         services.AddSingleton<RemoteDatabases>();
         services.AddHttpClient(RemoteDatabases.HttpClientName);
         return services

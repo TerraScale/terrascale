@@ -43,6 +43,10 @@ mesh.
   `X-TerraBase-Region` names the home. A forwarded request is never forwarded again. When the home cannot be reached the
   answer is `421 wrong_region` with `X-TerraBase-Database-Home` and the home's regional host. Listing a project's
   databases is forwarded to a region that holds the project when this one does not.
+- **Enrollment.** A create that enrolls a project (its first database) sends the same project→organization binding to every
+  other region (`PUT /admin/projects/{project}/enrollment`, peer credential, idempotent), so every region resolves the
+  project within seconds instead of answering `404 unknown_database` until its replicated catalog converges. A region that
+  misses the fan-out keeps resolving through home forwarding; the next first-create retry or enrollment repairs the gap.
 - **Postgres wire.** A dashboard API key is exchanged at ts-auth in the region the session reached; when its project or
   database is homed elsewhere, the session is relayed to the home for its whole life (`POST /v1/internal/postgres`, a
   duplex HTTP/2 stream on the internal listener), and the home authenticates it again. An unreachable home answers

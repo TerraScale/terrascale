@@ -14,6 +14,10 @@ public sealed record NameRequest(string? Name);
 /// <param name="Plan"><c>hobby</c>, <c>pro</c> or <c>enterprise</c>.</param>
 public sealed record PlanRequest(string? Plan);
 
+/// <summary>The organization a project's enrollment binds it to.</summary>
+/// <param name="Organization">The ts-auth organization id the creating region enrolled the project under.</param>
+public sealed record EnrollmentRequest(string? Organization);
+
 /// <summary>A database the acting user may change, or why not.</summary>
 public readonly union WritableDatabase(TenantContext, NotFound, Forbidden, Unavailable);
 
