@@ -147,7 +147,7 @@ type DatabaseUsage struct {
 	Writes       int64  `json:"writes"`
 }
 
-// ProjectAPIKey is a project's data API key (tb_…) without its secret.
+// ProjectAPIKey is a project's data API key without its secret.
 type ProjectAPIKey struct {
 	ID        string   `json:"id" ulid:"required"`
 	ProjectID string   `json:"projectId" ulid:"required"`
@@ -161,8 +161,8 @@ type ProjectAPIKey struct {
 }
 
 // ProjectAPIKeyRequest describes a key to issue: Name is 1-128 characters and
-// Scopes a non-empty subset of sql:read and sql:write. An empty
-// DatabaseID reaches every database of the project.
+// Scopes a non-empty set drawn from sql:read, sql:write, databases:read and
+// databases:write. An empty DatabaseID reaches every database of the project.
 type ProjectAPIKeyRequest struct {
 	Name       string   `json:"name"`
 	Scopes     []string `json:"scopes"`
