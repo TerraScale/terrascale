@@ -11,10 +11,28 @@ SDKs and the CLI do, and proves it still works end to end:
 4. Exchanges the key for a short-lived access token.
 5. Creates a database in the home region and runs one SQL REST round trip
    (`CREATE TABLE`, `INSERT`, `SELECT`).
-6. Tears everything down in reverse order (database, key, project,
-   organization, account), best effort, also when an earlier step failed.
-7. Prints a per-step table with ok/FAIL and milliseconds, plus the total time
-   to first query. Exits non-zero if any step failed.
+6. Discovers the serving regions the same way the SDKs and the CLI do
+   (anonymous `GET /v1/regions`), then for every region creates one small
+   database with that region as its explicit `homeRegion` and runs one SQL
+   round trip against it. Steps are recorded per region
+   (`create_database:gru`, `sql_round_trip:sjc`, …). A `421 wrong_region`
+   answer fails the step and its message (which names the home region) is
+   printed; no secret is ever shown.
+7. Runs the SDK quick starts published on the docs site. For each selected
+   language (`js`, `go`, `python`, `dotnet`, `rust`) the sample code block is
+   extracted from `docs-site/docs/getting-started/<lang>.md` into a temp dir
+   together with the minimal project file the page says to create, the SDK
+   version the page pins is installed, and the sample runs with the journey's
+   API key, project and database passed through `TERRASCALE_API_KEY`,
+   `TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_NAME` (and
+   `TERRASCALE_REGION` for the C# quickstart) — never through argv. The temp
+   dir is removed afterwards. A language whose toolchain is missing is
+   recorded as `skip`.
+8. Tears everything down in reverse order (per-region databases, the primary
+   database, key, project, organization, account), best effort, also when an
+   earlier step failed.
+9. Prints a per-step table with ok/FAIL/skip and milliseconds, plus the total
+   time to first query. Exits non-zero if any step failed.
 
 Everything created is named with the prefix `e2e-<utc yyyymmddhhmmss>-` so
 anything a failed run leaves behind is easy to find and delete by hand.
@@ -44,14 +62,34 @@ python3 ops/e2e/journey.py \
 
 `{ts}` in `--email` is replaced with the run's UTC timestamp, so every run
 signs up a distinct identity and the script is safely re-runnable. `--region`
-is optional (the platform picks the home region when omitted). `--keep` skips
-teardown to inspect what was created. `--dry-run` prints the planned steps and
-makes no network call and does not read the secret file.
+is optional (the platform picks the home region when omitted). `--sdks`
+narrows the quick-start languages (comma-separated; default: every language
+whose toolchain is on PATH — `node`, `go`, `python3`, `dotnet`, `cargo`).
+`--keep` skips teardown to inspect what was created. `--dry-run` prints the
+planned steps and makes no network call and does not read the secret file.
+
+## Toolchain expectations for the SDK steps
+
+- `js`: Node 22 or 24; installs the pinned `@terrascale/sdk` from npm.
+- `go`: Go 1.25+; `go get`s the pinned `terrascale.tech/sdk` tag.
+- `python`: Python 3.10+; builds a venv and installs the SDK from the
+  monorepo git ref the page pins (it is not on PyPI).
+- `dotnet`: .NET SDK per the repo pin; packs `sdk/dotnet` from this monorepo
+  checkout into the temp dir (the package is not on NuGet) and references it
+  from a fresh console project.
+- `rust`: cargo 1.99+; uses the git dependency the page documents (the crate
+  is not on crates.io).
+
+The quick-start samples come from the docs pages at run time; nothing is
+copied into this repo. Child process output is printed only on failure, only
+the last 20 lines, with the key, tokens and other secret values replaced by
+`***`.
 
 ## Cost and safety
 
 The script creates and deletes real resources: one account, one organization,
-one project, one API key and one small database that lives for under a minute.
+one project, one API key, one small database per serving region plus the
+primary database, each living for under a few minutes.
 Run it only against environments you own; it is not a CI job. Two emails are
 sent per run (the sign-up code and the step-up code), and the hosted
 mail-start limits (60-second cooldown per address, 5 codes per address per
