@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.Features.Usage
                         return HttpRedirects.SeeOther("/");
                     }
 
-                    return UsageView.Create(await usage.LoadAsync(ShellModel.For(http, context, "Usage"), selection, tab, http.Request.Query["saved"].ToString(), http.RequestAborted));
+                    return UsageView.Create(await usage.LoadAsync(ShellModel.For(http, selection.Context, "Usage"), selection, tab, http.Request.Query["saved"].ToString(), http.RequestAborted));
                 }
                 catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
                 catch (IOException) { return Results.Text("Could not load usage.", statusCode: 503); }

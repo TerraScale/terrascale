@@ -5,15 +5,17 @@ namespace TerraScale.Dashboard.Common.Usage
         public bool Member { get; init; } = true;
         public static UsageSelection For(AccountContext context, string projectId, string databaseId, string range)
         {
-            var org = context.Organization ?? throw new AccountAccessException("Selected organization is unavailable.");
             if (context.Session.UserId != context.UserId)
             {
                 throw new AccountAccessException("Organization membership is required.");
             }
 
+            var org = projectId.Length > 0
+                ? context.Organizations.FirstOrDefault(item => item.Projects.ContainsKey(projectId))
+                    ?? throw new AccountAccessException("Project is unavailable.", 404)
+                : context.Organization ?? throw new AccountAccessException("Selected organization is unavailable.");
             var member = org.ContainsMember(context.UserId);
-            var project = projectId.Length == 0 ? context.Project : org.Projects.GetValueOrDefault(projectId)
-                ?? throw new AccountAccessException("Project is unavailable.", 404);
+            var project = projectId.Length == 0 ? context.Project : org.Projects[projectId];
             if (project is not null && (project.OrganizationId != org.Id || !org.Projects.ContainsKey(project.Id)))
             {
                 throw new AccountAccessException("Project is unavailable.", 404);
@@ -29,7 +31,7 @@ namespace TerraScale.Dashboard.Common.Usage
                 throw new AccountAccessException("Database is unavailable.", 404);
             }
 
-            return new(context with { Project = project }, range is "1h" or "24h" or "30d" ? range : "7d", databaseId, project is not null && project.Id == projectId)
+            return new(context with { Organization = org, Project = project }, range is "1h" or "24h" or "30d" ? range : "7d", databaseId, project is not null && project.Id == projectId)
             {
                 Member = member
             };
