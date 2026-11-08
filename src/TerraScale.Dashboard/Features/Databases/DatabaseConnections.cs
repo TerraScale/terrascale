@@ -35,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 new("js", "JavaScript", $$"""
                     import { createTerraBaseV1Client } from "@terrascale/sdk";
 
-                    const db = createTerraBaseV1Client({ project: "{{projectId}}", token, baseUrl: "{{ApiUrl}}" }).database("{{database}}");
+                    const db = createTerraBaseV1Client({ project: "{{projectId}}", token: process.env.TERRASCALE_ACCESS_TOKEN, baseUrl: "{{ApiUrl}}" }).database("{{database}}");
                     const rows = await db.query("SELECT 1");
                     """),
                 new("go", "Go", $$"""
@@ -53,9 +53,10 @@ namespace TerraScale.Dashboard.Features.Databases
                     rows, err := db.Query(ctx, "SELECT 1")
                     """),
                 new("dotnet", ".NET", $$"""
-                    var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = apiKey });
+                    using var http = new HttpClient(TerraBaseHttp.CreateHandler());
+                    var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = Environment.GetEnvironmentVariable("TERRASCALE_API_KEY") });
                     var db = sql.Database("{{projectId}}", "{{database}}");
-                    var rows = await db.QueryAsync("SELECT 1", null, ct);
+                    var rows = await db.QueryAsync("SELECT 1");
                     """),
                 new("rust", "Rust", $"""
                     let client = terrascale::v1::Client::for_project_api_key("{projectId}", &api_key).build()?;
