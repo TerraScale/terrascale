@@ -11,6 +11,7 @@ import './style.css'
 import './shell-v3.css'
 import './prose-v3.css'
 import './home-v3.css'
+import './docs-footer.css'
 
 export default {
   extends: DefaultTheme,
