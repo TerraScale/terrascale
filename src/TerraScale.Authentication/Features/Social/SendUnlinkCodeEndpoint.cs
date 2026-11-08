@@ -8,10 +8,8 @@ using TerraScale.Authentication.Features.SignIn;
 
 namespace TerraScale.Authentication.Features.Social;
 
-/// <summary>Emails the caller a sign-in code for unlinking one of its linked providers.</summary>
 public sealed class SendUnlinkCodeEndpoint(PlatformAuthentication authentication, HostedAuth hosted, SignInMail mail) : PlatformEndpoint(authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/terrascale/account/providers/{provider}/code");
@@ -20,7 +18,6 @@ public sealed class SendUnlinkCodeEndpoint(PlatformAuthentication authentication
         Produces<OAuthErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
-    /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var provider = this.HttpContext.GetRouteValue("provider") as string;
