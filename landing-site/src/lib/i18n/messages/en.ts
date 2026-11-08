@@ -17,7 +17,7 @@ export const en = {
     docs: 'Docs',
     status: 'Status',
     login: 'Log in',
-    getStarted: 'Start building',
+    getStarted: 'Create account',
     toggleNav: 'Toggle navigation menu',
     language: {
       trigger: 'Language',
@@ -69,7 +69,7 @@ export const en = {
 
   hero: {
     headline: 'Multi-region database',
-    cta: 'Start free',
+    cta: 'Create account',
   },
 
 
@@ -173,9 +173,8 @@ export const en = {
   },
 
   cta: {
-    headlineLead: 'Register for the',
-    headlineAccent: 'TerraScale Public Alpha.',
-    ctaPrimary: 'Register for Public Alpha',
+    title: 'Ready to get started?',
+    ctaPrimary: 'Create account',
   },
 
   pricingTeaser: {
@@ -314,9 +313,8 @@ export const en = {
       contactSales: 'Contact Sales',
     },
     finalCta: {
-      titleLead: 'Ready to',
-      titleAccent: 'get started?',
-      cta: 'Register for Public Alpha',
+      title: 'Ready to get started?',
+      cta: 'Create account',
     },
     cadence: {
       free: 'No card required',

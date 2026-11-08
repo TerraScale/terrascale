@@ -19,7 +19,7 @@ export const es: Messages = {
     docs: 'Docs',
     status: 'Estado',
     login: 'Iniciar sesión',
-    getStarted: 'Empieza a construir',
+    getStarted: 'Crear cuenta',
     toggleNav: 'Abrir menú de navegación',
     language: {
       trigger: 'Idioma',
@@ -71,7 +71,7 @@ export const es: Messages = {
 
   hero: {
     headline: 'Base de datos multirregión',
-    cta: 'Empieza gratis',
+    cta: 'Crear cuenta',
   },
 
 
@@ -175,9 +175,8 @@ export const es: Messages = {
   },
 
   cta: {
-    headlineLead: 'Regístrate en',
-    headlineAccent: 'TerraScale Public Alpha.',
-    ctaPrimary: 'Registrarse en Public Alpha',
+    title: '¿Empezamos?',
+    ctaPrimary: 'Crear cuenta',
   },
 
   pricingTeaser: {
@@ -316,9 +315,8 @@ export const es: Messages = {
       contactSales: 'Contactar ventas',
     },
     finalCta: {
-      titleLead: '¿Listo para',
-      titleAccent: 'empezar?',
-      cta: 'Registrarse en Public Alpha',
+      title: '¿Empezamos?',
+      cta: 'Crear cuenta',
     },
     cadence: {
       free: 'Sin tarjeta de pago',
