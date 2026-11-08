@@ -37,6 +37,8 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
 
     public const string MfaTable = "mfa_credentials";
 
+    public const string PasskeyTable = "passkey_credentials";
+
     public const string OidcApplicationTable = "oidc_applications";
 
     public const string OidcAuthorizationTable = "oidc_authorizations";
@@ -93,7 +95,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         SigningKeyTable, OidcApplicationTable, OidcAuthorizationTable, OidcTokenTable,
         "email_admission", "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries", "email_alert_deliveries", "email_support_deliveries",
         OrganizationTable, MembershipTable, ProjectTable, ProjectMemberTable, ApiKeyTable, ApiKeyUsageTable,
-        InvitationTable, AuditEventTable, MfaTable, DeletionJobTable, DashboardDeletionCursorTable, ClosureJobTable,
+        InvitationTable, AuditEventTable, MfaTable, PasskeyTable, DeletionJobTable, DashboardDeletionCursorTable, ClosureJobTable,
         ClosureCancellationTable, ClosureCommitTable, ProjectAuthSettingsTable, OrganizationSsoTable, AccountDeletionReceiptTable,
         StepUpProofTable, StepUpDeletionGrantTable, StepUpPasscodeTable, EmailChangeTable, MailOutboxTable,
     ];

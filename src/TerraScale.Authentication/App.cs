@@ -13,6 +13,8 @@ using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Ui;
+using Fido2NetLib;
+using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
@@ -37,6 +39,26 @@ public static class App
         {
             throw new AuthConfigurationException("Authentication requires the GRU authority for durable single-use proofs and email admission");
         }
+    }
+
+    /// <summary>
+    /// The passkey relying party: the public origin's registrable host, so ceremonies from every allowed origin
+    /// (auth and the dashboard) bind to one account-scoped credential. Hosts of two labels are already registrable.
+    /// </summary>
+    public static string PasskeyRpId(string host)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(host);
+        var labels = host.Split('.');
+        return labels.Length >= 3 ? string.Join(".", labels, 1, labels.Length - 1) : host;
+    }
+
+    /// <summary>Whether an allowed origin's host is the relying party itself or one of its subdomains.</summary>
+    public static bool PasskeyOriginMatches(string origin, string rpId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(origin);
+        ArgumentException.ThrowIfNullOrEmpty(rpId);
+        return Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+            && (uri.Host.Equals(rpId, StringComparison.OrdinalIgnoreCase) || uri.Host.EndsWith("." + rpId, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -92,6 +114,23 @@ public static class App
         builder.Services.AddSingleton<PasswordHasher>();
         builder.Services.AddSingleton<HostedAuth>();
         builder.Services.AddSingleton<TotpCredentials>();
+        builder.Services.AddSingleton<PasskeyCredentials>();
+        var passkeyOrigins = new[] { options.PublicOrigin.AbsoluteUri.TrimEnd('/'), AuthOptions.DashboardOrigin };
+        var passkeyRpId = PasskeyRpId(options.PublicOrigin.Host);
+        if (!options.Development)
+        {
+            foreach (var origin in passkeyOrigins.Where(origin => !PasskeyOriginMatches(origin, passkeyRpId)))
+            {
+                throw new AuthConfigurationException($"The passkey origin {origin} must be the relying party {passkeyRpId} or a subdomain of it.");
+            }
+        }
+
+        builder.Services.AddSingleton(new Fido2NetLib.Fido2(new Fido2Configuration
+        {
+            RPID = passkeyRpId,
+            RPName = "TerraScale",
+            Origins = new HashSet<string>(passkeyOrigins, StringComparer.Ordinal),
+        }));
         builder.Services.AddSingleton<PlatformDirectory>();
         builder.Services.AddSingleton<AccountDeletion>();
         // Project closure reaches TerraBase through the regional peer transport, acting as no user.
