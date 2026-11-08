@@ -5,8 +5,8 @@ internal static class HostedPageBehavior
 {
     public const string Script = """
 (function () {
-  rowData.querySelectorAll('input[type="password"]').forEach(function (input) {
-    var group = rowData.createElement('div'), toggle = rowData.createElement('button');
+  document.querySelectorAll('input[type="password"]').forEach(function (input) {
+    var group = document.createElement('div'), toggle = document.createElement('button');
     group.className = 'password-control';
     input.before(group); group.append(input);
     toggle.type = 'button'; toggle.className = 'password-toggle';
@@ -21,8 +21,8 @@ internal static class HostedPageBehavior
     });
     group.append(toggle);
   });
-  rowData.querySelectorAll('input.code[name="code"][pattern="[0-9]{6}"][maxlength="6"]').forEach(function (value) {
-    var group = rowData.createElement('div'), digits = [], label = rowData.querySelector('label[for="' + value.id + '"]');
+  document.querySelectorAll('input.code[name="code"][pattern="[0-9]{6}"][maxlength="6"]').forEach(function (value) {
+    var group = document.createElement('div'), digits = [], label = document.querySelector('label[for="' + value.id + '"]');
     group.className = 'otp'; group.setAttribute('role', 'group');
     group.setAttribute('aria-label', label ? label.textContent : 'Verification code');
     value.type = 'hidden'; value.after(group);
@@ -34,7 +34,7 @@ internal static class HostedPageBehavior
     }
     for (var i = 0; i < 6; i++) {
       (function (index) {
-        var digit = rowData.createElement('input');
+        var digit = document.createElement('input');
         digit.type = 'text'; digit.inputMode = 'numeric'; digit.pattern = '[0-9]'; digit.required = true;
         digit.maxLength = 6; digit.placeholder = '·'; digit.autocomplete = index === 0 ? 'one-time-code' : 'off';
         digit.setAttribute('aria-label', 'Digit ' + (index + 1));
@@ -58,14 +58,15 @@ internal static class HostedPageBehavior
     }
     if (value.autofocus) digits[0].focus();
   });
-  rowData.addEventListener('submit', function (event) {
+  document.addEventListener('submit', function (event) {
     var form = event.target;
-    if (form instanceof HTMLFormElement && !form.hasAttribute('data-busy')) {
-      form.setAttribute('data-busy', '');
-      form.querySelectorAll('button[type="submit"]').forEach(function (button) {
-        button.setAttribute('aria-busy', 'true'); button.disabled = true;
-      });
-    }
+    if (!(form instanceof HTMLFormElement)) return;
+    if (form.hasAttribute('aria-busy')) { event.preventDefault(); return; }
+    form.setAttribute('aria-busy', 'true');
+    form.querySelectorAll('button[type="submit"]').forEach(function (button) {
+      if (button.disabled) return;
+      button.setAttribute('aria-busy', 'true'); button.disabled = true;
+    });
   });
 })();
 """;
