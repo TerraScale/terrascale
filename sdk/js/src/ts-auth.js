@@ -1733,67 +1733,6 @@ export class TsAuthJwtTemplatesClient {
   }
 }
 
-// audit-events (snake_case)
-
-/**
- * @typedef {{
- *   readonly id: import("./ids.js").EntityId;
- *   readonly instance_id: import("./ids.js").EntityId;
- *   readonly type: string;
- *   readonly actor_id?: import("./ids.js").EntityId | undefined; // Omitted from the wire when null.
- *   readonly data: Record<string, unknown>;
- *   readonly created_at: number; // Unix seconds.
- *   readonly integrity_version: number;
- *   readonly integrity_hash: string;
- *   readonly integrity_signature: string | null; // Both are null when the instance has no audit signing key.
- *   readonly integrity_key_fingerprint: string | null;
- * }} TsAuthAuditEvent
- */
-
-export class TsAuthAuditEventsClient {
-  /**
-   * @type {TsAuthHttp}
-   * @readonly
-   */
-  #http;
-  /**
-   * @type {string}
-   * @readonly
-   */
-  #slug;
-
-  /**
-   * @param {TsAuthHttp} http
-   * @param {string} instanceSlug
-   */
-  constructor(http, instanceSlug) {
-    this.#http = http;
-    this.#slug = instanceSlug;
-  }
-
-  /**
-   * @param {TsAuthRequestOptions & { readonly limit?: number | undefined }} [options={}]
-   * @returns {Promise<TerraScaleResult<readonly TsAuthAuditEvent[]>>}
-   */
-  list(options = {}) {
-    if (
-      options.limit !== undefined &&
-      (!Number.isInteger(options.limit) ||
-        options.limit < 1 ||
-        options.limit > 100)
-    ) {
-      throw new TypeError("limit must be an integer between 1 and 100.");
-    }
-    return this.#http.request({
-      method: "GET",
-      path: `v1/${this.#slug}/audit-events`,
-      routeName: "tsauth.auditEvents.list",
-      query: options.limit === undefined ? {} : { limit: options.limit },
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-  }
-}
-
 // plan and invoicing family (snake_case)
 
 // The published URL and route segment for this family is spelled with an
@@ -2536,11 +2475,6 @@ export class TsAuthClient {
    */
   jwtTemplates;
   /**
-   * @type {TsAuthAuditEventsClient}
-   * @readonly
-   */
-  auditEvents;
-  /**
    * @type {TsAuthBillingClient}
    * @readonly
    */
@@ -2588,7 +2522,6 @@ export class TsAuthClient {
     this.connections = new TsAuthConnectionsClient(this.#http, slug);
     this.directories = new TsAuthDirectoriesClient(this.#http, slug);
     this.jwtTemplates = new TsAuthJwtTemplatesClient(this.#http, slug);
-    this.auditEvents = new TsAuthAuditEventsClient(this.#http, slug);
     this.billing = new TsAuthBillingClient(this.#http, slug);
     this.instance = new TsAuthInstanceClient(this.#http, slug);
     this.oauthClients = new TsAuthOauthClientsClient(this.#http, slug);

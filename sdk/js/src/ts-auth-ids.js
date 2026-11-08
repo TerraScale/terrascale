@@ -27,7 +27,6 @@ const entityReferenceFields = new Map([
   ["tsauth.organizations.listInvitations", ["organization_id"]],
   ["tsauth.organizations.createDomain", ["organization_id"]],
   ["tsauth.organizations.listDomains", ["organization_id"]],
-  ["tsauth.auditEvents.list", ["instance_id"]],
   ["tsauth.oauthClients.create", ["client_id"]],
   ["tsauth.oauthClients.update", ["client_id"]],
   ["tsauth.oauthClients.list", ["client_id"]],
