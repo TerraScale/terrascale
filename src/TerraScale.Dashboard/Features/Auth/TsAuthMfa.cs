@@ -8,11 +8,16 @@ namespace TerraScale.Dashboard.Features.Auth
     // ts-auth enrols, shows recovery codes and disables two-factor on its hosted security page.
     public sealed record AccountMfaStatus(bool Enabled, int RecoveryCodesRemaining, string ManageUrl);
 
+    // One of the account's enrolled passkeys, as ts-auth reports it.
+    public sealed record AccountPasskey(string Id, string? Name, string Aaguid, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt);
+
     // The caller's own two-factor status and an organization's two-factor policy, both owned by ts-auth.
     public interface ITsAuthMfa
     {
         // Null when ts-auth does not report a status; unknown never means disabled.
         Task<AccountMfaStatus?> GetAccountMfaAsync(SessionRecord session, CancellationToken cancellationToken);
+        // Null when ts-auth does not report the passkeys; unknown never means none.
+        Task<IReadOnlyList<AccountPasskey>?> GetAccountPasskeysAsync(SessionRecord session, CancellationToken cancellationToken);
         // Null when ts-auth does not report the organization's policy.
         Task<bool?> GetRequireMfaAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         // Owner only; ts-auth refuses with mfa_not_enrolled while the caller has no two-factor.
@@ -50,6 +55,25 @@ namespace TerraScale.Dashboard.Features.Auth
             }
             catch (Exception error) when (Unreported(error, cancellationToken)) { return null; }
         }
+
+        public async Task<IReadOnlyList<AccountPasskey>?> GetAccountPasskeysAsync(SessionRecord session, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var body = await MfaCallAsync(HttpMethod.Get, "account/passkeys", session, null, cancellationToken);
+                return body.RootElement.TryGetProperty("passkeys", out var list) && list.ValueKind is JsonValueKind.Array
+                    ? [.. list.EnumerateArray().Select(Passkey)]
+                    : [];
+            }
+            catch (Exception error) when (Unreported(error, cancellationToken)) { return null; }
+        }
+
+        private static AccountPasskey Passkey(JsonElement item) => new(
+            item.GetProperty("id").GetString() ?? "",
+            item.TryGetProperty("name", out var name) && name.ValueKind is JsonValueKind.String ? name.GetString() : null,
+            item.TryGetProperty("aaguid", out var aaguid) && aaguid.ValueKind is JsonValueKind.String ? aaguid.GetString() ?? "" : "",
+            item.GetProperty("created_at").GetDateTimeOffset(),
+            item.TryGetProperty("last_used_at", out var lastUsed) && lastUsed.ValueKind is JsonValueKind.String ? lastUsed.GetDateTimeOffset() : null);
 
         public async Task<bool?> GetRequireMfaAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
         {

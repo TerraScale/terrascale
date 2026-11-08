@@ -388,11 +388,29 @@ else
 {
 <div><dt>Passkeys</dt><dd>None</dd></div>
 }
+</dl>
 @foreach (var passkey in Model.Passkeys)
 {
-<div><dt>@(passkey.Name is { Length: > 0 } name ? name : "Passkey")</dt><dd>Added @passkey.CreatedAt.ToString("d", CultureInfo.InvariantCulture) · @(passkey.LastUsedAt is { } lastUsed ? "Last used " + lastUsed.ToString("d", CultureInfo.InvariantCulture) : "Never used")</dd></div>
+<form method="post" action="/ui/@Model.Slug/security/passkeys/rename">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="id" value="@passkey.CredentialId">
+<div class="field">
+<label for="passkey-name-@passkey.CredentialId">Passkey name</label>
+<input id="passkey-name-@passkey.CredentialId" name="name" maxlength="64" autocomplete="off" value="@passkey.Name">
+</div>
+<p class="hint">Added @passkey.CreatedAt.ToString("d", CultureInfo.InvariantCulture) · @(passkey.LastUsedAt is { } lastUsed ? "Last used " + lastUsed.ToString("d", CultureInfo.InvariantCulture) : "Never used")</p>
+<button type="submit" class="secondary">Rename</button>
+</form>
+<form method="post" action="/ui/@Model.Slug/security/passkeys/delete">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="id" value="@passkey.CredentialId">
+<div class="field">
+<label for="passkey-code-@passkey.CredentialId">Authenticator or recovery code</label>
+<input id="passkey-code-@passkey.CredentialId" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
+</div>
+<button type="submit" class="secondary">Remove</button>
+</form>
 }
-</dl>
 <form id="passkey-add" data-options="/ui/@Model.Slug/security/passkeys/options" data-verify="/ui/@Model.Slug/security/passkeys/verify">
 <div class="field">
 <label for="passkey-name">Passkey name</label>

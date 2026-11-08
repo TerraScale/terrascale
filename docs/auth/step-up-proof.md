@@ -14,7 +14,7 @@ dashboard callback origin, without a query or fragment.
 Supported pairs are `delete_account` with `ts-dashboard` or `ts-auth`,
 `create_pat` with `ts-dashboard`, and `create_api_key`, `rotate_api_key`,
 `create_oauth_client`, `update_oauth_client`, `rotate_oauth_client`,
-`change_email`, `add_passkey` or `enroll_totp` with `ts-auth` (see `email-change.md`). The hosted page identifies the operation
+`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). The hosted page identifies the operation
 and account. It requires a fresh password, or one explicitly requested email
 code for a passwordless account, followed by a fresh active MFA factor.
 Opening the page sends no email. An attempt requests at most one code and uses

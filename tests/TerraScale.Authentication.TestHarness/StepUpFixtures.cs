@@ -63,6 +63,7 @@ public static class StepUpFixtures
             : request.Method == HttpMethod.Post && path.EndsWith("/clients", StringComparison.Ordinal) ? "create_oauth_client"
             : request.Method == HttpMethod.Put && path.Contains("/clients/", StringComparison.Ordinal) ? "update_oauth_client"
             : request.Method == HttpMethod.Post && path.Contains("/clients/", StringComparison.Ordinal) && path.EndsWith("/secret/rotate", StringComparison.Ordinal) ? "rotate_oauth_client"
+            : request.Method == HttpMethod.Delete && path.StartsWith("/v1/terrascale/account/passkeys/", StringComparison.Ordinal) ? "delete_passkey"
             : request.Method == HttpMethod.Post && path == "/v1/terrascale/account/email-change" ? "change_email"
             : request.Method == HttpMethod.Post && path == "/v1/terrascale/account/passkeys/verify" ? "add_passkey" : null;
         if (token is not null && purpose is not null && await oidc.ApprovedProofAsync(token, purpose) is { } proof)

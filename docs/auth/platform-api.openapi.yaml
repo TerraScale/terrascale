@@ -367,6 +367,107 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/passkeys:
+    get:
+      operationId: list_passkeys
+      tags: [Members]
+      summary: List your passkeys
+      description: |
+        The caller's enrolled passkeys: id, caller-chosen name, authenticator model (aaguid), creation time and last
+        use. Public keys and other credential material are never returned.
+      responses:
+        '200':
+          description: The account's passkeys in enrollment order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [passkeys]
+                properties:
+                  passkeys:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, aaguid, created_at]
+                      properties:
+                        id: { type: string, description: Base64url credential id. }
+                        name: { type: [string, 'null'], description: Caller-chosen label. }
+                        aaguid: { type: string, description: 'Authenticator model identifier, display only.' }
+                        created_at: { type: string, format: date-time }
+                        last_used_at: { type: [string, 'null'], format: date-time, description: Last successful assertion, or null before the first one. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/passkeys/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: Base64url credential id of an enrolled passkey.
+    patch:
+      operationId: rename_passkey
+      tags: [Members]
+      summary: Rename a passkey
+      description: |
+        Changes the caller-chosen name of one enrolled passkey, 1 to 64 characters. The write is conditional on the
+        account's authentication state and the stored passkey list; a concurrent change answers 409 version_conflict,
+        an unknown id 404 passkey_not_found.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 64, description: New caller-chosen label. }
+      responses:
+        '200':
+          description: The renamed passkey.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, aaguid, created_at]
+                properties:
+                  id: { type: string, description: Base64url credential id. }
+                  name: { type: [string, 'null'], description: Caller-chosen label. }
+                  aaguid: { type: string, description: 'Authenticator model identifier, display only.' }
+                  created_at: { type: string, format: date-time }
+                  last_used_at: { type: [string, 'null'], format: date-time, description: Last successful assertion, or null before the first one. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: passkey_not_found; no passkey with this id is enrolled for the account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    delete:
+      operationId: delete_passkey
+      tags: [Members]
+      summary: Delete a passkey
+      description: |
+        Removes one enrolled passkey of the caller and releases its credential claim; the account's sessions and
+        tokens stay. Requires a fresh approved delete_passkey/ts-auth proof in X-TerraScale-Step-Up-Proof, exactly as
+        account deletion does. The write is conditional on the account's authentication state and the stored passkey
+        list; a concurrent change answers 409 version_conflict, an unknown id 404 passkey_not_found. Deleting the
+        last passkey of an account without an authenticator app that belongs to an organization requiring two-factor
+        authentication answers 409 last_factor.
+      responses:
+        '204': { description: 'Deleted.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: passkey_not_found; no passkey with this id is enrolled for the account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/account:
     delete:
       operationId: delete_account

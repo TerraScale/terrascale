@@ -40,10 +40,13 @@ namespace TerraScale.Dashboard.Features.Profile
                 permissions.Add("Provision organization resources");
             }
 
+            var listed = await mfa.GetAccountPasskeysAsync(context.Session, Cancellation);
             return new(context.UserId, context.Account.Id, context.Account.Name, context.Account.Email, context.Account.Phone,
                 context.Account.Locale, context.Account.ActiveOrganizationId, context.Account.ActiveProjectId,
                 context.Organization?.Id ?? "", context.Project?.Id ?? "", context.Organization?.Name ?? "", context.Role.Length == 0 ? null : context.Role,
-                permissions, (await mfa.GetAccountMfaAsync(context.Session, Cancellation))?.Enabled, null, await tokens.ListAsync(context, Cancellation),
+                permissions, (await mfa.GetAccountMfaAsync(context.Session, Cancellation))?.Enabled,
+                listed is null ? null : [.. listed.Select(passkey => new DashboardMcpPasskey(passkey.Id, passkey.Name, passkey.Aaguid, passkey.CreatedAt, passkey.LastUsedAt))],
+                await tokens.ListAsync(context, Cancellation),
                 PlatformDatabases.IsPlatform(context.Organization?.Id) ? "viewer" : context.Project?.Role, context.CanWriteProjectData);
         }
 
@@ -96,14 +99,16 @@ namespace TerraScale.Dashboard.Features.Profile
         [property: Description("Whether two-factor authentication is on for your account, as ts-auth reports it; null when ts-auth did not report it, which does not mean disabled.")]
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
         bool? MfaEnabled,
-        [property: Description("Real passkey records are unavailable from the current owning provider contract; null does not mean no passkeys.")]
+        [property: Description("Your enrolled passkeys without key material, as ts-auth reports them; null when ts-auth did not report them, which does not mean none.")]
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
         IReadOnlyList<DashboardMcpPasskey>? Passkeys,
         IReadOnlyList<ProfileToken> AccessTokens,
         [property: Description("Effective role for exactly projectId, independent of organization membership.")]
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ProjectRole, bool CanWriteProjectData);
 
-    public sealed record DashboardMcpPasskey(string Id, string Name, DateTimeOffset CreatedAt);
+    public sealed record DashboardMcpPasskey(string Id, string? Name, string Aaguid, DateTimeOffset CreatedAt,
+        [property: Description("The last successful sign-in with this passkey, or null before the first one.")]
+        DateTimeOffset? LastUsedAt);
 
     public sealed record DashboardMcpSaved(bool Saved);
     public sealed record DashboardMcpRevoked(bool Revoked);
