@@ -28,14 +28,14 @@ const (
 	StepUpRotateAPIKey = "rotate_api_key"
 )
 
-const stepUpCallback = "https://dash.terrascale.tech/auth/step-up/callback"
+const DefaultDashboardOrigin = "https://dash.terrascale.tech"
 
 func (u *User) RequestStepUp(ctx context.Context, purpose string) (*StepUpBody, error) {
 	if purpose != StepUpCreateAPIKey && purpose != StepUpRotateAPIKey {
 		return nil, fmt.Errorf("tsauth: unsupported step-up purpose %q", purpose)
 	}
 	var out StepUpBody
-	body := StepUpRequest{Purpose: purpose, Audience: "ts-auth", ReturnURI: stepUpCallback}
+	body := StepUpRequest{Purpose: purpose, Audience: "ts-auth", ReturnURI: DefaultDashboardOrigin + "/auth/step-up/callback"}
 	if _, err := u.doStatus(ctx, http.MethodPost, []string{"step-up"}, nil, body, &out); err != nil {
 		return nil, err
 	}
