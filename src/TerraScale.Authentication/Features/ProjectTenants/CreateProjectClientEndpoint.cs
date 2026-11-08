@@ -24,7 +24,7 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var request = await this.BodyAsync(ProjectTenantJson.Default.CreateClientRequest, cancellationToken);
         var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
         var type = request.Type is ClientTypes.Public or ClientTypes.Confidential ? request.Type : throw Invalid("type must be public or confidential.");
-        List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => Redirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
+        List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => ClientRedirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
         if (redirects.Count is < 1 or > 10)
         {
             throw Invalid("redirect_uris must hold 1 to 10 URIs.");
@@ -43,8 +43,4 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         return Results.Json(Map(client, secret), ProjectTenantJson.Default.ClientBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"/v1/{projectId}/clients/{client.ClientId}");
     }
-
-    private static Uri? Redirect(string? value) =>
-        Uri.TryCreate(value, UriKind.Absolute, out var uri) && string.IsNullOrEmpty(uri.UserInfo) && !value.Contains('#', StringComparison.Ordinal)
-        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback) ? uri : null;
 }
