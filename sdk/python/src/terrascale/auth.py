@@ -64,6 +64,93 @@ def _rotate_key_call(api_key: str | None, issuer: str | None, key_id: str, grace
                       body={"previous_secret_ttl": grace_seconds}, base_url=origin)
 
 
+PROOF_HEADER = "X-TerraScale-Step-Up-Proof"
+
+
+def _origin(issuer: str | None) -> str:
+    url = httpx.URL((issuer or DEFAULT_ISSUER).rstrip("/"))
+    loopback = url.host in ("localhost", "127.0.0.1", "::1")
+    if url.scheme != "https" and not (url.scheme == "http" and loopback):
+        raise ValueError("issuer must be an https URL")
+    return str(url.copy_with(path="/", query=None, fragment=None)).rstrip("/")
+
+
+def _keys_path(organization: str, project: str | None, *extra: str) -> list[str]:
+    path = ["v1", "terrascale", "organizations", validate_id(organization, "organization")]
+    if project is not None:
+        path += ["projects", validate_id(project, "project")]
+    return [*path, "api-keys", *extra]
+
+
+def create_api_key_call(issuer: str | None, organization: str, project: str | None, name: str,
+                        scopes: Sequence[str], database: str | None, expires_at: str | None,
+                        allowed_cidrs: Sequence[str] | None, step_up_proof: str) -> _spec.Call:
+    body: dict[str, Any] = {"name": name, "scopes": list(scopes)}
+    if database is not None:
+        body["database"] = validate_id(database, "database")
+    if expires_at is not None:
+        body["expires_at"] = expires_at
+    if allowed_cidrs is not None:
+        body["allowed_cidrs"] = list(allowed_cidrs)
+    return _spec.Call("POST", _keys_path(organization, project),
+                      lambda r: models.ApiKeySecret.from_json(r.json()),
+                      headers={PROOF_HEADER: step_up_proof}, body=body, success=(201,), base_url=_origin(issuer))
+
+
+def list_api_keys_call(issuer: str | None, organization: str, project: str | None,
+                       limit: int | None, cursor: str | None) -> _spec.Call:
+    return _spec.Call("GET", _keys_path(organization, project),
+                      lambda r: models.ApiKeyPage.from_json(r.json()),
+                      params=_spec._page_params(limit, cursor), replay_safe=True, base_url=_origin(issuer))
+
+
+def revoke_api_key_call(issuer: str | None, organization: str, project: str | None, key: str) -> _spec.Call:
+    return _spec.Call("DELETE", _keys_path(organization, project, validate_id(key, "key id")), _spec._none,
+                      success=(204,), base_url=_origin(issuer))
+
+
+def _clients_path(project: str, *extra: str) -> list[str]:
+    return ["v1", validate_id(project, "project"), "clients", *extra]
+
+
+def create_project_client_call(issuer: str | None, project: str, name: str, client_type: str,
+                               redirect_uris: Sequence[str], step_up_proof: str) -> _spec.Call:
+    body = {"name": name, "type": client_type, "redirect_uris": list(redirect_uris)}
+    return _spec.Call("POST", _clients_path(project),
+                      lambda r: models.ProjectClient.from_json(r.json()),
+                      headers={PROOF_HEADER: step_up_proof}, body=body, success=(201,), base_url=_origin(issuer))
+
+
+def list_project_clients_call(issuer: str | None, project: str) -> _spec.Call:
+    return _spec.Call("GET", _clients_path(project),
+                      lambda r: models.ProjectClientPage.from_json(r.json()), replay_safe=True,
+                      base_url=_origin(issuer))
+
+
+def update_project_client_call(issuer: str | None, project: str, client_id: str, name: str,
+                               redirect_uris: Sequence[str], step_up_proof: str) -> _spec.Call:
+    body = {"name": name, "redirect_uris": list(redirect_uris)}
+    return _spec.Call("PUT", _clients_path(project, validate_id(client_id, "client id")),
+                      lambda r: models.ProjectClient.from_json(r.json()),
+                      headers={PROOF_HEADER: step_up_proof}, body=body, base_url=_origin(issuer))
+
+
+def rotate_project_client_secret_call(issuer: str | None, project: str, client_id: str,
+                                      grace_seconds: int | None, step_up_proof: str) -> _spec.Call:
+    if grace_seconds is not None and (not isinstance(grace_seconds, int) or isinstance(grace_seconds, bool)
+                                      or not 0 <= grace_seconds <= 86400):
+        raise ValueError("grace_seconds must be 0 to 86400 seconds")
+    body: dict[str, Any] = {} if grace_seconds is None else {"grace_seconds": grace_seconds}
+    return _spec.Call("POST", _clients_path(project, validate_id(client_id, "client id"), "secret", "rotate"),
+                      lambda r: models.ProjectClientSecret.from_json(r.json()),
+                      headers={PROOF_HEADER: step_up_proof}, body=body, base_url=_origin(issuer))
+
+
+def delete_project_client_call(issuer: str | None, project: str, client_id: str) -> _spec.Call:
+    return _spec.Call("DELETE", _clients_path(project, validate_id(client_id, "client id")), _spec._none,
+                      success=(204,), base_url=_origin(issuer))
+
+
 def _transport_error(attempts: int, exc: Exception) -> TokenError:
     detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
     return TokenError(0, "token_transport_error", f"token exchange failed after {attempts} attempt{'s' if attempts != 1 else ''}"

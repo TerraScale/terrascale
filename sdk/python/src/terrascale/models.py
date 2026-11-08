@@ -8,7 +8,17 @@ from typing import Any
 
 from .ids import validate_id
 
-__all__ = ["Database", "DatabasePage", "ScopedKey"]
+__all__ = [
+    "ApiKey",
+    "ApiKeyPage",
+    "ApiKeySecret",
+    "Database",
+    "DatabasePage",
+    "ProjectClient",
+    "ProjectClientPage",
+    "ProjectClientSecret",
+    "ScopedKey",
+]
 
 
 @dataclass(frozen=True)
@@ -129,5 +139,143 @@ class DatabasePage:
     def from_json(cls, body: dict[str, Any]) -> DatabasePage:
         return cls(
             items=[Database.from_json(d) for d in body.get("items") or []],
+            next_cursor=body.get("next") or None,
+        )
+
+
+def _strings(body: dict[str, Any], key: str, what: str) -> list[str]:
+    values = body.get(key)
+    if not isinstance(values, list) or any(not isinstance(v, str) or not v for v in values):
+        raise ValueError(f"invalid {what}")
+    return list(values)
+
+
+@dataclass(frozen=True)
+class ApiKey:
+    """An organization or project API key, never its secret."""
+
+    id: str
+    name: str
+    organization_id: str
+    scopes: list[str]
+    created_by: str
+    created_at: str
+    project_id: str | None = None
+    database: str | None = None
+    expires_at: str | None = None
+    previous_secret_expires_at: str | None = None
+    last_used_at: str | None = None
+    allowed_cidrs: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ApiKey:
+        for key in ("id", "name", "organization_id", "created_by", "created_at"):
+            if not isinstance(body.get(key), str) or not body[key]:
+                raise ValueError("invalid api key metadata")
+        return cls(
+            id=validate_id(body["id"]),
+            name=body["name"],
+            organization_id=validate_id(body["organization_id"]),
+            scopes=_strings(body, "scopes", "api key scopes"),
+            created_by=validate_id(body["created_by"]),
+            created_at=body["created_at"],
+            project_id=validate_id(body["project_id"]) if body.get("project_id") is not None else None,
+            database=validate_id(body["database"]) if body.get("database") is not None else None,
+            expires_at=body.get("expires_at"),
+            previous_secret_expires_at=body.get("previous_secret_expires_at"),
+            last_used_at=body.get("last_used_at"),
+            allowed_cidrs=_strings(body, "allowed_cidrs", "api key allowed cidrs"),
+        )
+
+
+@dataclass(frozen=True)
+class ApiKeySecret:
+    """A created or rotated key with its whole ``<ULID>_<52 chars>`` string, answered once."""
+
+    api_key: ApiKey
+    key: str = field(repr=False)
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ApiKeySecret:
+        if not isinstance(body.get("key"), str) or not body["key"]:
+            raise ValueError("invalid api key secret")
+        inner = body.get("api_key")
+        if not isinstance(inner, dict):
+            raise ValueError("invalid api key secret")
+        return cls(api_key=ApiKey.from_json(inner), key=body["key"])
+
+
+@dataclass(frozen=True)
+class ApiKeyPage:
+    items: list[ApiKey]
+    next_cursor: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ApiKeyPage:
+        return cls(
+            items=[ApiKey.from_json(k) for k in body.get("items") or []],
+            next_cursor=body.get("next") or None,
+        )
+
+
+@dataclass(frozen=True)
+class ProjectClient:
+    """A project's registered OAuth client; ``client_secret`` appears only on confidential creation."""
+
+    client_id: str
+    name: str
+    type: str
+    redirect_uris: list[str]
+    created_at: str
+    client_secret: str | None = field(default=None, repr=False)
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectClient:
+        for key in ("client_id", "name", "type", "created_at"):
+            if not isinstance(body.get(key), str) or not body[key]:
+                raise ValueError("invalid project client metadata")
+        if body["type"] not in ("public", "confidential"):
+            raise ValueError("invalid project client type")
+        secret = body.get("client_secret")
+        if secret is not None and (not isinstance(secret, str) or not secret):
+            raise ValueError("invalid project client secret")
+        return cls(
+            client_id=validate_id(body["client_id"]),
+            name=body["name"],
+            type=body["type"],
+            redirect_uris=_strings(body, "redirect_uris", "project client redirect uris"),
+            created_at=body["created_at"],
+            client_secret=secret,
+        )
+
+
+@dataclass(frozen=True)
+class ProjectClientSecret:
+    """A rotated client secret, answered exactly once."""
+
+    client_id: str
+    client_secret: str = field(repr=False)
+    previous_secret_expires_at: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectClientSecret:
+        if not isinstance(body.get("client_secret"), str) or not body["client_secret"]:
+            raise ValueError("invalid project client secret")
+        return cls(
+            client_id=validate_id(body["client_id"]),
+            client_secret=body["client_secret"],
+            previous_secret_expires_at=body.get("previous_secret_expires_at"),
+        )
+
+
+@dataclass(frozen=True)
+class ProjectClientPage:
+    items: list[ProjectClient]
+    next_cursor: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectClientPage:
+        return cls(
+            items=[ProjectClient.from_json(c) for c in body.get("items") or []],
             next_cursor=body.get("next") or None,
         )

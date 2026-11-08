@@ -170,7 +170,7 @@ Automatic all-regions placement and moving the home region are coming on the ser
 
 | Surface | Methods |
 | --- | --- |
-| Client | `TerraScale(api_key=, project=, token=, base_url=, region=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=, ttl_seconds=)`, `rename_database(id, name)`, `fork_database`, `set_database_ttl`, `clear_database_ttl`, `delete_database`, `create_scoped_key` |
+| Client | `TerraScale(api_key=, project=, token=, base_url=, region=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=, ttl_seconds=)`, `rename_database(id, name)`, `fork_database`, `set_database_ttl`, `clear_database_ttl`, `delete_database`, `create_scoped_key`, `rotate_api_key`, `create_api_key(organization, name, scopes, step_up_proof=, project=, database=, expires_at=, allowed_cidrs=)`, `list_api_keys(organization, project=, limit=, cursor=)`, `revoke_api_key(organization, key, project=)`, `create_project_client(name, client_type, redirect_uris, step_up_proof=, project=)`, `list_project_clients(project=)`, `update_project_client(client_id, name, redirect_uris, step_up_proof=, project=)`, `rotate_project_client_secret(client_id, step_up_proof=, grace_seconds=, project=)`, `delete_project_client(client_id, project=)` |
 | Database | `info()`, `delete()`, `branch(name)`, `execute`, `query`, `batch` (see [SQL](#sql)) |
 
 **IDs** are canonical ULIDs (`terrascale.new_id()`).
