@@ -166,7 +166,6 @@ release qualification remain open gates.
 | Live table shapes | `db.shape(table)` |
 | Databases | `client.databases.create/list/get/rename/delete/branch`, plus `deleteIfId`/`branchIfId` guarded by the database's immutable ID |
 | Backups and usage | `db.backups`, `db.metrics`, `client.metrics`, `client.backupDestination` |
-| Saved queries | `client.savedQueries` |
 | File buckets | `client.storage` |
 
 `client.metrics.usage()` includes the current month’s `readUnits`, `writeUnits` and billed `units` in `month`. Billed `units` equals `writeUnits`; SQL reads count against fair use. Database usage reports stored bytes and operation counts.
@@ -291,7 +290,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the 0.0.1 migration and breaking changes.
 
 `@terrascale/sdk/management` exports `createTerraScaleManagementClient` with the
 root client's project credentials. It exposes `databases`, `database(name)`,
-`metrics`, `backupDestination` and `savedQueries`; database handles include
+`metrics` and `backupDestination`; database handles include
 SQL, backups and usage.
 
 The same entrypoint exports `createTerraScaleIdentityManagementClient({ apiBaseUrl,

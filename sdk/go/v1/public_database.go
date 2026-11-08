@@ -77,6 +77,14 @@ func publicCall[T any](ctx context.Context, c *Client, req request, in any) (*T,
 	return &out, nil
 }
 
+func projectCall[T any](ctx context.Context, c *Client, method, project string, query url.Values, in any, extra ...string) (*T, error) {
+	req, err := projectRequest(method, project, query, extra...)
+	if err != nil {
+		return nil, err
+	}
+	return publicCall[T](ctx, c, req, in)
+}
+
 func databaseCall[T any](ctx context.Context, d *Database, method string, query url.Values, in any, extra ...string) (*T, error) {
 	p, err := d.path(extra...)
 	if err != nil {

@@ -23,7 +23,7 @@ test("management entrypoints construct the existing project-scoped named clients
     expect(Object.isFrozen(client)).toBe(true);
     expect(JSON.stringify(client)).not.toContain(config.token);
     expect(Object.keys(client).sort()).toEqual([
-      "backupDestination", "database", "databases", "metrics", "savedQueries",
+      "backupDestination", "database", "databases", "metrics",
     ]);
   }
 });

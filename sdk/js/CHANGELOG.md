@@ -10,7 +10,7 @@ TTL, change notifications, the read-only
 entrypoint and the `terrascale-models` CLI. Database placement is one region:
 `replicaRegions`, `allRegions`, `databases.update` and the replication reads are
 removed. SQL over HTTPS and WebSocket, live SQL table shapes, the database
-catalog, backups, usage, saved queries and file buckets remain.
+catalog, backups, usage and file buckets remain.
 
 ## 0.0.19 — public-client refresh
 

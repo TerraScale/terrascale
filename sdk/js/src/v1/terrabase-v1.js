@@ -15,7 +15,6 @@ import { V1Transport } from "./transport.js";
 import { V1Health, V1Platform, V1Regions } from "./system.js";
 import { V1Backups, V1BackupDestinationClient } from "./backups.js";
 import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
-import { V1SavedQueries } from "./saved-queries.js";
 /** @import { TerraBaseV1ClientConfig } from "./transport.js" */
 
 /** @typedef {{ readonly ttlSeconds?: number | undefined; readonly signal?: AbortSignal | undefined }} V1AgentDatabaseOptions */
@@ -131,8 +130,6 @@ export class TerraBaseV1Client {
   #backupDestination;
   /** @type {V1ProjectUsageClient} */
   #metrics;
-  /** @type {V1SavedQueries} */
-  #savedQueries;
   /** @type {V1Databases} */
   #databases;
   /** @type {V1Transport} */
@@ -151,7 +148,6 @@ export class TerraBaseV1Client {
     this.#projects.set(config.project, this.#transport);
     this.#storage = new V1FileStorage(this.#transport, config.fetch ?? globalThis.fetch.bind(globalThis));
     this.#databases = new V1Databases(this.#transport);
-    this.#savedQueries = new V1SavedQueries(this.#transport);
     this.#metrics = new V1ProjectUsageClient(this.#transport);
     this.#backupDestination = new V1BackupDestinationClient(this.#transport);
     this.#health = new V1Health(this.#transport);
@@ -282,8 +278,6 @@ export class TerraBaseV1Client {
   get databases() { return this.#databases; }
   /** @returns {V1FileStorage} Project file buckets. */
   get storage() { return this.#storage; }
-  /** @returns {V1SavedQueries} */
-  get savedQueries() { return this.#savedQueries; }
   /** @returns {V1ProjectUsageClient} */
   get metrics() { return this.#metrics; }
   /** @returns {V1BackupDestinationClient} */
