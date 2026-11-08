@@ -19,9 +19,9 @@ internal sealed class ExportDatabaseEndpoint(IStorageEngine engine, ITenantDirec
         Summary("Downloads the database as a SQL dump");
         Description("""
             Streams the database as one SQL script: BEGIN, then every user table's CREATE TABLE and its rows as
-            INSERT INTO "<table>" VALUES (…) in rowid order, then indexes, then COMMIT, taken from one read snapshot.
-            Identifiers are double-quoted, text single-quoted, blobs X'hex'. The same SQL dialect runs it back into a
-            fresh database. Needs sql:read. The database's home region serves the export.
+            INSERT INTO "<table>" VALUES (…) in primary key order, then indexes, then COMMIT, taken from one read
+            snapshot. Identifiers are double-quoted, text single-quoted, blobs X'hex'. The same SQL dialect runs it
+            back into a fresh database. Needs sql:read. The database's home region serves the export.
             """);
         Tags("Queries");
         Produces<byte[]>(StatusCodes.Status200OK, "application/sql");
@@ -52,18 +52,18 @@ internal sealed class ExportDatabaseEndpoint(IStorageEngine engine, ITenantDirec
 
     private async ValueTask<IResult> DumpAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        var transaction = await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false);
-        if (transaction is null)
-        {
-            return ErrorResponse.From(DatabaseRoute.UnknownDatabase);
-        }
-
         var name = DatabaseRoute.Database(HttpContext);
         var file = EntityIds.IsValid(name) ? "database" : name;
         var response = HttpContext.Response;
         response.Headers.CacheControl = "no-store";
         response.Headers.ContentDisposition = $"attachment; filename=\"{file}.sql\"";
         response.ContentType = "application/sql";
+        var transaction = await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false);
+        if (transaction is null)
+        {
+            return ErrorResponse.From(DatabaseRoute.UnknownDatabase);
+        }
+
         await using (transaction.ConfigureAwait(false))
         {
             try
@@ -72,9 +72,9 @@ internal sealed class ExportDatabaseEndpoint(IStorageEngine engine, ITenantDirec
                 await SqlDump.WriteAsync(transaction, response.BodyWriter, cancellationToken).ConfigureAwait(false);
                 return Results.Empty;
             }
-            catch (Exception error) when (error is OperationCanceledException or SqlStatementException or QueryCapacityException or StorageBusyException)
+            catch (Exception error) when (error is OperationCanceledException or SqlStatementException or QueryCapacityException or StorageBusyException or InvalidOperationException)
             {
-                await response.CompleteAsync().ConfigureAwait(false);
+                HttpContext.Abort();
                 return Results.Empty;
             }
         }

@@ -13,8 +13,8 @@ internal static class SqlDump
     internal static async ValueTask WriteAsync(IStorageTransaction transaction, PipeWriter output, CancellationToken cancellationToken)
     {
         Write(output, "BEGIN;\n");
-        var tables = await RowsAsync(transaction,
-            "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND sql IS NOT NULL AND sql NOT LIKE 'CREATE VIRTUAL%' ORDER BY name", cancellationToken).ConfigureAwait(false);
+        var tables = await transaction.ExecuteStatementAsync(SqlSession.Internal(
+            "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND sql IS NOT NULL AND sql NOT LIKE 'CREATE VIRTUAL%' ORDER BY name"), cancellationToken).ConfigureAwait(false);
         foreach (var row in tables.Rows)
         {
             if (row[0] is not string name || row[1] is not string create || SqlScript.IsReservedName(name))
@@ -23,12 +23,20 @@ internal static class SqlDump
             }
 
             Write(output, Statement(create));
-            await WriteRowsAsync(transaction, name, output, cancellationToken).ConfigureAwait(false);
+            if (create.Contains("WITHOUT ROWID", StringComparison.OrdinalIgnoreCase))
+            {
+                await WriteKeyedRowsAsync(transaction, name, output, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await WriteRowidRowsAsync(transaction, name, output, cancellationToken).ConfigureAwait(false);
+            }
+
             await output.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        var indexes = await RowsAsync(transaction,
-            "SELECT name, sql FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL ORDER BY name", cancellationToken).ConfigureAwait(false);
+        var indexes = await transaction.ExecuteStatementAsync(SqlSession.Internal(
+            "SELECT name, sql FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL ORDER BY name"), cancellationToken).ConfigureAwait(false);
         foreach (var row in indexes.Rows)
         {
             if (row[0] is not string name || row[1] is not string create || SqlScript.IsReservedName(name))
@@ -43,55 +51,127 @@ internal static class SqlDump
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static async ValueTask<SqlStatementResult> RowsAsync(IStorageTransaction transaction, string sql, CancellationToken cancellationToken) =>
-        await transaction.ExecuteStatementAsync(SqlSession.Internal(sql), cancellationToken).ConfigureAwait(false);
-
     private static string Statement(string create) => create.TrimEnd(' ', '\r', '\n', '\t', ';') + ";\n";
 
-    private static async ValueTask WriteRowsAsync(IStorageTransaction transaction, string table, PipeWriter output, CancellationToken cancellationToken)
+    private static async ValueTask<SqlStatementResult> PageAsync(IStorageTransaction transaction, string sql, IReadOnlyList<object?> args, CancellationToken cancellationToken) =>
+        await transaction.ExecuteStatementAsync(SqlSession.Internal(sql) with { Args = args, MaxRows = PageRows }, cancellationToken).ConfigureAwait(false);
+
+    private static void CheckPage(SqlStatementResult page)
     {
-        var quoted = "\"" + table.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+        if (page.Truncated && page.Rows.Count < PageRows)
+        {
+            throw new InvalidOperationException("an export page exceeded its byte budget");
+        }
+    }
+
+    private static async ValueTask WriteRowidRowsAsync(IStorageTransaction transaction, string table, PipeWriter output, CancellationToken cancellationToken)
+    {
+        var quoted = Quote(table);
         var after = long.MinValue;
         while (true)
         {
-            var page = await transaction.ExecuteStatementAsync(
-                SqlSession.Internal(string.Create(CultureInfo.InvariantCulture, $"SELECT rowid, * FROM {quoted} WHERE rowid > {after} ORDER BY rowid LIMIT {PageRows}"))
-                    with { MaxRows = PageRows },
-                cancellationToken).ConfigureAwait(false);
-            if (page.Truncated && page.Rows.Count < PageRows)
+            var page = await PageAsync(transaction, string.Create(CultureInfo.InvariantCulture,
+                $"SELECT rowid, * FROM {quoted} WHERE rowid > {after} ORDER BY rowid LIMIT {PageRows}"), [], cancellationToken).ConfigureAwait(false);
+            foreach (var row in page.Rows)
             {
-                throw new InvalidOperationException("an export page exceeded its byte budget");
+                WriteRow(output, quoted, row, first: 1);
             }
 
-            for (var i = 0; i < page.Rows.Count; i++)
-            {
-                Write(output, "INSERT INTO ");
-                Write(output, quoted);
-                Write(output, " VALUES (");
-                var row = page.Rows[i];
-                for (var column = 1; column < row.Length; column++)
-                {
-                    if (column > 1)
-                    {
-                        Write(output, ",");
-                    }
-
-                    WriteValue(output, row[column]);
-                }
-
-                Write(output, ");\n");
-            }
-
-            if (page.Rows.Count < PageRows || page.Rows[^1][0] is not long last)
+            CheckPage(page);
+            if (page.Rows.Count < PageRows)
             {
                 return;
             }
 
-            after = last;
+            if (page.Rows[^1][0] is not long next)
+            {
+                throw new InvalidOperationException("an export page lost its paging key");
+            }
+
+            after = next;
         }
     }
 
-    private static void WriteValue(PipeWriter output, object? value)
+    private static async ValueTask WriteKeyedRowsAsync(IStorageTransaction transaction, string table, PipeWriter output, CancellationToken cancellationToken)
+    {
+        var quoted = Quote(table);
+        var info = await transaction.ExecuteStatementAsync(SqlSession.Internal(
+            "PRAGMA table_info(" + quoted + ")"), cancellationToken).ConfigureAwait(false);
+        var columns = new List<string>();
+        var keys = new SortedList<long, string>();
+        foreach (var row in info.Rows)
+        {
+            if (row[1] is not string name)
+            {
+                throw new InvalidOperationException("WITHOUT ROWID primary key not found");
+            }
+
+            columns.Add(name);
+            if (row[5] is long order && order > 0)
+            {
+                keys[order] = name;
+            }
+        }
+
+        if (keys.Count == 0)
+        {
+            throw new InvalidOperationException("WITHOUT ROWID primary key not found");
+        }
+
+        var ordinals = new int[keys.Count];
+        for (var key = 0; key < keys.Count; key++)
+        {
+            ordinals[key] = columns.FindIndex(column => column.Equals(keys.Values[key], StringComparison.OrdinalIgnoreCase));
+            if (ordinals[key] < 0)
+            {
+                throw new InvalidOperationException("WITHOUT ROWID primary key not found");
+            }
+        }
+
+        var list = string.Join(", ", keys.Values.Select(Quote));
+        var placeholders = string.Join(", ", keys.Values.Select(_ => "?"));
+        IReadOnlyList<object?>? after = null;
+        while (true)
+        {
+            var where = after is null ? "" : $" WHERE ({list}) > ({placeholders})";
+            var page = await PageAsync(transaction, $"SELECT * FROM {quoted}{where} ORDER BY {list} LIMIT {PageRows}", after ?? [],
+                cancellationToken).ConfigureAwait(false);
+            foreach (var row in page.Rows)
+            {
+                WriteRow(output, quoted, row, first: 0);
+            }
+
+            CheckPage(page);
+            if (page.Rows.Count < PageRows)
+            {
+                return;
+            }
+
+            after = [.. ordinals.Select(ordinal => page.Rows[^1][ordinal])];
+        }
+    }
+
+    private static string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+
+    private static void WriteRow(PipeWriter output, string quoted, object?[] row, int first)
+    {
+        Write(output, "INSERT INTO ");
+        Write(output, quoted);
+        Write(output, " VALUES (");
+        for (var column = first; column < row.Length; column++)
+        {
+            if (column > first)
+            {
+                Write(output, ",");
+            }
+
+            WriteValue(output, row[column]);
+        }
+
+        Write(output, ");\n");
+    }
+
+    private static void WriteValue(IBufferWriter<byte> output, object? value)
     {
         switch (value)
         {
