@@ -17,7 +17,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var http = HttpContext;
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) { return Results.Unauthorized(); }
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form)) { return Results.BadRequest("Invalid form token."); }
             var id = form["databaseId"].ToString();
             try

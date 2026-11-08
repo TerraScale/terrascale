@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
             endpoints.MapPost("/invitations/{token}/respond", async (HttpContext http, DashboardSessions sessions, InvitationService invitations, string token) =>
             {
                 Protect(http);
-                var form = await http.Request.ReadFormAsync(http.RequestAborted);
+                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
                 if (!Csrf.Validate(http, form))
                 {
                     return Results.StatusCode(403);
@@ -48,7 +48,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
             endpoints.MapPost("/invitations/{token}/switch-account", async (HttpContext http, string token) =>
             {
                 Protect(http);
-                var form = await http.Request.ReadFormAsync(http.RequestAborted);
+                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
                 if (!Csrf.Validate(http, form))
                 {
                     return Results.StatusCode(403);

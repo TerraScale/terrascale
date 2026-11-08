@@ -17,7 +17,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return Results.Unauthorized();
             }
 
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form) || !context.CanManageProject || context.Project is null)
             {
                 return Results.StatusCode(403);

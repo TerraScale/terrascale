@@ -138,12 +138,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private static async Task<IResult> LogoutAsync(HttpContext context)
         {
-            if (!context.Request.HasFormContentType)
-            {
-                return Results.BadRequest();
-            }
-
-            var form = await context.Request.ReadFormAsync(context.RequestAborted);
+            var form = await FormRequests.ReadAsync(context, context.RequestAborted);
             if (!Csrf.Validate(context, form))
             {
                 return Results.StatusCode(403);

@@ -51,7 +51,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 }
 
                 context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
-                var form = await http.Request.ReadFormAsync(http.RequestAborted);
+                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
                 var userId = form["userId"].ToString();
                 var role = form["role"].ToString();
                 IResult Error(string message, int status)

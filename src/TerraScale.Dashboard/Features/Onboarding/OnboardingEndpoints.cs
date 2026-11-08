@@ -88,12 +88,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
 
         private static async Task<IResult> SaveAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend)
         {
-            if (!context.Request.HasFormContentType)
-            {
-                return Results.BadRequest();
-            }
-
-            var form = await context.Request.ReadFormAsync(context.RequestAborted);
+            var form = await FormRequests.ReadAsync(context, context.RequestAborted);
             if (!Csrf.Validate(context, form))
             {
                 return Results.StatusCode(403);

@@ -34,7 +34,7 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 if (sessions is not null)
                 {
-                    var form = await http.Request.ReadFormAsync(budget.Token);
+                    var form = await FormRequests.ReadAsync(http, budget.Token);
                     if (!Csrf.Validate(http, form))
                     {
                         return Results.StatusCode(403);

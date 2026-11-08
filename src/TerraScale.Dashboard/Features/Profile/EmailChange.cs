@@ -13,12 +13,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 return AccountRequest.LoginRedirect(http);
             }
 
-            if (!http.Request.HasFormContentType)
-            {
-                return Results.BadRequest();
-            }
-
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return Results.BadRequest("Invalid form token.");
