@@ -79,10 +79,6 @@ public sealed partial record AuthOptions
     /// <summary>The ts-dashboard OpenID Connect client, registered at startup when configured.</summary>
     public DashboardClientOptions? DashboardClient { get; init; }
 
-    /// <summary>
-    /// The dashboard's public origin, <c>https://dash.terrascale.tech</c>: the one ts-auth URL a hosted page may send
-    /// the browser to besides its own, in code like the allowance and alert emails, not configuration.
-    /// </summary>
     public const string DashboardOrigin = "https://dash.terrascale.tech";
 
     /// <summary>
