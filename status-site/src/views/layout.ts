@@ -157,12 +157,14 @@ function bottom(page: Page, year: number): Html {
       </ul>
       <a class="ts-button st-f2-cta" href="https://dash.terrascale.tech/register"${EXTERNAL}>Create account</a>
     </div>
-    ${FOOTER_COLUMNS.map((column) => html`<nav class="st-f2-col" aria-label="${column.key}">
+    ${FOOTER_COLUMNS.map(
+      (column) => html`<nav class="st-f2-col" aria-label="${column.key}">
       <div class="ts-label">${column.key}</div>
       <ul class="st-f2-list">
         ${column.links.map((link) => html`<li>${footerLink(link)}</li>`)}
       </ul>
-    </nav>`)}
+    </nav>`,
+    )}
   </div>
   <div class="st-frame">
     <div class="st-f2-meta"><span>© ${year} TerraScale. All rights reserved.</span></div>
