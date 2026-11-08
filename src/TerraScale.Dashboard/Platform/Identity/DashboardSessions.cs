@@ -456,6 +456,49 @@ namespace TerraScale.Dashboard.Platform.Identity
             Clear(context);
         }
 
+        public async Task RevokeAsync(HttpContext context, SessionRecord session, string id)
+        {
+            if (id.Length != 64 || !id.All(char.IsAsciiHexDigitLower))
+            {
+                return;
+            }
+
+            if (context.Request.Cookies[Cookie] is { Length: 64 } current && Key(current) == id)
+            {
+                return;
+            }
+
+            var index = await state.GetAsync("session_indexes", Key(session.UserId), context.RequestAborted);
+            if (index is null)
+            {
+                return;
+            }
+
+            var values = index.Body.Deserialize<SessionIndex>() ?? throw new IOException("Session index is invalid.");
+            if (values.UserId != session.UserId || values.Entries is null || !values.Entries.ContainsKey(id))
+            {
+                return;
+            }
+
+            var row = await state.GetAsync("sessions", id, context.RequestAborted);
+            if (row is null)
+            {
+                return;
+            }
+
+            var credentials = await identity.ReadAsync(context.RequestAborted);
+            var record = Open(row.Body.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey);
+            if (record.UserId != session.UserId)
+            {
+                return;
+            }
+
+            await DeleteStrictAsync("sessions", id, context.RequestAborted);
+            try { await UpdateIndexAsync(session.UserId, entries => entries.Remove(id), context.RequestAborted); }
+            catch (Exception error) when (error is HttpRequestException or IOException or JsonException)
+            { context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DashboardSessions").RevokedSessionIndexCleanupFailed(error.GetType().Name); }
+        }
+
         private static void Clear(HttpContext context)
         {
             context.Response.Cookies.Delete(Cookie);
