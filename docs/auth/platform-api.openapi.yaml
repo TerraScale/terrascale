@@ -276,6 +276,98 @@ paths:
         '204': { description: 'Signed out everywhere.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/passkeys/options:
+    post:
+      operationId: create_passkey_options
+      tags: [Members]
+      summary: Start passkey enrollment
+      description: |
+        Returns WebAuthn PublicKeyCredentialCreationOptions for the caller with a sealed single-use challenge valid
+        5 minutes. Attestation is none, user verification is required and resident keys are preferred; the caller's
+        existing credential ids are excluded. The challenge dies with the account's authentication state. Pass the
+        browser's answer to create_passkey_verify.
+      responses:
+        '200':
+          description: Creation options and the sealed challenge to return with the browser's answer.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge, options]
+                properties:
+                  challenge: { type: string, description: Sealed single-use challenge for create_passkey_verify. }
+                  options:
+                    type: object
+                    additionalProperties: true
+                    description: PublicKeyCredentialCreationOptions as the WebAuthn level 2 specification defines them.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: passkey_denied; the account's authentication state changed. Sign in again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/passkeys/verify:
+    post:
+      operationId: create_passkey_verify
+      tags: [Members]
+      summary: Finish passkey enrollment
+      description: |
+        Verifies the browser's WebAuthn registration answer (origin, relying party id, user verification, challenge)
+        against the sealed challenge from create_passkey_options and stores the passkey. The challenge works once
+        and dies with the account's authentication state; a refused ceremony, a reused or stale challenge, or a
+        credential id that is already enrolled answers 403 passkey_denied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge, response]
+              properties:
+                challenge: { type: string, description: The sealed challenge from create_passkey_options. }
+                name: { type: string, maxLength: 100, description: Caller-chosen passkey label. }
+                response:
+                  type: object
+                  required: [id, rawId, type, response]
+                  description: The browser's PublicKeyCredential after navigator.credentials.create.
+                  properties:
+                    id: { type: string }
+                    rawId: { type: string, description: Base64url credential id. }
+                    type: { type: string, enum: [public-key] }
+                    response:
+                      type: object
+                      required: [clientDataJSON, attestationObject]
+                      properties:
+                        clientDataJSON: { type: string, description: Base64url client data. }
+                        attestationObject: { type: string, description: Base64url attestation object. }
+                        transports: { type: array, items: { type: string } }
+      responses:
+        '201':
+          description: The passkey is enrolled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, aaguid, created_at]
+                properties:
+                  id: { type: string, description: Base64url credential id. }
+                  name: { type: string, nullable: true }
+                  aaguid: { type: string, description: Authenticator model identifier, display only. }
+                  created_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: passkey_denied; the registration failed verification, the challenge was reused or stale, or the credential id is already enrolled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: rate_limited; at most 10 passkey enrollment attempts per account per 15 minutes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/account:
     delete:
       operationId: delete_account

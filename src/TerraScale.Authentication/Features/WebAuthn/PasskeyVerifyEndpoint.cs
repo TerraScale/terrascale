@@ -14,6 +14,7 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, PlatformA
         this.Describe("create_passkey_verify", "Finish passkey enrollment",
             "Verifies the browser's WebAuthn registration answer (origin, RP id, user verification, challenge) against the sealed challenge from create_passkey_options and stores the passkey. The challenge works once and dies with the account's authentication state; a refused ceremony, a reused or stale challenge, or a credential id that is already enrolled answers 403 passkey_denied.",
             "Members", typeof(PasskeyVerifyRequest), StatusCodes.Status201Created, typeof(PasskeyEnrolledBody), roleChecked: false, scoped: false);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 

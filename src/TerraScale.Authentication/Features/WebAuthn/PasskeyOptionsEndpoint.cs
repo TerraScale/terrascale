@@ -14,6 +14,7 @@ public sealed class PasskeyOptionsEndpoint(PasskeyCredentials passkeys, Platform
         this.Describe("create_passkey_options", "Start passkey enrollment",
             "Returns WebAuthn PublicKeyCredentialCreationOptions for the caller with a sealed single-use challenge valid 5 minutes. Attestation is none, user verification is required and resident keys are preferred; existing credential ids are excluded. The challenge dies with the account's authentication state. Pass the answer to create_passkey_verify.",
             "Members", null, StatusCodes.Status200OK, typeof(PasskeyOptionsBody), roleChecked: false, scoped: false);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
     }
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
