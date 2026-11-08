@@ -230,7 +230,7 @@ public sealed class AccountMfaEndpoint(TotpCredentials mfa, AuthOptions options,
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var (enabled, remaining) = await mfa.StatusAsync(caller.InstanceId, caller.Id, cancellationToken);
-        return Results.Json(new AccountMfaBody(enabled, remaining, new Uri(options.PublicOrigin, $"/ui/{OidcIssuer.Slug}/security").AbsoluteUri), PlatformApiJson.Default.AccountMfaBody);
+        return Results.Json(new AccountMfaBody(enabled, remaining, new Uri(options.PublicOrigin, $"/ui/{OidcIssuer.Slug}/security?next={Uri.EscapeDataString(AuthOptions.DashboardOrigin + "/profile?tab=security")}").AbsoluteUri), PlatformApiJson.Default.AccountMfaBody);
     }
 }
 

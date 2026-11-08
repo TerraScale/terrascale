@@ -33,7 +33,7 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
         Get("/ui/{slug}/sign-in");
         Name("ui_sign_in");
         Summary("Hosted sign-in page");
-        Description("Email passcode or password sign-in for existing accounts, with links to sign-up and password reset. next is honoured only when it is this issuer's /{slug}/oauth/authorize URL or the /ui/{slug}/device page.");
+        Description("Email passcode or password sign-in for existing accounts, with links to sign-up and password reset. next is honoured only when it is this issuer's /{slug}/oauth/authorize URL, the /ui/{slug}/device page, or exactly the dashboard's https://dash.terrascale.tech/profile or https://dash.terrascale.tech/profile?tab=security URL.");
         Tags("Sign-in");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         AllowAnonymous();
@@ -841,13 +841,16 @@ internal static class SignInFlow
     public static string SecurityPath(string tenant) => $"/ui/{tenant}/security";
 
     /// <summary>
-    /// Only the page's own issuer's authorization endpoint or security page, or for the platform its device page, may be resumed, as a
-    /// same-origin path.
+    /// Only the page's own issuer's authorization endpoint or security page, the platform's device page, or the
+    /// dashboard's profile or security-tab profile page, may be resumed. The same-origin paths are relative; the
+    /// dashboard destinations are two exact absolute URLs.
     /// </summary>
     public static string? SafeNext(HttpContext context, string? next) =>
         next is not null && Tenancy.Resolved(context) is { } tenant
             && (next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
                 || next == SecurityPath(tenant)
+                || next == AuthOptions.DashboardOrigin + "/profile"
+                || next == AuthOptions.DashboardOrigin + "/profile?tab=security"
                 || !Tenancy.IsProject(tenant) && (next == DevicePath || next.StartsWith(DevicePath + "?", StringComparison.Ordinal)))
             && next.Length <= 4096
             && !next.Any(character => character is '\\' or '#' || char.IsControl(character) || char.IsWhiteSpace(character))
