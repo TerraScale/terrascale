@@ -490,7 +490,7 @@ internal static partial class PostgresStatements
     public static PgError Error(SqlError error) => new(error.Sqlstate, error.Message);
 
     /// <summary>Whether a column of the type is sent in binary when the client asks; others are always text.</summary>
-    public static bool Binary(int oid) => oid is 16 or 17 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 1082 or 1114 or 1184 or 2950 or 3802;
+    public static bool Binary(int oid) => oid is 16 or 17 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 1082 or 1114 or 1184 or 2950 or 3802 or 1700;
 
     /// <summary>
     /// A value in the column's format; false when it does not fit the binary type (SQLite keeps 64-bit integers in an int4
@@ -523,6 +523,41 @@ internal static partial class PostgresStatements
             }
 
             bytes = binary ? Convert.FromHexString(uuid.ToString("N", Invariant)) : Utf8.GetBytes(uuid.ToString("D", Invariant));
+            return true;
+        }
+
+        if (oid == 1700)
+        {
+            string? s;
+            switch (value.Kind)
+            {
+                case SqlValueKind.Integer:
+                    s = value.Integer.ToString(Invariant);
+                    break;
+                case SqlValueKind.Real:
+                    s = value.Real.ToString("R", Invariant);
+                    break;
+                case SqlValueKind.Text when PgNumeric.Matches(value.Text ?? ""):
+                    s = value.Text!;
+                    break;
+                default:
+                    return false;
+            }
+
+            if (binary)
+            {
+                if (PgNumeric.Encode(s) is not { } numeric)
+                {
+                    return false;
+                }
+
+                bytes = numeric;
+            }
+            else
+            {
+                bytes = Utf8.GetBytes(s);
+            }
+
             return true;
         }
 
@@ -625,6 +660,7 @@ internal static partial class PostgresStatements
                     (701, 8) => Real(BinaryPrimitives.ReadDoubleBigEndian(value)),
                     (1082 or 1114 or 1184, _) => PostgresTemporal.Decode(oid, value),
                     (2950, 16) => Uuid(value),
+                    (1700, _) => PgNumeric.Decode(value) is { } n ? Numeric(n) : null,
                     (3802, > 0) when value[0] == 1 => Text(Utf8.GetString(value.AsSpan(1))),
                     (17, _) => SqlValue.Of(value),
                     (0 or TextOid or 114 or 705 or 1042 or 1043, _) => Text(Utf8.GetString(value)),
@@ -639,7 +675,8 @@ internal static partial class PostgresStatements
                     (20 or 21 or 23, var text) => long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var integer) ? SqlValue.Of(integer) : null,
                     (700 or 701, var text) => double.TryParse(text, NumberStyles.Float, Invariant, out var real) ? Real(real) : null,
                     // Exact numerics stay exact: an integer, a double that round-trips, else the text.
-                    (1700, var text) => long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var whole) ? SqlValue.Of(whole)
+                    (1700, var text) => PgNumeric.Matches(text) ? Numeric(text)
+                        : long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var whole) ? SqlValue.Of(whole)
                         : decimal.TryParse(text, NumberStyles.Float, Invariant, out var exact) && (decimal)(double)exact == exact ? SqlValue.Of((double)exact)
                         : Text(text),
                     // Untyped (psql \bind, node-postgres): PostgreSQL types them from context; a canonical number binds as one,
@@ -681,6 +718,11 @@ internal static partial class PostgresStatements
 
     private static SqlValue? Uuid(string text) =>
         Guid.TryParseExact(text.AsSpan(), "D", out var uuid) ? SqlValue.Of(uuid.ToString("D", Invariant)) : null;
+
+    private static SqlValue? Numeric(string n) =>
+        !n.Contains('.', StringComparison.Ordinal) && long.TryParse(n, NumberStyles.AllowLeadingSign, Invariant, out var whole)
+            ? SqlValue.Of(whole)
+            : SqlValue.Of(n);
 
     private static SqlValue? Real(double value) => double.IsFinite(value) ? SqlValue.Of(value) : null;
 
