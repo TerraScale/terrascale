@@ -19,7 +19,7 @@ internal static class CredentialLineage
 
     internal const string ConflictNotice = "This credential expired, was already used, or lost a concurrent sign-in or rotation in another region. Sign in again or use the latest credential.";
 
-    internal const string ReplayNotice = "This refresh token was already used. This sign-in has ended. Sign in again to continue.";
+    internal const string ReplayNotice = "This credential was already used, so its sign-in was ended for safety. Sign in again.";
 
     /// <summary>The ancestry <see cref="RedeemExactlyOnce"/> resolved for the token request being served, if any.</summary>
     internal static IReadOnlyList<CredentialBinding> Issued(HttpContext? http) =>
