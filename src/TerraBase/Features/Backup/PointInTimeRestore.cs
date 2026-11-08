@@ -26,8 +26,10 @@ public sealed record RestoreWindow(DateTimeOffset Earliest, DateTimeOffset Lates
 /// and the history's end, from object names. Whether each segment begins where the previous one ends needs their lengths,
 /// which only a restore reads, so a restore can still answer 409 <c>backup_history_incomplete</c>.
 /// </param>
+/// <param name="Generation">The generation of the selected snapshot, whose objects a restore reads.</param>
 public sealed record PointInTimePlan(
-    RestoreWindow Window, DateTimeOffset PointInTime, DateTimeOffset SnapshotAt, DateTimeOffset? LatestSegmentAt, int SegmentCount, string HistoryCheck);
+    RestoreWindow Window, DateTimeOffset PointInTime, DateTimeOffset SnapshotAt, DateTimeOffset? LatestSegmentAt, int SegmentCount, string HistoryCheck,
+    Ulid? Generation = null);
 
 /// <summary>A read-only restore plan, or why its metadata could not be read or shows the history incomplete.</summary>
 public readonly union PointInTimePlanResult(PointInTimePlan, NotFound, Conflict, Validation, Unavailable);
@@ -159,7 +161,7 @@ internal sealed class PointInTimeRestore(
             // Read from the bucket, the window ends at the newest time a read mark proves; the shipper's own progress stands.
             var proven = newest is null ? storedLatest
                 : await ProvenLatestAsync(backup, BackupLayout.KeyScope(database), last, newest.NewestKeys, deadline.Token).ConfigureAwait(false);
-            return new PointInTimePlan(new(earliest, proven), at, chosen.At, segments.Latest, segments.Count, "metadata");
+            return new PointInTimePlan(new(earliest, proven), at, chosen.At, segments.Latest, segments.Count, "metadata", chosen.Generation);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {

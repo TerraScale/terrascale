@@ -75,6 +75,8 @@ internal sealed record BackupSchedule(DateTimeOffset? LastSucceededAt, DateTimeO
 /// <param name="Until">When the lease expires unless renewed.</param>
 internal sealed record BackupLease(string BackupId, string OperationId, DateTimeOffset Until);
 
+internal sealed record RestoreGenerationLease(string DatabaseId, Ulid Generation, string OperationId, DateTimeOffset Until);
+
 /// <summary>
 /// Where the lifecycle lives in the catalog. Backups are kept under their organization, not under the database, so
 /// deleting a database never loses track of a snapshot file: its backups are expired and swept like any other.
@@ -104,4 +106,10 @@ internal static class BackupCatalog
 
     /// <summary>The key of one operation's lease on one backup.</summary>
     public static string LeaseKey(string backupId, string operationId) => $"{backupId}/{operationId}";
+
+    /// <summary>The <see cref="RestoreGenerationLease"/> records of an organization, keyed by database id, generation, then operation id.</summary>
+    public static string GenerationLeases(string organizationId) => $"organizations/{organizationId}/restore_generation_leases";
+
+    /// <summary>The key of one operation's lease on one database generation.</summary>
+    public static string GenerationLeaseKey(string databaseId, Ulid generation, string operationId) => $"{databaseId}/{generation}/{operationId}";
 }

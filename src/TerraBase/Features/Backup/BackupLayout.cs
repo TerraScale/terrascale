@@ -71,6 +71,18 @@ internal static class BackupLayout
         return parts is [var start, var at] && Number(start) is { } frames && Milliseconds(at) is { } time ? new(key, frames, time) : null;
     }
 
+    public static Ulid? SegmentGeneration(string key)
+    {
+        var end = key.LastIndexOf('/');
+        if (end <= 0)
+        {
+            return null;
+        }
+
+        var start = key.LastIndexOf('/', end - 1) + 1;
+        return Ulid.TryParse(key[start..end], out var generation) ? generation : null;
+    }
+
     private static long? Number(string value) =>
         value.Length == 16 && long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var number) ? number : null;
 

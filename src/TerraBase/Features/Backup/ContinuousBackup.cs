@@ -38,6 +38,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly IStorageEngine _storage;
     private readonly BackupTargets _targets;
     private readonly Lazy<ICatalogGate> _catalogGate;
+    private readonly SystemCatalog _catalog;
     private readonly TimeProvider _time;
     private readonly ILogger<ContinuousBackup> _logger;
     private readonly IShipperLeases _shippers;
@@ -73,10 +74,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     public ContinuousBackup(
         IWalBackup engine, IStorageEngine storage, BackupTargets targets, TerraBaseOptions options, TimeProvider time,
         IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, ITenantDirectory tenants, BackupSettings settings, S3ObjectStore bucket,
-        Lazy<ICatalogGate> catalogGate, IDatabaseFileCatalog fileCatalog, IDiskBudget disk)
+        Lazy<ICatalogGate> catalogGate, IDatabaseFileCatalog fileCatalog, IDiskBudget disk, SystemCatalog catalog)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(meters);
+        _catalog = catalog;
         (_engine, _storage, _targets, _time, _logger, _shippers) = (engine, storage, targets, time, logger, shippers);
         (_tenants, _settings, _node, _bucket) = (tenants, settings, options.MachineId, bucket);
         _catalogGate = catalogGate;
