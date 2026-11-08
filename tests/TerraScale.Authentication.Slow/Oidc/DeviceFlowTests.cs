@@ -51,6 +51,8 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
         await Assert.That(confirm).Contains("<h1>Approve this device?</h1>");
         await Assert.That(confirm).Contains(userCode);
         await Assert.That(confirm).Contains("alice@example.test");
+        await Assert.That(confirm).Contains("<dt>Application</dt><dd>ts-cli</dd>");
+        await Assert.That(confirm).Contains("Your email address");
         await Assert.That(confirm).Contains("name=\"decision\" value=\"approve\"");
         clock.Advance(TimeSpan.FromSeconds(6));
         await Assert.That(await PollAsync(oidc, deviceCode)).IsEqualTo("authorization_pending");

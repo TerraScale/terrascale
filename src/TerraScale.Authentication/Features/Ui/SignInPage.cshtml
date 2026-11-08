@@ -312,9 +312,13 @@ break;
 case SignInStep.DeviceConfirm:
 <div class="device-code" aria-label="Device code">@Model.UserCode</div>
 <dl class="facts">
-<div><dt>Application</dt><dd>TerraScale CLI</dd></div>
+<div><dt>Application</dt><dd>@Model.ClientName</dd></div>
 <div><dt>Account</dt><dd>@Model.Account</dd></div>
 </dl>
+@if (Model.Scopes is { Count: > 0 } scopes)
+{
+<ul class="scopes">@foreach (var scope in scopes) { <li>@scope</li> }</ul>
+}
 <form method="post" action="/ui/@Model.Slug/device">
 <input type="hidden" name="user_code" value="@Model.UserCode">
 <div class="actions">

@@ -176,6 +176,9 @@ button.danger { background: light-dark(#c81e1e, #d92626); }
 .row a { display: inline-flex; align-items: center; gap: 6px; }
 .alt { text-align: center; font-size: 13px; color: var(--ink-2); }
 .device-code { padding: 16px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--canvas); font: 500 28px / 1 var(--mono); letter-spacing: 0.12em; text-align: center; }
+ul.scopes { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--ink-2); }
+ul.scopes li { padding-left: 18px; position: relative; }
+ul.scopes li::before { content: ""; position: absolute; left: 2px; top: 0.55em; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
 .facts { display: grid; gap: 8px; margin: 0; font-size: 13px; }
 .facts div { display: flex; justify-content: space-between; gap: 12px; }
 .facts dt { color: var(--ink-3); }
