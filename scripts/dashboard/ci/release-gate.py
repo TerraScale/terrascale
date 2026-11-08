@@ -7,8 +7,8 @@ started while it is the real main head. Later unrelated pushes do not block
 push or dispatch releases:
 
   release <sha>  exit 0 and print true when <sha> is the newest qualified,
-                 not-failed main commit and it is newer than live. The
-                 dashboard's own dev-host proofs qualify it: CI may still run.
+                 not-failed main commit and it is newer than live. Its own
+                 Images run (with Dashboard Fast) qualifies it: CI may still run.
   heal           after CI completes, rerun its Images run, or dispatch Images
                  on main if GitHub missed the push and it is still the head.
 """
@@ -20,7 +20,6 @@ import sys
 import urllib.request
 
 REPO = 'TerraScale/terrascale'
-CONTEXT = 'dashboard-release/dashboard'
 WORKFLOW = 'images-ghcr.yml'
 RERUNS = 3
 
@@ -29,12 +28,12 @@ def gh(*args):
     return json.loads(subprocess.check_output(['gh', *args], text=True))
 
 
-# Proofs are posted before main moves; one lookup per commit per run suffices.
+# A dashboard commit qualifies once its own Images run exists and has not failed: that run's
+# Dashboard Fast job gates its release, so the gate never waits for CI to finish.
 @functools.cache
 def qualified(sha):
-    pages = gh('api', '--paginate', '--slurp', f'repos/{REPO}/commits/{sha}/statuses?per_page=100')
-    proof = next((item for page in pages for item in page if item['context'] == CONTEXT), None)
-    return bool(proof) and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
+    runs = images_runs(sha)
+    return bool(runs) and not all(run['status'] == 'completed' and run['conclusion'] != 'success' for run in runs)
 
 
 def ci(sha):
@@ -75,7 +74,7 @@ def main_head():
 
 def images_runs(sha):
     runs = gh('run', 'list', '--repo', REPO, '--workflow', WORKFLOW, '--branch', 'main', '--commit', sha,
-              '--limit', '100', '--json', 'databaseId,event,status,attempt')
+              '--limit', '100', '--json', 'databaseId,event,status,conclusion,attempt')
     return [run for run in runs if run['event'] in ('push', 'workflow_dispatch')]
 
 
@@ -143,7 +142,7 @@ def heal():
     runs = images_runs(sha)
     if not runs:
         if main_head() != sha:
-            print(f'{sha} has no Images run and main advanced; qualify the current head on a dev host',
+            print(f'{sha} has no Images run and main advanced; a newer push releases the dashboard',
                   file=sys.stderr)
             return
         subprocess.check_call(['gh', 'workflow', 'run', WORKFLOW, '--repo', REPO, '--ref', 'main'])

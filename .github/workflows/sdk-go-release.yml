@@ -13,7 +13,6 @@ on:
       - '!.cos/**'
 permissions:
   contents: read
-  statuses: read
 
 concurrency:
   group: sdk-go-release-${{ github.ref }}
@@ -26,7 +25,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      statuses: read
       actions: read
     outputs:
       eligible: ${{ steps.gate.outputs.eligible }}
@@ -36,7 +34,7 @@ jobs:
         with:
           persist-credentials: false
       - id: gate
-        name: Select qualified green main
+        name: Select green main
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -53,12 +51,6 @@ jobs:
               runs = [item for item in runs if item['workflowName'] != 'SDK Go Release']
               return bool(runs) and all(item['status'] == 'completed'
                                         and item['conclusion'] in {'success', 'skipped'} for item in runs)
-          def qualified(sha):
-              pages = gh('api', '--paginate', '--slurp',
-                         f'repos/{repo}/commits/{sha}/statuses?per_page=100')
-              rows = [row for page in pages for row in page if row.get('context') == 'sdk-release/sdk-go']
-              proof = max(rows, key=lambda row: row['id']) if rows else None
-              return bool(proof) and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
           def released_commit():
               pages = gh('api', '--paginate', '--slurp', f'repos/{repo}/tags?per_page=100')
               names = [tag['name'] for page in pages for tag in page
@@ -87,10 +79,10 @@ jobs:
                       break
               return found[:20]
           def releasable():
-              if qualified(pushed) and green(pushed):
+              if green(pushed):
                   return pushed
               for sha in unreleased():
-                  if sha != pushed and qualified(sha) and green(sha):
+                  if sha != pushed and green(sha):
                       return sha
               return None
           deadline = time.monotonic() + 25 * 60
@@ -103,37 +95,40 @@ jobs:
               if revision:
                   output.write(f'revision={revision}\n')
           if not revision:
-              print('No qualified green main revision became releasable.')
+              print('No green main revision became releasable.')
           PYTHON
-      - name: Require the released revision's dev-host Fast result
-        if: steps.gate.outputs.eligible == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REVISION: ${{ steps.gate.outputs.revision }}
-        run: python3 scripts/sdk/check-proof.py sdk-go "$REVISION"
 
   autorelease:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.tests.outputs.eligible == 'true'
     needs: tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
     permissions:
       contents: write
-      statuses: read
       actions: read
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          ref: ${{ needs.tests.outputs.revision }}
           persist-credentials: false
-      - name: Download exact qualified bytes
+          fetch-depth: 0
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          install: false
+      - name: Install the pinned Go toolchains and GoReleaser
+        run: mise install "go@$(cat sdk/go/.go-version)" go@1.25.0 goreleaser@2.19.0
+      - name: Build the release artifacts with their release gates
         id: qualified
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REVISION: ${{ needs.tests.outputs.revision }}
-        run: python3 scripts/sdk/download-qualified.py go "$REVISION" "$RUNNER_TEMP/qualified"
-      - name: Tag the qualified revision
+        run: python3 scripts/sdk/build-release.py go "$RUNNER_TEMP/qualified"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdk-go-release
+          path: ${{ runner.temp }}/qualified
+          if-no-files-found: error
+          retention-days: 1
+      - name: Tag the built revision
         id: tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -156,7 +151,7 @@ jobs:
     if: needs.autorelease.outputs.tag != ''
     permissions:
       contents: write
-      statuses: read
+      actions: read
     uses: ./.github/workflows/sdk-go-publish.yml
     with:
       tag: ${{ needs.autorelease.outputs.tag }}

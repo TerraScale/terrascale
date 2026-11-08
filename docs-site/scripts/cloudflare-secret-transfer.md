@@ -21,8 +21,8 @@ gh variable get CLOUDFLARE_ACCOUNT_ID --repo TerraScale/ts-docs > "$transfer_dir
 
 Ship `cloudflare-secret-export.yml.template` as a temporary
 `.github/workflows/cloudflare-secret-export.yml` in the old `ts-docs` repo, along
-with only the public key as `cloudflare-transfer-public.pem`. Follow the normal
-`ts-ship` path. The template has `workflow_dispatch`, `contents: read`, and uses
+with only the public key as `cloudflare-transfer-public.pem`, pushed to its
+`main`. The template has `workflow_dispatch`, `contents: read`, and uses
 the existing `CLOUDFLARE_API_TOKEN` secret only in this encryption step:
 
 ```bash
@@ -54,17 +54,3 @@ artifact, and remove the local temporary key directory after the handoff succeed
 repo commits in the mirror bundle before deletion. Verify the monorepo
 `docs-deploy.yml` run and `https://docs.terrascale.tech/build-info.json` before
 retiring the old repository.
-
-## Live proof without moving host credentials
-
-After the exact main commit is green and has a `docs/qualified-<sha>` artifact,
-run this on a dev host through the existing heavy runner:
-
-```bash
-ts-heavy-any python3 docs-site/scripts/deploy-current-main.py --repo terrascale --branch main
-```
-
-This uses the host's existing `cf` authentication, requires the source revision
-and artifact hashes to match current green main, publishes the prebuilt site,
-checks the hosted pages/assets and build-info SHA, and records `docs-live/docs`
-on that commit. It neither installs credentials nor changes token permissions.

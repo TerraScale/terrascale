@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: read
-  statuses: read
 
 concurrency:
   group: sdk-rust-release-${{ github.ref }}
@@ -21,10 +20,9 @@ jobs:
   publish:
     needs: tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     permissions:
       contents: read
-      statuses: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -35,18 +33,15 @@ jobs:
           [[ "$GITHUB_REF_NAME" =~ ^sdk/rust/v0\.0\.(0|[1-9][0-9]*)$ ]]
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
           test "$GITHUB_SHA" = "$(git rev-parse origin/main)"
-      - name: Download exact qualified bytes
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+      - name: Build the release artifacts with their release gates
         id: qualified
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/sdk/download-qualified.py rust "$GITHUB_SHA" "$RUNNER_TEMP/qualified"
-      - name: Require the qualified package version
+        run: python3 scripts/sdk/build-release.py rust "$RUNNER_TEMP/qualified"
+      - name: Require the tagged package version
         env:
           VERSION: ${{ steps.qualified.outputs.version }}
         run: test "$GITHUB_REF_NAME" = "sdk/rust/v$VERSION"
-      - name: Install the pinned Rust toolchain
-        working-directory: sdk/rust
-        run: rustup show
       - name: Publish the qualified source without rebuilding
         working-directory: sdk/rust
         env:

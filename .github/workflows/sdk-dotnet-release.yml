@@ -1,6 +1,6 @@
 # Tags publish qualified bytes to GitHub Packages, verify a clean registry restore, then publish to nuget.org.
 # Manual dispatch only prepares the reproducible artifact and provenance, without registry credentials or writes.
-# Tests run through the sdk-fast gate, which requires the exact SHA's successful ts-ship/sdk-dotnet status.
+# Tests run through the sdk-fast gate; the package job builds the release bytes with their release checks.
 # See sdk/dotnet/docs/automatic-nuget-releases.md for the credential handoff and preparation commands.
 name: SDK .NET Release
 
@@ -26,14 +26,10 @@ jobs:
     uses: ./.github/workflows/sdk-fast.yml
     with:
       area: sdk-dotnet
-    permissions:
-      contents: read
-      statuses: read
 
   package:
     permissions:
       contents: read
-      statuses: read
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -76,10 +72,8 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - id: qualified
-        name: Download the dev-host qualified package
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 "$GITHUB_WORKSPACE/scripts/sdk/download-qualified.py" dotnet "$GITHUB_SHA" "$RUNNER_TEMP/qualified-package"
+        name: Build the release package with its release checks
+        run: python3 "$GITHUB_WORKSPACE/scripts/sdk/build-release.py" dotnet "$RUNNER_TEMP/qualified-package"
       - id: pack
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -186,7 +180,7 @@ jobs:
           dotnet restore --use-lock-file
           echo "$SHA256  $NUGET_PACKAGES/terrascale.dotnet/$VERSION/terrascale.dotnet.$VERSION.nupkg" | sha256sum --check
           dotnet run --no-restore --file "$checker" -- "$consumer/TerraScale.DotNet.PackageConsumer.csproj" | tee "$RUNNER_TEMP/consumer-nuget-audit.log"
-          # Both-framework consumer execution qualified these exact bytes on the dev host.
+          # Both-framework consumer execution in the package job checked these exact bytes.
           # Registry restore and hash equality above prove this feed supplied that same package.
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:

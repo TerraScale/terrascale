@@ -18,9 +18,12 @@ scanner="$HOME/.cache/terrascale/govulncheck-v1.9.0-go$pin"
 export GOROOT="$(mise where go@"$pin")"
 export PATH="$GOROOT/bin:$scanner:$PATH"
 test "$(go env GOVERSION)" = "go$pin"
+# A tagged revision rebuilds its own version; an untagged one builds the next version.
+tagged=$(git tag --points-at HEAD --list 'sdk/go/v0.0.*' --sort=-v:refname | head -n 1)
 latest=$(git tag --list 'sdk/go/v0.0.*' --merged HEAD --sort=-v:refname | head -n 1)
-case "$latest" in
-  sdk/go/v0.0.*) version="0.0.$((${latest##*.} + 1))" ;;
+case "$tagged:$latest" in
+  sdk/go/v0.0.*:*) version="${tagged#sdk/go/v}" ;;
+  :sdk/go/v0.0.*) version="0.0.$((${latest##*.} + 1))" ;;
   *) echo 'No sdk/go/v0.0.X tag found in this history' >&2; exit 1 ;;
 esac
 export TS_GO_VERSION="$version"

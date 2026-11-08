@@ -21,32 +21,14 @@ TerraBase engine; engine qualification belongs in the monorepo.
 
 The site lives at `docs-site/` in the public `TerraScale/terrascale` monorepo.
 Run its commands from that directory. `make docs-test-fast` at the root runs
-locked installation, the site build and the core tests on a dev host through
-`ts-ship`.
+locked installation, the site build and the core tests; Docs Fast in GitHub
+Actions runs it for every docs change.
 
-Before shipping a docs change, qualify its clean commit on a dev host:
-
-```bash
-ts-heavy-any bash docs-site/scripts/prepare-deployment.sh --repo terrascale --branch <staging-ref>
-```
-
-This audits all locked npm graphs, builds the site, runs the full examples and
-starter checks, and uploads immutable artifacts under `docs/qualified-<sha>`.
-It does not deploy. After `ts-ship` pushes that same commit and monorepo CI is
-green, `docs-deploy.yml` publishes the checked artifact through Cloudflare
-Workers. The workflow also accepts a manual dispatch on `main`. It verifies
-`build-info.json` and the checked pages/assets against `docs.terrascale.tech`.
-Publication uses the existing scoped `CLOUDFLARE_API_TOKEN` Actions secret and
-`CLOUDFLARE_ACCOUNT_ID` variable.
-
-For an operator deployment after green main, use the existing host's Cloudflare
-authentication, without moving its broader user token into CI:
-
-```bash
-cd docs-site
-cf deploy --prebuilt --message "$(git rev-parse HEAD)"
-node scripts/check-hosted.mjs
-```
+After a docs push to `main` passes Docs Fast, `docs-deploy.yml` builds that
+revision and publishes it through Cloudflare Workers. The workflow also accepts
+a manual dispatch on green `main`. It verifies `build-info.json` and the pages
+and assets against `docs.terrascale.tech`. Publication uses the scoped
+`CLOUDFLARE_API_TOKEN` Actions secret and `CLOUDFLARE_ACCOUNT_ID` variable.
 
 `cf` is pinned in `package-lock.json`. Its required `workersDev`, `previewUrls`
 and `CLOUDFLARE_PREVIEW_BUILD` fields describe production and preview hosting;

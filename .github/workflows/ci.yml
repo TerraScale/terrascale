@@ -87,7 +87,7 @@ jobs:
               # Both services reference the libraries; their tests and benchmarks build only in libs.slnf.
               - src/TerraScale.Endpoints*/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
-            # Each area lists only inputs its own projects build, matching the proofs ts-ship posts.
+            # Each area lists only inputs its own projects build.
             dotnet-sdk: &dotnet-sdk
               # The auth store and TerraBase E2E reference the .NET SDK from this revision.
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
@@ -191,7 +191,6 @@ jobs:
           python3 scripts/ci/slow-report-test.py
           python3 scripts/ci/cache-policy-test.py
           python3 scripts/ci/fast-budget-test.py
-          python3 scripts/ci/qualified-build-test.py
           bash scripts/ci/release-app-test.sh
           python3 scripts/vendor/turso-native-pipeline-test.py
           bash scripts/terrabase/storage-format-check-test.sh
@@ -217,7 +216,7 @@ jobs:
             legacy-hits.md
             legacy-scan.log
 
-  # Native Rust builds stay in explicit maintenance dispatches; dev hosts verify the pinned release bytes.
+  # Native Rust builds stay in explicit maintenance dispatches; every build verifies the pinned release bytes.
   native-build:
     if: github.event_name == 'workflow_dispatch' && inputs.native_artifacts
     strategy:
@@ -299,12 +298,12 @@ jobs:
           path: native-release/
           if-no-files-found: error
 
-  # ts-ship retains the checked build and uncached Fast proof for this exact commit.
+  # Each affected area builds, checks and runs its Fast suite on a hosted runner for this exact commit.
   libs:
     needs: changes
     if: contains(fromJSON(needs.changes.outputs.fast), 'libs')
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 30
     steps:
       - &checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -312,37 +311,49 @@ jobs:
           path: terrascale
           persist-credentials: false
           ref: ${{ needs.changes.outputs.sha }}
-      - name: Verify checked build and budgeted Libraries Fast
+      - &setup-dotnet
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: terrascale/global.json
+      - &locked-restore
+        name: Locked restore and pinned native libraries
         working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/qualified-build.py verify libs
+        run: make restore turso-native
+      - name: Checked build and Libraries Fast
+        working-directory: terrascale
+        run: bash scripts/ci/test-area.sh fast libs
 
   auth:
     needs: changes
     if: contains(fromJSON(needs.changes.outputs.fast), 'auth')
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 30
     steps:
       - *checkout
-      - name: Verify checked build and budgeted Auth Fast
+      - *setup-dotnet
+      - *locked-restore
+      - name: Install Auth browser dependencies
         working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/qualified-build.py verify auth
+        run: npx --yes playwright@1.63.0 install --with-deps chromium
+      - name: Checked Auth build
+        working-directory: terrascale
+        run: bash scripts/ci/auth-build.sh
+      - name: Auth Fast
+        working-directory: terrascale
+        run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make -o restore auth-test-fast CONFIGURATION=Release
 
   terrabase:
     needs: changes
     if: contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 30
     steps:
       - *checkout
-      - name: Verify checked build, integration proofs and budgeted TerraBase Fast
+      - *setup-dotnet
+      - *locked-restore
+      - name: Checked build, integration proofs and TerraBase Fast
         working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/qualified-build.py verify terrabase
+        run: bash scripts/ci/test-area.sh fast terrabase
 
   main:
     needs: [changes, terrabase, test]
@@ -559,11 +570,6 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Fork PRs cannot qualify without Fast
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
-        run: |
-          echo 'Fast qualification currently runs for branches in this repository. Qualify these changes on a repository branch.' >&2
-          exit 1
       - name: Every affected Fast area passed
         env:
           FAST_AREAS: ${{ needs.changes.outputs.fast }}

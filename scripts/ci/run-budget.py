@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject slow Fast jobs; report end-to-end CI time against the 360 s target."""
+"""Report Fast job times and end-to-end CI time against the 360 s target."""
 from datetime import datetime, timezone
 import json
 import os
@@ -23,9 +23,10 @@ def check(run, jobs, now):
                 errors.append(f'{job["name"]} has not completed')
                 continue
             duration = (instant(job['completed_at']) - instant(job['started_at'])).total_seconds()
-            lines.append(f'{job["name"]}: {duration:.0f}s / 120s')
-            if duration >= 120 or job['conclusion'] != 'success':
-                errors.append(f'{job["name"]} did not pass within 120s')
+            # Compilation dominates a hosted job; fast-budget.py enforces the 30 s suite and 10 s test limits.
+            lines.append(f'{job["name"]}: {duration:.0f}s')
+            if job['conclusion'] != 'success':
+                errors.append(f'{job["name"]} did not pass')
         if job['status'] == 'completed' and job['conclusion'] not in {'success', 'skipped'}:
             errors.append(f'{job["name"]}: {job["conclusion"]}')
     lines.append(f'CI including rollout: {elapsed:.0f}s / 360s')

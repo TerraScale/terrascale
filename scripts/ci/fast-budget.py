@@ -46,14 +46,6 @@ def main():
     report = results / f'{suite}-{uuid.uuid4().hex}.trx'
     command = [*sys.argv[3:], '--report-trx', '--results-directory', str(results),
                '--report-trx-filename', report.name, '--no-ansi']
-    # ts-ship's build phase records the exact invocation without running tests.
-    if os.environ.get('TS_SHIP_PHASE') == 'build':
-        # Stable filename keeps the planned invocation identical in the test phase.
-        command[command.index('--report-trx-filename') + 1] = suite + '.trx'
-        return subprocess.call(command)
-    if os.environ.get('TS_SHIP_PHASE') == 'test':
-        report = results / (suite + '.trx')
-        command[command.index('--report-trx-filename') + 1] = report.name
     report.unlink(missing_ok=True)
     started = time.monotonic()
     process = subprocess.Popen(command, start_new_session=True)

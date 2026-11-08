@@ -33,15 +33,15 @@ on:
 
 permissions:
   contents: read
-  statuses: read
+  actions: read
 
 jobs:
   # The release token's sha claim must equal the image's revision label, so each
   # qualified commit is released by its own push run even after main moves on,
   # or by a recovery dispatch while it remains the real main head:
   # pushes outside the dashboard never block it. ts-orch orders signed runs, and
-  # the gate only admits the newest qualified, not-failed main commit. It starts
-  # as soon as the dev-host release proof exists: it never waits for CI to finish.
+  # the gate only admits the newest qualified, not-failed main commit. The image
+  # job also needs this run's Dashboard Fast; it never waits for CI to finish.
   ready:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -49,7 +49,6 @@ jobs:
       # The CI completion heal reruns Images or dispatches a missing main-head run.
       actions: write
       contents: read
-      statuses: read
     outputs:
       deploy: ${{ steps.gate.outputs.deploy }}
     steps:
@@ -73,11 +72,11 @@ jobs:
           fi
           deploy=$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")
           if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$deploy" != true ]; then
-            echo 'Qualify current green main on a dev host before dispatching deployment' >&2
+            echo 'Dispatch deployment only for the newest unreleased dashboard commit on green main' >&2
             exit 1
           fi
           echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
-  # Dashboard Fast: every push and dispatch requires its exact-commit dev-host proof, released or not.
+  # Dashboard Fast: every push and dispatch runs it, released or not.
   test:
     if: github.event_name != 'workflow_run'
     uses: ./.github/workflows/dashboard-ci.yml
@@ -96,7 +95,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      statuses: read
       actions: read
       packages: write
       id-token: write
@@ -104,45 +102,11 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - name: Download and verify the application qualified on a dev host
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/dashboard-qualified" "$RUNNER_TEMP/dashboard-publish"
-          python3 scripts/ci/proof_release.py download "$GITHUB_SHA" dashboard \
-            "$RUNNER_TEMP/dashboard-qualified" dashboard-publish.tar.gz dashboard-qualification.json
-          python3 - <<'PYTHON'
-          import hashlib
-          import json
-          import os
-          from pathlib import Path, PurePosixPath
-          import tarfile
-
-          temporary = Path(os.environ["RUNNER_TEMP"])
-          qualified = temporary / "dashboard-qualified"
-          output = temporary / "dashboard-publish"
-          manifest = json.loads((qualified / "dashboard-qualification.json").read_text())
-          assert manifest["schema"] == "terrascale.dashboard-qualification/v1"
-          assert manifest["revision"] == os.environ["GITHUB_SHA"]
-          assert manifest["archive"] == "dashboard-publish.tar.gz"
-          archive = qualified / manifest["archive"]
-          assert hashlib.sha256(archive.read_bytes()).hexdigest() == manifest["sha256"]
-          with tarfile.open(archive, "r:gz") as package:
-              files = {}
-              for member in package.getmembers():
-                  path = PurePosixPath(member.name)
-                  assert not path.is_absolute() and ".." not in path.parts
-                  assert member.isdir() or member.isfile(), "Only regular application files are permitted"
-                  if member.isfile():
-                      name = path.as_posix()
-                      assert name not in files, "Duplicate application file"
-                      files[name] = hashlib.sha256(package.extractfile(member).read()).hexdigest()
-              assert files and files == manifest["files"]
-              assert "TerraScale.Dashboard.dll" in files
-              package.extractall(output, filter="data")
-          print(f"Verified {len(files)} application files from {manifest['revision']}")
-          PYTHON
+      - name: Download the application Dashboard Fast tested
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dashboard-publish
+          path: ${{ runner.temp }}/dashboard-publish
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:

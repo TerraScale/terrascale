@@ -2,7 +2,7 @@
 
 TerraScale is one monorepo for the platform's core code: **TerraBase** (the multi-region SQL database), **ts-auth** (hosted identity provider), the dashboard, the shared .NET libraries (endpoints, logging), the SDKs in `sdk/` (dotnet, go, js, python, rust), the docs site, the landing site and the benchmarks.
 
-Agent and contributor rules: [`AGENTS.md`](AGENTS.md). Shipping from a dev host: [`ts-ship`](docs/dev/shipping.md).
+Agent and contributor rules: [`AGENTS.md`](AGENTS.md). Shipping: [plain git push to main](docs/dev/shipping.md).
 
 ## Layout
 

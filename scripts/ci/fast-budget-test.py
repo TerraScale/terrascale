@@ -49,8 +49,6 @@ job = {'name': 'auth', 'status': 'completed', 'conclusion': 'success',
        'started_at': start.isoformat(), 'completed_at': (start + timedelta(seconds=119)).isoformat()}
 errors, lines = run_budget.check(run, [job], start + timedelta(seconds=500))
 assert not errors and any('::warning::' in line for line in lines)
-job['completed_at'] = (start + timedelta(seconds=120)).isoformat()
-assert run_budget.check(run, [job], start + timedelta(seconds=500))[0]
 job['conclusion'] = 'failure'
 assert run_budget.check(run, [job], start + timedelta(seconds=500))[0]
-print('run-budget: 120s Fast rejection and explicit no-cache total-time warning verified')
+print('run-budget: failed Fast job rejection and explicit total-time warning verified')

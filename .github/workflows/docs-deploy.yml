@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  statuses: read
   actions: read
 
 concurrency:
@@ -32,17 +31,8 @@ jobs:
         run: |
           main=$(gh api repos/TerraScale/terrascale/git/ref/heads/main --jq .object.sha)
           [[ "$REVISION" = "$main" ]] || { echo 'A newer main revision superseded this deployment.'; exit 0; }
-          gh api --paginate --slurp "repos/TerraScale/terrascale/commits/$REVISION/statuses?per_page=100" > "$RUNNER_TEMP/docs-statuses.json"
-          python3 - "$RUNNER_TEMP/docs-statuses.json" <<'PY'
-          import json, os, sys
-          statuses = [item for page in json.load(open(sys.argv[1])) for item in page]
-          proof = next((item for item in statuses if item['context'] == 'docs-release/docs'), None)
-          qualified = proof and proof['state'] == 'success' and proof['creator']['login'] == 'MarioGK'
-          if not qualified:
-              raise SystemExit('Qualify this exact docs commit on a dev host before deploying it')
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f"deploy={'true' if qualified else 'false'}\nrevision={os.environ['REVISION']}\n")
-          PY
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: eligible
@@ -59,45 +49,24 @@ jobs:
         with:
           ref: ${{ needs.eligible.outputs.revision }}
           persist-credentials: false
-      - name: Require green main and dev-host Fast for this exact revision
+      - name: Require green main for a manual deployment
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 ../scripts/docs/check-proof.py docs "$REVISION"
-          # Automatic deployment depends on Docs Fast in the path-filtered caller.
-          # Manual operator deployment retains the repository-wide green-main check.
+          # Automatic deployment runs after Docs Fast in the path-filtered caller.
           if [[ "${{ github.event_name }}" == workflow_dispatch ]]; then
             python3 scripts/check-main.py "$REVISION"
           fi
-          main=$(gh api repos/TerraScale/terrascale/git/ref/heads/main --jq .object.sha)
-          [[ "$REVISION" = "$main" ]]
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: docs-site/.node-version
           package-manager-cache: false
       - run: npm ci --no-audit --no-fund
-      - name: Download and verify the checked site
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Build this revision's site
         run: |
-          python3 ../scripts/ci/proof_release.py download "$REVISION" docs "$RUNNER_TEMP/docs-site" site.tar.gz site-manifest.json
-          python3 - "$RUNNER_TEMP/docs-site" "$REVISION" <<'PY'
-          import hashlib, json, pathlib, sys, tarfile
-          root = pathlib.Path(sys.argv[1])
-          manifest = json.loads((root / 'site-manifest.json').read_text())
-          assert manifest['revision'] == sys.argv[2] and manifest['sourceDirectory'] == 'docs-site', 'Artifact source differs from this revision'
-          archive = root / 'site.tar.gz'
-          assert hashlib.sha256(archive.read_bytes()).hexdigest() == manifest['sha256'], 'Artifact digest mismatch'
-          with tarfile.open(archive) as package:
-              for member in package.getmembers():
-                  name = pathlib.PurePosixPath(member.name)
-                  assert not name.is_absolute() and '..' not in name.parts and not member.issym() and not member.islnk(), 'Unsafe artifact path'
-                  assert member.name.startswith(('.cloudflare/output', 'docs/.vitepress/dist')), 'Unexpected artifact member'
-              package.extractall(filter='data')
-          info = json.loads(pathlib.Path('docs/.vitepress/dist/build-info.json').read_text())
-          assert info['commit'] == sys.argv[2], 'Static site revision differs from this deployment'
-          PY
-      - name: Deploy the checked site to Workers
+          npm run build
+          python3 -c 'import json,sys; assert json.load(open("docs/.vitepress/dist/build-info.json"))["commit"] == sys.argv[1]' "$REVISION"
+      - name: Deploy the site to Workers
         run: npm run deploy:site -- --message "$REVISION"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

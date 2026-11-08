@@ -27,34 +27,22 @@ assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures n
 assert "ContinuousIntegrationBuild: false" not in workflow
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
 assert "terrabase-shard" not in workflow and "terrabase-build:" not in workflow
-assert "timeout-minutes: 2" in workflow
-assert "qualified-build.py" in workflow
 assert "run-budget.py" in workflow
 assert "docker/build-push-action" in workflow
 assert "runner.temp }}/image-payloads" in workflow, "CI wraps the checked runtime payload without compilation"
 assert "image-payloads.sh publish" in workflow and "platforms: linux/arm64\n" in workflow
 assert "no-cache-filters: slow-${{ env.AREA }}-run" in slow_workflow
 assert "steps: *slow-steps" in slow_workflow
-qualified = (root / "scripts/ci/qualified-build.py").read_text()
 for invariant in ("--locked",):
     assert invariant in (root / "Makefile").read_text()
-assert "'ci-build/' + area" in qualified
-assert "'ts-ship/' + area" in qualified
-assert "manifest digest mismatch" in qualified
-assert "<30s; tests <=10s" in qualified
-assert "['creator']['login'].lower() == 'mariogk'" in qualified
-assert "retain_payload" not in qualified and "cf_command" not in qualified
 assert "CLOUDFLARE_API_TOKEN" not in workflow and "r2 objects" not in workflow
-assert "logs only" in qualified and "terrascale.ci-checks/v2" in qualified
 assert "dotnet build tests/TerraScale.Authentication.Fast/" in (root / "scripts/ci/auth-build.sh").read_text()
-assert "terrabase-e2e-local" in qualified
-assert "image-payloads.sh" not in qualified
-for area in ("libs", "auth", "terrabase"):
+fast_commands = {"libs": "test-area.sh fast libs", "auth": "auth-test-fast", "terrabase": "test-area.sh fast terrabase"}
+for area, command in fast_commands.items():
     block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {area}:\n", 1)[1], maxsplit=1)[0]
-    assert "timeout-minutes: 2" in block
-    assert f"qualified-build.py verify {area}" in block
-    assert "dotnet build" not in block
-    assert "needs: changes" in block, "Receipt checks run right after changes; aggregate test gates releases"
+    assert "make restore turso-native" in block or "*locked-restore" in block, area
+    assert command in block, f"{area} runs its own Fast suite on a hosted runner"
+    assert "needs: changes" in block, "Fast jobs run right after changes; aggregate test gates releases"
     assert "needs.changes.outputs.fast" in block
 
 # Guard behavior at the build graph boundary: publishing and Slow must never rerun checked Fast stages.
@@ -75,7 +63,7 @@ for area in ("libs", "auth", "terrabase"):
     assert f"SOLUTION={area}.slnf" in stages[f"build-{area}"][1], area
 build_check = "src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj"
 assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore" in stages["build-terrabase"][1]
-# Imported areas qualify on dev hosts; the existing hosted jobs format their own service graphs.
+# Imported areas (SDKs, dashboard) format their own graphs in their own workflows.
 imported_projects = {p for p in all_projects if p.startswith(('sdk/', 'src/TerraScale.Dashboard', 'tests/TerraScale.Dashboard.'))}
 assert all_projects <= formatted | {build_check} | imported_projects, all_projects - formatted - {build_check} - imported_projects
 assert "needs: [changes, checks, libs, auth, terrabase]" in workflow, "Fast must gate required test; Slow must not delay it"
@@ -117,7 +105,7 @@ assert "  schedule:" in slow_events and "  workflow_dispatch:" in slow_events
 assert "  push:" not in slow_events and "  pull_request:" not in slow_events
 assert "  schedule:" not in workflow
 assert "slow-state.py" in slow_workflow and "ref: main" in slow_workflow
-assert "make restore" in dockerfile, "Dev hosts retain locked restore and package caches"
+assert "make restore" in dockerfile, "Images retain locked restore"
 
 inputs = dockerfile.split("FROM base AS restore-inputs\n", 1)[1].split("\nFROM base AS restored", 1)[0]
 command = inputs.split("\nRUN ", 1)[1].split("\n\n", 1)[0].replace("\\\n", " ")
@@ -148,4 +136,4 @@ def filtered(change=None):
 baseline = filtered()
 for path in fixtures:
     assert (filtered(path) != baseline) == (path in expected), path
-print(f"cache-policy-test: ok (main-only package/base writers, fresh host Fast suites, {len(fixtures)} restore invalidation controls)")
+print(f"cache-policy-test: ok (main-only package/base writers, hosted Fast suites, {len(fixtures)} restore invalidation controls)")

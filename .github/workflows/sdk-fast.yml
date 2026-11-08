@@ -1,4 +1,4 @@
-name: SDK dev-host proof
+name: SDK Fast
 
 on:
   workflow_call:
@@ -9,20 +9,35 @@ on:
 
 permissions:
   contents: read
-  statuses: read
 
 jobs:
-  proof:
+  fast:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
+    env:
+      AREA: ${{ inputs.area }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Require this commit's dev-host Fast result
-        env:
-          GH_TOKEN: ${{ github.token }}
-          AREA: ${{ inputs.area }}
-          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: python3 scripts/sdk/check-proof.py "$AREA" "$REVISION"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        if: inputs.area == 'sdk-dotnet'
+        with:
+          dotnet-version: |
+            10.0.401
+            11.0.100-rc.3.26522.148
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        if: inputs.area != 'sdk-dotnet'
+        with:
+          install: false
+      - name: Install the pinned SDK toolchain
+        run: |
+          set -euo pipefail
+          case "$AREA" in
+            sdk-go) mise use -g "go@$(cat sdk/go/.go-version)"; dirname "$(mise which go)" >> "$GITHUB_PATH" ;;
+            sdk-python) mise use -g uv@0.13.7; dirname "$(mise which uv)" >> "$GITHUB_PATH" ;;
+            sdk-rust) rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy ;;
+          esac
+      - name: SDK Fast
+        run: make "$AREA-test-fast"

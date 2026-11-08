@@ -48,4 +48,4 @@ Derive region, node and peers from `TS_REGION`, `TS_NODE` and `TS_PEERS_FILE`. O
 
 ## Development and shipping
 
-Use the exact SDK in `global.json` and the root Makefile. Run heavy work through `ts-heavy-any`; ship from an isolated checkout with `ts-ship`. Fast validation is `make terrabase-test-fast`; Slow is `make terrabase-test-slow`. See [CI](ci.md) and [Fast budgets](fast-ci-budgets.md). Deployment requires green main; launch formalities remain [deferred](../decisions/go-live.md).
+Use the exact SDK in `global.json` and the root Makefile. Ship from an isolated checkout with plain git ([Shipping](../dev/shipping.md)); CI runs Fast for every TerraBase push. Fast validation is `make terrabase-test-fast`; Slow is `make terrabase-test-slow`. See [CI](ci.md). Deployment requires green main; launch formalities remain [deferred](../decisions/go-live.md).
