@@ -135,6 +135,13 @@ export class V1Backups {
     const operation = restoreOperation((await this.#transport.call("restorePointInTime", this.#params, { body: stringifyExactJson(request, "point-in-time restore"), signal: options.signal })).value);
     return this.#awaitRestore(operation, options);
   }
+  /** @param {V1PointInTimeRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1RestoredDatabase>} */
+  async rewindPointInTime(request, options = {}) {
+    members(request, ["pointInTime", "destination"]);
+    pointInTime(request);
+    mutationOptions(options);
+    return restored((await this.#transport.call("rewindPointInTime", this.#params, { body: stringifyExactJson(request, "point-in-time rewind"), signal: options.signal })).value);
+  }
 }
 /** Write-only destination credentials are sent only to the configured API, never retained in the client. */
 export class V1BackupDestinationClient {
