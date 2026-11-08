@@ -28,6 +28,7 @@ export const en = {
 
   footer: {
     rightsReserved: 'All rights reserved.',
+    tagline: 'Multi-region database',
     columns: {
       product: {
         title: 'Product',
@@ -35,7 +36,6 @@ export const en = {
           features: 'Features',
           pricing: 'Pricing',
           changelog: 'Changelog',
-          documentation: 'Documentation',
         },
       },
       company: {
@@ -52,9 +52,14 @@ export const en = {
       resources: {
         title: 'Resources',
         links: {
-          docs: 'Docs',
+          documentation: 'Documentation',
           apiReference: 'API Reference',
           status: 'Status',
+        },
+      },
+      support: {
+        title: 'Support',
+        links: {
           support: 'Support',
           supportEmail: 'Contact: support@terrascale.tech',
         },
