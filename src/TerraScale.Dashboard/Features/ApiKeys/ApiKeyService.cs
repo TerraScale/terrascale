@@ -19,6 +19,11 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 return new([], null);
             }
 
+            if (!context.CanManageKeys)
+            {
+                return new([], null, ViewerOnly: true);
+            }
+
             CursorPaging.ValidateLimit(limit);
             if (cursor is { Length: > 512 } || cursor is not null && cursor.Any(char.IsControl))
             {
@@ -484,7 +489,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         }
     }
 
-    public sealed record ApiKeyListPage(IReadOnlyList<ProjectCredential> Items, string? NextCursor)
+    public sealed record ApiKeyListPage(IReadOnlyList<ProjectCredential> Items, string? NextCursor, bool ViewerOnly = false)
     {
         public bool HasMore => NextCursor is not null;
     }
@@ -493,6 +498,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     {
         private static readonly string[] FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
         public string Warning { get; init; } = "";
+        public bool ViewerOnly { get; init; }
         public string DraftKeyCidrs { get; init; } = "";
         public static string Lines(IReadOnlyList<string>? cidrs)
         {

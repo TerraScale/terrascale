@@ -274,6 +274,14 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 using var json = JsonDocument.Parse(await listed.Content.ReadAsStringAsync());
                 await Assert.That(json.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(0);
             }
+
+            using (var page = await viewer.GetAsync("/api-keys" + scope))
+            {
+                var html = await page.Content.ReadAsStringAsync();
+                await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(html).Contains("Only project members can see API keys.");
+                await Assert.That(html).DoesNotContain("The live credential issuer is unavailable");
+            }
         }
 
         private static async Task<WebApplication> StartAsync(DemoEnvironment environment, string root)
