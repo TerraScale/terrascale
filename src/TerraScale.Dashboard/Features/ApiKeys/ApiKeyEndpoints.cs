@@ -222,7 +222,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
         }
 
-        // Idempotent revoke: the audit trail records only revokes that removed a key this call, never repeats.
         private static async Task RecordRevokeAsync(HttpContext http, AccountContext context, AccountService accounts, ApiKeyService keys, string keyId)
         {
             if (await keys.RevokeAsync(context, keyId, http.RequestAborted))
