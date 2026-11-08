@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await SubmitAsync("/onboarding/step", "Save and continue →");
             await page.GetByRole(AriaRole.Heading, new() { Name = "Choose your plan", Exact = true }).WaitForAsync();
             await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=starter]") }).ClickAsync();
-            await SubmitAsync("/onboarding/step", "Continue to checkout →");
+            await SubmitAsync("/onboarding/step", "Continue to checkout on Starter →");
             await page.GetByRole(AriaRole.Heading, new() { Name = "Create your first project", Exact = true }).WaitForAsync();
             await page.Locator("#projectName").FillAsync("Billing project " + suffix);
             await page.Locator("#region").SelectOptionAsync("GRU");
