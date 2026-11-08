@@ -164,6 +164,12 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
         }
     }
 
+    public async Task AuditClientRotationAsync(string userId, string projectId, string clientId, CancellationToken cancellationToken)
+    {
+        var project = await platform.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        await store.TransactAsync([platform.Audit(project.Value.OrganizationId, userId, "oauth_client.rotated", clientId)], cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Deletes the tenant's client; false when there is none.</summary>
     public async Task<bool> DeleteClientAsync(string projectId, string clientId, CancellationToken cancellationToken) =>
         await store.GetAsync(AuthStore.OidcApplicationTable, projectId, clientId, cancellationToken).ConfigureAwait(false) is { } rowData

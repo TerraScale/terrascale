@@ -102,6 +102,54 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
     }
 
+    [Test]
+    public async Task Another_projects_admin_gets_404_rotating_a_clients_secret()
+    {
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var (_, token, _, root) = await this.ProjectAsync(oidc);
+        var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token,
+            new { name = this.faker.Company.CompanyName(), type = "confidential", redirect_uris = CreateRedirect }, HttpStatusCode.Created);
+        var clientId = created.GetProperty("client_id").GetString()!;
+        var (_, otherToken, _, _) = await this.ProjectAsync(oidc, "person2");
+
+        using var denied = await oidc.CallAsync(HttpMethod.Post, $"{root}/clients/{clientId}/secret/rotate", otherToken, new { grace_seconds = 60 });
+        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+
+        using var deleted = await oidc.CallAsync(HttpMethod.Delete, $"{root}/clients/{clientId}", token);
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
+    [Test]
+    public async Task A_rotated_secret_keeps_working_only_through_its_grace()
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var (_, token, project, root) = await this.ProjectAsync(oidc);
+        var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token,
+            new { name = this.faker.Company.CompanyName(), type = "confidential", redirect_uris = CreateRedirect }, HttpStatusCode.Created);
+        var clientId = created.GetProperty("client_id").GetString()!;
+        var first = created.GetProperty("client_secret").GetString()!;
+
+        var rotated = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients/{clientId}/secret/rotate", token, new { grace_seconds = 3600 });
+        var second = rotated.GetProperty("client_secret").GetString()!;
+        await Assert.That(second).IsNotEqualTo(first);
+        await Assert.That(rotated.GetProperty("previous_secret_expires_at").GetDateTimeOffset()).IsEqualTo(clock.GetUtcNow().AddHours(1));
+
+        var form = new Dictionary<string, string> { ["grant_type"] = "client_credentials" };
+        await Assert.That((await oidc.PostTokenAsync(new Dictionary<string, string>(form), clientId, first, tenant: project)).StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await oidc.PostTokenAsync(new Dictionary<string, string>(form), clientId, second, tenant: project)).StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        using var refused = await oidc.PostTokenAsync(new Dictionary<string, string>(form), clientId, "wrong-secret", tenant: project);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        clock.Advance(TimeSpan.FromSeconds(3601));
+        using var expired = await oidc.PostTokenAsync(new Dictionary<string, string>(form), clientId, first, tenant: project);
+        await Assert.That(expired.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That((await oidc.PostTokenAsync(new Dictionary<string, string>(form), clientId, second, tenant: project)).StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
+        using var deleted = await oidc.CallAsync(HttpMethod.Delete, $"{root}/clients/{clientId}", token);
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
     // An owner signed in, with its sign-in token, an organization and a project.
     private async Task<(UserRecord Owner, string Token, string Project, string Root)> ProjectAsync(OidcHarness oidc, string person = "person1")
     {

@@ -406,7 +406,8 @@ public sealed class ApiKeyApplicationManager(
     OpenIddict.Abstractions.IOpenIddictApplicationCache<OidcApplication> cache,
     ILogger<OpenIddict.Core.OpenIddictApplicationManager<OidcApplication>> logger,
     Microsoft.Extensions.Options.IOptionsMonitor<OpenIddict.Core.OpenIddictCoreOptions> options,
-    OpenIddict.Abstractions.IOpenIddictApplicationStore<OidcApplication> store)
+    OpenIddict.Abstractions.IOpenIddictApplicationStore<OidcApplication> store,
+    TimeProvider clock)
     : OpenIddict.Core.OpenIddictApplicationManager<OidcApplication>(cache, logger, options, store)
 {
     /// <summary>The prefix of an API key client's stored secret.</summary>
@@ -422,6 +423,17 @@ public sealed class ApiKeyApplicationManager(
             && string.Equals(await this.Store.GetClientIdAsync(application, cancellationToken).ConfigureAwait(false), identifier, StringComparison.Ordinal)
                 ? application
                 : null;
+    }
+
+    public override async ValueTask<bool> ValidateClientSecretAsync(OidcApplication application, string secret, CancellationToken cancellationToken = default)
+    {
+        if (await base.ValidateClientSecretAsync(application, secret, cancellationToken).ConfigureAwait(false))
+        {
+            return true;
+        }
+
+        return application.PreviousSecretHash is not null && application.PreviousSecretExpiresAt > clock.GetUtcNow()
+            && await ValidateClientSecretAsync(secret, application.PreviousSecretHash, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

@@ -12,6 +12,7 @@ public sealed record StepUpPageModel(string Id, string Email, string Purpose, bo
         "rotate_api_key" => "Rotate an API key",
         "create_oauth_client" => "Register an OAuth client",
         "update_oauth_client" => "Update an OAuth client",
+        "rotate_oauth_client" => "Rotate an OAuth client's secret",
         "change_email" => "Change your sign-in email",
         _ => "Verify your account",
     };
