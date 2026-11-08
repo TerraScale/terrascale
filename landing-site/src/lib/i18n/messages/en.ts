@@ -86,6 +86,35 @@ export const en = {
     ],
   },
 
+  terminalFeatures: {
+    rows: [
+      {
+        title: 'Encrypted read replicas in other regions',
+        text: 'Choose replica regions to keep encrypted read-only copies outside the home region. Replicas are eventually consistent and writes always go to the home region.',
+      },
+      {
+        title: 'psql, HTTP and WebSocket connections',
+        text: 'Connect with psql or any Postgres driver, the typed C# and TypeScript SDKs, the HTTP API, the CLI, or an MCP client.',
+      },
+      {
+        title: 'Agent databases with TTL, forks and scoped keys',
+        text: 'Give an agent its own database with a time to live, fork a database, and issue a key scoped to one database with read or read-write access.',
+      },
+    ],
+  },
+
+  whyTerraScale: {
+    title: 'Why TerraScale',
+    rows: [
+      { title: 'SQL tables, indexes and foreign keys', text: 'Tables, indexes, views and triggers in the SQLite dialect, with foreign keys always enforced.' },
+      { title: 'One home region for writes', text: 'São Paulo, the San Francisco Bay Area, or Frankfurt. Reads can come from an encrypted local replica.' },
+      { title: 'Encrypted in transit and at rest', text: 'Customer traffic uses TLS and database files, replicas and backups are encrypted at rest.' },
+      { title: 'Deletion destroys backup keys', text: 'Deleting a database destroys its backup data keys, so retained encrypted backups cannot be restored.' },
+      { title: 'Export anytime', text: 'Export through the dashboard or API at any time. There is no exit fee for leaving TerraScale.' },
+      { title: 'Plans enforce write caps', text: 'Monthly write caps stop new writes and SQL read fair use stops SQL reads, while shape reads stay available.' },
+    ],
+  },
+
   howItWorks: {
     titleLead: 'From sign up to your first query',
     titleAccent: 'in three steps.',

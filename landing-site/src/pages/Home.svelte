@@ -1,17 +1,17 @@
 <script lang="ts">
-  import Hero from '@/components/sections/Hero.svelte'
+  import HeroTerminal from '@/components/HeroTerminal.svelte'
+  import TerminalFeatures from '@/components/sections/TerminalFeatures.svelte'
   import HowItWorks from '@/components/sections/HowItWorks.svelte'
-  import CodePanel from '@/components/sections/CodePanel.svelte'
-  import Features from '@/components/sections/Features.svelte'
+  import WhyTable from '@/components/sections/WhyTable.svelte'
   import PricingTeaser from '@/components/sections/PricingTeaser.svelte'
   import FaqSection from '@/components/sections/FaqSection.svelte'
   import CtaSection from '@/components/sections/CtaSection.svelte'
 </script>
 
-<Hero />
+<HeroTerminal />
+<TerminalFeatures />
 <HowItWorks />
-<CodePanel />
-<Features />
+<WhyTable />
 <PricingTeaser />
 <FaqSection source="home" />
 <CtaSection />
