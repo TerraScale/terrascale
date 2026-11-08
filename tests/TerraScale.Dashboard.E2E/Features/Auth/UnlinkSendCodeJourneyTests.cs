@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -31,6 +32,8 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 var body = await view.Content.ReadAsStringAsync();
                 await Assert.That(body).Contains("We emailed a code to user@example.com. It expires in 30 minutes.");
                 await Assert.That(body).Contains("Email me a code</button>");
+                await Assert.That(body).Contains(@"formaction=""/api/v1/dashboard/profile/providers/github/code"" formnovalidate");
+                await Assert.That(Regex.Count(Section(body), "<form")).IsEqualTo(1);
             }
 
             await Assert.That(host.Providers.Sends).IsEqualTo(1);
@@ -48,9 +51,23 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 var body = await waiting.Content.ReadAsStringAsync();
                 await Assert.That(body).Contains("Email me a code (wait 30 s)</button>");
                 await Assert.That(body).Contains("disabled>Email me a code");
+                await Assert.That(Regex.Count(Section(body), "<form")).IsEqualTo(1);
             }
 
             await Assert.That(host.Providers.Sends).IsEqualTo(2);
+        }
+
+        private static string Section(string body)
+        {
+            var marker = body.IndexOf("ts-profile-method-confirm", StringComparison.Ordinal);
+            if (marker < 0)
+            {
+                return "";
+            }
+
+            var start = body.LastIndexOf("<form", marker, StringComparison.Ordinal);
+            var end = body.IndexOf("</form>", marker, StringComparison.Ordinal);
+            return start >= 0 && end > start ? body[start..end] : "";
         }
 
         private sealed class UnlinkHost : IAsyncDisposable
