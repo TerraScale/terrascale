@@ -1,6 +1,6 @@
 import { requireId } from "../ids.js";
 import { requireDatabaseSelector } from "./ids.js";
-import { dictionary, list, nullable, numeric, record, text } from "./management-decode.js";
+import { dictionary, flag, list, nullable, numeric, record, text } from "./management-decode.js";
 import { members } from "./management-validation.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
@@ -13,6 +13,9 @@ const projectUsage = record({ projectId: requireId, databases: numeric, storageB
   reads: numeric, writes: numeric, period, series, items: list(databaseUsage), month });
 const bandwidth = record({ bytesSent: numeric, bytesReceived: numeric });
 const latency = record({ p50Ms: nullable(numeric), p95Ms: nullable(numeric), p99Ms: nullable(numeric) });
+const requestLog = record({ id: requireId, time: text, region: text, method: text, route: text,
+  status: numeric, latencyMs: numeric, operations: numeric, isQuery: flag, requestId: nullable(text) });
+export const requestLogs = record({ databaseId: requireId, items: list(requestLog), truncated: flag, recordingLimited: flag });
 const analytics = record({ projectId: requireId, range: text, from: text, to: text, bucketSeconds: numeric,
   items: list(record({ databaseId: requireId, databaseName: text, region: text,
     series: list(record({ start: text, requests: dictionary(numeric), operations: dictionary(numeric), errors: numeric,
@@ -20,6 +23,8 @@ const analytics = record({ projectId: requireId, range: text, from: text, to: te
 /** @typedef {ReturnType<typeof databaseUsage>} V1DatabaseUsage */
 /** @typedef {ReturnType<typeof projectUsage>} V1ProjectUsage */
 /** @typedef {ReturnType<typeof analytics>} V1Analytics */
+/** @typedef {ReturnType<typeof requestLog>} V1DatabaseRequestLog */
+/** @typedef {ReturnType<typeof requestLogs>} V1DatabaseRequestLogs */
 /** @typedef {{ readonly granularity?: "hour" | "day"; readonly from?: string; readonly to?: string }} V1UsageRequest */
 /** @typedef {{ readonly range?: "1h" | "24h" | "7d" | "30d"; readonly database?: string; readonly region?: string }} V1AnalyticsRequest */
 /** @param {V1UsageRequest} request */
@@ -68,6 +73,10 @@ export class V1ProjectUsageClient {
   /** @param {V1AnalyticsRequest} [request] @param {V1RequestOptions} [options] @returns {Promise<V1Analytics>} */
   async analytics(request = {}, options = {}) {
     return analytics((await this.#transport.call("getProjectAnalytics", {}, { query: analyticsQuery(request, true), signal: options.signal })).value);
+  }
+  /** @param {V1RequestOptions} [options] @returns {Promise<string>} */
+  async metrics(options = {}) {
+    return this.#transport.text("getProjectMetrics", {}, { signal: options.signal });
   }
 }
 export class V1DatabaseUsageClient {

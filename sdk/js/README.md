@@ -167,9 +167,13 @@ release qualification remain open gates.
 | Databases | `client.databases.create/list/get/rename/delete/branch`, plus `deleteIfId`/`branchIfId` guarded by the database's immutable ID |
 | Backups and usage | `db.backups`, `db.metrics`, `client.metrics`, `client.backupDestination` |
 | Functions | `db.functions.deploy/list/get/invoke/logs/delete` |
+| Request logs | `db.listDatabaseLogs(status?)` |
+| Project metrics | `client.metrics.metrics()` |
 | File buckets | `client.storage` |
 
 `client.metrics.usage()` includes the current month’s `readUnits`, `writeUnits` and billed `units` in `month`. Billed `units` equals `writeUnits`; SQL reads count against fair use. Database usage reports stored bytes and operation counts.
+
+`db.listDatabaseLogs(status?)` reads the newest 100 recorded requests within 24 hours; `status` is `2xx`, `3xx`, `4xx` or `5xx`. Recording is best effort, without a cursor or export guarantee. `client.metrics.metrics()` returns the project's Prometheus 0.0.4 text exposition.
 
 Current project routes authenticate ts-auth project access JWTs. Legacy C# `tb_` keys remain accepted for their
 narrower data scopes; they cannot grant `databases:read` or `databases:write`. Credentials travel as

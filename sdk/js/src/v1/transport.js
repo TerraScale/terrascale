@@ -556,6 +556,27 @@ export class V1Transport {
   }
 
   /**
+   * Calls a named producer route that answers with UTF-8 text, not JSON, and returns it whole.
+   * @param {V1Operation} operation
+   * @param {Readonly<Record<string, string>>} params
+   * @param {V1CallOptions} [options]
+   * @returns {Promise<string>}
+   */
+  async text(operation, params, options = {}) {
+    const deadline = operationDeadline(operation, options.signal);
+    try {
+      const scoped = { ...options, signal: deadline.signal };
+      const response = await this.#send(operation, params, scoped, deadline.expiresAt);
+      const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+      if (mediaType !== "text/plain")
+        throw new TypeError(`TerraBase returned ${mediaType ?? "no media type"} instead of text/plain.`);
+      return await this.readText(response, scoped.signal);
+    } finally {
+      deadline.clear();
+    }
+  }
+
+  /**
    * Calls a named producer route that answers with a body to stream, not JSON. The
    * caller consumes and cancels the returned body; only header-time failures are retried here.
    * @param {V1Operation} operation

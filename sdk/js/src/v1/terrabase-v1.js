@@ -15,7 +15,7 @@ import { V1Transport } from "./transport.js";
 import { V1Health, V1Platform, V1Regions } from "./system.js";
 import { V1Backups, V1BackupDestinationClient } from "./backups.js";
 import { V1Functions } from "./functions.js";
-import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
+import { V1ProjectUsageClient, V1DatabaseUsageClient, requestLogs } from "./usage.js";
 /** @import { TerraBaseV1ClientConfig } from "./transport.js" */
 
 /** @typedef {{ readonly ttlSeconds?: number | undefined; readonly signal?: AbortSignal | undefined }} V1AgentDatabaseOptions */
@@ -94,6 +94,23 @@ export class V1Database {
    */
   exportDatabase(options = {}) {
     return this.#transport.stream("exportDatabase", { database: this.name }, options.signal);
+  }
+
+  /**
+   * Reads the newest 100 recorded requests within 24 hours; needs the read scope.
+   * `status` filters by HTTP status class. Recording is best effort, without a cursor or export guarantee.
+   * @param {"2xx" | "3xx" | "4xx" | "5xx"} [status]
+   * @param {V1RequestOptions} [options]
+   * @returns {Promise<import("./usage.js").V1DatabaseRequestLogs>}
+   */
+  async listDatabaseLogs(status, options = {}) {
+    const query = new URLSearchParams();
+    if (status !== undefined) {
+      if (!["2xx", "3xx", "4xx", "5xx"].includes(status)) throw new TypeError("status must be 2xx, 3xx, 4xx or 5xx.");
+      query.set("status", status);
+    }
+    return requestLogs((await this.#transport.call("listDatabaseLogs", { database: this.name },
+      { query, signal: options.signal })).value);
   }
 
   /**

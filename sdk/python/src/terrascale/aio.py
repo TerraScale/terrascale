@@ -358,6 +358,11 @@ class AsyncDatabase:
     async def info(self) -> models.Database:
         return await self._c._send(_spec.get_database(*self._p))
 
+    async def list_database_logs(self, status: str | None = None) -> models.DatabaseRequestLogs:
+        """The newest 100 recorded requests within 24 hours; ``status`` filters by HTTP status class.
+        Recording is best effort, without a cursor or export guarantee."""
+        return await self._c._send(_spec.list_database_logs(*self._p, status))
+
     async def delete(self) -> None:
         """Delete in the database's home region. HTTP 204 confirms logical deletion and local cleanup;
         remote erasure is retried durably and may complete later."""

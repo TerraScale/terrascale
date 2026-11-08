@@ -296,3 +296,64 @@ class ProjectClientPage:
             items=[ProjectClient.from_json(c) for c in body.get("items") or []],
             next_cursor=body.get("next") or None,
         )
+
+
+@dataclass(frozen=True)
+class DatabaseRequestLog:
+    """A completed authorized request; ``route`` is a redacted template, never SQL text or keys."""
+
+    id: str
+    time: str
+    region: str
+    method: str
+    route: str
+    status: int
+    latency_ms: float
+    operations: int
+    is_query: bool
+    request_id: str | None = None
+    statements: int = 0
+    statement_errors: int = 0
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> DatabaseRequestLog:
+        for key in ("id", "time", "region", "method", "route"):
+            if not isinstance(body.get(key), str) or not body[key]:
+                raise ValueError("invalid request log")
+        status = body["status"]
+        latency = body["latencyMs"]
+        if not isinstance(status, int) or isinstance(status, bool) or not 100 <= status <= 599:
+            raise ValueError("invalid request log status")
+        if not isinstance(latency, (int, float)) or isinstance(latency, bool) or latency < 0:
+            raise ValueError("invalid request log latency")
+        operations = body["operations"]
+        if not isinstance(operations, int) or isinstance(operations, bool) or operations < 0:
+            raise ValueError("invalid request log operations")
+        if not isinstance(body["isQuery"], bool):
+            raise ValueError("invalid request log isQuery")
+        request_id = body.get("requestId")
+        if request_id is not None and not isinstance(request_id, str):
+            raise ValueError("invalid request log requestId")
+        return cls(validate_id(body["id"]), body["time"], body["region"], body["method"], body["route"],
+                   status, float(latency), operations, body["isQuery"], request_id,
+                   int(body.get("statements") or 0), int(body.get("statementErrors") or 0))
+
+
+@dataclass(frozen=True)
+class DatabaseRequestLogs:
+    """The newest 100 recorded requests within 24 hours; recording is best effort, without a cursor."""
+
+    database_id: str
+    items: list[DatabaseRequestLog]
+    truncated: bool
+    recording_limited: bool
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> DatabaseRequestLogs:
+        if not isinstance(body.get("truncated"), bool) or not isinstance(body.get("recordingLimited"), bool):
+            raise ValueError("invalid request logs flags")
+        items = body.get("items")
+        if not isinstance(items, list) or len(items) > 100:
+            raise ValueError("invalid request logs items")
+        return cls(validate_id(body["databaseId"]), [DatabaseRequestLog.from_json(i) for i in items],
+                   body["truncated"], body["recordingLimited"])
