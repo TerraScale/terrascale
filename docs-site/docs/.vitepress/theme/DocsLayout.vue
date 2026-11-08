@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useData } from 'vitepress'
 import DefaultTheme from 'vitepress/theme-without-fonts'
+import DocsFooter from './DocsFooter.vue'
 
 const { Layout } = DefaultTheme
 const { page, theme, localeIndex } = useData()
@@ -23,6 +24,9 @@ const home = computed(() => localeIndex.value === 'root' ? '/' : `/${localeIndex
         <a :href="group.items[0].link">{{ group.text }}</a><span aria-hidden="true">/</span>
         <span aria-current="page">{{ page.title }}</span>
       </nav>
+    </template>
+    <template #layout-bottom>
+      <DocsFooter />
     </template>
   </Layout>
 </template>
