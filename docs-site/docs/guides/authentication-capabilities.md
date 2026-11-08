@@ -16,7 +16,8 @@ Current contract, reviewed 26 October 2026. This page takes precedence over olde
 | Device authorization | TerraScale CLI only: `POST /terrascale/oauth/device`, approval at `/ui/terrascale/device`, polling at `/terrascale/oauth/token`. Not `/oauth/device_authorization`. |
 | Machine credentials and scoped exchange | Platform issuer and authorized clients only; these are not project-issuer grants. |
 | Discovery, JWKS, userinfo, revoke and logout | Available per issuer; use its discovered endpoints. Introspection is not available. |
-| Passkeys, magic-link sign-in, guest accounts and conversion | Not currently available. Email template names and staged examples do not establish a supported sign-in method. |
+| Passkeys | Enrollment for TerraScale accounts on the hosted security page; passkey sign-in on the hosted sign-in page with user verification, which satisfies second-factor policies. Management (list, rename, delete) is not currently available. |
+| Magic-link sign-in, guest accounts and conversion | Not currently available. Email template names and staged examples do not establish a supported sign-in method. |
 
 For issuer `https://auth.terrascale.tech/<tenant>`, read `<issuer>/.well-known/openid-configuration`. `<tenant>` is `terrascale` for platform accounts or your project ID for end users. [Served OpenAPI](https://auth.terrascale.tech/openapi/v1.json) and [API reference](https://auth.terrascale.tech/scalar/) describe the current deployment. Discovery may list grants or methods unavailable to your registered client; it does not grant permissions. Project client registration does not provision `private_key_jwt` assertion keys. Although listed in metadata, `prompt=login`, `consent` and `select_account` currently return interaction errors; `prompt=none` can check an existing session.
 
