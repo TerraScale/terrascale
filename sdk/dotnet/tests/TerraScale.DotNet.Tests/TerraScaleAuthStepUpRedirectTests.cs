@@ -73,28 +73,39 @@ public sealed class TerraScaleAuthStepUpRedirectTests
         {
             while (true)
             {
-                using var connection = await listener.AcceptTcpClientAsync(stopping.Token);
-                await using var stream = connection.GetStream();
-                using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, leaveOpen: true);
-                var request = new StringBuilder();
-                var length = 0;
-                while (await reader.ReadLineAsync(stopping.Token) is { Length: > 0 } line)
+                TcpClient connection;
+                try
                 {
-                    request.AppendLine(line);
-                    if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
-                        length = int.Parse(line.AsSpan("Content-Length:".Length).Trim(), CultureInfo.InvariantCulture);
+                    connection = await listener.AcceptTcpClientAsync(stopping.Token);
                 }
-                var body = new char[length];
-                var offset = 0;
-                while (offset < body.Length)
+                catch (Exception e) when (stopping.IsCancellationRequested && e is OperationCanceledException or SocketException or InvalidOperationException)
                 {
-                    var read = await reader.ReadAsync(body.AsMemory(offset), stopping.Token);
-                    if (read == 0) throw new IOException("Incomplete loopback request.");
-                    offset += read;
+                    return;
                 }
-                request.Append(body);
-                Requests.Enqueue(request.ToString());
-                await stream.WriteAsync(response, stopping.Token);
+                using (connection)
+                {
+                    await using var stream = connection.GetStream();
+                    using var reader = new StreamReader(stream, Encoding.ASCII, false, 1024, leaveOpen: true);
+                    var request = new StringBuilder();
+                    var length = 0;
+                    while (await reader.ReadLineAsync(stopping.Token) is { Length: > 0 } line)
+                    {
+                        request.AppendLine(line);
+                        if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                            length = int.Parse(line.AsSpan("Content-Length:".Length).Trim(), CultureInfo.InvariantCulture);
+                    }
+                    var body = new char[length];
+                    var offset = 0;
+                    while (offset < body.Length)
+                    {
+                        var read = await reader.ReadAsync(body.AsMemory(offset), stopping.Token);
+                        if (read == 0) throw new IOException("Incomplete loopback request.");
+                        offset += read;
+                    }
+                    request.Append(body);
+                    Requests.Enqueue(request.ToString());
+                    await stream.WriteAsync(response, stopping.Token);
+                }
             }
         }
 
