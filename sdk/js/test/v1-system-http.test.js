@@ -10,3 +10,12 @@ test("public probes omit authorization and retain readiness and backup 503 bodie
   expect(requests.map(r => r.url.pathname)).toEqual(["/healthz", "/readyz", "/backupz"]);
   for (const r of requests) expect(r.headers.authorization).toBeUndefined();
 });
+
+test("listRegions reads the anonymous ordered region catalog without authorization", async () => {
+  const { client, requests } = await fixture((_request, response) => json(response, { regions: ["gru", "sjc"] }));
+  const regions = await client.regions.list();
+  expect(regions).toEqual({ regions: ["gru", "sjc"] });
+  expect(Object.isFrozen(regions.regions)).toBe(true);
+  expect(requests.map(r => `${r.method} ${r.url.pathname}`)).toEqual(["GET /v1/regions"]);
+  expect(requests[0]?.headers.authorization).toBeUndefined();
+});
