@@ -1,4 +1,5 @@
 [
+  {"path": "^ops/e2e/journey\\.py$", "terms": ["document-feeds"], "match": "\\.feed\\(", "reason": "Python stdlib html.parser.HTMLParser.feed call that parses the hosted sign-in pages; unrelated to the retired document feed surface."},
   {"path": "(^|/)AGENTS\\.md$", "reason": "Human-owned agent instructions are governance, not product surfaces."},
   {"path": "^scripts/legacy-scan/", "repo": "terrascale", "reason": "Scanner policy and process fixtures necessarily name forbidden terms."},
   {"path": "^benchmark/bench/", "repo": "terrascale", "reason": "Immutable historical measurement reports retained for comparisons."},
