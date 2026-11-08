@@ -23,7 +23,7 @@ public sealed class PasskeyHostedEnrollTests(TerraBaseFixture fixture)
         using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var credentialId = RandomNumberGenerator.GetBytes(32);
 
-        using var options = await SendAsync(oidc, "/ui/terrascale/security/passkeys/options", session.Token);
+        using var options = await SendAsync(oidc, "/ui/terrascale/security/passkeys/options", session.Token, post: true);
         await Assert.That(options.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var body = await OidcHarness.JsonAsync(options);
         var sealedChallenge = body.GetProperty("challenge").GetString()!;
@@ -38,11 +38,16 @@ public sealed class PasskeyHostedEnrollTests(TerraBaseFixture fixture)
         await Assert.That(html).Contains("Never used");
     }
 
-    private static Task<HttpResponseMessage> SendAsync(OidcHarness oidc, string path, string session, object? json = null)
+    private static Task<HttpResponseMessage> SendAsync(OidcHarness oidc, string path, string session, object? json = null, bool post = false)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, path);
+        var method = json is null && post is false ? HttpMethod.Get : HttpMethod.Post;
+        var request = new HttpRequestMessage(method, path);
         request.Headers.Add("Cookie", $"tsauth_session={session}");
-        request.Headers.Add("Origin", OidcHarness.PublicOrigin);
+        if (method == HttpMethod.Post)
+        {
+            request.Headers.Add("Origin", OidcHarness.PublicOrigin);
+        }
+
         if (json is not null)
         {
             request.Content = new StringContent(JsonSerializer.Serialize(json), Encoding.UTF8, "application/json");
