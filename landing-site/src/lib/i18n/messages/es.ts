@@ -75,9 +75,9 @@ export const es: Messages = {
   },
 
   homeStats: {
-    regions: 'Serving regions',
-    writeRegion: 'Write region per database',
-    statements: 'Statements per transaction',
+    regions: 'Regiones en servicio',
+    writeRegion: 'Región de escritura por base de datos',
+    statements: 'Sentencias por transacción',
   },
 
 

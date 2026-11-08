@@ -75,9 +75,9 @@ export const ptBr: Messages = {
   },
 
   homeStats: {
-    regions: 'Serving regions',
-    writeRegion: 'Write region per database',
-    statements: 'Statements per transaction',
+    regions: 'Regiões em operação',
+    writeRegion: 'Região de escrita por banco de dados',
+    statements: 'Instruções por transação',
   },
 
 
