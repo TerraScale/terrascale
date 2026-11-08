@@ -2,13 +2,21 @@
    renderer (internal/ui/charts/charts.go). Coordinates are viewBox units
    with one decimal, so charts need no inline style under the strict CSP. */
 
+import { project } from "./world-map.generated";
+
 export type Point = [number, number];
 
-/** The region map's viewBox; hub and vantage positions are in its units. */
-export const MAP_WIDTH = 136;
-export const MAP_HEIGHT = 80;
-
 export const coordinate = (value: number): string => value.toFixed(1);
+
+const LEGACY_NORTH = Math.log(Math.tan(Math.PI / 4 + (71 * Math.PI) / 360));
+const LEGACY_SOUTH = Math.log(Math.tan(Math.PI / 4 + (-56 * Math.PI) / 360));
+
+export function legacyMapPoint(x: number, y: number): { x: number; y: number } {
+  const mercator = LEGACY_NORTH - (y / 80) * (LEGACY_NORTH - LEGACY_SOUTH);
+  const lat = (2 * Math.atan(Math.exp(mercator)) - Math.PI / 2) / (Math.PI / 180);
+  const lng = -180 + (x / 136) * 360;
+  return project(lat, lng);
+}
 
 /** The smallest of 1, 2 or 5 × 10ⁿ at or above `value`. */
 export function niceCeiling(value: number): number {

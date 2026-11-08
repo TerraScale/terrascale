@@ -577,11 +577,6 @@
   background: var(--ts-surface);
 }
 
-.st-map-land {
-  stroke: var(--ts-line-strong);
-  stroke-opacity: 1;
-}
-
 .st-hub,
 .st-vantage {
   outline: none;
