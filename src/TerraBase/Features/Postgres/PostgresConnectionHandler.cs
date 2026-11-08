@@ -496,23 +496,55 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 output.Empty('I');
                 return null;
             case PgStatement[] statements:
+                // PostgreSQL runs one Query message as a single implicit transaction: a failure rolls back the whole
+                // message. A batch that manages transactions itself keeps today's statement-by-statement behavior.
+                var atomic = statements is { Length: > 1 } && session.Sql.IsAutocommit
+                    && !Array.Exists(statements, statement => statement.Kind is PgKind.Begin or PgKind.Commit or PgKind.Rollback);
+                PgError? failure = null;
+                if (atomic && await ControlAsync(session, PgKind.Begin, cancellationToken).ConfigureAwait(false) is { } beginError)
+                {
+                    return beginError;
+                }
+
                 foreach (var statement in statements)
                 {
                     switch (await RunAsync(session, statement, [], cancellationToken).ConfigureAwait(false))
                     {
                         case PgError error:
-                            return error;
+                            failure = error;
+                            break;
                         case PgResult[] results:
                             foreach (var result in results)
                             {
                                 if (Write(output, result, [], describe: true) is { } encodeError)
                                 {
-                                    return encodeError;
+                                    failure = encodeError;
+                                    break;
                                 }
                             }
 
                             break;
                     }
+
+                    if (failure is not null)
+                    {
+                        break;
+                    }
+                }
+
+                if (failure is null && atomic && await ControlAsync(session, PgKind.Commit, cancellationToken).ConfigureAwait(false) is { } commitError)
+                {
+                    failure = commitError;
+                }
+
+                if (failure is not null)
+                {
+                    if (atomic && !session.Sql.IsAutocommit)
+                    {
+                        _ = await ControlAsync(session, PgKind.Rollback, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    return failure;
                 }
 
                 return null;
@@ -807,6 +839,13 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
 
         return outcome;
+    }
+
+    // The implicit transaction of a multi-statement Query message: PostgreSQL sends no tags for it, only for its statements.
+    private async ValueTask<PgError?> ControlAsync(Session session, PgKind kind, CancellationToken cancellationToken)
+    {
+        var statement = new PgStatement(kind, "", "", 0);
+        return await RunAsync(session, statement, [], cancellationToken, Counting.None).ConfigureAwait(false) is PgError error ? error : null;
     }
     private async ValueTask<PgOutcome> GuardAsync(Session session, Func<TenantContext, CancellationToken, ValueTask<PgOutcome>> run, CancellationToken cancellationToken,
         Counting counting = Counting.None)
