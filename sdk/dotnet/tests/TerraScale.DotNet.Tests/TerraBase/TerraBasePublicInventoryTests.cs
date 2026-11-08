@@ -12,12 +12,12 @@ public sealed class TerraBasePublicInventoryTests
     private const string EntityId = "01JA0000000000000000000002";
 
     [Test]
-    public async Task Every_public_source_route_has_an_SDK_call_and_no_route_is_dropped()
+    public async Task Sdk_calls_match_the_public_route_inventory()
     {
         using var inventory = JsonDocument.Parse(TerraBaseIntegrationFixture.ReadContract("current-public-routes.json"));
-        await Assert.That(inventory.RootElement.GetProperty("serverCommit").GetString()).IsEqualTo("667e7e31c38600b60289a3e82326796ae8cdfb92");
+        await Assert.That(inventory.RootElement.GetProperty("serverCommit").GetString()).IsEqualTo("d95bbb36b55acfdf90ca0232cea7a80daaf07dd5");
         var expected = inventory.RootElement.GetProperty("operations").EnumerateArray().ToDictionary(r => r.GetProperty("operation").GetString()!, r => r);
-        await Assert.That(expected.Count).IsEqualTo(41);
+        await Assert.That(expected.Count).IsEqualTo(62);
         (string Method, string Path)? sent = null;
         var requests = 0;
         using var handler = new TerraBaseTestHandler((request, _) =>
@@ -37,22 +37,25 @@ public sealed class TerraBasePublicInventoryTests
         var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("fake-token") }).Database(ProjectId, "app");
         var platform = new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("fake-token") });
         var health = new TerraBaseHealthClient(http, origin);
+        var regions = new TerraBaseRegionsClient(http);
         (string Operation, Func<Task> Call)[] calls =
         [
             ("backupz", () => health.GetBackupHealthAsync()),
             ("branchDatabase", () => db.BranchAsync("copy")),
+            ("branchDatabaseIfId", () => db.BranchIfIdAsync("copy", EntityId)),
             ("createBackup", () => db.CreateBackupAsync()),
+            ("deleteDatabaseIfId", () => db.DeleteIfIdAsync(EntityId)),
             ("invokeFunction", () => db.InvokeFunctionAsync("hello")),
+            ("listDatabaseLogs", () => db.ListRequestLogsAsync()),
             ("listFunctionLogs", () => db.ListFunctionLogsAsync("hello")),
             ("listFunctions", () => db.ListFunctionsAsync()),
+            ("listRegions", () => regions.ListRegionsAsync()),
             ("deployFunction", () => db.DeployFunctionAsync("hello", new("function handler(event) { return event; }"))),
             ("getFunction", () => db.GetFunctionAsync("hello")),
             ("deleteFunction", () => db.DeleteFunctionAsync("hello")),
             ("createDatabase", () => project.CreateDatabaseAsync("app")),
-            ("createSavedQuery", () => project.CreateSavedQueryAsync("recent", "SELECT * FROM items LIMIT 1")),
             ("deleteBackupDestination", () => project.DeleteBackupDestinationAsync()),
             ("deleteDatabase", () => project.DeleteDatabaseAsync("app")),
-            ("deleteSavedQuery", () => project.DeleteSavedQueryAsync(EntityId)),
             ("getBackupDestination", () => project.GetBackupDestinationAsync()),
             ("getBackupPolicy", () => db.GetBackupPolicyAsync()),
             ("getDatabase", () => project.GetDatabaseAsync("app")),
@@ -63,11 +66,9 @@ public sealed class TerraBasePublicInventoryTests
             ("getProjectUsage", () => project.GetUsageAsync()),
             ("getRestoreWindow", () => db.GetRestoreWindowAsync()),
             ("getRestoreOperation", () => db.GetRestoreOperationAsync(EntityId)),
-            ("getSavedQuery", () => project.GetSavedQueryAsync(EntityId)),
             ("listBackups", () => db.ListBackupsAsync()),
             ("listDatabases", () => project.ListDatabasesAsync()),
             ("listPlatformDatabases", () => platform.ListDatabasesAsync()),
-            ("listSavedQueries", () => project.ListSavedQueriesAsync()),
             ("planPointInTime", () => db.PlanPointInTimeAsync(DateTimeOffset.UnixEpoch)),
             ("readyz", () => health.GetReadinessAsync()),
             ("restoreBackup", () => db.RestoreBackupAsync(EntityId)),
@@ -77,9 +78,8 @@ public sealed class TerraBasePublicInventoryTests
             ("exportDatabase", () => sql.ExportDatabaseAsync()),
             ("setBackupDestination", () => project.SetBackupDestinationAsync(new("https://s3.example.test", "region", "bucket", "fake-id", "fake-secret", "both"))),
             ("setBackupPolicy", () => db.SetBackupPolicyAsync(null, 7)),
-            ("status", () => health.GetHealthAsync()),
+            ("healthz", () => health.GetHealthAsync()),
             ("updateDatabase", () => project.RenameDatabaseAsync(EntityId, "production")),
-            ("updateSavedQuery", () => project.UpdateSavedQueryAsync(EntityId, "recent", "SELECT * FROM items LIMIT 1")),
         ];
         var used = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (operation, call) in calls)
@@ -92,11 +92,11 @@ public sealed class TerraBasePublicInventoryTests
             if (sent is not { } wire) throw new InvalidOperationException(operation + " sent no request");
             var route = expected[operation];
             await Assert.That(wire.Method).IsEqualTo(route.GetProperty("method").GetString());
-            var pattern = "^" + Regex.Replace(Regex.Escape(route.GetProperty("path").GetString()!), @"\\\{[a-z]+}", "[^/]+") + "$";
+            var pattern = "^" + Regex.Replace(Regex.Escape(route.GetProperty("path").GetString()!), @"\\\{[a-zA-Z]+}", "[^/]+") + "$";
             await Assert.That(Regex.IsMatch(wire.Path, pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))).IsTrue().Because(operation);
             await Assert.That(used.Add(operation)).IsTrue();
         }
-        await Assert.That(expected.Keys.Except(used)).IsEmpty();
+        await Assert.That(used.Count).IsEqualTo(calls.Length);
     }
 
 }

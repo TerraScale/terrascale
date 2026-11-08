@@ -3,7 +3,7 @@
 SDK tests establish client behavior against synthetic HTTP fixtures only. No TerraBase binary or project runs in SDK tests.
 
 - `routes.json` records every client method and path. `tests/TerraScale.DotNet.Tests` checks that the clients send exactly these, and ts-auth Fast (`TerraBaseSdkContractTests`) checks that the TerraBase built from the same commit serves each one.
-- `current-public-routes.json` is the retained subset of the public route inventory at its `serverCommit`; every entry has an SDK call.
+- `current-public-routes.json` is the full public route inventory of TerraBase's `/openapi/v1.json` at its `serverCommit`; TerraBasePublicInventoryTests maps each SDK call onto it.
 - `sql/` holds the SQL error codes and WebSocket session contract shared by every SDK; see [`sdk/SQL-API.md`](../../../SQL-API.md), [`sql-execute.md`](sql-execute.md) and [`sql-websocket.md`](sql-websocket.md).
 - `fixtures/` holds synthetic database, branch and usage JSON.
 - `functions.json`, `function-invocations.json`, `file-storage/`, `project-metrics.json`, `public-health*.{md,json}`, `regions.md`, `request-logs.md`, `database-rename.md` and `project-erasure.md` pin their scoped producer sources.
