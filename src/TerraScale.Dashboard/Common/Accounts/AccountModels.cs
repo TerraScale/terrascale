@@ -282,6 +282,11 @@ namespace TerraScale.Dashboard.Common.Accounts
             project.OrganizationId == organization.Id && ReferenceEquals(organization.Projects.GetValueOrDefault(project.Id), project);
         // ts-auth's admin project role on the live project, from organization ownership/admin or an explicit grant.
         public bool CanManageProject => Project?.Role == "admin" && CanWriteProjectData;
+        // ts-auth's key rule (ApiKeys.AuthorizeAsync): an organization owner/admin reaches every project; otherwise the
+        // live project's member role carries list/create/rotate/revoke and each key's own allowlist, this project only.
+        public bool CanManageKeys => CanManage || CanWriteProjectData;
+        // ts-auth gates a project's CIDR allowlist on the project admin role (PlatformEndpoints.SetProjectAllowedCidrs).
+        public bool CanManageProjectCidrs => CanManage || CanManageProject;
         // When this request loaded the context from ts-auth; AccountScope reuses it while nothing has changed since.
         [System.Text.Json.Serialization.JsonIgnore] public ServerTiming.Mark? Loaded { get; init; }
     }

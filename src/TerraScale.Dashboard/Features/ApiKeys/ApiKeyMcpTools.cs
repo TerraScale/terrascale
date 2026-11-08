@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(credentials, page.NextCursor, page.HasMore, limit);
         }
 
-        [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a project API key from the dashboard after hosted confirmation. Unattended MCP calls return step_up_required. The dashboard reveals the secret once. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires an owner or admin role.")]
+        [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a project API key from the dashboard after hosted confirmation. Unattended MCP calls return step_up_required. The dashboard reveals the secret once. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires the organization owner/admin role or this project's member role.")]
         public Task<ProjectApiKeySecret> CreateApiKey(string name,
             [Description(ApiKeyService.ScopeDescription)] string[] scopes,
             string databaseId = "", int expiresInDays = 0, string[]? allowedCidrs = null, string? organizationId = null, string? projectId = null)
@@ -46,20 +46,20 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             throw new AccountAccessException("Connect MCP using a project API key to mint scoped keys. OAuth and personal access tokens cannot mint scoped keys.", 403);
         }
 
-        [McpServerTool(Name = "set_api_key_allowed_cidrs", Title = "Set API key allowed IPs", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Replace the IPs or CIDR ranges (up to 32; an empty list allows any IP) that requests with an API key may come from. Requests must also match the project's list when it has one. Changes apply within 60 seconds. Requires an owner or admin role.")]
+        [McpServerTool(Name = "set_api_key_allowed_cidrs", Title = "Set API key allowed IPs", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Replace the IPs or CIDR ranges (up to 32; an empty list allows any IP) that requests with an API key may come from. Requests must also match the project's list when it has one. Changes apply within 60 seconds. Requires the organization owner/admin role or this project's member role.")]
         public async Task<ProjectCredentialMetadata> SetApiKeyAllowedCidrs(string keyId, string[] allowedCidrs, string? organizationId = null, string? projectId = null)
         {
             return ApiKeyService.CredentialMetadata(await keys.SetAllowedCidrsAsync(Scope(organizationId, projectId), keyId, allowedCidrs, Cancellation));
         }
 
-        [McpServerTool(Name = "rotate_api_key", Title = "Rotate API key", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Rotate an API key from the dashboard after hosted confirmation. Unattended MCP calls return step_up_required. The dashboard reveals the new secret once. With previousSecretTtlSeconds = 0 (default), the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With a grace period (up to 86400 seconds), the old secret works until it ends; these bounds start then. Another rotation is refused during the grace. Requires an owner or admin role.")]
+        [McpServerTool(Name = "rotate_api_key", Title = "Rotate API key", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Rotate an API key from the dashboard after hosted confirmation. Unattended MCP calls return step_up_required. The dashboard reveals the new secret once. With previousSecretTtlSeconds = 0 (default), the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With a grace period (up to 86400 seconds), the old secret works until it ends; these bounds start then. Another rotation is refused during the grace. Requires the organization owner/admin role or this project's member role.")]
         public async Task<ProjectApiKeySecret> RotateApiKey(string keyId, int previousSecretTtlSeconds = 0, string? organizationId = null, string? projectId = null)
         {
             var result = await keys.RotateAsync(Scope(organizationId, projectId), keyId, previousSecretTtlSeconds, Cancellation);
             return new(ApiKeyService.Metadata(result.Key), result.Secret);
         }
 
-        [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. Idempotent: revoking again succeeds, because the key is already gone from this project.")]
+        [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Revoking stops this key everywhere within 2 seconds: new requests are refused and open connections (including Postgres) are closed within 3 seconds. Idempotent: revoking again succeeds, because the key is already gone from this project. Requires the organization owner/admin role or this project's member role.")]
         public async Task<McpCredentialRevoked> RevokeApiKey(string keyId, string? organizationId = null, string? projectId = null)
         {
             var context = Scope(organizationId, projectId);

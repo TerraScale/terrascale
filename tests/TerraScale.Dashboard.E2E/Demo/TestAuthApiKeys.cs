@@ -184,13 +184,14 @@ namespace TerraScale.Dashboard.E2E.Demo
                 return Error(HttpStatusCode.NotFound, "not_found");
             }
 
-            var manage = current is "owner" or "admin";
+            // ts-auth's ApiKeys.AuthorizeAsync: the project's member role carries every key operation.
+            var manage = current is "owner" or "admin" or "member";
             if (!match.Groups["keys"].Success)
             {
                 // ts-auth's project body, reduced to what the dashboard reads; PUT .../allowed-cidrs needs project admin.
                 if (request.Method == HttpMethod.Put && cidrsRoute)
                 {
-                    if (!manage)
+                    if (current is not ("owner" or "admin"))
                     {
                         return Error(HttpStatusCode.Forbidden, "access_denied");
                     }
