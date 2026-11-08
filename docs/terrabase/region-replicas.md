@@ -58,7 +58,10 @@ eventual consistency.
    replica; otherwise the region takes the placement when it is newer and deletes the replica when it no longer names
    this region. A follower whose database's home changed (a [move](placement.md#moving-the-home)) is stopped, its
    replica deleted and pulled again from the new home. The peers file is read again on every sweep, so a region that
-   joins is replicated without a restart.
+   joins is replicated without a restart. A database's home also tells its replica regions directly on deletion
+   (`DELETE /v1/sync/organizations/{organization}/projects/{project}/databases/{database}`), so the record and replica
+   are gone within seconds instead of the sweep; the sweep remains the fallback, and a project's merged database
+   listing never lists a database its home no longer lists.
 2. **Notices.** After each commit that advances a database's revision, its home publishes one notice per replica region on
    core NATS (`TS_NATS_URL`, token from `TERRABASE_NATS_TOKEN_FILE`; a node with NATS and no backup refuses to start,
    because durable local writes seal under the database key store), subject

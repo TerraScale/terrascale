@@ -638,7 +638,7 @@ internal sealed class RegionReplication(
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
-            await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false);
+            _ = await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false);
             return;
         }
 

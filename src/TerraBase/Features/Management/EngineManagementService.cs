@@ -24,7 +24,7 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, IOrphanDatabaseFiles orphanFiles, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota, IRegionPeers regionPeers,
-    Lazy<ICatalogGate> catalogGate, DatabaseAllowance databaseAllowance, Lazy<IBackupKeyShredding> shredding)
+    Lazy<ICatalogGate> catalogGate, DatabaseAllowance databaseAllowance, Lazy<IBackupKeyShredding> shredding, RemoteDatabases remote)
     : IManagementService, ITenantDirectory, IHostedService, ICatalogGuard, IDatabaseFileCatalog
 {
     private const string Catalog = ManagementCatalog.Kind;
@@ -412,10 +412,27 @@ internal sealed partial class EngineManagementService(
             cancellationToken).ConfigureAwait(false) switch
         {
             bool deleted => !deleted ? ManagementErrors.NotFound
-                : await shredding.Value.DestroyAsync(deletable.Storage, cancellationToken).ConfigureAwait(false) ? new Done()
-                : new Unavailable("database deletion committed; key destruction is pending and will retry"),
+                : await ForgetReplicaRegionsAsync(deletable.Storage, deletable.Record, CancellationToken.None).ConfigureAwait(false),
             Unavailable refused => refused,
         };
+    }
+
+    // The home tells the regions that hold the database's record directly, so their catalogs and every merged listing
+    // drop it within seconds. Best effort and bounded: a region that misses the push forgets the database on its own
+    // sweep, and the merged listing serves only what a reachable home still lists.
+    private async ValueTask<DeleteDatabaseResult> ForgetReplicaRegionsAsync(TenantContext storage, ManagedDatabase record, CancellationToken cancellationToken)
+    {
+        var peers = (await regionPeers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false))
+            .Where(peer => record.AllRegions || record.Replicas.Contains(peer.Region, StringComparer.Ordinal))
+            .Select(peer => remote.ForgetAsync(peer.Address, storage.OrganizationId, storage.ProjectId!, storage.DatabaseId!, cancellationToken))
+            .ToArray();
+        if (peers.Length > 0)
+        {
+            await Task.WhenAll(peers).ConfigureAwait(false);
+        }
+
+        return await shredding.Value.DestroyAsync(storage, cancellationToken).ConfigureAwait(false) ? new Done()
+            : new Unavailable("database deletion committed; key destruction is pending and will retry");
     }
 
     private Done Shredded(TenantContext storage)

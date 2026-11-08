@@ -22,7 +22,8 @@ internal sealed class ListManagedDatabasesEndpoint(
         Name(ListOperationName);
         Summary("Lists the databases of a project");
         Description(ManagementRoute.PageDescription + " " + ProjectApiRoute.IdentityDescription
-            + " Every serving region's page is merged, so a database appears whichever region homes it; items are in id order.");
+            + " Every serving region's page is merged, so a database appears whichever region homes it; items are in id order."
+            + " A database whose home region no longer lists it — one its home deleted — is not listed, whatever a replica region still records.");
         Tags("Databases");
         Produces<ManagementPage<ManagedDatabaseBody>>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
@@ -116,18 +117,32 @@ internal sealed class ListManagedDatabasesEndpoint(
 
         var items = local.Items.Select(database => ManagedDatabaseBody.From(database, region)).ToList();
         var more = local.Next is not null;
-        var peers = (await regions.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Address).ToList();
+        var peers = await regions.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        // Every region's page for this window, keyed by region: the database ids it listed for the project, and the
+        // window's last id — null when a page reached the project's end, so its omissions are decisive for every later
+        // id too. The local page is this region's own answer; a peer with no entry could not be read.
+        var windows = new Dictionary<string, (HashSet<string> Ids, string? Last)>(StringComparer.Ordinal)
+        {
+            [region] = ([.. local.Items.Select(database => database.Id)], local.Next is null ? null : local.Items[^1].Id),
+        };
         if (peers.Count > 0)
         {
-            var pages = await Task.WhenAll(peers.Select(peer => remote.PageAsync(peer, project, page.After, page.Limit, cancellationToken)))
+            var pages = await Task.WhenAll(peers.Select(peer => remote.PageAsync(peer.Address, project, page.After, page.Limit, cancellationToken)))
                 .ConfigureAwait(false);
-            foreach (var fetched in pages)
+            for (var index = 0; index < pages.Length; index++)
             {
-                if (fetched is not null)
+                var fetched = pages[index];
+                var listed = fetched?.Items.Where(database => database.ProjectId == project).ToList();
+                if (listed is null || listed.Count == 0 && fetched!.Next is not null)
                 {
-                    items.AddRange(fetched.Items.Where(database => database.ProjectId == project));
-                    more |= fetched.Next is not null;
+                    continue;
                 }
+
+                windows[peers[index].Region] = (
+                    [.. listed.Select(database => database.Id)],
+                    fetched!.Next is null ? null : listed[^1].Id);
+                items.AddRange(listed);
+                more |= fetched.Next is not null;
             }
         }
 
@@ -136,8 +151,16 @@ internal sealed class ListManagedDatabasesEndpoint(
             .SkipWhile(database => page.After is not null && string.CompareOrdinal(database.Id, page.After) <= 0)
             .Take(page.Limit + 1)
             .ToList();
-        var truncated = ordered.Count > page.Limit;
-        var shown = truncated ? [.. ordered.Take(page.Limit)] : ordered;
+        // A database its home region no longer lists is the ghost of a deletion its replica regions have not reconciled
+        // yet, so the merged page drops it whatever a replica still records. Pages are in id order, so a home's omission
+        // is decisive only within the window it covered; an id sorting after the window's last is inconclusive, and a
+        // home that could not be read keeps its replicas listed, like every other surface.
+        bool Ghost(ManagedDatabaseBody candidate) =>
+            windows.TryGetValue(candidate.HomeRegion, out var window)
+            && (window.Last is null || string.CompareOrdinal(candidate.Id, window.Last) <= 0) && !window.Ids.Contains(candidate.Id);
+        var kept = ordered.Where(database => !Ghost(database)).ToList();
+        var truncated = kept.Count > page.Limit;
+        var shown = truncated ? [.. kept.Take(page.Limit)] : kept;
         return new(shown, shown.Count > 0 && (truncated || more) ? shown[^1].Id : null);
     }
 
