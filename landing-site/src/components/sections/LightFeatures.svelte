@@ -28,6 +28,7 @@
             <Icon name={item.icon} className="lf__icon-svg" />
           </span>
           <h3 class="lf__title">{item.headline}</h3>
+          <p class="lf__text">{item.text}</p>
         </li>
       {/each}
     </ul>
@@ -101,6 +102,14 @@
     letter-spacing: -0.015em;
     color: var(--ts-text);
     text-wrap: balance;
+  }
+
+  .lf__text {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ts-text-muted);
+    text-wrap: pretty;
   }
 
   @media (max-width: 900px) {

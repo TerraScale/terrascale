@@ -79,16 +79,34 @@ export const es: Messages = {
     titleLead: 'Bases de datos SQL',
     titleAccent: 'y réplicas de lectura.',
     items: [
-      { headline: 'Tablas SQL, índices y claves foráneas' },
-      { headline: 'Conexiones con psql, HTTP y WebSocket' },
-      { headline: 'Réplicas de lectura cifradas en otras regiones' },
-      { headline: 'Shapes filtradas con permisos de lectura por tabla' },
-      { headline: 'Bases para agentes con TTL, forks y claves limitadas' },
-      { headline: 'El borrado destruye las claves de las copias de seguridad' },
+      {
+        headline: 'Tablas SQL, índices y claves foráneas',
+        text: 'Tables, indexes, views and triggers in the SQLite dialect.',
+      },
+      {
+        headline: 'Conexiones con psql, HTTP y WebSocket',
+        text: 'Any Postgres driver over the wire protocol, plus the HTTP API, the SDKs, the CLI and MCP.',
+      },
+      {
+        headline: 'Réplicas de lectura cifradas en otras regiones',
+        text: 'Encrypted read-only copies outside the home region, eventually consistent.',
+      },
+      {
+        headline: 'Shapes filtradas con permisos de lectura por tabla',
+        text: 'Live shapes support filters and selected columns.',
+      },
+      {
+        headline: 'Bases para agentes con TTL, forks y claves limitadas',
+        text: 'Issue a key scoped to one database with read or read-write access.',
+      },
+      {
+        headline: 'El borrado destruye las claves de las copias de seguridad',
+        text: 'Retained encrypted backups cannot be restored after deletion.',
+      },
     ],
   },
 
-  howItWorks: {
+howItWorks: {
     titleLead: 'Del registro a tu primera consulta',
     titleAccent: 'en tres pasos.',
     steps: [

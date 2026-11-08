@@ -6,6 +6,12 @@
   import { registrationUrl } from '@/lib/site'
 
   const connections = ['psql', 'HTTP', 'WebSocket', 'C# SDK', 'TypeScript SDK', 'CLI', 'MCP']
+
+  const results = [
+    { email: 'growth@example.com', seats: 24 },
+    { email: 'team@example.com', seats: 12 },
+    { email: 'ops@example.com', seats: 10 },
+  ]
 </script>
 
 <section class="hl">
@@ -27,6 +33,42 @@
       <RouteLink href="/pricing" class="ts-btn ts-btn-glass hl__cta">
         {$dict.pricingTeaser.cta}
       </RouteLink>
+    </div>
+
+    <div class="hl__panel">
+      <div class="hl__panel-chrome">
+        <span class="hl__dots" aria-hidden="true">
+          <i></i><i></i><i></i>
+        </span>
+        <span class="hl__file">app — pg.terrascale.tech</span>
+        <span class="hl__chip">SQL</span>
+      </div>
+      <div class="hl__panel-body">
+        <pre class="hl__query" aria-label="SQL query"><code><span class="hlq-keyword">SELECT</span> email, seats
+<span class="hlq-keyword">FROM</span> customers
+<span class="hlq-keyword">WHERE</span> seats &gt;= <span class="hlq-num">10</span>
+<span class="hlq-keyword">ORDER BY</span> seats <span class="hlq-keyword">DESC</span>
+<span class="hlq-keyword">LIMIT</span> <span class="hlq-num">25</span>;</code></pre>
+        <div class="hl__result">
+          <table class="hl__table">
+            <thead>
+              <tr>
+                <th scope="col">email</th>
+                <th scope="col">seats</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each results as row (row.email)}
+                <tr>
+                  <td class="hl__cell-email">{row.email}</td>
+                  <td class="hl__cell-seats">{row.seats}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          <p class="hl__status">{results.length} rows · home region gru</p>
+        </div>
+      </div>
     </div>
 
     <ul class="hl__strip" aria-label="Ways to connect">
@@ -141,7 +183,7 @@
 
   .hl__strip {
     list-style: none;
-    margin: 16px 0 0;
+    margin: 20px 0 0;
     padding: 0;
     display: flex;
     flex-wrap: wrap;
@@ -162,6 +204,130 @@
     font: 500 12px / 1 var(--ts-font-mono);
   }
 
+  .hl__panel {
+    width: 100%;
+    max-width: 760px;
+    margin-top: 16px;
+    border: 1px solid var(--ts-divider);
+    border-radius: var(--ts-radius-lg);
+    background: var(--ts-bg-surface);
+    overflow: hidden;
+    text-align: left;
+    box-shadow: 0 30px 70px rgb(16 24 40 / 0.12);
+  }
+
+  .hl__panel-chrome {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--ts-divider);
+  }
+
+  .hl__dots {
+    display: inline-flex;
+    gap: 6px;
+  }
+
+  .hl__dots i {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgb(16 24 40 / 0.12);
+  }
+
+  .hl__file {
+    font: 400 12px / 1 var(--ts-font-mono);
+    color: var(--ts-text-muted);
+  }
+
+  .hl__chip {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid rgba(var(--ts-primary-light-rgb), 0.35);
+    border-radius: var(--ts-radius-sm);
+    color: var(--ts-primary-light);
+    font: 500 11px / 1 var(--ts-font-mono);
+    letter-spacing: 0.04em;
+  }
+
+  .hl__panel-body {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  }
+
+  .hl__query {
+    margin: 0;
+    padding: 18px 20px;
+    border-right: 1px solid var(--ts-divider);
+    overflow-x: auto;
+    font: 400 13px / 1.8 var(--ts-font-mono);
+    color: var(--ts-text);
+    tab-size: 2;
+  }
+
+  .hlq-keyword {
+    color: var(--ts-primary-light);
+  }
+
+  .hlq-num {
+    color: var(--ts-warning);
+  }
+
+  .hl__result {
+    min-width: 0;
+    display: grid;
+    grid-template-rows: 1fr auto;
+  }
+
+  .hl__table {
+    width: 100%;
+    border-collapse: collapse;
+    font: 400 13px / 1 var(--ts-font-mono);
+  }
+
+  .hl__table th {
+    padding: 12px 20px 10px;
+    border-bottom: 1px solid var(--ts-divider);
+    color: var(--ts-text-muted);
+    font-weight: 400;
+    text-align: left;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+  }
+
+  .hl__table td {
+    padding: 10px 20px;
+    color: var(--ts-text);
+    white-space: nowrap;
+  }
+
+  .hl__table tbody tr + tr td {
+    border-top: 1px solid var(--ts-divider);
+  }
+
+  .hl__cell-email {
+    color: var(--ts-secondary);
+  }
+
+  .hl__cell-seats {
+    color: var(--ts-warning);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hl__status {
+    margin: 0;
+    padding: 10px 20px;
+    border-top: 1px solid var(--ts-divider);
+    color: var(--ts-text-muted);
+    font: 400 12px / 1 var(--ts-font-mono);
+  }
+
   @media (max-width: 640px) {
     .hl {
       padding-block: 48px 48px;
@@ -173,6 +339,21 @@
 
     .hl__brand-word {
       font-size: 24px;
+    }
+
+    .hl__panel-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hl__query {
+      border-right: 0;
+      border-bottom: 1px solid var(--ts-divider);
+    }
+
+    .hl__table th,
+    .hl__table td,
+    .hl__status {
+      padding-inline: 14px;
     }
   }
 

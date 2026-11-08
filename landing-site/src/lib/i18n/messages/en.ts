@@ -77,16 +77,34 @@ export const en = {
     titleLead: 'SQL databases',
     titleAccent: 'and read replicas.',
     items: [
-      { headline: 'SQL tables, indexes and foreign keys' },
-      { headline: 'psql, HTTP and WebSocket connections' },
-      { headline: 'Encrypted read replicas in other regions' },
-      { headline: 'Filtered live shapes with table read grants' },
-      { headline: 'Agent databases with TTL, forks and scoped keys' },
-      { headline: 'Database deletion destroys backup keys' },
+      {
+        headline: 'SQL tables, indexes and foreign keys',
+        text: 'Tables, indexes, views and triggers in the SQLite dialect.',
+      },
+      {
+        headline: 'psql, HTTP and WebSocket connections',
+        text: 'Any Postgres driver over the wire protocol, plus the HTTP API, the SDKs, the CLI and MCP.',
+      },
+      {
+        headline: 'Encrypted read replicas in other regions',
+        text: 'Encrypted read-only copies outside the home region, eventually consistent.',
+      },
+      {
+        headline: 'Filtered live shapes with table read grants',
+        text: 'Live shapes support filters and selected columns.',
+      },
+      {
+        headline: 'Agent databases with TTL, forks and scoped keys',
+        text: 'Issue a key scoped to one database with read or read-write access.',
+      },
+      {
+        headline: 'Database deletion destroys backup keys',
+        text: 'Retained encrypted backups cannot be restored after deletion.',
+      },
     ],
   },
 
-  howItWorks: {
+howItWorks: {
     titleLead: 'From sign up to your first query',
     titleAccent: 'in three steps.',
     steps: [

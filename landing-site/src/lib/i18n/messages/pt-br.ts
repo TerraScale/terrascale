@@ -79,16 +79,34 @@ export const ptBr: Messages = {
     titleLead: 'Bancos de dados SQL',
     titleAccent: 'e réplicas de leitura.',
     items: [
-      { headline: 'Tabelas SQL, índices e chaves estrangeiras' },
-      { headline: 'Conexões com psql, HTTP e WebSocket' },
-      { headline: 'Réplicas de leitura criptografadas em outras regiões' },
-      { headline: 'Shapes filtradas com permissões de leitura por tabela' },
-      { headline: 'Bancos para agentes com TTL, forks e chaves limitadas' },
-      { headline: 'A exclusão destrói as chaves dos backups' },
+      {
+        headline: 'Tabelas SQL, índices e chaves estrangeiras',
+        text: 'Tables, indexes, views and triggers in the SQLite dialect.',
+      },
+      {
+        headline: 'Conexões com psql, HTTP e WebSocket',
+        text: 'Any Postgres driver over the wire protocol, plus the HTTP API, the SDKs, the CLI and MCP.',
+      },
+      {
+        headline: 'Réplicas de leitura criptografadas em outras regiões',
+        text: 'Encrypted read-only copies outside the home region, eventually consistent.',
+      },
+      {
+        headline: 'Shapes filtradas com permissões de leitura por tabela',
+        text: 'Live shapes support filters and selected columns.',
+      },
+      {
+        headline: 'Bancos para agentes com TTL, forks e chaves limitadas',
+        text: 'Issue a key scoped to one database with read or read-write access.',
+      },
+      {
+        headline: 'A exclusão destrói as chaves dos backups',
+        text: 'Retained encrypted backups cannot be restored after deletion.',
+      },
     ],
   },
 
-  howItWorks: {
+howItWorks: {
     titleLead: 'Do cadastro à primeira consulta',
     titleAccent: 'em três passos.',
     steps: [
