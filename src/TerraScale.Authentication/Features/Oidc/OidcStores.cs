@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
@@ -271,7 +272,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
 /// OpenIddict authorizations on TerraBase, one per sign-in. Revoking one rejects every token issued under it, because
 /// OpenIddict checks the authorization whenever it validates such a token.
 /// </summary>
-public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor http) : IOpenIddictAuthorizationStore<OidcAuthorization>
+public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor http, TimeProvider clock) : IOpenIddictAuthorizationStore<OidcAuthorization>
 {
     private const string Table = AuthStore.OidcAuthorizationTable;
 
@@ -405,6 +406,61 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
     /// <inheritdoc />
     public ValueTask<long> PruneAsync(DateTimeOffset threshold, CancellationToken cancellationToken) => throw OidcApplicationStore.Unsupported();
 
+    public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
+    {
+        var cutoff = clock.GetUtcNow() - TimeSpan.FromHours(1);
+        var candidates = new JsonObject
+        {
+            ["and"] = new JsonArray(
+                new JsonObject
+                {
+                    ["or"] = new JsonArray(
+                        new JsonObject { ["eq"] = new JsonArray("/status", Statuses.Revoked) },
+                        new JsonObject { ["eq"] = new JsonArray("/type", AuthorizationTypes.AdHoc) }),
+                },
+                new JsonObject { ["lte"] = new JsonArray("/creationDate", JsonValue.Create(cutoff)) }),
+        };
+        using var filter = JsonDocument.Parse(candidates.ToJsonString());
+        var total = 0;
+        string? cursor = null;
+        for (var page = 0; page < 20; page++)
+        {
+            var batch = await store.PageAsync(Table, filter.RootElement, batchSize, cursor, cancellationToken).ConfigureAwait(false);
+            foreach (var rowData in batch.Items)
+            {
+                var authorization = rowData.Body.Deserialize(OidcJson.Default.OidcAuthorization);
+                if (authorization?.Id is not { } id || authorization.InstanceId is not { } instanceId
+                    || await HasTokensAsync(authorization, cancellationToken).ConfigureAwait(false))
+                {
+                    continue;
+                }
+
+                if (await store.CompareAndDeleteAsync(Table, instanceId, id, rowData.Version, cancellationToken).ConfigureAwait(false))
+                {
+                    total++;
+                }
+            }
+
+            cursor = batch.NextCursor;
+            if (batch.Items.Count < batchSize || cursor is null)
+            {
+                return total;
+            }
+        }
+
+        return total;
+    }
+
+    private async ValueTask<bool> HasTokensAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
+    {
+        await foreach (var _ in store.QueryAsync(AuthStore.OidcTokenTable, authorization.InstanceId!, "/authorizationId", authorization.Id!, cancellationToken).ConfigureAwait(false))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     private async IAsyncEnumerable<OidcAuthorization> FindAsync(string field, string value, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         await foreach (var rowData in store.QueryAsync(Table, this.Tenant, field, value, cancellationToken).ConfigureAwait(false))
@@ -459,7 +515,7 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
 /// wrote first, so concurrent redemptions of one code or refresh token have exactly one winner. A reference token's
 /// digest is reserved in <c>uniques</c> in the same transaction that stores it, which is how a handle is found.
 /// </summary>
-public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IHttpContextAccessor http) : IOpenIddictTokenStore<OidcToken>
+public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IHttpContextAccessor http, TimeProvider clock) : IOpenIddictTokenStore<OidcToken>
 {
     private const string Table = AuthStore.OidcTokenTable;
 
@@ -716,6 +772,32 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
     /// <inheritdoc />
     public ValueTask<long> PruneAsync(DateTimeOffset threshold, CancellationToken cancellationToken) => throw OidcApplicationStore.Unsupported();
 
+    public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
+    {
+        var now = JsonSerializer.Serialize(clock.GetUtcNow(), OidcJson.Default.DateTimeOffset);
+        using var filter = JsonDocument.Parse($$"""{"lte":["/expirationDate",{{now}}]}""");
+        var total = 0;
+        while (true)
+        {
+            var batch = await store.QueryAsync(Table, filter.RootElement, batchSize, cancellationToken).ConfigureAwait(false);
+            var deleted = 0;
+            foreach (var rowData in batch)
+            {
+                if (rowData.Body.Deserialize(OidcJson.Default.OidcToken) is { Id: not null, InstanceId: not null } token
+                    && await store.DeleteWithClaimsAsync(Table, token.InstanceId, token.Id, rowData.Version, token.Id, cancellationToken).ConfigureAwait(false))
+                {
+                    deleted++;
+                }
+            }
+
+            total += deleted;
+            if (batch.Count < batchSize || deleted == 0)
+            {
+                return total;
+            }
+        }
+    }
+
     // ponytail: TerraBase query scan, used only for revocation; add an index when token volume makes it slow.
     private async IAsyncEnumerable<OidcToken> FindAsync(string field, string value, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -768,5 +850,6 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
 [JsonSerializable(typeof(OidcApplication))]
 [JsonSerializable(typeof(OidcAuthorization))]
 [JsonSerializable(typeof(OidcToken))]
+[JsonSerializable(typeof(DateTimeOffset))]
 [JsonSerializable(typeof(OAuthErrorBody))]
 internal sealed partial class OidcJson : JsonSerializerContext;

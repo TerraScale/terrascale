@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Extensions;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using OpenIddict.Server;
@@ -114,6 +115,10 @@ public static class OidcIssuer
                     .ReplaceApplicationStore<OidcApplication, OidcApplicationStore>(ServiceLifetime.Singleton)
                     .ReplaceAuthorizationStore<OidcAuthorization, OidcAuthorizationStore>(ServiceLifetime.Singleton)
                     .ReplaceTokenStore<OidcToken, OidcTokenStore>(ServiceLifetime.Singleton);
+                services.AddSingleton<OidcAuthorizationStore>();
+                services.AddSingleton<OidcTokenStore>();
+                services.Replace(ServiceDescriptor.Singleton<IOpenIddictAuthorizationStore<OidcAuthorization>>(static sp => sp.GetRequiredService<OidcAuthorizationStore>()));
+                services.Replace(ServiceDescriptor.Singleton<IOpenIddictTokenStore<OidcToken>>(static sp => sp.GetRequiredService<OidcTokenStore>()));
             })
             .AddServer(server =>
             {
