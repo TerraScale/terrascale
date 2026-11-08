@@ -1,0 +1,101 @@
+{
+  "producer": "355c3b892b852a3a91b20aa17d93564c496e37b4",
+  "source": "src/TerraScale.Authentication/Features/Sso/ (GetSsoConnectionEndpoint, PutSsoConnectionEndpoint, VerifySsoDomainEndpoint, DeleteSsoConnectionEndpoint, SsoEndpoint SsoConnectionBody/SsoConnectionRequest), values synthetic",
+  "put_sso_connection": {
+    "method": "PUT",
+    "path": "/v1/terrascale/organizations/{org}/sso",
+    "status": 200,
+    "request": {
+      "domain": "example.com",
+      "protocol": "oidc",
+      "default_role": "member",
+      "oidc": {
+        "issuer": "https://issuer.example.test",
+        "client_id": "ts-client",
+        "client_secret": "{secret}"
+      }
+    },
+    "response": {
+      "organization_id": "{org}",
+      "domain": "example.com",
+      "domain_verified": false,
+      "verified_at": null,
+      "verification": {
+        "type": "TXT",
+        "name": "_terrascale-sso.example.com",
+        "value": "terrascale-sso-verification=0123456789abcdef"
+      },
+      "protocol": "oidc",
+      "default_role": "member",
+      "oidc": {
+        "issuer": "https://issuer.example.test",
+        "client_id": "ts-client",
+        "client_secret_set": true,
+        "redirect_uri": "https://auth.terrascale.tech/ui/terrascale/sso/callback"
+      },
+      "created_at": "2026-11-01T00:00:00+00:00",
+      "updated_at": "2026-11-08T00:00:00+00:00"
+    }
+  },
+  "get_sso_connection": {
+    "method": "GET",
+    "path": "/v1/terrascale/organizations/{org}/sso",
+    "status": 200,
+    "request": null,
+    "response": {
+      "organization_id": "{org}",
+      "domain": "example.com",
+      "domain_verified": true,
+      "verified_at": "2026-11-08T00:00:00+00:00",
+      "verification": {
+        "type": "TXT",
+        "name": "_terrascale-sso.example.com",
+        "value": "terrascale-sso-verification=0123456789abcdef"
+      },
+      "protocol": "oidc",
+      "default_role": "member",
+      "oidc": {
+        "issuer": "https://issuer.example.test",
+        "client_id": "ts-client",
+        "client_secret_set": true,
+        "redirect_uri": "https://auth.terrascale.tech/ui/terrascale/sso/callback"
+      },
+      "created_at": "2026-11-01T00:00:00+00:00",
+      "updated_at": "2026-11-08T00:00:00+00:00"
+    }
+  },
+  "verify_sso_domain": {
+    "method": "POST",
+    "path": "/v1/terrascale/organizations/{org}/sso/verify",
+    "status": 200,
+    "request": null,
+    "response": {
+      "organization_id": "{org}",
+      "domain": "example.com",
+      "domain_verified": true,
+      "verified_at": "2026-11-08T00:00:00+00:00",
+      "verification": {
+        "type": "TXT",
+        "name": "_terrascale-sso.example.com",
+        "value": "terrascale-sso-verification=0123456789abcdef"
+      },
+      "protocol": "oidc",
+      "default_role": "member",
+      "oidc": {
+        "issuer": "https://issuer.example.test",
+        "client_id": "ts-client",
+        "client_secret_set": true,
+        "redirect_uri": "https://auth.terrascale.tech/ui/terrascale/sso/callback"
+      },
+      "created_at": "2026-11-01T00:00:00+00:00",
+      "updated_at": "2026-11-08T00:00:00+00:00"
+    }
+  },
+  "delete_sso_connection": {
+    "method": "DELETE",
+    "path": "/v1/terrascale/organizations/{org}/sso",
+    "status": 204,
+    "request": null,
+    "response": null
+  }
+}
