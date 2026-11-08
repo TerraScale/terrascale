@@ -209,7 +209,8 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             {
                 var html = await refused.Content.ReadAsStringAsync();
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-                await Assert.That(html).Contains("203.0.113.0/24\n999.999.999.999");
+                // Razor encodes the textarea's newline as &#xA;, so assert on the decoded text the user sees.
+                await Assert.That(WebUtility.HtmlDecode(html)).Contains("203.0.113.0/24\n999.999.999.999");
                 await Assert.That(html).Contains("id=\"cidrs-" + keyId + "-error\"");
                 await Assert.That(html).Contains("data-init=\"el.showModal()\"");
             }
