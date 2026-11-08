@@ -119,6 +119,12 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The signed-in account's email, shown before approving a device.</summary>
     public string? Account { get; init; }
 
+    /// <summary>The registered client's display name, shown before approving a device.</summary>
+    public string ClientName { get; init; } = "TerraScale CLI";
+
+    /// <summary>Readable labels of the scopes the device asked for.</summary>
+    public IReadOnlyList<string> Scopes { get; init; } = [];
+
     /// <summary>The client's validated post-logout redirect URI the signed-out page continues to.</summary>
     public string? ReturnTo { get; init; }
 
