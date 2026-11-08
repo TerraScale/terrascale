@@ -35,6 +35,14 @@ internal static class HomeForwarding
         {
             if (await HomeOfAsync(context).ConfigureAwait(false) is { } home)
             {
+                if (context.WebSockets.IsWebSocketRequest)
+                {
+                    // A WebSocket cannot follow a 421 or a stripped upgrade: the session is relayed to the home
+                    // for its whole life instead of forwarded (docs/terrabase/cross-region.md).
+                    await context.RequestServices.GetRequiredService<HomeSocketRelay>().RunAsync(context, home, context.RequestAborted).ConfigureAwait(false);
+                    return;
+                }
+
                 await ForwardAsync(context, home).ConfigureAwait(false);
                 return;
             }
@@ -44,6 +52,9 @@ internal static class HomeForwarding
         return app;
     }
 
+    /// <summary>Whether <paramref name="name"/> travels with a request sent to a peer.</summary>
+    internal static bool IsForwardable(string name) => !Unforwarded.Contains(name) && !name.StartsWith(':');
+
     internal static string Host(string region) => region + ".api.terrascale.tech";
 
     internal static string RetryUrl(HttpContext context, string region) =>
@@ -52,8 +63,18 @@ internal static class HomeForwarding
     private static async ValueTask<HomeNode?> HomeOfAsync(HttpContext context)
     {
         if (Listeners.ArrivedOn(context) != TerraBaseListener.Client || Listeners.IsForwarded(context) || context.GetEndpoint() is null
-            || context.Request.RouteValues["project"] is not string project || context.Request.RouteValues.ContainsKey("organization")
-            || context.User.Identity?.IsAuthenticated != true || context.User.FindFirst("project_id")?.Value != project)
+            || context.Request.RouteValues["project"] is not string project || context.Request.RouteValues.ContainsKey("organization"))
+        {
+            return null;
+        }
+
+        // A session WebSocket authenticates either with a header or with a first frame, after the upgrade: the socket
+        // endpoints are anonymous. The home is resolved from the route alone, and the home runs every check — first
+        // frame, token, IP allowlist, scope — itself, once; the relaying region decides nothing.
+        var socket = context.GetEndpoint()?.Metadata.GetMetadata<Management.DatabaseRegions.ReplicaReads>() is not null
+            && context.WebSockets.IsWebSocketRequest;
+        if (!socket
+            && (context.User.Identity?.IsAuthenticated != true || context.User.FindFirst("project_id")?.Value != project))
         {
             return null;
         }
@@ -84,6 +105,20 @@ internal static class HomeForwarding
                 var peer = (await services.GetRequiredService<IRegionPeers>().OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
                     .FirstOrDefault(candidate => candidate.Region == shapeHome);
                 return peer is null ? null : new HomeNode(shapeHome, peer.Address);
+            }
+
+            // A session WebSocket whose record is here but places the database elsewhere never reaches the endpoint:
+            // the placement check answers 421 first, and a WebSocket cannot follow that. Relay the whole socket to the
+            // home instead. A replica region keeps serving the socket itself, as every route does.
+            if (socket && database is not null
+                && await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase socketDatabase
+                && socketDatabase.Home(services.GetRequiredService<TerraBaseOptions>().Region) is { } socketHome
+                && socketHome != services.GetRequiredService<TerraBaseOptions>().Region
+                && !(socketDatabase.AllRegions || socketDatabase.Replicas.Contains(services.GetRequiredService<TerraBaseOptions>().Region)))
+            {
+                var peer = (await services.GetRequiredService<IRegionPeers>().OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
+                    .FirstOrDefault(candidate => candidate.Region == socketHome);
+                return peer is null ? null : new HomeNode(socketHome, peer.Address);
             }
 
             if (database is null
