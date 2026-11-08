@@ -36,6 +36,30 @@ Hosted-page **Branding** also supports `title_size` (20–40 px), `default_theme
 
 Read settings with `GET /v1/{project}/settings`; update them with `PUT` at the same path using your TerraScale sign-in token and project admin role. Each supplied `configuration` or `branding` object replaces that object; omitted objects stay unchanged. Reducing session policy applies at the next session or grant check. Once a shortened browser expiry is observed it is persisted, and an OAuth sign-in observed past policy expiry is revoked; increasing policy cannot revive it. Issued access tokens retain their short expiry.
 
+### Change redirect URIs
+
+When you move a domain or add a callback path, update the registered client instead of creating a new one: the `client_id`, type and secret stay the same. `PUT /v1/{project}/clients/{client_id}` replaces the name and the whole redirect list with the same rules as registration (1–10 absolute URIs, `https` or loopback `http`, no fragments or userinfo, each exactly matching the project's allowlist when it is nonempty). The change needs the project admin role, your TerraScale sign-in token and a fresh `update_oauth_client` step-up proof (see [sensitive actions](/ru/guides/sensitive-actions)); the response is the updated client, without any secret.
+
+```sh
+curl -sS --fail-with-body -X PUT "https://auth.terrascale.tech/v1/$PROJECT/clients/$CLIENT_ID" \
+  -H "Authorization: Bearer $TERRASCALE_SIGN_IN_TOKEN" \
+  -H "X-TerraScale-Step-Up-Proof: $UPDATE_PROOF" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Web app","redirect_uris":["https://app.example.test/callback"]}'
+```
+
+### Rotate the client secret
+
+Rotating issues a new client secret for a confidential client and answers it **exactly once** in the response; only a hash is kept, so store it immediately and never log it. The previous secret keeps working for `grace_seconds` (0 to 86400, default 3600) so you can deploy the new secret without downtime; after the grace it is refused, and `previous_secret_expires_at` in the response says when. Rotating again inside the grace replaces the previous secret, so only one old secret is ever valid. Rotation needs the project admin role and a fresh `rotate_oauth_client` step-up proof; public clients have no secret and cannot rotate.
+
+```sh
+curl -sS --fail-with-body -X POST "https://auth.terrascale.tech/v1/$PROJECT/clients/$CLIENT_ID/secret/rotate" \
+  -H "Authorization: Bearer $TERRASCALE_SIGN_IN_TOKEN" \
+  -H "X-TerraScale-Step-Up-Proof: $ROTATE_PROOF" \
+  -H "Content-Type: application/json" \
+  -d '{"grace_seconds":3600}'
+```
+
 ## Social sign-in
 
 Open **Authentication** for your project, then **Social sign-in**. You can connect four providers: **Google**, **GitHub**, **Apple**, and generic **OpenID Connect**, which works with any OIDC provider by its `https` issuer, such as Auth0, Keycloak or another TerraScale project.
@@ -111,7 +135,7 @@ Copy `.env.example` to `.env` first and fill in your project issuer and OAuth cl
 
 The dashboard lists your project's users with search. For each user you can see their sessions, end a session, **disable** them or **delete** them. Disabling a user ends every session and stops their refresh tokens at once; access tokens already issued stay valid until they expire, at most 5 minutes. Deleting a user removes the account; the address can sign up again.
 
-For automation, the [.NET SDK project administration client](https://github.com/TerraScale/terrascale/blob/main/sdk/dotnet/src/TerraScale.DotNet/AuthService/TerraScaleAuthProjects.cs), `TerraScaleAuthClient.Projects`, exposes settings read/update, provider set/delete, user list/get/disable/enable/delete, session list/revoke and OAuth client list/create/delete. These `/v1/{project}` calls use your **TerraScale account sign-in token**, with viewer access for reads and admin for changes, not a project end-user token. This is separate from interactive OIDC login; other SDKs do not necessarily expose this management group. See [C# source installation](/ru/getting-started/csharp) for the SDK.
+For automation, the [.NET SDK project administration client](https://github.com/TerraScale/terrascale/blob/main/sdk/dotnet/src/TerraScale.DotNet/AuthService/TerraScaleAuthProjects.cs), `TerraScaleAuthClient.Projects`, exposes settings read/update, provider set/delete, user list/get/disable/enable/delete, session list/revoke and OAuth client list/create/update/delete with secret rotation. These `/v1/{project}` calls use your **TerraScale account sign-in token**, with viewer access for reads and admin for changes, not a project end-user token. This is separate from interactive OIDC login; other SDKs do not necessarily expose this management group. See [C# source installation](/ru/getting-started/csharp) for the SDK.
 
 ### Export the directory
 
