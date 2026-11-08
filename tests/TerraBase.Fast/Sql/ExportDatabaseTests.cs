@@ -15,11 +15,35 @@ public sealed class ExportDatabaseTests
     {
         var text = new StringBuilder();
         var quoted = false;
+        var create = false;
+        var trigger = false;
         for (var i = 0; i < dump.Length; i++)
         {
             var character = dump[i];
             text.Append(character);
-            if (character == '\'')
+            if (!quoted && char.IsAsciiLetter(character))
+            {
+                if (!trigger && Matches(dump, i, "trigger"))
+                {
+                    create = true;
+                }
+                else if (create && Matches(dump, i, "begin"))
+                {
+                    trigger = true;
+                }
+                else if (trigger && Matches(dump, i, "end") && !char.IsAsciiLetterOrDigit(Next(dump, i + 3)))
+                {
+                    trigger = false;
+                    create = false;
+                }
+
+                while (i + 1 < dump.Length && char.IsAsciiLetterOrDigit(dump[i + 1]))
+                {
+                    i++;
+                    text.Append(dump[i]);
+                }
+            }
+            else if (character == '\'')
             {
                 if (quoted && i + 1 < dump.Length && dump[i + 1] == '\'')
                 {
@@ -31,7 +55,7 @@ public sealed class ExportDatabaseTests
                     quoted = !quoted;
                 }
             }
-            else if (character == ';' && !quoted)
+            else if (character == ';' && !quoted && !trigger)
             {
                 var statement = text.ToString().Trim();
                 if (statement != "BEGIN;" && statement != "COMMIT;" && statement.Length > 0)
@@ -40,8 +64,29 @@ public sealed class ExportDatabaseTests
                 }
 
                 text.Clear();
+                create = false;
             }
         }
+    }
+
+    private static char Next(string dump, int index) => index < dump.Length ? dump[index] : '\0';
+
+    private static bool Matches(string dump, int index, string word)
+    {
+        if (index + word.Length > dump.Length)
+        {
+            return false;
+        }
+
+        for (var offset = 0; offset < word.Length; offset++)
+        {
+            if (char.ToLowerInvariant(dump[index + offset]) != word[offset])
+            {
+                return false;
+            }
+        }
+
+        return !char.IsAsciiLetterOrDigit(Next(dump, index + word.Length));
     }
 
     [Test]
@@ -53,7 +98,9 @@ public sealed class ExportDatabaseTests
             Stmt("CREATE TABLE items (id INTEGER PRIMARY KEY, body TEXT, data BLOB, score REAL)"),
             Stmt("INSERT INTO items VALUES (1, ?, ?, ?)", text, Blob([0x00, 0x01, 0xFE, 0xFF]), 12.5),
             Stmt("INSERT INTO items VALUES (2, NULL, NULL, NULL)"),
-            Stmt("CREATE INDEX items_body ON items (body)"));
+            Stmt("CREATE INDEX items_body ON items (body)"),
+            Stmt("CREATE VIEW items_hot AS SELECT id FROM items WHERE score > 0"),
+            Stmt("CREATE TRIGGER items_touch AFTER INSERT ON items BEGIN UPDATE items SET body = body WHERE id = NEW.id; END;"));
 
         using var export = await source.Writer.GetAsync(
             ManagementApi.Uri(source.Database.Data + "/export"), cancellationToken);
@@ -73,6 +120,9 @@ public sealed class ExportDatabaseTests
         await Assert.That(realBack).IsEqualTo(12.5);
         await Assert.That(nullBack).IsNull();
         await Assert.That(indexBack).IsTrue();
+        var schema = await target.OkAsync("SELECT type || ':' || name FROM sqlite_schema WHERE type IN ('view','trigger') ORDER BY name");
+        await Assert.That(schema[0].GetProperty("rows")[0][0].GetString()).IsEqualTo("view:items_hot");
+        await Assert.That(schema[0].GetProperty("rows")[1][0].GetString()).IsEqualTo("trigger:items_touch");
         return;
 
         async Task<(string? Text, byte[]? Blob, double? Real, string? Null, bool Index)> Rows(SqlNativeDatabase database)
@@ -85,5 +135,18 @@ public sealed class ExportDatabaseTests
                 rows[0].GetProperty("rows")[0][2].GetDouble(), nulls[0].GetProperty("rows")[0][0].GetString(),
                 indexes[0].GetProperty("rows")[0][0].GetInt64() == 1);
         }
+    }
+
+    [Test]
+    public async Task An_export_refuses_a_key_narrowed_to_another_database(CancellationToken cancellationToken)
+    {
+        await using var source = await StartSharedAsync();
+        var other = await source.Api.CreateManagedDatabaseAsync(source.Database.Organization, source.Database.Project, "other");
+        var key = await source.Api.Server.IssueNarrowedAsync(other.Organization, other.Project, other.Id, "sql:read");
+        using var client = source.Api.DataClient(key);
+        var (sqlStatus, _) = await source.PostAsync(client, "SELECT 1");
+        using var export = await client.GetAsync(ManagementApi.Uri(source.Database.Data + "/export"), cancellationToken);
+        await Assert.That(sqlStatus).IsNotEqualTo(HttpStatusCode.OK);
+        await Assert.That(export.StatusCode).IsEqualTo(sqlStatus);
     }
 }

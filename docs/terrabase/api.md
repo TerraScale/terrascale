@@ -9,6 +9,9 @@ TerraBase serves SQL databases under `/v1/projects/{project}/databases/{database
 | POST | `/sql/execute` | One atomic batch of 1–256 SQL statements |
 | GET | `/sql/ws` | SQL WebSocket upgrade, subprotocol `terrascale.sql.v1` |
 | GET | `/shape` | SQL table snapshot, catch-up and live changes |
+| GET | `/export` | Streams the database as one SQL dump |
+
+`/export` needs `sql:read` and streams schema, rows, indexes, views and triggers from one read snapshot, wrapped in a single transaction; a mid-stream failure aborts the connection rather than returning a partial file. The home region serves it.
 
 [Native SQL](sql/native-sql.md) specifies types, parameter binding, limits and errors. [Shapes](shape-reads.md) specify their parameters and continuations. PostgreSQL drivers use the TLS PostgreSQL listener and the same SQLite dialect.
 
