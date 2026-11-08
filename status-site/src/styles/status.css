@@ -1248,6 +1248,7 @@
 .st-code {
   margin: 0;
   padding: var(--ts-s3);
+  max-width: 100%;
   overflow-x: auto;
   border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius);
