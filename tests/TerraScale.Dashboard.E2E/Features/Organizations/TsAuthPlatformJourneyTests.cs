@@ -272,6 +272,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 await Assert.That(html).Contains("Granted usage");
                 await Assert.That(html).Contains("usage-history");
                 await Assert.That(html).DoesNotContain("plan allowance").And.DoesNotContain("Spending").And.DoesNotContain(sibling);
+                await Assert.That(html).Contains("href=\"/usage?project=" + granted + "\"").And.Contains("href=\"/analytics?project=" + granted + "\"").And.DoesNotContain("href=\"/organization\"");
                 using var settings = await client.GetAsync("/usage?tab=settings&project=" + granted);
                 await Assert.That(settings.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
                 await Assert.That(platform.Producer.Role(org, collaborator)).IsNull();

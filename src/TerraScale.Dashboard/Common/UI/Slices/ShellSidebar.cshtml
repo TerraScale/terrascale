@@ -75,10 +75,12 @@
 }<p class="ts-empty" role="status" aria-live="polite" hidden data-attr:hidden="@("!(" + NoMatches(pages.Select(item => item.SearchLabel), "$pageSearch") + ")")">No pages match</p></div></div></dialog>
 @functions {
     private bool Active(string url) => url == "/" ? Model.ReturnUrl == "/" || Model.ReturnUrl.StartsWith("/?") : Model.ReturnUrl.StartsWith(url, StringComparison.Ordinal);
-    private IEnumerable<Group> Groups => Navigation.Select(group => group with { Items = [.. group.Items.Where(Visible)] })
+    private IEnumerable<Group> Groups => Navigation.Select(group => group with { Items = [.. group.Items.Select(Scope).Where(Visible)] })
         .Where(group => group.Items.Length > 0);
+    private Item Scope(Item item) => IsCollaborator && item.Url is "/usage" or "/analytics" ? item with { Url = item.Url + "?project=" + Model.Context.Project!.Id } : item;
     private bool Visible(Item item) => IsMember || item.Url is not ("/organization" or "/analytics" or "/usage");
     private bool IsMember => Model.Context.Role.Length > 0;
+    private bool IsCollaborator => !IsMember && Model.Context.Organization is { } organization && TerraScale.Dashboard.Common.Accounts.ProjectCollaborator.Allows(organization, Model.Context.Project);
     private sealed record Item(string Label, string Url, string Icon);
     private sealed record Group(string Label, Item[] Items);
     private static readonly Group[] Navigation = [new("", [new("Overview", "/", "layout-dashboard")]), new("Build", [new("Databases", "/databases", "database"), new("Files", "/storage", "database")]), new("Secure", [new("API keys", "/api-keys", "key-round"), new("Authentication", "/auth", "fingerprint")]), new("Manage", [new("Analytics", "/analytics", "line-chart"), new("Usage", "/usage", "chart-column-big"), new("Organization", "/organization", "building2")])];
@@ -92,7 +94,7 @@
     {
         var organization = "Organization · " + (Model.Context.Organization?.Name ?? "Choose organization");
         var project = "Project · " + (Model.Context.Organization?.Name ?? "Choose organization") + " / " + (Model.Context.Project?.Name ?? "Choose project");
-        foreach (var item in Navigation.SelectMany(group => group.Items).Where(Visible))
+        foreach (var item in Navigation.SelectMany(group => group.Items).Select(Scope).Where(Visible))
             yield return new(item.Label, item.Url, item.Icon, item.Url == "/organization" ? organization : project);
         yield return new("Support", "/support", "circle-help", "Help");
         yield return new("Profile", "/profile", "user-round", "Account");
