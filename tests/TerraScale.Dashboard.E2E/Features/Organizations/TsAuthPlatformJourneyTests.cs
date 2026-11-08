@@ -142,8 +142,6 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             using (var page = await client.GetAsync("/databases" + scope))
             {
                 await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                // One assertion, three surfaces: the Manage nav links, the search dialog's organization tabs
-                // and the picker's organization shortcuts are all organization-membership-only.
                 var html = await page.Content.ReadAsStringAsync();
                 await Assert.That(html).DoesNotContain("href=\"/organization\"").And.DoesNotContain("href=\"/analytics\"")
                     .And.DoesNotContain("href=\"/usage\"").And.DoesNotContain("tab=members");

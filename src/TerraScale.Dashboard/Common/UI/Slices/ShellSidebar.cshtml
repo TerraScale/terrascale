@@ -15,7 +15,7 @@
         <details class="ts-menu ts-context-menu" data-on:click__outside="el.open = false" data-on:click="evt.target.closest('.ts-menu-panel [type=submit]') &amp;&amp; (el.open = false, el.querySelector('summary').focus())" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; el.open &amp;&amp; (el.open = false, el.querySelector('summary').focus())" data-signals="{organizationSearch: '', projectSearch: ''}">
             <summary class="ts-context-trigger" aria-label="Switch organization or project, current: @(Model.Context.Organization?.Name ?? "none") / @(Model.Context.Project?.Name ?? "none")">
                 <span class="ts-context-icon" data-tone="@ShellModel.Tone(Model.Context.Organization?.Name ?? "")" aria-hidden="true">@ShellModel.Initial(Model.Context.Organization?.Name ?? "")</span>
-                <span class="ts-context-text"><span class="ts-context-kind">@(Model.Context.Organization?.Name ?? "Choose organization")</span><span class="ts-context-name"><span class="ts-context-dot" data-tone="@ShellModel.Tone(Model.Context.Project?.Name ?? "")" aria-hidden="true"></span><span class="ts-truncate">@(Model.Context.Project?.Name ?? "Choose project")</span>@if (!member && Model.Context.Project?.Role is { Length: > 0 } projectRole) { <span class="ts-badge ts-badge-neutral">Project @TerraScale.Dashboard.Features.Organizations.OrganizationPage.RoleLabel(projectRole)</span> }</span></span><span class="ts-context-chevron" aria-hidden="true">@ShellIcons.Svg("arrow-up-down", 14)</span>
+                <span class="ts-context-text"><span class="ts-context-kind">@(Model.Context.Organization?.Name ?? "Choose organization")</span><span class="ts-context-name"><span class="ts-context-dot" data-tone="@ShellModel.Tone(Model.Context.Project?.Name ?? "")" aria-hidden="true"></span><span class="ts-truncate">@(Model.Context.Project?.Name ?? "Choose project")</span></span></span><span class="ts-context-chevron" aria-hidden="true">@ShellIcons.Svg("arrow-up-down", 14)</span>
                 @if (Model.Context.Organization is { } current) { <span class="ts-sr-only" data-active-organization-id="@current.Id">Current organization: @current.Name</span> }
                 @if (Model.Context.Project is { } activeProject) { <span class="ts-sr-only" data-active-project-id="@activeProject.Id">Current project: @activeProject.Name</span> }
             </summary>
@@ -42,7 +42,7 @@
                         <div class="ts-context-search-empty" data-show="@NoMatches(selected.Projects.Values.Select(project => project.Name), "$projectSearch")"><p role="status" aria-live="polite">No projects match</p><button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" data-on:click="$projectSearch = ''; document.getElementById('projectSearch').focus()">Clear search</button></div>
                     }
                 }
-                @if (member) { <hr class="ts-menu-separator" /><a class="ts-menu-item" href="/organization?newProject=1#projects" data-tone="emerald">@ShellIcons.Svg("plus", 15)<span class="ts-menu-label">Create new project</span></a><a class="ts-menu-item" href="/organization" data-tone="indigo">@ShellIcons.Svg("boxes", 15)<span class="ts-menu-label">All workspaces</span></a> }
+                @if (IsMember) { <hr class="ts-menu-separator" /><a class="ts-menu-item" href="/organization?newProject=1#projects" data-tone="emerald">@ShellIcons.Svg("plus", 15)<span class="ts-menu-label">Create new project</span></a><a class="ts-menu-item" href="/organization" data-tone="indigo">@ShellIcons.Svg("boxes", 15)<span class="ts-menu-label">All workspaces</span></a> }
             </div>
         </details>
     }
@@ -75,12 +75,10 @@
 }<p class="ts-empty" role="status" aria-live="polite" hidden data-attr:hidden="@("!(" + NoMatches(pages.Select(item => item.SearchLabel), "$pageSearch") + ")")">No pages match</p></div></div></dialog>
 @functions {
     private bool Active(string url) => url == "/" ? Model.ReturnUrl == "/" || Model.ReturnUrl.StartsWith("/?") : Model.ReturnUrl.StartsWith(url, StringComparison.Ordinal);
-    // Analytics, Usage and Organization require organization membership; a project-only collaborator is
-    // refused there ("Organization membership is required"), so those pages and their empty group stay hidden.
     private IEnumerable<Group> Groups => Navigation.Select(group => group with { Items = [.. group.Items.Where(Visible)] })
         .Where(group => group.Items.Length > 0);
-    private bool Visible(Item item) => member || item.Url is not ("/organization" or "/analytics" or "/usage");
-    private bool member => Model.Context.Role.Length > 0;
+    private bool Visible(Item item) => IsMember || item.Url is not ("/organization" or "/analytics" or "/usage");
+    private bool IsMember => Model.Context.Role.Length > 0;
     private sealed record Item(string Label, string Url, string Icon);
     private sealed record Group(string Label, Item[] Items);
     private static readonly Group[] Navigation = [new("", [new("Overview", "/", "layout-dashboard")]), new("Build", [new("Databases", "/databases", "database"), new("Files", "/storage", "database")]), new("Secure", [new("API keys", "/api-keys", "key-round"), new("Authentication", "/auth", "fingerprint")]), new("Manage", [new("Analytics", "/analytics", "line-chart"), new("Usage", "/usage", "chart-column-big"), new("Organization", "/organization", "building2")])];
@@ -99,7 +97,7 @@
         yield return new("Support", "/support", "circle-help", "Help");
         yield return new("Profile", "/profile", "user-round", "Account");
         yield return new("Notifications", "/notifications", "bell", "Account inbox");
-        if (member && Model.Context.Organization is not null)
+        if (IsMember && Model.Context.Organization is not null)
             foreach (var (key, label) in OrganizationPages)
                 yield return new(label, "/organization?tab=" + key, "building2", organization);
         if (Model.Context.Project is null) yield break;
