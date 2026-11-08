@@ -12,6 +12,9 @@ formatting and runs the Fast suite. `make benchmark-build` also builds the
 
 - [`cmd/replica-lag`](cmd/replica-lag/main.go) measures SQL write acknowledgement
   to replica visibility, optionally timing replication notices.
+- [`cmd/insert-bench`](cmd/insert-bench/main.go) measures batched multi-row INSERT
+  throughput of one local TerraBase node over SQL REST and the Postgres wire
+  (`make -C benchmark insert-batch`).
 - `region-sim` drives a local SQL cluster with the real CLI.
 - `shape-tails` measures SQL subscription delivery.
 - `overlay-proof` proves sjc provisional, confirmed
