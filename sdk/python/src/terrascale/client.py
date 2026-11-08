@@ -11,6 +11,7 @@ from typing import Any, TypeVar, overload
 import httpx
 
 from . import _spec, models
+from . import backups as _backups
 from . import sql as _sql
 from ._spec import Call
 from ._version import __version__
@@ -192,7 +193,11 @@ class TerraScale:
         self, source: str, name: str, *, point_in_time: str | None = None, ttl_seconds: int | None = None,
     ) -> models.Database:
         """Fork the current database state, or an RFC 3339 point in its restore window, with an independent TTL."""
-        return self._send(_spec.fork_database(self.project, source, name, point_in_time, ttl_seconds))
+        operation = self._send(_spec.fork_database(self.project, source, name, point_in_time, ttl_seconds))
+        if point_in_time is None:
+            return operation
+        done = _backups._send_or_timeout(self._send, self.project, source, operation)
+        return self._send(_spec.get_database(self.project, done.database))
 
     def set_database_ttl(self, database: str, ttl_seconds: int) -> models.Database:
         """Set expiry in 60 to 31,536,000 seconds; the database and backups are deleted on expiry."""

@@ -42,6 +42,7 @@
   "GET /v1/projects/{project}/databases/{database}/logs",
   "GET /v1/projects/{project}/databases/{database}/point-in-time",
   "GET /v1/projects/{project}/databases/{database}/query-shapes",
+  "GET /v1/projects/{project}/databases/{database}/restores/{operation}",
   "GET /v1/projects/{project}/databases/{database}/schema",
   "GET /v1/projects/{project}/databases/{database}/sql/ws",
   "GET /v1/projects/{project}/databases/{database}/tables/{table}/shape",
