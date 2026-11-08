@@ -547,8 +547,8 @@ namespace TerraScale.Dashboard.Common.Databases
             return name;
         }
 
-        public const string NameInputPattern = @"(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z](?:[a-z0-9\-]{0,61}[a-z0-9])?";
-        public const string NameHint = "Database names must start with a lowercase letter and use 1–63 lowercase letters, digits, and inner hyphens. Reserved names: con, prn, aux, nul, com0–com9, lpt0–lpt9.";
+        public const string NameInputPattern = @"(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])$)[a-z][a-z0-9_\-]{0,62}";
+        public const string NameHint = "Database names must start with a lowercase letter and use 1–63 lowercase letters, digits, underscores or hyphens. Reserved names: con, prn, aux, nul, com0–com9, lpt0–lpt9.";
 
         public static string PreviewName(string name)
         {
