@@ -35,7 +35,7 @@ A key limited to one database works only for that database. A key's scopes are a
 | --- | --- |
 | `sql:read` | Run SQL reads; read shapes and files. |
 | `sql:write` | Run SQL writes and schema changes; write files. |
-| `databases:read` | Read databases, schema, indexes, backups, policies, usage and saved queries; read-only SQL. |
+| `databases:read` | Read databases, schema, indexes, backups, policies, usage and saved queries. SQL endpoints need `sql:read` or `sql:write`. |
 | `databases:write` | Create, branch and delete databases; backups, restores, policies, indexes and saved queries. |
 
 The access token's `scope` field lists the scopes it grants.
