@@ -177,6 +177,9 @@ public static class OidcIssuer
                     .AddEventHandler<ValidateTokenContext>(handler => handler.UseScopedHandler<ValidateCredentialLineage>()
                         .SetOrder(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor.Order)
                         .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ValidateTokenRequestContext>(handler => handler.UseSingletonHandler<RefuseScopeExpansion>()
+                        .SetOrder(OpenIddictServerHandlers.Exchange.ValidateScopePermissions.Descriptor.Order - 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<SignWithKeyRing>()
                         .SetOrder(OpenIddictServerHandlers.Protection.AttachSecurityCredentials.Descriptor.Order + 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
@@ -298,6 +301,33 @@ public sealed class TrustPublicOrigin(AuthOptions options) : IOpenIddictServerHa
         }
 
         return Tenancy.Resolved(request.HttpContext);
+    }
+}
+
+/// <summary>
+/// Answers a refresh whose requested scopes are not a subset of the original grant with RFC 6749 §5.2
+/// <c>invalid_scope</c>, before OpenIddict's own checks answer <c>invalid_request</c> or <c>invalid_grant</c> and
+/// before any redemption, so the refused request never consumes the refresh token.
+/// </summary>
+public sealed class RefuseScopeExpansion : IOpenIddictServerHandler<ValidateTokenRequestContext>
+{
+    /// <inheritdoc />
+    public ValueTask HandleAsync(ValidateTokenRequestContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (!context.Request.IsRefreshTokenGrantType() || string.IsNullOrEmpty(context.Request.Scope))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        var granted = context.RefreshTokenPrincipal is { } refresh ? refresh.GetScopes().ToHashSet(StringComparer.Ordinal) : [];
+        if (granted.Count is 0 || granted.IsSupersetOf(context.Request.GetScopes()))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        context.Reject(Errors.InvalidScope, "The requested scope exceeds the original authorization.");
+        return ValueTask.CompletedTask;
     }
 }
 

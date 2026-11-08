@@ -58,6 +58,68 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         await Assert.That(second.GetClaim("email_verified").Value).IsEqualTo("true");
     }
 
+    [Test]
+    public async Task Refresh_scope_handling_keeps_the_original_authorization_and_refuses_expansion_without_consuming_the_token()
+    {
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var user = await oidc.CreateUserAsync(oidc.UniqueEmail("scope"));
+        var session = (await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(user)).Token;
+        var (verifier, challenge) = OidcHarness.Pkce();
+        using var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, scope: "openid email profile offline_access"), session);
+        using var redeemed = await oidc.RedeemCodeAsync(OidcHarness.Query(authorize.Headers.Location!)["code"]!, verifier);
+        var original = JsonSerializer.Deserialize<JsonElement>(await redeemed.Content.ReadAsStringAsync());
+        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var keys = await KeysAsync(oidc);
+        var refresh = original.GetProperty("refresh_token").GetString()!;
+
+        using var omitted = await oidc.RefreshAsync(refresh);
+        var full = JsonSerializer.Deserialize<JsonElement>(await omitted.Content.ReadAsStringAsync());
+        await Assert.That(omitted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await AssertScopeAsync(full, "openid email profile offline_access");
+        await Assert.That(Scopes(await ValidateAsync(full.GetProperty("access_token").GetString()!, keys, Audience)))
+            .IsEquivalentTo(["openid", "email", "profile", "offline_access"]);
+        refresh = full.GetProperty("refresh_token").GetString()!;
+
+        using var reduced = await oidc.TokenAsync(new() { ["grant_type"] = "refresh_token", ["refresh_token"] = refresh, ["scope"] = "openid email" });
+        var subset = JsonSerializer.Deserialize<JsonElement>(await reduced.Content.ReadAsStringAsync());
+        await Assert.That(reduced.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await AssertScopeAsync(subset, "openid email");
+        await Assert.That(Scopes(await ValidateAsync(subset.GetProperty("access_token").GetString()!, keys, Audience)))
+            .IsEquivalentTo(["openid", "email"]);
+        refresh = subset.GetProperty("refresh_token").GetString()!;
+
+        using var restored = await oidc.RefreshAsync(refresh);
+        var whole = JsonSerializer.Deserialize<JsonElement>(await restored.Content.ReadAsStringAsync());
+        await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await AssertScopeAsync(whole, "openid email profile offline_access");
+        await Assert.That(Scopes(await ValidateAsync(whole.GetProperty("access_token").GetString()!, keys, Audience)))
+            .IsEquivalentTo(["openid", "email", "profile", "offline_access"]);
+        refresh = whole.GetProperty("refresh_token").GetString()!;
+
+        foreach (var refused in new[] { "openid email admin", "openid bogus" })
+        {
+            using var expansion = await oidc.TokenAsync(new() { ["grant_type"] = "refresh_token", ["refresh_token"] = refresh, ["scope"] = refused });
+            var error = JsonSerializer.Deserialize<JsonElement>(await expansion.Content.ReadAsStringAsync());
+            await Assert.That(expansion.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That(error.GetProperty("error").GetString()).IsEqualTo("invalid_scope");
+        }
+
+        using var after = await oidc.RefreshAsync(refresh);
+        await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    // RFC 6749 §5.1: the response omits scope when it equals the requested one.
+    private static async Task AssertScopeAsync(JsonElement body, string requested)
+    {
+        if (body.TryGetProperty("scope", out var scope))
+        {
+            await Assert.That(scope.GetString()).IsEqualTo(requested);
+        }
+    }
+
+    private static string[] Scopes(JsonWebToken token) =>
+        token.GetClaim("scope").Value.Split(' ');
+
     private static async Task<JsonWebKeySet> KeysAsync(OidcHarness oidc) =>
         new(await oidc.Client.GetStringAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json"));
 
