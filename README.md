@@ -64,6 +64,9 @@ here deploys or touches production.
 - Every listener stays on loopback: TerraBase binds `127.0.0.1` in Development (8080 public, 8081 internal,
   9091 metrics) and ts-auth listens on `127.0.0.1:8090` (metrics 9092). Locally, ts-auth stores in the TerraBase at
   `127.0.0.1:8081`.
+- `TS_DEV_INSTANCE=1 make dev` runs a second stack beside the first: every fixed port becomes `base + 100 × instance`
+  (so 8080/8081/8090 → 8180/8181/8190, metrics 9091/9092 → 9191/9192, Postgres 5432 → 5532) and TerraBase's data
+  directory gets an `-<instance>` suffix; instance 0 (the default) keeps the ports above.
 - Each run is disposable: TerraBase starts from an empty data directory (`$TMPDIR/terrascale-aspire-terrabase`, emptied
   at the start of every run), and ts-auth gets a new master key that is never written to disk.
 - ts-auth answers `/readyz` 503 ("no signing keys") until the platform issuer has a signing key. The `auth-signing-key`
