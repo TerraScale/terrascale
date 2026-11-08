@@ -1,0 +1,271 @@
+/* v3 incident and history pages: split content and aside, timeline dots,
+   affected components, full-width history rows and filters. Scoped to the
+   page classes set in views/incident.ts and views/history.ts. */
+@layer status {
+  .st-incident,
+  .st-history {
+    width: 100%;
+    max-width: none;
+  }
+
+  /* Incident: header */
+  .st-incident .st-title {
+    font-size: var(--ts-fs-3xl);
+    letter-spacing: -0.01em;
+  }
+
+  /* Incident: split content and aside */
+  .st-incident .st-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: var(--ts-s10);
+    align-items: start;
+  }
+
+  .st-incident .st-aside {
+    display: grid;
+    gap: var(--ts-s4);
+    position: sticky;
+    top: calc(56px + var(--ts-s6));
+  }
+
+  .st-incident .st-aside .ts-label {
+    margin-bottom: var(--ts-s3);
+  }
+
+  /* Incident: affected components */
+  .st-incident .st-affected {
+    display: grid;
+    gap: var(--ts-s3);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .st-incident .st-affected li {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--ts-s1) var(--ts-s3);
+    align-items: start;
+    font-size: var(--ts-fs-sm);
+  }
+
+  .st-incident .st-affected li > .ts-dot {
+    margin-top: 6px;
+  }
+
+  .st-incident .st-affected li > .ts-badge {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .st-incident .st-affected strong {
+    font-weight: 500;
+  }
+
+  .st-incident .ts-panel {
+    padding: var(--ts-s5);
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-lg);
+    background: var(--ts-surface);
+  }
+  .st-incident .ts-label {
+    color: var(--ts-ink-3);
+    font: var(--ts-label-size) var(--ts-font-mono);
+    text-transform: uppercase;
+    letter-spacing: var(--ts-label-tracking);
+  }
+  .st-incident-row { display: flex; align-items: flex-start; gap: var(--ts-s3); }
+  .st-incident-dot { margin-top: 7px; flex: none; color: var(--state); }
+
+  /* Incident: follow panel */
+  .st-incident .st-follow {
+    display: grid;
+    gap: var(--ts-s3);
+  }
+
+  .st-incident .st-follow p {
+    font-size: var(--ts-fs-sm);
+  }
+
+  .st-incident .st-follow .ts-button {
+    justify-content: center;
+  }
+
+  /* Incident: timeline, one dot per update, coloured by its state */
+  .st-incident .st-timeline {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-left: 0;
+  }
+
+  .st-incident .st-timeline-item {
+    position: relative;
+    display: grid;
+    gap: var(--ts-s2);
+    padding: 0 0 var(--ts-s6) var(--ts-s6);
+  }
+
+  .st-incident .st-timeline-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 6px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--state);
+    box-shadow: 0 0 0 3px var(--ts-surface);
+  }
+
+  .st-incident .st-timeline-item::after {
+    content: "";
+    position: absolute;
+    left: 4.5px;
+    top: 16px;
+    bottom: 0;
+    width: 1px;
+    background: var(--ts-line-strong);
+  }
+
+  .st-incident .st-timeline-item:last-child {
+    padding-bottom: 0;
+  }
+
+  .st-incident .st-timeline-item:last-child::after {
+    display: none;
+  }
+
+  .st-incident .st-timeline-item .ts-row {
+    flex-wrap: wrap;
+    gap: var(--ts-s2) var(--ts-s3);
+    font-size: var(--ts-fs-sm);
+  }
+
+  .st-incident .st-timeline-item p {
+    max-width: 68ch;
+    color: var(--ts-ink-2);
+  }
+
+  /* Incident: health check bars */
+  .st-incident .st-bars {
+    height: 24px;
+  }
+
+  @media (max-width: 900px) {
+    .st-incident .st-split {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--ts-s8);
+    }
+
+    .st-incident .st-aside {
+      position: static;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .st-incident .st-title {
+      font-size: var(--ts-fs-2xl);
+    }
+  }
+
+  /* History: filters and month range */
+  .st-history .st-history-controls {
+    display: grid;
+    gap: var(--ts-s3);
+  }
+
+  .st-history .st-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--ts-s3);
+  }
+
+  .st-history .st-field {
+    display: grid;
+    gap: var(--ts-s1);
+    font-size: var(--ts-fs-xs);
+    color: var(--ts-ink-3);
+  }
+
+  .st-history .st-field-grow {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+
+  .st-history .st-field-grow .ts-input {
+    width: 100%;
+  }
+
+  .st-history .st-months {
+    flex-wrap: wrap;
+  }
+
+  /* History: incident rows, one card per month */
+  .st-history .ts-list-item {
+    padding: var(--ts-s4) var(--ts-s2);
+    margin-inline: calc(-1 * var(--ts-s2));
+    border-radius: var(--ts-radius);
+    transition: background-color var(--ts-fast) var(--ts-ease);
+  }
+
+  .st-history .ts-list-item:hover {
+    background: var(--ts-surface-2);
+  }
+
+  .st-history .ts-list-main {
+    gap: var(--ts-s2);
+  }
+
+  .st-history .ts-list-main .ts-row {
+    flex-wrap: wrap;
+    gap: var(--ts-s2);
+  }
+
+  .st-history .st-incident-title {
+    font-size: var(--ts-fs-md);
+    font-weight: 500;
+  }
+
+  .st-history .st-incident-body {
+    color: var(--ts-ink-2);
+    font-size: var(--ts-fs-sm);
+  }
+
+  @media (max-width: 600px) {
+    .st-history .st-field,
+    .st-history .st-field-grow {
+      flex: 1 1 100%;
+    }
+
+    .st-history .st-filters .ts-button {
+      width: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .st-history .ts-list-item {
+      transition: none;
+    }
+  }
+}
+
+@layer status {
+  .st-breadcrumb { display: flex; align-items: center; gap: var(--ts-s3); color: var(--ts-ink-2); font-size: var(--ts-fs-sm); }
+  .st-breadcrumb li { min-width: 0; }
+  .st-breadcrumb li + li::before { content: "/"; margin-right: var(--ts-s3); color: var(--ts-ink-3); }
+  .st-breadcrumb li:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st-breadcrumb a { color: var(--ts-ink-2); }
+  .st-incident .ts-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-left: 0; gap: 0; border-top: 1px solid var(--ts-line); }
+  .st-incident .ts-stat { padding: var(--ts-s5); }
+  .st-incident .ts-stat:first-child { border-left: 0; }
+  .st-incident .ts-stat-value { font-weight: 500; }
+  @media (max-width: 600px) {
+    .st-incident .ts-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .st-incident .ts-stat:nth-child(3) { border-left: 0; border-top: 1px solid var(--ts-line); }
+    .st-incident .ts-stat:nth-child(4) { border-top: 1px solid var(--ts-line); }
+    .st-incident .ts-stat { padding: var(--ts-s4); }
+  }
+}

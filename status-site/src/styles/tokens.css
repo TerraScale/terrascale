@@ -1,0 +1,163 @@
+/* Design tokens shared with ts-dashboard (web/assets/css/tokens.css). Flat graphite, dark only. */
+
+:root {
+  color-scheme: dark;
+
+  /* Graphite neutrals, darkest to lightest. Flat: no gradients or glows. */
+  --ts-canvas: #151515;
+  --ts-surface: #1b1b1b;
+  --ts-surface-2: #222222;
+  --ts-surface-3: #2c2c2c;
+  --ts-line: rgb(255 255 255 / 0.08);
+  --ts-line-strong: rgb(255 255 255 / 0.14);
+  --ts-control-line: rgb(255 255 255 / 0.17);
+  --ts-control-line-hover: rgb(255 255 255 / 0.29);
+  --ts-hover: rgb(255 255 255 / 0.05);
+  --ts-nav-active-bg: rgb(255 255 255 / 0.08); /* neutral selected nav fill, no accent */
+  --ts-nav-hover-bg: rgb(255 255 255 / 0.04);
+
+  /* Text. ink-3 is 4.9:1 on surface. */
+  --ts-ink: #f2f2f2;
+  --ts-ink-2: #a8a8a8;
+  --ts-ink-3: #919191;
+
+  /* Frost: chrome (header, nav) and overlays only, never cards. */
+  --ts-glass: rgb(21 21 21 / 0.90);
+  --ts-glass-strong: rgb(32 32 32 / 0.94);
+  --ts-glass-line: rgb(255 255 255 / 0.09);
+  --ts-scrim: rgb(0 0 0 / 0.52);
+  --ts-shadow: rgb(0 0 0 / 0.56);
+
+  /* Accent. The logo blue is the fill; text and focus on dark use --ts-link. */
+  --ts-logo-blue: #2158e8;
+  --ts-accent: #2158e8; /* white on this fill is 5.8:1 */
+  --ts-accent-soft: rgb(33 88 232 / 0.18);
+  --ts-primary: #2158e8;
+  --ts-primary-hover: #1a4bd0;
+  --ts-primary-pressed: #163fb0;
+  --ts-on-primary: #ffffff;
+  --ts-link: #6b93ff; /* 5.9:1 on canvas */
+  --ts-eyebrow: #6b93ff;
+  --ts-focus: #6b93ff; /* logo blue is only 3:1 on graphite, so focus uses the lighter blue */
+  --ts-brand-mark: #2158e8;
+
+  /* Status. Full strength; red, amber and green only for error, warning and success. */
+  --ts-success: #6bca92;
+  --ts-warning: #ffa726;
+  --ts-severe: #ff7a33;
+  --ts-orange: var(--ts-severe); /* kept for existing callers */
+  --ts-danger: #ff5c5c;
+  --ts-danger-solid: #d92626;
+  --ts-on-danger: #ffffff;
+  --ts-info: #84b4f8;
+  --ts-maint: #b2a0ec;
+
+  /* Chart series 1-6: muted blue, cyan, sky, indigo, violet, magenta. No status hues. */
+  --ts-chart-1: #4797e4;
+  --ts-chart-2: #925086;
+  --ts-chart-3: #00a1dd;
+  --ts-chart-4: #7f5794;
+  --ts-chart-5: #00a7bf;
+  --ts-chart-6: #565bc3;
+  --ts-cat-1: var(--ts-chart-1);
+  --ts-cat-2: var(--ts-chart-2);
+  --ts-cat-3: var(--ts-chart-3);
+  --ts-cat-4: var(--ts-chart-4);
+  --ts-cat-5: var(--ts-chart-5);
+  --ts-cat-6: var(--ts-chart-6);
+  --ts-cat-7: #8aa4d6; /* slate blue, extra series only */
+  --ts-cat-8: #b8a6e8; /* lavender, extra series only */
+
+  /* Type. Geist carries the page; Geist Mono carries codes, labels and numbers. */
+  --ts-font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ts-font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --ts-fs-xs: 12px;
+  --ts-fs-sm: 13px;
+  --ts-fs-md: 14px;
+  --ts-fs-lg: 16px;
+  --ts-fs-xl: 20px;
+  --ts-fs-2xl: 24px;
+  --ts-fs-3xl: 32px;
+  --ts-fs-4xl: 40px;
+  --ts-fs-5xl: 56px;
+  --ts-lh-tight: 1.2;
+  --ts-lh: 1.5;
+  --ts-lh-prose: 1.7;
+  --ts-heading-tracking: -0.015em;
+  --ts-display-tracking: -0.035em;
+  /* Label voice: mono, uppercase (eyebrows, table heads, stat labels). */
+  --ts-label-size: 11.5px;
+  --ts-label-tracking: 0.06em;
+
+  /* Spacing on a 4px grid. */
+  --ts-s1: 4px;
+  --ts-s2: 8px;
+  --ts-s3: 12px;
+  --ts-s4: 16px;
+  --ts-s5: 20px;
+  --ts-s6: 24px;
+  --ts-s8: 32px;
+  --ts-s10: 40px;
+  --ts-s12: 48px;
+  --ts-s16: 64px;
+  --ts-s20: 80px;
+  --ts-s24: 96px;
+
+  /* Shape. */
+  --ts-radius-sm: 4px;
+  --ts-radius: 6px;
+  --ts-radius-lg: 10px;
+  --ts-radius-xl: 14px;
+  --ts-radius-pill: 999px;
+  --ts-control-h-sm: 32px;
+  --ts-control-h: 36px;
+  --ts-control-h-lg: 40px;
+  --ts-icon-sm: 14px;
+  --ts-icon: 16px;
+  --ts-icon-lg: 20px;
+  --ts-icon-stroke: 1.5;
+
+  /* Depth: flat. The only drop shadow is on dialogs and toasts. */
+  --ts-blur: 20px;
+  --ts-blur-lg: 24px;
+  --ts-saturate: 1.15;
+  --ts-shadow-overlay: 0 0 0 1px var(--ts-line-strong), 0 16px 40px -16px var(--ts-shadow);
+
+  /* Motion. */
+  --ts-fast: 150ms;
+  --ts-base: 200ms;
+  --ts-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Layering and layout. Full width: pages take the viewport, gutters come from --ts-gutter. */
+  --ts-z-sticky: 10;
+  --ts-z-dropdown: 20;
+  --ts-z-overlay: 30;
+  --ts-z-modal: 40;
+  --ts-z-toast: 50;
+  --ts-z-tooltip: 60;
+  --ts-header-h: 56px;
+  --ts-gutter: clamp(16px, 2.5vw, 40px);
+
+  /* Page width. Full width; the old 60rem cap is gone. */
+  --st-width: 100%;
+}
+
+/* Status states: every state owns a color, read by dots, badges and bars. */
+[data-state] {
+  --state: var(--ts-ink-3);
+}
+[data-state="operational"] {
+  --state: var(--ts-success);
+}
+[data-state="maintenance"] {
+  --state: var(--ts-maint);
+}
+[data-state="degraded"] {
+  --state: var(--ts-warning);
+}
+[data-state="partial_outage"] {
+  --state: var(--ts-severe);
+}
+[data-state="major_outage"] {
+  --state: var(--ts-danger);
+}

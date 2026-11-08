@@ -1,0 +1,78 @@
+/* Page container and text helpers. Pages space their blocks with gap, never
+   with margins, so rhythm stays consistent. */
+
+.ts-page {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--ts-s12);
+  width: 100%;
+  max-width: var(--st-width);
+  margin-inline: auto;
+  padding: var(--ts-s8) var(--ts-s10) var(--ts-s12);
+}
+
+/* The label voice of the direction: eyebrows, stat labels, table headers
+   and group titles. */
+.ts-eyebrow,
+.ts-label {
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  line-height: 16px;
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
+  color: var(--ts-ink-3);
+}
+
+.ts-eyebrow {
+  color: var(--ts-link);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ts-row,
+.ts-row-between {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2) var(--ts-s3);
+  min-width: 0;
+}
+
+.ts-row-between {
+  justify-content: space-between;
+}
+
+.ts-meta {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-muted {
+  color: var(--ts-ink-2);
+}
+
+.ts-strong {
+  color: var(--ts-ink);
+  font-weight: 500;
+}
+
+.ts-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-link {
+  color: var(--ts-link);
+  font-weight: 500;
+}
+
+@media (max-width: 47.99rem) {
+  .ts-page {
+    gap: var(--ts-s8);
+    padding: var(--ts-s6) var(--ts-s4) var(--ts-s10);
+  }
+}

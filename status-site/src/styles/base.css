@@ -1,0 +1,192 @@
+/* Font, reset, document defaults, and accessibility helpers. */
+
+/* Geist is served from /fonts (OFL, see OFL-geist.txt). Sans is preloaded by the layout; swap shows the system fallback at once. */
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/Geist-Variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--ts-canvas);
+  color: var(--ts-ink);
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-md);
+  line-height: var(--ts-lh);
+  font-feature-settings:
+    "liga" 1,
+    "calt" 1;
+  accent-color: var(--ts-accent);
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  scrollbar-gutter: stable;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  margin: 0;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+dl,
+dd {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 600;
+  line-height: var(--ts-lh-tight);
+  letter-spacing: var(--ts-heading-tracking);
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--ts-link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+::selection {
+  background: var(--ts-accent-soft);
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--ts-font-mono);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ts-focus);
+  outline-offset: 2px;
+  border-radius: var(--ts-radius-sm);
+}
+
+* {
+  scrollbar-color: var(--ts-surface-3) transparent;
+  scrollbar-width: thin;
+}
+
+.ts-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ts-skip-link {
+  position: fixed;
+  top: var(--ts-s3);
+  left: var(--ts-s3);
+  z-index: var(--ts-z-tooltip);
+  padding: var(--ts-s2) var(--ts-s4);
+  border-radius: var(--ts-radius);
+  background: var(--ts-primary);
+  color: var(--ts-on-primary);
+  transform: translateY(-200%);
+}
+
+.ts-skip-link:focus {
+  transform: none;
+}
+
+/* The shared status contract: data-state sets --state, read by dots,
+   badges, bars, alerts, the banner, map hubs and the heatmap. Views map the
+   stored partial_outage and major_outage to "partial" and "outage". */
+[data-state] {
+  --state: var(--ts-ink-3);
+}
+[data-state="operational"] {
+  --state: var(--ts-success);
+}
+[data-state="maintenance"] {
+  --state: var(--ts-info);
+}
+[data-state="degraded"] {
+  --state: var(--ts-warning);
+}
+[data-state="partial"] {
+  --state: var(--ts-severe);
+}
+[data-state="outage"] {
+  --state: var(--ts-danger);
+}
+
+/* Inline Lucide icons take the text colour; 16px by default. */
+.ts-icon {
+  flex: none;
+  width: var(--ts-icon);
+  height: var(--ts-icon);
+}
+
+.ts-icon-sm {
+  width: var(--ts-icon-sm);
+  height: var(--ts-icon-sm);
+}
+
+.ts-icon-lg {
+  width: var(--ts-icon-lg);
+  height: var(--ts-icon-lg);
+}
+
+.ts-mono {
+  font-family: var(--ts-font-mono);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

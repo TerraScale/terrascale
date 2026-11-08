@@ -1,0 +1,15 @@
+/* Status page stylesheet, inlined into every page by src/views/layout.ts.
+   Tokens and shared components follow the ts-dashboard design system
+   (ts-dashboard/DESIGN_SYSTEM.md); status-only pieces use the st- prefix. */
+
+@layer base, layout, components, charts, status;
+
+@import "tokens.css";
+@import "base.css" layer(base);
+@import "layout.css" layer(layout);
+@import "components.css" layer(components);
+@import "charts.css" layer(charts);
+@import "status.css" layer(status);
+@import "v3-shell.css" layer(status);
+@import "v3-home.css";
+@import "v3-incidents.css";

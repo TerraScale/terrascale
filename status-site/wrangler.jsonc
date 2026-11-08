@@ -1,0 +1,44 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ts-status",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-13",
+  "workers_dev": true,
+  // One production deploy from main; no per-version preview URLs.
+  "preview_urls": false,
+  "routes": [{ "pattern": "status.terrascale.tech", "custom_domain": true }],
+  // Keeps the probe coordinator armed and rolls samples up (src/probe/rollup.ts).
+  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [
+    {
+      "binding": "STATUS_DB",
+      "database_name": "ts-status",
+      "database_id": "c2eca5bc-6045-4983-941a-4e01e4e0c749",
+    },
+  ],
+  // Cloudflare Email Sending for subscription mail (src/notify/outbox.ts).
+  "send_email": [{ "name": "EMAIL", "remote": true }],
+  // The coordinator runs a probe round every 30 seconds (src/probe/coordinator.ts)
+  // and asks every vantage point (src/vantage/point.ts) to probe.
+  "durable_objects": {
+    "bindings": [
+      { "name": "COORDINATOR", "class_name": "Coordinator" },
+      { "name": "VANTAGE", "class_name": "VantagePoint" },
+    ],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Coordinator"] },
+    { "tag": "v2", "new_sqlite_classes": ["VantagePoint"] },
+  ],
+  "vars": { "PUBLIC_ORIGIN": "https://status.terrascale.tech" },
+  "services": [
+    { "binding": "VANTAGE_SFO", "service": "ts-status-vantage-sfo" },
+    { "binding": "VANTAGE_GRU", "service": "ts-status-vantage-gru" },
+  ],
+  // Subscription requests and admin sign-in attempts per client IP
+  // (src/notify/subscribe.ts, src/admin/index.ts).
+  "ratelimits": [
+    { "name": "SUBSCRIBE_LIMITER", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } },
+    { "name": "ADMIN_LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } },
+  ],
+}

@@ -1,0 +1,314 @@
+/* SVG charts after the v3 shared chart (shared/chart.css): flat grid, lines
+   over flat translucent areas (no gradients), a dashed crosshair with ringed
+   dots, and a frosted HTML tooltip once the chart script runs. Without it,
+   hover columns reveal the same crosshair with an SVG tooltip. */
+
+.ts-chart {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  touch-action: pan-y;
+  cursor: crosshair;
+  user-select: none;
+  --ring: var(--ts-surface);
+}
+
+.ts-chart-grid {
+  stroke: var(--ts-line);
+}
+
+.ts-chart-baseline {
+  stroke: var(--ts-line-strong);
+}
+
+.ts-chart-axis {
+  fill: var(--ts-ink-3);
+  font-family: var(--ts-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-chart-line {
+  fill: none;
+  stroke: var(--series, var(--ts-chart-1));
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* One series fills at 28%; two overlap with the larger behind at 20% and the
+   smaller on top at 30%; more stay at 8% so every line remains readable. */
+.ts-chart-area {
+  fill: var(--series, var(--ts-chart-1));
+  fill-opacity: 0.28;
+  stroke: none;
+}
+
+.is-overlap .ts-chart-area {
+  fill-opacity: 0.3;
+}
+
+.is-overlap .ts-chart-back {
+  fill-opacity: 0.2;
+}
+
+.is-many .ts-chart-area {
+  fill-opacity: 0.08;
+}
+
+.ts-chart-column {
+  outline: none;
+}
+
+.ts-chart-hit {
+  fill: transparent;
+}
+
+.ts-chart-column:focus-visible .ts-chart-hit {
+  fill: var(--ts-accent-soft);
+}
+
+.ts-chart-guide {
+  stroke: var(--ts-ink-3);
+  stroke-dasharray: 2 3;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ts-chart-dot {
+  fill: var(--series, var(--ts-chart-1));
+  stroke: var(--ring);
+  stroke-width: 2;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ts-chart-column.is-active :is(.ts-chart-guide, .ts-chart-dot),
+:root:not([data-charts]) .ts-chart-column:is(:hover, :focus-visible) :is(.ts-chart-guide, .ts-chart-dot, .ts-chart-tip),
+.ts-chart-column:last-of-type .ts-chart-dot {
+  opacity: 1;
+}
+
+.ts-chart-tip {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ts-fast) var(--ts-ease);
+}
+
+:root[data-charts] .ts-chart-tip {
+  display: none;
+}
+
+.ts-chart-tip-box {
+  fill: var(--ts-surface-2);
+  stroke: var(--ts-line-strong);
+}
+
+.ts-chart .ts-chart-tip text {
+  fill: var(--ts-ink-2);
+  font-family: var(--ts-font-mono);
+  font-size: 11px;
+}
+
+.ts-chart .ts-chart-tip .ts-chart-tip-label {
+  fill: var(--ts-ink-3);
+}
+
+.ts-chart .ts-chart-tip .ts-chart-tip-value {
+  fill: var(--ts-ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-chart-tip-swatch {
+  fill: var(--series, var(--ts-chart-1));
+}
+
+/* The chart script's tooltip: an overlay, so it is frosted. */
+.ts-chart-float {
+  position: fixed;
+  z-index: var(--ts-z-tooltip);
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+  max-width: min(260px, calc(100vw - 16px));
+  padding: var(--ts-s2) var(--ts-s3);
+  border-radius: var(--ts-radius);
+  background: var(--ts-glass-strong);
+  box-shadow: var(--ts-shadow-overlay);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-xs);
+  pointer-events: none;
+  backdrop-filter: blur(20px) saturate(1.15);
+}
+
+.ts-chart-float[hidden] {
+  display: none;
+}
+
+.ts-chart-float-head {
+  margin-bottom: 2px;
+  color: var(--ts-ink-3);
+  font-family: var(--ts-font-mono);
+  font-size: 11px;
+}
+
+.ts-chart-float-row {
+  display: grid;
+  grid-template-columns: 12px auto 1fr;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-chart-float-row b {
+  font-family: var(--ts-font-mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ts-chart-float-row span {
+  overflow: hidden;
+  color: var(--ts-ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-chart-float-key {
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--series, var(--ts-chart-1));
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .ts-chart-float {
+    background: var(--ts-surface-2);
+  }
+}
+
+@media (forced-colors: active) {
+  .ts-chart-line,
+  .ts-chart-guide {
+    stroke: CanvasText;
+  }
+}
+
+.ts-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2) var(--ts-s4);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ts-chart-swatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--series, var(--ts-chart-1));
+}
+
+/* Series colours: the direction's three hued chart colours (blue, teal,
+   violet), then two status-local ones for the per-vantage charts (four
+   series). The fourth is neutral ink, never a hue a reader could take for
+   a state (orange and green mean partial outage and operational here); the
+   fifth, beyond the four vantages, borrows the syntax amber. Declared here,
+   layered, so a direction defining more wins. */
+:root {
+  --ts-cat-4: var(--ts-ink-2);
+  --ts-cat-5: var(--ts-syn-number);
+}
+
+.ts-cat-1 {
+  --series: var(--ts-cat-1);
+}
+.ts-cat-2 {
+  --series: var(--ts-cat-2);
+}
+.ts-cat-3 {
+  --series: var(--ts-cat-3);
+}
+.ts-cat-4 {
+  --series: var(--ts-cat-4);
+}
+.ts-cat-5 {
+  --series: var(--ts-cat-5);
+}
+
+/* A card's range radios pick one server-rendered chart view; without :has()
+   the full window stays shown. */
+.st-chart-range {
+  min-width: 0;
+  margin: 0;
+}
+
+.st-chart-range > label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px var(--ts-s3);
+  border-radius: var(--ts-radius-sm);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.st-chart-range > label:hover {
+  color: var(--ts-ink);
+}
+
+.st-chart-range > label:has(:checked) {
+  background: var(--ts-nav-active-bg);
+  color: var(--ts-ink);
+}
+
+.st-chart-range > label:has(:focus-visible) {
+  outline: 2px solid var(--ts-focus);
+  outline-offset: 1px;
+}
+
+.st-chart-view:not([data-chart-view="full"]),
+.ts-card:has([data-chart-pick][value="1h"]:checked) [data-chart-view="full"],
+.ts-card:has([data-chart-pick][value="30m"]:checked) [data-chart-view="full"] {
+  display: none;
+}
+
+.ts-card:has([data-chart-pick][value="1h"]:checked) [data-chart-view="1h"],
+.ts-card:has([data-chart-pick][value="30m"]:checked) [data-chart-view="30m"] {
+  display: block;
+}
+
+/* Sparklines: a quiet trend beside a row's numbers. */
+.st-spark {
+  width: 96px;
+  height: 22px;
+  fill: none;
+  stroke: var(--ts-chart-1);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  flex: none;
+}
+
+.st-spark path {
+  vector-effect: non-scaling-stroke;
+}
+
+.st-spark circle {
+  fill: var(--ts-chart-1);
+  stroke: none;
+}
+
+@media (max-width: 47.99rem) {
+  .st-spark {
+    display: none;
+  }
+}

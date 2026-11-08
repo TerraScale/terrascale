@@ -1,0 +1,148 @@
+/* ts-status v3 home page: flat graphite, full width, one blue accent.
+   Presentation only; markup and data come from src/views/home.ts. */
+@layer status {
+  /* Links and focus on dark use #6b93ff; the logo blue #2158e8 stays on fills. */
+  .st-overview {
+    --ts-link: #6b93ff;
+    max-width: none;
+    width: 100%;
+    gap: var(--ts-s8);
+  }
+
+  .st-overview :focus-visible {
+    outline: 2px solid #6b93ff;
+    outline-offset: 2px;
+  }
+
+  /* Hero: a flat state-tinted banner, no glow or gradient. */
+  .st-overview .st-hero {
+    padding: var(--ts-s6);
+    border: 1px solid color-mix(in oklab, var(--state) 40%, transparent);
+    border-radius: var(--ts-radius-lg);
+    background: color-mix(in oklab, var(--state) 6%, var(--ts-surface));
+  }
+
+  .st-overview .st-hero-mark {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--ts-radius);
+    background: color-mix(in oklab, var(--state) 16%, transparent);
+  }
+
+  .st-overview .st-title {
+    font-size: var(--ts-fs-xl);
+    letter-spacing: var(--ts-heading-tracking);
+  }
+
+  /* Stats: one row, dividers between cells, mono numbers. */
+  .st-overview .ts-stats {
+    gap: 0;
+    margin-left: 0;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-top: 1px solid var(--ts-line);
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  .st-overview .ts-stat {
+    padding: var(--ts-s4) var(--ts-s5);
+    border-left: 1px solid var(--ts-line);
+  }
+
+  .st-overview .ts-stat:first-child {
+    border-left: 0;
+  }
+
+  .st-overview .ts-stat-value {
+    font-family: var(--ts-font-mono);
+    font-size: var(--ts-fs-3xl);
+    font-weight: 500;
+  }
+
+  /* Card heads: title left, actions (range switch, links) right. */
+  .st-overview .ts-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ts-s4);
+    flex-wrap: wrap;
+  }
+
+  .st-overview .ts-card-title {
+    font-size: var(--ts-fs-xl);
+  }
+
+  /* Range switch sits top-right of its chart card, like the prototype. */
+  .st-overview .st-range {
+    flex: none;
+    background: var(--ts-surface);
+  }
+
+  /* Service rows: name left, latency and uptime grouped right. */
+  .st-overview .st-service {
+    align-items: center;
+  }
+
+  .st-overview .st-service-state {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-s3);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  /* Regions: flat list, each region a bordered block. */
+  .st-overview .st-regions {
+    gap: var(--ts-s5) var(--ts-s6);
+  }
+
+  .st-overview .st-region > header {
+    align-items: center;
+    gap: var(--ts-s3);
+    flex-wrap: wrap;
+  }
+
+  .st-overview .st-region-code {
+    font-family: var(--ts-font-mono);
+    color: var(--ts-ink-2);
+    letter-spacing: 0;
+  }
+
+  .st-overview .st-map-figure {
+    border: 1px solid var(--ts-line);
+    border-radius: var(--ts-radius-lg);
+    background: var(--ts-surface);
+    overflow: hidden;
+  }
+
+  .st-overview .st-region-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--ts-s6);
+    align-items: start;
+  }
+  .st-overview .st-regions { grid-template-columns: minmax(0, 1fr); }
+  .st-overview .st-map { border: 0; }
+  .st-overview .st-map-legend { padding: var(--ts-s3); }
+  @media (max-width: 900px) {
+    .st-overview .st-region-layout { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  /* Mobile: stats in two columns, status banner stacks. */
+  @media (max-width: 600px) {
+    .st-overview .st-hero {
+      padding: var(--ts-s4);
+    }
+
+    .st-overview .ts-stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .st-overview .ts-stat:nth-child(3) {
+      border-left: 0;
+    }
+
+    .st-overview .st-service-state {
+      justify-content: flex-start;
+    }
+  }
+}

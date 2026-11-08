@@ -1,0 +1,1454 @@
+/* Status page pieces: the top bar, the status banner, status bars, the
+   hover card, regions and the footer. Written only against the tokens. */
+
+/* The status page keeps its 960px single column. */
+:root {
+  --st-width: 60rem;
+}
+
+.st-frame {
+  width: 100%;
+  max-width: var(--st-width);
+  margin-inline: auto;
+  padding-inline: var(--ts-s10);
+}
+
+/* Anchored sections clear the sticky top bar. */
+:root {
+  scroll-padding-top: calc(var(--ts-header-h) + var(--ts-s4));
+}
+
+/* Top bar: sticky and frosted; brand, page links, then the tools. The glass
+   sits on a pseudo-element so the header is no backdrop root and the menu
+   panel inside it can blur the page too. */
+.st-top {
+  position: sticky;
+  top: 0;
+  z-index: var(--ts-z-sticky);
+  border-bottom: 1px solid var(--ts-glass-line);
+}
+
+.st-top::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--ts-glass);
+  backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
+}
+
+.st-top > .st-frame {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s4);
+  height: var(--ts-header-h);
+}
+
+/* The logo: blue mark and light wordmark (the dark-UI logo). */
+.st-brand,
+.st-foot-brand {
+  display: flex;
+  color: var(--ts-ink);
+}
+
+.st-brand {
+  flex: none;
+  margin-right: auto;
+}
+
+.st-logo {
+  width: auto;
+  height: 22px;
+}
+
+.st-foot-brand .st-logo {
+  height: 18px;
+}
+
+.st-logo-mark {
+  fill: var(--ts-accent-fill);
+}
+
+.st-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s1);
+}
+
+.st-nav a {
+  display: inline-flex;
+  align-items: center;
+  height: var(--ts-control-h-sm);
+  padding: 0 10px;
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-2);
+  font-weight: 500;
+  transition:
+    color var(--ts-fast) var(--ts-ease),
+    background-color var(--ts-fast) var(--ts-ease);
+}
+
+.st-nav a:hover {
+  background: var(--ts-line);
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.st-nav a[aria-current="page"] {
+  color: var(--ts-ink);
+}
+
+.st-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s1);
+  min-width: 0;
+}
+
+/* The time zone: a ghost control as wide as the zone it shows. */
+.st-zone {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-2);
+  transition: background-color var(--ts-fast) var(--ts-ease);
+}
+
+.st-zone:hover {
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+}
+
+.st-zone[hidden] {
+  display: none;
+}
+
+.st-zone > .ts-icon {
+  margin-left: var(--ts-s2);
+  pointer-events: none;
+}
+
+.st-zone > .ts-select {
+  width: 11rem;
+  max-width: 12rem;
+  padding-left: 6px;
+  border-color: transparent;
+  background-color: transparent;
+  color: inherit;
+  field-sizing: content;
+}
+
+@supports (field-sizing: content) {
+  .st-zone > .ts-select {
+    width: auto;
+  }
+}
+
+.st-icon-button {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: var(--ts-control-h-sm);
+  height: var(--ts-control-h-sm);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ts-radius);
+  background: transparent;
+  color: var(--ts-ink-2);
+  cursor: pointer;
+  transition:
+    background-color var(--ts-fast) var(--ts-ease),
+    color var(--ts-fast) var(--ts-ease);
+}
+
+.st-icon-button:hover {
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+}
+
+.st-icon-button[hidden] {
+  display: none;
+}
+
+/* The phone menu: a frosted panel under its button. */
+.st-menu {
+  position: relative;
+  display: none;
+}
+
+.st-menu > summary {
+  list-style: none;
+}
+
+.st-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.st-menu[open] > summary {
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+}
+
+.st-menu-panel {
+  position: absolute;
+  top: calc(100% + var(--ts-s2));
+  right: 0;
+  z-index: var(--ts-z-dropdown);
+  display: grid;
+  min-width: 220px;
+  padding: var(--ts-s1);
+  border: 1px solid var(--ts-glass-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-glass);
+  backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
+}
+
+.st-menu-panel a {
+  display: flex;
+  align-items: center;
+  height: var(--ts-control-h-sm);
+  padding: 0 var(--ts-s3);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+}
+
+.st-menu-panel a:hover,
+.st-menu-panel a[aria-current="page"] {
+  background: var(--ts-line);
+  text-decoration: none;
+}
+
+/* The status banner: the overall state in a ring, the headline, and when
+   it was checked; a hairline box like the specimen's. */
+.st-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s4);
+  padding: var(--ts-s4) var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+}
+
+.st-hero-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--state) 16%, transparent);
+  color: var(--state);
+}
+
+.st-hero-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.st-hero-label {
+  color: var(--state);
+}
+
+.st-hero .st-title {
+  font-size: var(--ts-fs-2xl);
+}
+
+.st-hero .ts-meta {
+  color: var(--ts-ink-3);
+}
+
+/* Page titles. */
+.st-title {
+  font-size: var(--ts-fs-3xl);
+}
+
+/* Page header of pages without a status banner: eyebrow, title, lede. */
+.st-page-head {
+  display: grid;
+  gap: var(--ts-s2);
+}
+
+.st-page-head > .ts-muted {
+  max-width: var(--ts-prose-max);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-lg);
+}
+
+/* Component groups: a label over their divided rows. */
+.st-group {
+  display: grid;
+  gap: var(--ts-s1);
+}
+
+.st-group-title {
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
+  color: var(--ts-ink-3);
+}
+
+/* Components and clusters: name and state, then the bars. */
+.st-service {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ts-s2) var(--ts-s4);
+  padding: var(--ts-s4) 0;
+}
+
+.st-service :is(h3, h4) {
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.st-service-state {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+}
+
+.st-service-state > .ts-num,
+.st-uptime {
+  color: var(--ts-ink-2);
+  font: 400 var(--ts-fs-sm) / 1 var(--ts-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.st-service > .st-bars {
+  grid-column: 1 / -1;
+}
+
+/* Status bars: one cell per bucket, colored by its worst state. The strip
+   is one focusable image; the client script opens a hover card for the
+   active cell. Without scripts, cells show a one-line tip on hover. */
+.st-bars {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+  height: 28px;
+  border-radius: var(--ts-radius-sm);
+}
+
+.st-bars-static {
+  display: block;
+  width: 100%;
+}
+
+.st-bars-static path {
+  fill: var(--state);
+}
+
+.st-bars-static path[data-state="none"] {
+  fill: var(--ts-surface-3);
+}
+
+.st-bars-lg {
+  height: 40px;
+}
+
+.st-bars:focus-visible {
+  outline-offset: 4px;
+}
+
+.st-bars > li {
+  position: relative;
+  border-radius: 2px;
+  background: var(--state);
+  transition: opacity var(--ts-fast) var(--ts-ease);
+}
+
+.st-bars > li[data-state="none"] {
+  background: var(--ts-surface-3);
+}
+
+.st-bars:focus-visible > li {
+  opacity: 0.55;
+}
+
+@media (hover: hover) {
+  .st-bars:hover > li {
+    opacity: 0.55;
+  }
+}
+
+.st-bars > li:hover,
+.st-bars > li.is-active {
+  opacity: 1;
+}
+
+.st-bars > li::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: var(--ts-z-tooltip);
+  padding: var(--ts-s1) var(--ts-s2);
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-xs);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity var(--ts-fast) var(--ts-ease);
+}
+
+/* Tooltips at the ends open inward so they never leave the page. */
+.st-bars > li:nth-child(-n + 4)::after {
+  left: 0;
+  transform: none;
+}
+
+.st-bars > li:nth-last-child(-n + 4)::after {
+  right: 0;
+  left: auto;
+  transform: none;
+}
+
+@media (hover: hover) {
+  .st-bars > li:hover::after {
+    opacity: 1;
+  }
+}
+
+:root[data-js] .st-bars > li::after {
+  display: none;
+}
+
+/* The hover card: the menu surface (glass + hairline, no shadow); time and
+   state, then the details of what it describes. */
+.st-card {
+  position: fixed;
+  z-index: var(--ts-z-tooltip);
+  display: grid;
+  gap: var(--ts-s2);
+  width: max-content;
+  min-width: 13rem;
+  max-width: min(22rem, calc(100vw - 16px));
+  padding: var(--ts-s3);
+  border: 1px solid var(--ts-glass-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-glass);
+  backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
+  font-size: var(--ts-fs-xs);
+  pointer-events: none;
+  animation: st-card-in var(--ts-base) var(--ts-ease);
+}
+
+.st-card[hidden] {
+  display: none;
+}
+
+.st-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3);
+}
+
+.st-card-title {
+  color: var(--ts-ink);
+  font-weight: 500;
+}
+
+.st-card-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--ts-s4);
+  padding-top: var(--ts-s2);
+  border-top: 1px solid var(--ts-line);
+}
+
+.st-card-rows dt {
+  color: var(--ts-ink-3);
+}
+
+.st-card-rows dd {
+  color: var(--ts-ink);
+  font-family: var(--ts-font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.st-card-notes {
+  display: grid;
+  gap: 2px;
+  padding-top: var(--ts-s2);
+  border-top: 1px solid var(--ts-line);
+  color: var(--ts-ink-2);
+}
+
+.st-card-notes li::before {
+  content: "● ";
+  color: var(--ts-warning);
+}
+
+@keyframes st-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* Range links, admin tabs and month strips: the segmented control. */
+.st-range {
+  display: inline-flex;
+  gap: 2px;
+  height: var(--ts-control-h-sm);
+  padding: 2px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
+}
+
+.st-range > :is(a, span) {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--ts-s3);
+  border-radius: var(--ts-radius-sm);
+  color: var(--ts-ink-2);
+  font: 500 var(--ts-fs-sm) / 1 var(--ts-font-sans);
+}
+
+.st-range a:hover {
+  color: var(--ts-ink);
+  text-decoration: none;
+}
+
+.st-range [aria-current] {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.st-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ts-s3);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+/* The legend: small squares in the bars' colours. */
+.st-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2) var(--ts-s4);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+}
+
+.st-legend > li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.st-legend .ts-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--state);
+}
+
+.st-legend [data-state="none"] .ts-dot {
+  background: var(--ts-surface-3);
+}
+
+/* Region map: the dotted world, a hub per region, the vantage points, and
+   the probe paths between them. */
+.st-map-figure {
+  display: grid;
+  gap: var(--ts-s2);
+  margin: 0;
+}
+
+.st-map {
+  width: 100%;
+  max-height: 24rem;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.st-map-land {
+  stroke: var(--ts-line-strong);
+  stroke-opacity: 1;
+}
+
+.st-hub,
+.st-vantage {
+  outline: none;
+  cursor: default;
+}
+
+.st-hub {
+  color: var(--state);
+  fill: currentColor;
+}
+
+.st-hub[data-state="none"] {
+  color: var(--ts-ink-3);
+}
+
+.st-hub-ring {
+  fill: color-mix(in oklab, currentColor 22%, transparent);
+}
+
+.st-hub-pulse {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 0.4;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: st-hub-pulse 2.4s var(--ts-ease) infinite;
+}
+
+.st-hub[data-lifecycle="planned"] .st-hub-pulse {
+  display: none;
+}
+
+@keyframes st-hub-pulse {
+  from {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+.st-hub text {
+  fill: var(--ts-ink-2);
+  font-family: var(--ts-font-mono);
+  font-size: 2.6px;
+  font-weight: 500;
+}
+
+.st-hub:is(:hover, :focus-visible, .is-active) .st-hub-ring {
+  fill: color-mix(in oklab, currentColor 45%, transparent);
+}
+
+.st-hub:focus-visible .st-hub-ring {
+  stroke: var(--ts-ink);
+  stroke-width: 0.5;
+}
+
+.st-vantage rect {
+  fill: var(--ts-canvas);
+  stroke: var(--ts-accent);
+  stroke-width: 0.5;
+}
+
+.st-vantage:is(:hover, :focus-visible, .is-active) rect {
+  fill: var(--ts-accent);
+}
+
+.st-arc-line {
+  fill: none;
+  stroke: var(--state);
+  stroke-width: 0.35;
+  stroke-dasharray: 1.2 1.6;
+  opacity: 0.55;
+}
+
+.st-arc[data-state="none"] .st-arc-line {
+  stroke: var(--ts-ink-3);
+}
+
+.st-arc-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 2.4;
+}
+
+/* Only the path in view flows, so the map never repaints while idle. */
+.st-arc:is(:hover, :focus-visible, .is-active) .st-arc-line {
+  opacity: 1;
+  stroke-width: 0.6;
+  animation: st-flow 1.6s linear infinite;
+}
+
+.st-arc {
+  outline: none;
+}
+
+@keyframes st-flow {
+  to {
+    stroke-dashoffset: -2.8;
+  }
+}
+
+.st-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2) var(--ts-s4);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+}
+
+.st-map-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.st-key {
+  display: inline-block;
+}
+
+.st-key-hub {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ts-ink-2);
+}
+
+.st-key-vantage {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--ts-accent);
+  transform: rotate(45deg);
+}
+
+.st-key-arc {
+  width: 14px;
+  border-top: 1px dashed var(--ts-ink-2);
+}
+
+/* Regions: one row each (code, name, uptime, state) over its bars, with
+   its clusters folded below. */
+.st-regions {
+  display: grid;
+}
+
+.st-region {
+  display: grid;
+  gap: var(--ts-s2);
+  min-width: 0;
+  padding: var(--ts-s4) 0;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.st-region-code {
+  color: var(--ts-link);
+  font-size: var(--ts-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.st-region-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2) var(--ts-s3);
+}
+
+.st-region-name {
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.st-region-where {
+  min-width: 0;
+}
+
+.st-region-row > .st-uptime {
+  margin-left: auto;
+}
+
+.st-region-clusters > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s1);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+  list-style: none;
+  cursor: pointer;
+}
+
+.st-region-clusters > summary::-webkit-details-marker {
+  display: none;
+}
+
+.st-region-clusters > summary:hover {
+  color: var(--ts-ink);
+}
+
+.st-region-chevron {
+  transition: transform var(--ts-fast) var(--ts-ease);
+}
+
+.st-region-clusters[open] .st-region-chevron {
+  transform: rotate(90deg);
+}
+
+.st-region-clusters > .ts-list {
+  padding-left: var(--ts-s5);
+}
+
+/* Incidents in lists. */
+.st-incident-title {
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.st-incident-body {
+  color: var(--ts-ink-2);
+  white-space: pre-line;
+}
+
+/* The footer: logo, ©, links, and the live status link. */
+.st-foot {
+  border-top: 1px solid var(--ts-line);
+}
+
+.st-foot > .st-frame {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s3) var(--ts-s5);
+  padding-block: var(--ts-s6);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+.st-foot nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2) var(--ts-s4);
+}
+
+.st-foot nav a {
+  color: var(--ts-ink-2);
+}
+
+.st-status-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  height: 28px;
+  margin-left: auto;
+  padding: 0 var(--ts-s3);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-pill);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+}
+
+.st-status-link:hover {
+  border-color: var(--ts-line-strong);
+  text-decoration: none;
+}
+
+/* The live dot is the one allowed loop. */
+.ts-dot-live {
+  animation: st-live 2.4s var(--ts-ease) infinite;
+}
+
+@keyframes st-live {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .st-frame {
+    padding-inline: var(--ts-s4);
+  }
+
+  .st-logo {
+    height: 18px;
+  }
+
+  .st-top > .st-frame {
+    gap: var(--ts-s2);
+  }
+
+  .st-nav {
+    display: none;
+  }
+
+  .st-menu {
+    display: block;
+  }
+
+  .st-zone > .ts-select {
+    max-width: 10rem;
+  }
+
+  .st-title {
+    font-size: var(--ts-fs-2xl);
+  }
+
+  .st-hero .st-title {
+    font-size: var(--ts-fs-xl);
+  }
+
+  .st-service {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .st-bars {
+    gap: 1px;
+  }
+
+  .st-region-row > .st-uptime {
+    margin-left: 0;
+  }
+
+  .st-status-link {
+    margin-left: 0;
+  }
+}
+
+/* Incident titles link to their page. */
+.st-incident-link {
+  color: inherit;
+}
+
+/* Rows and alerts that open a page: the title link covers the whole box,
+   which washes on hover and carries the focus ring. Rows reach 12px past
+   their text, so the text keeps the page's left edge. */
+.st-linked {
+  position: relative;
+  transition: background-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-list-item > .st-linked {
+  margin: calc(-1 * var(--ts-s3));
+  padding: var(--ts-s3);
+  border-radius: var(--ts-radius);
+}
+
+.st-linked .st-incident-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.st-linked .st-incident-link:focus-visible {
+  outline: none;
+}
+
+.st-linked .st-incident-link:focus-visible::after {
+  outline: 2px solid var(--ts-focus);
+  outline-offset: 2px;
+}
+
+.st-linked:is(:hover, :focus-within) {
+  background: var(--ts-surface);
+}
+
+.ts-alert.st-linked:is(:hover, :focus-within) {
+  background: color-mix(in oklab, var(--state) var(--ts-tint-badge), transparent);
+}
+
+/* History filters: a wrapping row of labeled fields. */
+.st-history-controls {
+  display: grid;
+  gap: var(--ts-s3);
+}
+
+.st-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ts-s3);
+}
+
+.st-field {
+  display: grid;
+  flex: 1 1 9rem;
+  gap: var(--ts-s1);
+}
+
+/* The caption only, so the control inside keeps its own type. */
+.st-field > span {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+}
+
+.st-field-grow {
+  flex: 2 1 14rem;
+}
+
+/* Thirteen short month names fit a desktop row; phones scroll the strip. */
+.st-months {
+  justify-self: start;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.st-months > :is(a, span) {
+  flex: none;
+}
+
+/* Stats that hold words rather than numbers read in the body face. */
+.st-stat-text {
+  font-family: var(--ts-font-sans);
+  letter-spacing: var(--ts-heading-tracking);
+}
+
+/* An incident's updates, newest first, on a rail. */
+.st-timeline {
+  display: grid;
+  gap: var(--ts-s5);
+  padding-left: var(--ts-s5);
+  border-left: 1px solid var(--ts-line-strong);
+}
+
+.st-timeline-item {
+  position: relative;
+  display: grid;
+  gap: var(--ts-s1);
+}
+
+.st-timeline-item::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: calc(-1 * var(--ts-s5) - 4px);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--state, var(--ts-accent));
+}
+
+.st-countdown {
+  color: var(--ts-info);
+  font-weight: 500;
+}
+
+/* Tables that may scroll sideways on small screens: the wrapper always
+   fills its container and never grows past it, even inside grids that size
+   children to their content. */
+.st-table-wrap {
+  justify-self: stretch;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.st-sla,
+.st-ping {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ts-fs-sm);
+}
+
+.st-sla :is(th, td),
+.st-ping :is(th, td) {
+  height: 48px;
+  padding: var(--ts-s2) var(--ts-s4);
+  border-bottom: 1px solid var(--ts-line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* Header row in the label voice; horizontal hairlines only, no zebra. */
+.st-sla thead th,
+.st-ping thead th {
+  height: 36px;
+  padding-block: 0;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
+  color: var(--ts-ink-3);
+}
+
+.st-sla :is(th, td):first-child,
+.st-ping :is(th, td):first-child {
+  padding-left: 0;
+}
+
+.st-sla tbody tr,
+.st-ping tbody tr {
+  transition: background-color var(--ts-fast) var(--ts-ease);
+}
+
+.st-sla tbody tr:hover,
+.st-ping tbody tr:hover {
+  background: var(--ts-surface-2);
+}
+
+.st-sla tbody th,
+.st-ping tbody th {
+  color: var(--ts-ink);
+  font-weight: 500;
+}
+
+.st-sla-cell {
+  text-align: right;
+}
+
+.st-sla :is(th, td) {
+  padding-inline: 6px;
+}
+
+/* Month headers stack their year, so twelve months fit the column. */
+.st-sla thead th {
+  padding-block: var(--ts-s1);
+  white-space: normal;
+}
+
+/* Month headers line up with the right-aligned cells beneath them. */
+.st-sla thead th:not(:first-child) {
+  text-align: right;
+}
+
+.st-sla-cell[data-sla="met"] {
+  color: var(--ts-success);
+}
+
+.st-sla-cell[data-sla="missed"] {
+  color: var(--ts-danger);
+}
+
+.st-sla-cell[data-sla="none"] {
+  color: var(--ts-ink-3);
+}
+
+.st-sla-total th,
+.st-sla-total td {
+  border-top: 1px solid var(--ts-line-strong);
+}
+
+/* Latency matrices: the latest value large, p95 and the day's trend below.
+   Columns share the width and headers wrap, so long vantage names never
+   push the table past the page. */
+.st-ping:not(.st-ping-browser) {
+  table-layout: fixed;
+}
+
+.st-ping thead th,
+.st-ping tbody th {
+  white-space: normal;
+}
+
+.st-ping-cell .st-spark {
+  width: 100%;
+  max-width: 96px;
+}
+
+.st-ping-cell {
+  vertical-align: top;
+}
+
+.st-ping-cell > * {
+  display: block;
+}
+
+.st-ping-value {
+  color: var(--ts-ink);
+  font-family: var(--ts-font-num);
+  font-size: var(--ts-fs-lg);
+  font-weight: 500;
+}
+
+.st-ping-cell:is(:hover, .is-active) {
+  background: var(--ts-accent-soft);
+}
+
+.st-ping-test {
+  display: grid;
+  justify-items: start;
+  gap: var(--ts-s3);
+}
+
+/* Target names are long; let them wrap rather than widen the table. */
+.st-ping-browser tbody th {
+  white-space: normal;
+}
+
+.st-ping-browser td {
+  font-size: var(--ts-fs-lg);
+  font-weight: 500;
+}
+
+/* Calendar heatmap. */
+.st-heat {
+  width: 100%;
+  height: auto;
+}
+
+.st-heat rect {
+  fill: var(--state);
+  outline: none;
+}
+
+.st-heat rect[data-state="none"] {
+  fill: var(--ts-surface-3);
+}
+
+.st-heat rect:is(:hover, .is-active) {
+  stroke: var(--ts-ink);
+  stroke-width: 1.5;
+}
+
+.st-heat g:focus-visible {
+  outline: 2px solid var(--ts-accent);
+}
+
+.st-heat-label {
+  fill: var(--ts-ink-3);
+  font-size: 9px;
+}
+
+/* Deploy markers on charts. */
+.st-chart-marker line {
+  stroke: var(--ts-cat-3);
+  stroke-dasharray: 2 3;
+}
+
+.st-chart-marker text {
+  fill: var(--ts-cat-3);
+  font-size: 10px;
+}
+
+/* The embeddable widget: a compact card filling its iframe. */
+.st-embed {
+  display: grid;
+  gap: var(--ts-s3);
+  padding: var(--ts-s4);
+}
+
+.st-embed-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2);
+  color: var(--ts-ink);
+}
+
+.st-embed-head > .ts-dot {
+  color: var(--state);
+}
+
+.st-embed-head > .ts-meta {
+  margin-left: auto;
+}
+
+.st-embed-list {
+  display: grid;
+}
+
+.st-embed-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--ts-line);
+  font-size: var(--ts-fs-sm);
+}
+
+/* Integrations: snippets, badge previews and the widget preview. */
+.st-integration .ts-list-main {
+  gap: var(--ts-s1);
+}
+
+.st-mono {
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+  word-break: break-all;
+}
+
+.st-code {
+  margin: 0;
+  padding: var(--ts-s3);
+  overflow-x: auto;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface);
+  color: var(--ts-ink-2);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+  white-space: pre;
+}
+
+.st-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+}
+
+.st-embed-preview {
+  width: 100%;
+  max-width: 360px;
+  height: 260px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-canvas);
+}
+
+.st-tls[data-state] {
+  color: var(--state);
+  font-weight: 500;
+}
+
+/* Forms of the subscription and sign-in pages: a narrow column that keeps
+   the page's left edge. */
+.st-narrow > * {
+  max-width: 40rem;
+}
+
+.st-form {
+  display: grid;
+  justify-items: start;
+  gap: var(--ts-s4);
+}
+
+.st-form > .st-field {
+  width: 100%;
+}
+
+.st-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2) var(--ts-s5);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* Component checkboxes line up in columns. */
+.st-components {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  justify-self: stretch;
+}
+
+.st-choices > legend {
+  margin-bottom: var(--ts-s2);
+  padding: 0;
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
+}
+
+.st-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  font-size: var(--ts-fs-sm);
+}
+
+.st-choice input {
+  margin: 0;
+  accent-color: var(--ts-accent);
+}
+
+.st-honeypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+/* The admin pages: title left, sign out right; forms in a grid that
+   collapses to one column on phones. */
+.st-page-head.ts-row-between {
+  display: flex;
+  align-items: flex-end;
+}
+
+.ad-nav {
+  justify-self: start;
+}
+
+.ad-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr));
+  align-items: end;
+  gap: var(--ts-s3);
+  padding: var(--ts-s3) 0;
+}
+
+.ad-form > .ts-button {
+  justify-self: start;
+}
+
+.ad-wide {
+  grid-column: 1 / -1;
+}
+
+.ad-text {
+  height: auto;
+  min-height: 6rem;
+  padding: var(--ts-s2) var(--ts-s3);
+  resize: vertical;
+}
+
+.ad-item {
+  display: grid;
+  gap: var(--ts-s2);
+}
+
+.ad-item summary {
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.ad-delete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s3);
+}
+
+.ts-button.ad-danger {
+  background: color-mix(in oklab, var(--ts-danger) var(--ts-tint-badge), transparent);
+  color: var(--ts-danger);
+}
+
+.ts-button.ad-danger:hover {
+  background: var(--ts-danger);
+  color: var(--ts-canvas);
+}
+
+.ts-button.ad-quiet {
+  border-color: var(--ts-control-line);
+  background: transparent;
+  color: var(--ts-ink);
+}
+
+.ts-button.ad-quiet:hover {
+  border-color: var(--ts-control-line-hover);
+  background: var(--ts-surface-2);
+}
+
+/* Without backdrop-filter, or when less transparency is asked for, the
+   glass turns solid. */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .st-top::before,
+  .st-menu-panel,
+  .st-card {
+    background: var(--ts-surface);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .st-top::before,
+  .st-menu-panel,
+  .st-card {
+    background: var(--ts-surface);
+    backdrop-filter: none;
+  }
+}

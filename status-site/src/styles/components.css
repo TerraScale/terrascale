@@ -1,0 +1,394 @@
+/* Shared components of the TerraScale design system (direction folder
+   components.css), written only against the --ts-* tokens: flat sections,
+   stat tiles, alerts, badges, lists, empty states and controls. Sections
+   sit on the canvas split by hairlines, never boxed. */
+
+/* A flat section: a heading row and its content. */
+.ts-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-s4);
+  min-width: 0;
+}
+
+/* Consecutive sections are divided by a hairline. */
+.ts-page > .ts-card + .ts-card {
+  padding-top: var(--ts-s8);
+  border-top: 1px solid var(--ts-line);
+}
+
+/* The heading sits a section-title gap (24px) above the content; the
+   content's own pieces keep the tighter card gap. */
+.ts-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ts-s3) var(--ts-s4);
+  padding-bottom: var(--ts-s2);
+}
+
+.ts-card-heading {
+  display: grid;
+  flex: 1 1 280px;
+  gap: var(--ts-s1);
+  min-width: 0;
+}
+
+.ts-card-title {
+  font-size: var(--ts-fs-xl);
+}
+
+.ts-card-description {
+  color: var(--ts-ink-2);
+}
+
+/* Stacked boxes inside a section, such as active incident alerts. */
+.ts-card-body {
+  display: grid;
+  gap: var(--ts-s2);
+}
+
+/* Stat tiles: a borderless row with hairlines above and below and between
+   tiles; 2 by 2 on phones. Each tile spans three shared rows (label, value,
+   detail), so values line up even when a label wraps. */
+.ts-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  border-block: 1px solid var(--ts-line);
+}
+
+.ts-stat {
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  align-content: start;
+  row-gap: var(--ts-s2);
+  padding: var(--ts-s5) var(--ts-s6);
+  border-left: 1px solid var(--ts-line);
+}
+
+.ts-stat:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.ts-stat-label {
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  line-height: 16px;
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
+  color: var(--ts-ink-3);
+}
+
+/* A tile showing a state carries its dot in the label. */
+.ts-stat-label:has(> .ts-dot) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ts-stat-value {
+  color: var(--ts-ink);
+  font: 500 var(--ts-fs-3xl) / 1 var(--ts-font-num);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A unit beside the value ("365 days"), small so the number leads. */
+.ts-stat-unit {
+  margin-left: var(--ts-s1);
+  color: var(--ts-ink-2);
+  font: 400 var(--ts-fs-md) / 1 var(--ts-font-sans);
+  letter-spacing: 0;
+}
+
+.ts-stat-detail {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+@media (max-width: 47.99rem) {
+  .ts-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ts-stat {
+    padding: var(--ts-s4);
+  }
+
+  .ts-stat:nth-child(odd) {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .ts-stat:nth-child(n + 3) {
+    border-top: 1px solid var(--ts-line);
+  }
+
+  .ts-stat-value {
+    font-size: var(--ts-fs-2xl);
+  }
+}
+
+/* Alerts: a 2px state edge over an 8% tint. */
+.ts-alert {
+  --state: var(--ts-info);
+  display: grid;
+  gap: var(--ts-s1);
+  padding: var(--ts-s3) var(--ts-s4);
+  border-left: 2px solid var(--state);
+  border-radius: 0 var(--ts-radius) var(--ts-radius) 0;
+  background: color-mix(in oklab, var(--state) var(--ts-tint-alert), transparent);
+  color: var(--ts-ink);
+}
+
+.ts-alert[data-state="operational"] {
+  --state: var(--ts-success);
+}
+
+.ts-alert[data-state="maintenance"] {
+  --state: var(--ts-info);
+}
+
+.ts-alert[data-state="degraded"] {
+  --state: var(--ts-warning);
+}
+
+.ts-alert[data-state="partial"] {
+  --state: var(--ts-severe);
+}
+
+.ts-alert[data-state="outage"] {
+  --state: var(--ts-danger);
+}
+
+.ts-alert-title {
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.ts-alert-body {
+  color: var(--ts-ink-2);
+  white-space: pre-line;
+}
+
+/* Badges: a 14% state tint with the state as text; neutral without a state. */
+.ts-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 var(--ts-s2);
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
+  font: 500 var(--ts-fs-xs) / 1 var(--ts-font-sans);
+  white-space: nowrap;
+}
+
+.ts-badge[data-state] {
+  background: color-mix(in oklab, var(--state) var(--ts-tint-badge), transparent);
+  color: var(--state);
+}
+
+/* Region codes and similar identifiers. */
+.ts-badge-outline {
+  border: 1px solid var(--ts-line-strong);
+  background: transparent;
+  color: var(--ts-ink-2);
+  font-family: var(--ts-font-mono);
+  font-weight: 400;
+}
+
+/* A status dot. */
+.ts-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--state, currentColor);
+}
+
+.ts-badge > .ts-dot {
+  width: 6px;
+  height: 6px;
+}
+
+/* Divided rows. */
+.ts-list {
+  display: grid;
+}
+
+.ts-list-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s3);
+  padding: var(--ts-s3) 0;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-list-item:last-child {
+  border-bottom: 0;
+}
+
+.ts-list-main {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ts-list-main > * {
+  justify-self: start;
+}
+
+/* Empty states: a hairline box, centred: icon tile, title, one line and an
+   optional action. Never dashed, never a filled box. */
+.ts-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ts-s2);
+  padding: var(--ts-s8) var(--ts-s6);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  text-align: center;
+}
+
+/* The icon tile: a 32px accent-tinted square; an all-clear tile takes the
+   success tint instead. */
+.ts-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: var(--ts-s1);
+  border-radius: var(--ts-radius);
+  background: var(--ts-accent-soft);
+  color: var(--ts-accent);
+}
+
+.ts-empty-icon[data-state] {
+  background: color-mix(in oklab, var(--state) var(--ts-tint-badge), transparent);
+  color: var(--state);
+}
+
+.ts-empty-title {
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
+}
+
+.ts-empty-detail {
+  max-width: 52ch;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-empty > .ts-button {
+  margin-top: var(--ts-s2);
+}
+
+/* Inputs and selects: 36px, control-line border, 2px focus ring. */
+.ts-select,
+.ts-input {
+  width: 100%;
+  min-width: 0;
+  height: var(--ts-control-h);
+  padding: 0 var(--ts-s3);
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius);
+  background-color: var(--ts-surface);
+  color: var(--ts-ink);
+  font: 400 var(--ts-fs-md) / 1 var(--ts-font-sans);
+  transition: border-color var(--ts-fast) var(--ts-ease);
+}
+
+/* The Lucide chevron, drawn with the current text colour. */
+.ts-select {
+  padding-right: var(--ts-s8);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+  appearance: none;
+  cursor: pointer;
+}
+
+.ts-select-sm {
+  height: var(--ts-control-h-sm);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-select:hover,
+.ts-input:hover {
+  border-color: var(--ts-control-line-hover);
+}
+
+.ts-input::placeholder {
+  color: var(--ts-ink-3);
+}
+
+.ts-select:focus-visible,
+.ts-input:focus-visible {
+  border-color: transparent;
+  outline: 2px solid var(--ts-focus);
+  outline-offset: 0;
+}
+
+/* Buttons: 36px; primary by default, secondary and danger variants. */
+.ts-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-s2);
+  height: var(--ts-control-h);
+  padding: 0 var(--ts-s4);
+  border: 1px solid transparent;
+  border-radius: var(--ts-radius);
+  background: var(--ts-primary);
+  color: var(--ts-on-primary);
+  font: 500 var(--ts-fs-md) / 1 var(--ts-font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--ts-fast) var(--ts-ease),
+    border-color var(--ts-fast) var(--ts-ease),
+    color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-button:hover {
+  background: var(--ts-primary-hover);
+  text-decoration: none;
+}
+
+.ts-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Row titles are body type, not display type. */
+.ts-list-main :is(h3, h4) {
+  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+/* Inline code: a hairline chip on surface 2. */
+:where(p, li, td) > code {
+  padding: 1px 6px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+  font-size: 0.88em;
+}

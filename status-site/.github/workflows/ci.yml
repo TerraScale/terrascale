@@ -1,0 +1,22 @@
+name: CI
+
+# Every main push runs tests; existing external Cloudflare publication is unchanged.
+"on":
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Recheck main and refresh its shared npm cache once a week.
+    - cron: '47 1 * * 6'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    uses: TerraScale/.github/.github/workflows/node.yml@3a54c0184eacdc45466c1123bca67a99db62e91c
