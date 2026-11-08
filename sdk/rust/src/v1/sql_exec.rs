@@ -53,6 +53,7 @@ pub mod sql_error_codes {
     pub const TENANT_BUSY: &str = "tenant_busy";
     pub const UNAVAILABLE: &str = "unavailable";
     pub const UNAUTHORIZED: &str = "unauthorized";
+    pub const WRONG_REGION: &str = "wrong_region";
     pub const INTERNAL_ERROR: &str = "internal_error";
 }
 
