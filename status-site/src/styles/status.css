@@ -733,10 +733,21 @@
 }
 
 .st-region-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--ts-link);
   font-size: var(--ts-fs-xs);
   font-weight: 700;
   letter-spacing: 0.08em;
+}
+
+.st-region-flag {
+  width: 16px;
+  height: 12px;
+  flex: none;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.14);
 }
 
 .st-region-row {
