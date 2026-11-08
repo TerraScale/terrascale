@@ -1,225 +1,225 @@
 {
- "contract": "sdk/SQL-API.md#databases-for-agents",
- "revision": "923bd4934",
- "evidence": "Contract examples; not a live-service recording.",
- "project": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
- "database": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
- "apiKey": "01ARZ3NDEKTSV4RRFFQ69G5FA3_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
- "accessToken": "fixture.payload.signature",
- "operations": [
-  {
-   "operation": "createDatabase",
-   "request": {
-    "method": "POST",
-    "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases",
-    "body": {
-     "name": "agent_run",
-     "ttlSeconds": 3600
+  "contract": "sdk/SQL-API.md#databases-for-agents",
+  "revision": "923bd4934",
+  "evidence": "Contract examples; not a live-service recording.",
+  "project": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+  "database": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+  "apiKey": "01ARZ3NDEKTSV4RRFFQ69G5FA3_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "accessToken": "fixture.payload.signature",
+  "operations": [
+    {
+      "operation": "createDatabase",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases",
+        "body": {
+          "name": "agent_run",
+          "ttlSeconds": 3600
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+          "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+          "name": "agent_run",
+          "branchedFrom": null,
+          "createdAt": "2026-11-04T12:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": "2026-11-04T13:00:00Z"
+        }
+      }
+    },
+    {
+      "operation": "forkDatabase",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/01ARZ3NDEKTSV4RRFFQ69G5FA2/branches",
+        "body": {
+          "name": "agent_fork",
+          "ttlSeconds": 7200
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+          "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+          "name": "agent_fork",
+          "branchedFrom": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+          "createdAt": "2026-11-04T12:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": "2026-11-04T14:00:00Z"
+        }
+      }
+    },
+    {
+      "operation": "forkDatabase",
+      "request": {
+        "method": "POST",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_run/point-in-time/restore",
+        "body": {
+          "name": "agent_past",
+          "pointInTime": "2026-11-04T12:00:00Z"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
+          "operationId": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
+          "status": "running",
+          "kind": "point-in-time",
+          "database": "agent_past",
+          "errorCode": null,
+          "errorMessage": null,
+          "createdAt": "2026-11-04T12:00:01Z",
+          "finishedAt": null
+        }
+      }
+    },
+    {
+      "operation": "getRestoreOperation",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_run/restores/01ARZ3NDEKTSV4RRFFQ69G5FA9",
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
+          "operationId": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
+          "status": "completed",
+          "kind": "point-in-time",
+          "database": "agent_past",
+          "errorCode": null,
+          "errorMessage": null,
+          "createdAt": "2026-11-04T12:00:01Z",
+          "finishedAt": "2026-11-04T12:00:05Z"
+        }
+      }
+    },
+    {
+      "operation": "getDatabase",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_past",
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+          "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+          "name": "agent_past",
+          "branchedFrom": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+          "createdAt": "2026-11-04T12:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": null
+        }
+      }
+    },
+    {
+      "operation": "setDatabaseTtl",
+      "request": {
+        "method": "PUT",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_run/ttl",
+        "body": {
+          "ttlSeconds": 1800
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+          "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+          "name": "agent_run",
+          "branchedFrom": null,
+          "createdAt": "2026-11-04T12:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": "2026-11-04T12:30:00Z"
+        }
+      }
+    },
+    {
+      "operation": "clearDatabaseTtl",
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/01ARZ3NDEKTSV4RRFFQ69G5FA2/ttl",
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+          "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+          "name": "agent_run",
+          "branchedFrom": null,
+          "createdAt": "2026-11-04T12:00:00Z",
+          "region": "gru",
+          "homeRegion": "gru",
+          "expiresAt": null
+        }
+      }
+    },
+    {
+      "operation": "deleteDatabase",
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/01ARZ3NDEKTSV4RRFFQ69G5FA2",
+        "body": null
+      },
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "operation": "createScopedKey",
+      "request": {
+        "method": "POST",
+        "path": "/v1/terrascale/api-keys/self/scoped-keys",
+        "body": {
+          "project": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+          "database": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+          "access": "read_write",
+          "ttl_seconds": 600
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "key": "01ARZ3NDEKTSV4RRFFQ69G5FA3_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FA3",
+          "database": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+          "access": "read_write",
+          "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
+          "expires_at": "2026-11-04T12:10:00Z"
+        }
+      }
     }
-   },
-   "response": {
-    "status": 201,
-    "body": {
-     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-     "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
-     "name": "agent_run",
-     "branchedFrom": null,
-     "createdAt": "2026-11-04T12:00:00Z",
-     "region": "gru",
-     "homeRegion": "gru",
-     "expiresAt": "2026-11-04T13:00:00Z"
+  ],
+  "forbidden": {
+    "operation": "createScopedKey",
+    "request": {
+      "method": "POST",
+      "path": "/v1/terrascale/api-keys/self/scoped-keys",
+      "body": {
+        "database": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+        "access": "read"
+      }
+    },
+    "response": {
+      "status": 403,
+      "body": {
+        "error": "forbidden",
+        "error_description": "The parent key cannot reach the requested database."
+      }
     }
-   }
-  },
-  {
-   "operation": "forkDatabase",
-   "request": {
-    "method": "POST",
-    "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/01ARZ3NDEKTSV4RRFFQ69G5FA2/branches",
-    "body": {
-     "name": "agent_fork",
-     "ttlSeconds": 7200
-    }
-   },
-   "response": {
-    "status": 201,
-    "body": {
-     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-     "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
-     "name": "agent_fork",
-     "branchedFrom": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-     "createdAt": "2026-11-04T12:00:00Z",
-     "region": "gru",
-     "homeRegion": "gru",
-     "expiresAt": "2026-11-04T14:00:00Z"
-    }
-   }
-  },
-  {
-   "operation": "forkDatabase",
-   "request": {
-    "method": "POST",
-    "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_run/point-in-time/restore",
-    "body": {
-     "name": "agent_past",
-     "pointInTime": "2026-11-04T12:00:00Z"
-    }
-   },
-   "response": {
-    "status": 202,
-    "body": {
-     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
-     "operationId": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
-     "status": "running",
-     "kind": "point-in-time",
-     "database": "agent_past",
-     "errorCode": null,
-     "errorMessage": null,
-     "createdAt": "2026-11-04T12:00:01Z",
-     "finishedAt": null
-    }
-   }
-  },
-  {
-   "operation": "getRestoreOperation",
-   "request": {
-    "method": "GET",
-    "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_run/restores/01ARZ3NDEKTSV4RRFFQ69G5FA9",
-    "body": null
-   },
-   "response": {
-    "status": 200,
-    "body": {
-     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
-     "operationId": "01ARZ3NDEKTSV4RRFFQ69G5FA9",
-     "status": "completed",
-     "kind": "point-in-time",
-     "database": "agent_past",
-     "errorCode": null,
-     "errorMessage": null,
-     "createdAt": "2026-11-04T12:00:01Z",
-     "finishedAt": "2026-11-04T12:00:05Z"
-    }
-   }
-  },
-  {
-   "operation": "getDatabase",
-   "request": {
-    "method": "GET",
-    "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_past",
-    "body": null
-   },
-   "response": {
-    "status": 200,
-    "body": {
-     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-     "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
-     "name": "agent_past",
-     "branchedFrom": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-     "createdAt": "2026-11-04T12:00:00Z",
-     "region": "gru",
-     "homeRegion": "gru",
-     "expiresAt": null
-    }
-   }
-  },
-  {
-   "operation": "setDatabaseTtl",
-   "request": {
-    "method": "PUT",
-    "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/agent_run/ttl",
-    "body": {
-     "ttlSeconds": 1800
-    }
-   },
-   "response": {
-    "status": 200,
-    "body": {
-     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-     "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
-     "name": "agent_run",
-     "branchedFrom": null,
-     "createdAt": "2026-11-04T12:00:00Z",
-     "region": "gru",
-     "homeRegion": "gru",
-     "expiresAt": "2026-11-04T12:30:00Z"
-    }
-   }
-  },
-  {
-   "operation": "clearDatabaseTtl",
-   "request": {
-    "method": "DELETE",
-    "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/01ARZ3NDEKTSV4RRFFQ69G5FA2/ttl",
-    "body": null
-   },
-   "response": {
-    "status": 200,
-    "body": {
-     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-     "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
-     "name": "agent_run",
-     "branchedFrom": null,
-     "createdAt": "2026-11-04T12:00:00Z",
-     "region": "gru",
-     "homeRegion": "gru",
-     "expiresAt": null
-    }
-   }
-  },
-  {
-   "operation": "deleteDatabase",
-   "request": {
-    "method": "DELETE",
-    "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/01ARZ3NDEKTSV4RRFFQ69G5FA2",
-    "body": null
-   },
-   "response": {
-    "status": 204,
-    "body": null
-   }
-  },
-  {
-   "operation": "createScopedKey",
-   "request": {
-    "method": "POST",
-    "path": "/v1/terrascale/api-keys/self/scoped-keys",
-    "body": {
-     "project": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
-     "database": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-     "access": "read_write",
-     "ttl_seconds": 600
-    }
-   },
-   "response": {
-    "status": 201,
-    "body": {
-     "key": "01ARZ3NDEKTSV4RRFFQ69G5FA3_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-     "id": "01ARZ3NDEKTSV4RRFFQ69G5FA3",
-     "database": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-     "access": "read_write",
-     "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FA1",
-     "expires_at": "2026-11-04T12:10:00Z"
-    }
-   }
   }
- ],
- "forbidden": {
-  "operation": "createScopedKey",
-  "request": {
-   "method": "POST",
-   "path": "/v1/terrascale/api-keys/self/scoped-keys",
-   "body": {
-    "database": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
-    "access": "read"
-   }
-  },
-  "response": {
-   "status": 403,
-   "body": {
-    "error": "forbidden",
-    "error_description": "The parent key cannot reach the requested database."
-   }
-  }
- }
 }
