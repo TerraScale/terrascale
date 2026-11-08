@@ -151,6 +151,9 @@ with `ts -project my-project -yes db delete example`. Keep `-yes` before the com
 
 
 `db list` lists databases. `db info` prints one database's metadata as JSON.
+`db export <db>` downloads a database as a SQL dump to stdout; `-o file` writes
+it atomically, leaving no file if the export is interrupted, and `-force`
+overwrites an existing file.
 
 ## Regions and backups
 
