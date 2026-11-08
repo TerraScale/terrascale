@@ -1,3 +1,5 @@
+using TerraScale.Dashboard.Common.Accounts;
+
 namespace TerraScale.Dashboard.Common.Usage
 {
     public sealed record UsageSelection(AccountContext Context, string Range, string DatabaseId, bool ExplicitProjectFilter)
@@ -21,7 +23,7 @@ namespace TerraScale.Dashboard.Common.Usage
                 throw new AccountAccessException("Project is unavailable.", 404);
             }
 
-            if (!member && (projectId.Length == 0 || !TerraScale.Dashboard.Common.Accounts.ProjectCollaborator.Allows(org, project)))
+            if (!member && (projectId.Length == 0 || !ProjectCollaborator.Allows(org, project)))
             {
                 throw new AccountAccessException("Organization membership is required.");
             }

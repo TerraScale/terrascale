@@ -270,6 +270,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 var html = await page.Content.ReadAsStringAsync();
                 await Assert.That(html).Contains("Granted usage");
+                await Assert.That(html).Contains("usage-history");
                 await Assert.That(html).DoesNotContain("plan allowance").And.DoesNotContain("Spending").And.DoesNotContain(sibling);
                 using var settings = await client.GetAsync("/usage?tab=settings&project=" + granted);
                 await Assert.That(settings.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
