@@ -506,7 +506,10 @@ one project (`CreateInvitation`, `Invitations`, `RevokeInvitation`,
 `LookupInvitation`, `AcceptInvitation`, `DeclineInvitation`), ownership
 transfers, projects and project members, organization and project API keys
 (`CreateAPIKey`, `APIKeys`, `APIKey`, `RotateAPIKey`, `RevokeAPIKey`; an empty
-project means an organization key) and `AuditEvents`. Errors are
+project means an organization key), the organization's OIDC SSO connection
+(`GetSsoConnection`, `PutSsoConnection`, `VerifySsoDomain`,
+`DeleteSsoConnection`; formatting never reveals the OIDC client secret) and
+`AuditEvents`. Errors are
 `*tsauth.APIError`, and each code is an `errors.Is` value such as
 `tsauth.ErrNotFound` (also an organization the user cannot reach),
 `ErrForbiddenRole` or `ErrLastOwner`.
