@@ -531,6 +531,47 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
     }
 }
 
+public sealed class ResendResetEndpoint(HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
+{
+    public override void Configure()
+    {
+        Post("/ui/{slug}/reset/resend");
+        Name("ui_password_reset_resend");
+        Summary("Resend the password reset code");
+        Description("Same-origin form post with the email of the reset code step. A fresh reset code is mailed to the same address, replacing the previous one, and the visitor stays on the code step. The response never reveals whether the address has an account; a spent hourly code budget is told plainly (429, Retry-After, resend disabled), identically for every refused address, so nothing becomes enumerable. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour). A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
+        Tags("Sign-in");
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        AllowAnonymous();
+    }
+
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
+        {
+            return SignInFlow.Refused(this.HttpContext);
+        }
+
+        var address = form.Email?.Trim() ?? string.Empty;
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
+        if (await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext),
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken) is { } refusal)
+        {
+            return refusal.BudgetExhausted
+                ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.ResetCode, refusal.Wait, address, next)
+                : SignInFlow.Limited(this.HttpContext, SignInStep.ResetCode, refusal.Wait, address, next);
+        }
+
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next)
+        {
+            Notice = $"If an account exists for {address}, we emailed it a new code.",
+        });
+    }
+}
+
 /// <summary><c>POST /ui/{slug}/reset/complete</c>: sets a new password with the emailed reset code.</summary>
 public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
@@ -778,7 +819,7 @@ internal static class SignInFlow
         {
             "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method),
             "sign-in/verify" => theme.Passcode,
-            "sign-in/password" or "reset" or "reset/complete" => theme.Password,
+            "sign-in/password" or "reset" or "reset/complete" or "reset/resend" => theme.Password,
             "sign-up" or "sign-up/verify" or "sign-up/resend" => theme.SignUp,
             _ => true,
         };
