@@ -487,7 +487,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	}
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
 		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" {
-			return fmt.Errorf("%s needs ts auth login without TERRASCALE_API_KEY", name)
+			return fmt.Errorf("%s needs ts auth login first: unset TERRASCALE_API_KEY and run ts auth login", name)
 		}
 		if strings.HasPrefix(name, "schema ") && *schemaDB == "@" {
 			return fmt.Errorf("API key schema commands need --database <name|id>: %w", errUsage)
@@ -603,7 +603,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return err
 	}
 	if name == "keys create" {
-		return createKey(ctx, s, keyReq, out)
+		return createKey(ctx, s, keyReq, out, prompt)
 	}
 	if name == "keys rotate" {
 		return rotateKey(ctx, s, rotationID, rotationGrace, out, prompt)
@@ -676,10 +676,12 @@ func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyR
 
 // createKey creates a key and prints its secret once, with its expiry and
 // allowed networks on stderr.
-func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io.Writer) error {
-	k, err := s.user.CreateAPIKey(ctx, s.org, s.project, req)
+func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out, prompt io.Writer) error {
+	k, err := stepUp(ctx, s, tsauth.StepUpCreateAPIKey, "Creating API keys", func(u *tsauth.User) (*tsauth.CreatedAPIKey, error) {
+		return u.CreateAPIKey(ctx, s.org, s.project, req)
+	}, prompt)
 	if err != nil {
-		return keyOperationError(err, "Creating API keys", s)
+		return err
 	}
 	if jsonMode(out) {
 		return keyOutputError(emitJSON(out, k)) // This explicit create command reveals the secret once.

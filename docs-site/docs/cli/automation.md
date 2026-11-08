@@ -9,7 +9,7 @@ The Go `ts` CLI is the shipped distribution. Check `ts --version` and `ts help <
 Use `ts --json db list` for machine output. `--json` may follow the command; other global options go before it. Finite success is one JSON value plus newline; empty lists are `[]`.
 Exit codes are **0** success, **1** operational failure and **2** invalid arguments. Stdout contains only payloads; prompts/progress use stderr. Only explicit `keys create` and `keys rotate` return a one-time secret; login never prints tokens.
 
-Errors use `{"error":{"code":"invalid_arguments","message":"…"}}`, with optional HTTP `status` and safe `requestId`. Inspect uncertain writes before retrying. A writer failure can leave incomplete output even after a mutation committed. `keys create` and `keys rotate` fail with `{"error":{"code":"step_up_required","status":403,…}}` outside the dashboard: the message carries the dashboard API-keys link for the required password or email-code confirmation, and no secret is issued.
+Errors use `{"error":{"code":"invalid_arguments","message":"…"}}`, with optional HTTP `status` and safe `requestId`. Inspect uncertain writes before retrying. A writer failure can leave incomplete output even after a mutation committed. If a `keys create` or `keys rotate` confirmation is not approved within its five-minute window, the command fails with `{"error":{"code":"step_up_required","status":403,…}}`; run it again for a fresh confirmation URL. No secret is issued without confirmation.
 
 `shell` uses NDJSON: `{"type":"record","data":…}` followed by exactly one `{"type":"complete"}` on successful termination, or `{"type":"error","error":…}` and nonzero exit. Missing complete means incomplete; JSON SIGINT exits 1.
 

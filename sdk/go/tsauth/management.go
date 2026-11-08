@@ -66,6 +66,8 @@ func (c *Client) WithToken(accessToken string) *User {
 type User struct {
 	c     *Client
 	token string
+	// proof rides along in X-TerraScale-Step-Up-Proof on every request.
+	proof string
 }
 
 // Role is an organization role (viewer, member, admin, owner) or a project
@@ -619,17 +621,20 @@ func (u *User) doStatus(ctx context.Context, method string, path []string, query
 	if len(query) > 0 {
 		target += "?" + query.Encode()
 	}
-	return sendJSONStatus(ctx, u.c.hc, method, target, "Bearer "+u.token, in, out)
+	authorization := "Bearer " + u.token
+	return sendJSONStatus(ctx, u.c.hc, method, target, authorization, in, out, u.proof)
 }
 
 // sendJSON sends a JSON request with an Authorization header and decodes a
 // 2xx JSON answer into out; other answers are *APIError.
 func sendJSON(ctx context.Context, hc *http.Client, method, target, authorization string, in, out any) error {
-	_, err := sendJSONStatus(ctx, hc, method, target, authorization, in, out)
+	_, err := sendJSONStatus(ctx, hc, method, target, authorization, in, out, "")
 	return err
 }
 
-func sendJSONStatus(ctx context.Context, hc *http.Client, method, target, authorization string, in, out any) (int, error) {
+// sendJSONStatus sends one request, optionally carrying a step-up proof, and
+// returns its status; a non-2xx answer is *APIError.
+func sendJSONStatus(ctx context.Context, hc *http.Client, method, target, authorization string, in, out any, proof string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -654,6 +659,9 @@ func sendJSONStatus(ctx context.Context, hc *http.Client, method, target, author
 	req.Header.Set("Accept", "application/json")
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if proof != "" {
+		req.Header.Set(StepUpProofHeader, proof)
 	}
 	if err := ctx.Err(); err != nil {
 		return 0, err

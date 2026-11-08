@@ -51,6 +51,8 @@ func requiredAuthMembers(t reflect.Type) string {
 		return "api_key key"
 	case *AuditEvent:
 		return "id actor action occurred_at"
+	case *StepUpBody:
+		return "proof step_up_url expires_at"
 	}
 	return ""
 }
