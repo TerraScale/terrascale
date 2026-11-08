@@ -76,6 +76,9 @@ class Fake:
             source = self.databases[db]
             self.databases[body["name"]] = {**source, "id": new_id(), "name": body["name"], "branchedFrom": source["id"]}
             return httpx.Response(201, json=self.databases[body["name"]])
+        if rest == "/export" and db in self.databases:
+            return httpx.Response(200, content=b"BEGIN;\nINSERT INTO \"todos\" VALUES (1,'ship');\nCOMMIT;",
+                                  headers={"content-type": "application/sql"})
         if rest == "/sql/execute":
             return self._sql(body)
         return self._err(404, "unknown_route")
