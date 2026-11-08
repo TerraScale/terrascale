@@ -1,7 +1,7 @@
 # TerraScale Go SDK (`terrascale.tech/sdk`)
 
 Package `v1` is the TerraBase client for API keys and project JWTs: databases, SQL over REST
-and WebSocket, backups, functions, usage and analytics. `tsauth` exchanges
+and WebSocket, backups, file buckets, functions, usage and analytics. `tsauth` exchanges
 customer API keys and user tokens for project access tokens. The root package
 holds hosted TSAuth clients, pure SQL builders and the PostgreSQL client.
 
@@ -150,6 +150,14 @@ placement is coming; use an explicit replica-region list today.
 The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
 storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
 keys, making retained encrypted backups unreadable; physical cleanup is separate. Forks remain independent.
+
+### File buckets
+
+`c.CreateBucket(ctx, project, name, rules)`, `c.ListBuckets(ctx, project, page)` and
+`c.DeleteBucket(ctx, project, bucketID)` manage a project's file buckets with the project
+access token (`sql:read` lists, `sql:write` creates and deletes). `FileAccessRules` carries the
+end-user policy; missing grants deny access. Lists page in ID order with `PageOptions.After`
+only. Objects and signed URLs are not implemented yet.
 
 ### Relational SQL
 
