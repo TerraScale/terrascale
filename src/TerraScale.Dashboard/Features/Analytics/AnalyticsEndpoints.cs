@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.Features.Analytics
                 {
                     var selection = AnalyticsSelection.For(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(),
                         http.Request.Query["region"].ToString(), http.Request.Query["range"].ToString());
-                    return AnalyticsView.Create(await analytics.LoadAsync(ShellModel.For(http, context, "Analytics"), selection, http.RequestAborted));
+                    return AnalyticsView.Create(await analytics.LoadAsync(ShellModel.For(http, selection.Context, "Analytics"), selection, http.RequestAborted));
                 }
                 catch (AccountAccessException error)
                 {
