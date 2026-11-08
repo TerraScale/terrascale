@@ -228,6 +228,58 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         }
 
         [Test]
+        public async Task ProjectCidrsRoundTripThroughMcpToolsAndMemberIsRefused()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            using var client = scenario.CreateClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+            using var identity = await client.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
+            var organizationId = identity!.RootElement.GetProperty("organizationId").GetString()!;
+            var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
+            var ownerSecret = await HttpJourney.CreatePatAsync(client, "TUnit project cidrs owner");
+            var scope = new { organizationId, projectId };
+            var set = (await HttpJourney.McpAsync(client, ownerSecret, "tools/call", new
+            { name = "set_project_allowed_cidrs", arguments = new { allowedCidrs = new[] { "203.0.113.0/24", "198.51.100.7", "2001:db8::/48" }, organizationId, projectId } }))
+                .GetProperty("result").GetProperty("structuredContent").GetProperty("allowedCidrs");
+            await Assert.That(set.EnumerateArray().Select(item => item.GetString()!))
+                .IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7/32", "2001:db8::/48" }, CollectionOrdering.Matching);
+            var read = (await HttpJourney.McpAsync(client, ownerSecret, "tools/call", new
+            { name = "get_project_allowed_cidrs", arguments = scope }))
+                .GetProperty("result").GetProperty("structuredContent").GetProperty("allowedCidrs");
+            await Assert.That(read.EnumerateArray().Select(item => item.GetString()!))
+                .IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7/32", "2001:db8::/48" }, CollectionOrdering.Matching);
+
+            var suffix = Guid.NewGuid().ToString("N")[..8];
+            var email = "cidr-member-" + suffix + "@example.test";
+            using var member = scenario.CreateClient();
+            using (var joined = await HttpJourney.LoginAsync(member, email, "Cidr-" + suffix, signUp: true))
+            {
+                await Assert.That(joined.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            using var memberIdentity = await member.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
+            var memberId = memberIdentity!.RootElement.GetProperty("userId").GetString()!;
+            lock (scenario.Workspace.Gate)
+            {
+                scenario.Workspace.Organizations[organizationId].Members[memberId] = new()
+                { UserId = memberId, Name = "Cidr member", Email = email, Role = "member", Status = "active" };
+            }
+
+            using (var switched = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/switch-project", new()
+            { ["_csrf"] = await HttpJourney.CsrfAsync(member, "/profile"), ["projectId"] = projectId, ["returnUrl"] = "/api-keys" }))
+            {
+                await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            var memberSecret = await HttpJourney.CreatePatAsync(member, "TUnit project cidrs member");
+            var refused = (await HttpJourney.McpAsync(member, memberSecret, "tools/call", new
+            { name = "set_project_allowed_cidrs", arguments = new { allowedCidrs = Array.Empty<string>(), organizationId, projectId } }))
+                .GetProperty("result");
+            await Assert.That(refused.GetProperty("isError").GetBoolean()).IsTrue();
+            await Assert.That(refused.GetProperty("content")[0].GetProperty("text").GetString()).Contains("Project admin access is required.");
+        }
+
+        [Test]
         public async Task ProjectViewerCannotCreateKeys()
         {
             await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);

@@ -71,6 +71,18 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return new(keyId, true);
         }
 
+        [McpServerTool(Name = "get_project_allowed_cidrs", Title = "Get project allowed IPs", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read the IPs or CIDR ranges that requests with any of the project's API keys must come from. An empty list means any IP. Every key's own list applies on top of the project's list.")]
+        public async Task<McpProjectCidrs> GetProjectAllowedCidrs(string? organizationId = null, string? projectId = null)
+        {
+            return new(await keys.ProjectAllowedCidrsAsync(Scope(organizationId, projectId), Cancellation));
+        }
+
+        [McpServerTool(Name = "set_project_allowed_cidrs", Title = "Set project allowed IPs", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Replace the IPs or CIDR ranges (up to 32; an empty list allows any IP) that requests with any of the project's API keys must come from. Every key's own list applies on top of the project's list. Changes apply within 60 seconds. Requires the organization owner/admin role or this project's admin role.")]
+        public async Task<McpProjectCidrs> SetProjectAllowedCidrs(string[] allowedCidrs, string? organizationId = null, string? projectId = null)
+        {
+            return new(await keys.SetProjectAllowedCidrsAsync(Scope(organizationId, projectId), allowedCidrs, Cancellation));
+        }
+
         private AccountContext Scope(string? organizationId, string? projectId)
         {
             return DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
@@ -88,4 +100,5 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
     public sealed record McpCredentialList(IReadOnlyList<ProjectCredentialMetadata> Credentials, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
     public sealed record McpCredentialRevoked(string KeyId, bool Revoked);
+    public sealed record McpProjectCidrs(IReadOnlyList<string> AllowedCidrs);
 }
