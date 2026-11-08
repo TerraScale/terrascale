@@ -60,6 +60,7 @@ public sealed class TerraBaseContractTests
         yield return ("project", "getProjectUsage", client => ProjectClient(client).GetUsageAsync());
         yield return ("project", "getProjectMetrics", client => ProjectClient(client).GetPrometheusMetricsAsync());
         yield return ("sql", "executeSql", client => ((TerraBaseSqlClient)client).Database(Project, "app").ExecuteAsync("SELECT 1"));
+        yield return ("sql", "exportDatabase", client => ((TerraBaseSqlClient)client).Database(Project, "app").ExportDatabaseAsync());
         yield return ("platform", "listPlatformDatabases", client => ((TerraBasePlatformClient)client).ListDatabasesAsync());
 
         yield return ("management", "createOrganization", client => M(client).CreateOrganizationAsync(User, "Acme"));

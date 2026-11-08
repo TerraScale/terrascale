@@ -230,6 +230,22 @@ internal sealed class TerraBaseConnection
         }
     }
 
+    /// <summary>Opens a streaming GET within the request deadline and returns its body; reading the stream owns the response, and disposal closes it.</summary>
+    internal async Task<Stream> OpenStreamAsync(string path, string accept, CancellationToken cancellationToken)
+    {
+        var opened = await OpenAsync(HttpMethod.Get, path, null, null, accept, streaming: true, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var body = await opened.Response.Content.ReadAsStreamAsync(opened.Token).ConfigureAwait(false);
+            return new OwnedResponseBodyStream(opened, body);
+        }
+        catch
+        {
+            opened.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>Reads a response body bounded by the connection's response limit.</summary>
     internal async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
@@ -449,6 +465,46 @@ internal sealed class TerraBaseConnection
             request.Dispose();
             deadline.Dispose();
             expiry.Dispose();
+        }
+    }
+
+    /// <summary>A response body stream that releases the request and response resources it owns when it is disposed.</summary>
+    private sealed class OwnedResponseBodyStream(OpenResponse opened, Stream body) : Stream
+    {
+        public override bool CanRead => body.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override int Read(byte[] buffer, int offset, int count) => body.Read(buffer, offset, count);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            body.ReadAsync(buffer, cancellationToken);
+
+        public override Task CopyToAsync(Stream destination, int bufferSize, CancellationToken cancellationToken) =>
+            body.CopyToAsync(destination, bufferSize, cancellationToken);
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                body.Dispose();
+                opened.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await body.DisposeAsync().ConfigureAwait(false);
+            opened.Dispose();
+            await base.DisposeAsync().ConfigureAwait(false);
         }
     }
 
