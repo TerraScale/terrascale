@@ -98,6 +98,16 @@ public sealed partial class RegionalWriterCrashTests
                 return body.GetProperty("writer").GetBoolean() && body.GetProperty("ready").GetBoolean();
             }, TimeSpan.FromSeconds(15));
             await ExecuteAsync(recovered, "INSERT INTO acked VALUES ('after-restart')");
+            // The controller refuses a target whose regional status has not yet
+            // published readiness with its process session; under load that can
+            // lag the restarted host. Wait for the real signal, not a sleep.
+            using var standby = PeerTls.CreateClient(follower.Address);
+            await TerraBaseTestServer.EventuallyAsync(async _ =>
+            {
+                using var status = await standby.GetAsync(ManagementApi.Uri("/v1/rollout/status"), token);
+                var body = await status.Content.ReadFromJsonAsync<JsonElement>(token);
+                return body.GetProperty("ready").GetBoolean() && body.GetProperty("session").GetString() is { Length: > 0 };
+            }, TimeSpan.FromSeconds(15));
             using var transfer = await recovered.PostAsync(ManagementApi.Uri("/v1/rollout/drain?target=gru-2"), null, token);
             await Assert.That(transfer.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await transfer.Content.ReadAsStringAsync(token));
             using var survivor = PeerTls.CreateClient(follower.Address);
@@ -423,56 +433,6 @@ public sealed partial class RegionalWriterCrashTests
             }
 
             Console.WriteLine($"DRILL {name} ready process_ms={launched.Elapsed.TotalMilliseconds:F0} {await File.ReadAllTextAsync(ready, token)}");
-        }
-
-        internal async Task StartLegacyAsync(CancellationToken token)
-        {
-            var binary = Environment.GetEnvironmentVariable("TERRABASE_TEST_LEGACY_BINARY")
-                ?? throw new IOException("real b443 binary required: run scripts/terrabase/regional-bootstrap.sh on a dev host");
-            const string revision = "b443b6ea83f519018c0d9f9d8f04e65c3df12724";
-            if (await File.ReadAllTextAsync(binary + ".revision", token) != revision + "\n")
-            {
-                throw new IOException("legacy binary provenance does not match b443");
-            }
-            var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            start.ArgumentList.Add(binary);
-            start.ArgumentList.Add("--environment=Development");
-            start.ArgumentList.Add("--data-directory=" + DirectoryPath);
-            start.ArgumentList.Add("--internal-port=" + port);
-            // These ordinary listeners remain bound by the actual Program.
-            // Separate ephemeral ports prevent test instances sharing a host port.
-            foreach (var listener in new[] { "port", "metrics-port", "postgres-port" })
-            {
-                using var reserve = new TcpListener(IPAddress.Loopback, 0);
-                reserve.Start();
-                start.ArgumentList.Add("--" + listener + "=" + ((IPEndPoint)reserve.LocalEndpoint).Port);
-            }
-            start.Environment["TS_REGION"] = "gru";
-            start.Environment["TS_NODE"] = name;
-            start.Environment["TS_PEERS_FILE"] = peers;
-            start.Environment["TS_NATS_URL"] = (natsUrl ?? nats.Url).ToString();
-            start.Environment["TERRABASE_NATS_TOKEN"] = nats.Token;
-            start.Environment["TERRABASE_PEER_SECRET"] = PeerTls.Secret;
-            TestMasterKey.ConfigureProcess(start);
-            _process?.Dispose();
-            _process = Process.Start(start) ?? throw new IOException("legacy Program did not start");
-            _process.ErrorDataReceived += (_, line) => { if (line.Data is { } text) { lock (_errors) { _errors.Enqueue(text); while (_errors.Count > 100) { _ = _errors.Dequeue(); } } } };
-            _process.OutputDataReceived += (_, line) => { if (line.Data is { } text) { lock (_errors) { _errors.Enqueue(text); while (_errors.Count > 100) { _ = _errors.Dequeue(); } } } };
-            _process.BeginOutputReadLine();
-            _process.BeginErrorReadLine();
-            using var http = PeerTls.CreateClient(Address);
-            await TerraBaseTestServer.EventuallyAsync(async _ =>
-            {
-                if (_process.HasExited) { lock (_errors) { throw new IOException("legacy Program exited: " + string.Join('\n', _errors)); } }
-                try { return (await RecoveryDrill.StatusAsync(http, token)).Writer; }
-                catch (HttpRequestException) { return false; }
-            }, TimeSpan.FromSeconds(30));
-            Console.WriteLine($"DRILL actual legacy Program: revision={revision} pid={_process.Id} binary_sha256={Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(binary, token)))}");
         }
 
         internal async Task KillAsync()

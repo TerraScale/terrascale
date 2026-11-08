@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Engine.Turso;
@@ -13,26 +12,6 @@ internal sealed class TestMasterKey : IMasterKey
     private static readonly MasterKey Master = new(Material());
 
     private static byte[] Material() => SHA256.HashData("TerraBase integration fixtures only; never a production master"u8);
-
-    /// <summary>Configures a real child binary with a synthetic master, without keys in argv or files.</summary>
-    internal static void ConfigureProcess(ProcessStartInfo start)
-    {
-        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("AWS_", StringComparison.Ordinal)
-            || name == "BUCKET_NAME" || name.StartsWith("TERRABASE_MASTER_KEY", StringComparison.Ordinal)).ToList())
-        {
-            start.Environment.Remove(name);
-        }
-
-        var material = Material();
-        try
-        {
-            start.Environment["TERRABASE_MASTER_KEY"] = Convert.ToBase64String(material);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(material);
-        }
-    }
 
     public Task<(byte[] Key, string Wrapped)> GenerateDataKeyAsync(CancellationToken cancellationToken) =>
         Master.GenerateDataKeyAsync(cancellationToken);
