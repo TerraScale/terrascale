@@ -1,0 +1,14 @@
+{
+  "name": "terrascale-oidc-customer-app",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.x || 24.x"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "jose": "6.1.0"
+  }
+}
