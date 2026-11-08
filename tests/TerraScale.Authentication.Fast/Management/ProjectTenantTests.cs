@@ -92,7 +92,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token,
             new { name = this.faker.Company.CompanyName(), type = "public", redirect_uris = CreateRedirect }, HttpStatusCode.Created);
         var clientId = created.GetProperty("client_id").GetString()!;
-        var (_, otherToken, _, _) = await this.ProjectAsync(oidc);
+        var (_, otherToken, _, _) = await this.ProjectAsync(oidc, "person2");
 
         using var denied = await oidc.CallAsync(HttpMethod.Put, $"{root}/clients/{clientId}", otherToken,
             new { name = "Hostile rename", redirect_uris = HostileRedirect });
@@ -103,9 +103,9 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     }
 
     // An owner signed in, with its sign-in token, an organization and a project.
-    private async Task<(UserRecord Owner, string Token, string Project, string Root)> ProjectAsync(OidcHarness oidc)
+    private async Task<(UserRecord Owner, string Token, string Project, string Root)> ProjectAsync(OidcHarness oidc, string person = "person1")
     {
-        var (owner, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("person1"));
+        var (owner, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail(person));
         var organization = await oidc.CreateOrganizationAsync(token, this.faker.Company.CompanyName());
         var project = await oidc.CreateProjectAsync(token, organization, this.faker.Commerce.ProductName());
         return (owner, token, project, $"/v1/{project}");
