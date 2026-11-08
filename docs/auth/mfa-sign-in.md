@@ -17,6 +17,14 @@ active authenticator (TOTP) factor.
 - `POST /ui/{slug}/security/totp/disable` needs a current TOTP or unused
   recovery code, removes the factor, advances the epoch and opens a fresh
   session.
+- `POST /ui/{slug}/security/recovery/regenerate` needs a session opened in
+  the last 15 minutes plus a current TOTP or unused recovery code, consumed
+  like disable's, and replaces the whole recovery-code set in one conditional
+  write: every old code stops working, eight new ones are issued with a fresh
+  365-day expiry and shown once, and the TOTP secret, the enabled state, the
+  account's epoch and its sessions stay untouched. It records
+  `member.mfa_recovery_codes_regenerated` in the account's organizations'
+  audit logs.
 
 Every post is same-origin checked like the sign-in forms.
 
@@ -68,8 +76,9 @@ API keys keep working: they are the organization's credentials.
 ## Audit
 
 Policy changes write `organization.mfa_required` / `organization.mfa_optional`
-in the same transaction. Enabling, disabling and signing in with a recovery
-code write `member.mfa_enabled`, `member.mfa_disabled` and
+in the same transaction. Enabling, disabling, regenerating recovery codes and
+signing in with a recovery code write `member.mfa_enabled`,
+`member.mfa_disabled`, `member.mfa_recovery_codes_regenerated` and
 `member.mfa_recovery_code_used` to each of the user's organizations, best
 effort after the change.
 
