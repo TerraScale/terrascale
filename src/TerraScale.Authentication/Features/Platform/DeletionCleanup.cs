@@ -175,6 +175,11 @@ public sealed class DeletionCleanup(
                         _ = logFailure;
                     }
                 }
+                catch (Exception error) when (stoppingToken.IsCancellationRequested && error is not OutOfMemoryException)
+                {
+                    // Shutdown already asked this worker to stop: a storage fault racing it must not fault the worker.
+                    logger.ZLogDebug(error, $"Auth deletion cleanup interrupted by shutdown");
+                }
             }
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }
