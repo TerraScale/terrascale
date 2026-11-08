@@ -9,9 +9,9 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 workflow = (root / ".github/workflows/ci.yml").read_text()
-native = workflow.split("\n  native:\n", 1)[1].split("\n  native-build:\n", 1)[0]
 maintenance = workflow.split("\n  native-build:\n", 1)[1].split("\n  native-release:\n", 1)[0]
-assert "build-turso-native.sh" not in native and "download-turso-native.sh" in native
+# Push and PR runs build no native code; Rust builds stay in the maintenance dispatch.
+assert "\n  native:\n" not in workflow and workflow.count("build-turso-native.sh") == maintenance.count("build-turso-native.sh")
 assert "if: github.event_name == 'workflow_dispatch' && inputs.native_artifacts" in maintenance
 assert "ubuntu-24.04-arm" in maintenance
 assert maintenance.count("repeat: 1") == 2 and maintenance.count("repeat: 2") == 2
@@ -22,8 +22,7 @@ assert "Dockerfile.router-parser" in (root / "scripts/vendor/build-turso-native.
 aggregate = workflow.split("\n  test:\n", 1)[1]
 assert "name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}" in aggregate
 assert "${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)\n" in aggregate.split("\n  budget:\n", 1)[0]
-assert "needs: [changes, native, libs, auth, auth-package, terrabase, terrabase-package]" in aggregate
-assert "name: turso-native-verified" in workflow
+assert "needs: [changes, checks, libs, auth, terrabase]" in aggregate
 recipe = (root / "scripts/vendor/Dockerfile.turso-native").read_text()
 assert "--features turso_sdk_kit/fts" in recipe
 assert "aegis-feature-tree.txt" in recipe and "(pure-rust|pure-rust-crypto)" in recipe
