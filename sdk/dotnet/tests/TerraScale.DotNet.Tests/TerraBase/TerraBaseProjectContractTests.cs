@@ -45,6 +45,30 @@ public sealed class TerraBaseProjectContractTests
     }
 
     [Test]
+    public async Task Identity_conditioned_branch_and_delete_send_the_expected_id_segment()
+    {
+        var id = "01ARZ3NDEKTSV4RRFFQ69G5FA2";
+        var requests = new List<(string Method, string Path, string? Body)>();
+        using var handler = new TerraBaseTestHandler(async (request, token) =>
+        {
+            requests.Add((request.Method.Method, request.RequestUri!.AbsolutePath,
+                request.Content is null ? null : await request.Content.ReadAsStringAsync(token)));
+            return request.Method == HttpMethod.Delete ? new HttpResponseMessage(HttpStatusCode.NoContent)
+                : TerraBaseIntegrationFixture.Json(TerraBaseIntegrationFixture.Read("branch.json"), HttpStatusCode.Created);
+        });
+        using var http = new HttpClient(handler);
+        var database = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+        var branched = await database.BranchIfIdAsync("copy", id);
+        await database.DeleteIfIdAsync(id);
+
+        await Assert.That(branched.Name).IsEqualTo("copy");
+        await Assert.That(requests.Select(r => r.Method)).IsEquivalentTo(["POST", "DELETE"]);
+        await Assert.That(requests[0].Path).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/branches/if-id/{id}");
+        await Assert.That(requests[0].Body).IsEqualTo("{\"name\":\"copy\"}");
+        await Assert.That(requests[1].Path).IsEqualTo($"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/if-id/{id}");
+    }
+
+    [Test]
     public async Task Usage_preserves_int64_totals_periods_and_database_identity_without_manufacturing_billing()
     {
         var queries = new List<string>();

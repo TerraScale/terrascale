@@ -51,6 +51,8 @@ public sealed class TerraBaseContractTests
         yield return ("database", "cancelClosure", client => Db(client).CancelClosureAsync(User, User));
         yield return ("database", "getDatabaseUsage", client => Db(client).GetUsageAsync());
         yield return ("database", "branchDatabase", client => Db(client).BranchAsync("copy"));
+        yield return ("database", "branchDatabaseIfId", client => Db(client).BranchIfIdAsync("copy", User));
+        yield return ("database", "deleteDatabaseIfId", client => Db(client).DeleteIfIdAsync(User));
 
         yield return ("project", "createDatabase", client => ProjectClient(client).CreateDatabaseAsync("app"));
         yield return ("project", "listDatabases", client => ProjectClient(client).ListDatabasesAsync());
@@ -158,6 +160,6 @@ public sealed class TerraBaseContractTests
     {
         // A {placeholder} is one escaped path segment.
         public bool Matches(string path) =>
-            Regex.IsMatch(path, "^" + Regex.Replace(Regex.Escape(this.Path), @"\\\{[a-z]+}", "[^/]+") + "$", RegexOptions.None, TimeSpan.FromSeconds(1));
+            Regex.IsMatch(path, "^" + Regex.Replace(Regex.Escape(this.Path), @"\\\{[a-zA-Z]+}", "[^/]+") + "$", RegexOptions.None, TimeSpan.FromSeconds(1));
     }
 }

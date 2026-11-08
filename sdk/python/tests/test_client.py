@@ -128,3 +128,14 @@ def test_export_database_streams_the_sql_dump(ts: TerraScale, fake: Fake) -> Non
     assert request.url.path == f"/v1/projects/{PROJECT}/databases/main/export"
     assert request.headers["accept"] == "text/plain"
     assert request.headers["authorization"] == "Bearer tok-1"
+
+def test_if_id_branch_and_delete_guard_the_identity(ts: TerraScale, fake: Fake) -> None:
+    created = ts.create_database("main")
+    db = ts.database("main")
+    branch = db.branch_if_id("copy", created.id)
+    ts.database("copy").delete_if_id(branch.id)
+    api = [r for r in fake.requests if r.url.host != "auth.test"]
+    assert [r.method + " " + r.url.path for r in api[1:]] == [
+        f"POST /v1/projects/{PROJECT}/databases/main/branches/if-id/{created.id}",
+        f"DELETE /v1/projects/{PROJECT}/databases/copy/if-id/{branch.id}",
+    ]

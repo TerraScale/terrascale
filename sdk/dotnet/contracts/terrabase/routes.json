@@ -290,6 +290,18 @@
       "path": "/v1/projects/{project}/databases/{database}/branches"
     },
     {
+      "client": "database",
+      "operation": "branchDatabaseIfId",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/branches/if-id/{expectedId}"
+    },
+    {
+      "client": "database",
+      "operation": "deleteDatabaseIfId",
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}/if-id/{expectedId}"
+    },
+    {
       "client": "sql",
       "operation": "executeSql",
       "method": "POST",

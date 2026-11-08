@@ -118,4 +118,27 @@ public sealed partial class TerraBaseDatabase
         return (await connection.SendAsync(HttpMethod.Post, path + "/branches", TerraBaseConnection.Json(new RequestBody { Name = name }, Json.RequestBody),
             Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
     }
+
+    /// <summary>
+    /// Branches a consistent snapshot only while the source's immutable ID is still <paramref name="expectedId"/>; a changed
+    /// identity answers 409 before any copy work. Older servers without the identity-conditioned route answer 404.
+    /// </summary>
+    public async Task<TerraBaseManagedDatabase> BranchIfIdAsync(string name, string expectedId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        TerraScaleIds.Validate(expectedId);
+        return (await connection.SendAsync(HttpMethod.Post, path + "/branches/if-id/" + Uri.EscapeDataString(expectedId),
+            TerraBaseConnection.Json(new RequestBody { Name = name }, Json.RequestBody),
+            Json.TerraBaseManagedDatabase, null, cancellationToken).ConfigureAwait(false)).Value;
+    }
+
+    /// <summary>
+    /// Deletes the database only while its immutable ID is still <paramref name="expectedId"/>; a changed identity answers 409
+    /// before any deletion work. Older servers without the identity-conditioned route answer 404.
+    /// </summary>
+    public Task DeleteIfIdAsync(string expectedId, CancellationToken cancellationToken = default)
+    {
+        TerraScaleIds.Validate(expectedId);
+        return connection.SendAsync(HttpMethod.Delete, path + "/if-id/" + Uri.EscapeDataString(expectedId), null, null, cancellationToken);
+    }
 }

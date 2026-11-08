@@ -7,7 +7,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use super::client::{Client, Req};
 use super::database::{Database, ProjectDatabaseInfo};
 use super::errors::Result;
-use super::ids::{check_database_selector, check_name};
+use super::ids::{check_database_selector, check_name, valid_entity_id};
 
 /// Management pagination uses `after` / `next`, independently of data cursors.
 #[derive(Debug, Clone, Deserialize)]
@@ -147,6 +147,39 @@ impl Database {
         .await
     }
 
+    /// `POST D/branches/if-id/{expectedId}`; the server refuses with 409 before
+    /// copying when the source name resolves to a different immutable ID.
+    pub async fn branch_database_if_id(
+        &self,
+        name: &str,
+        expected_id: &str,
+    ) -> Result<ProjectDatabaseInfo> {
+        check_name("database", name)?;
+        check_expected_id(expected_id)?;
+        self.management(
+            Method::POST,
+            &["branches", "if-id", expected_id],
+            &[],
+            Some(&serde_json::json!({"name": name})),
+            StatusCode::CREATED,
+        )
+        .await
+    }
+
+    /// `DELETE D/if-id/{expectedId}`; the server refuses with 409 before any
+    /// deletion work when the name resolves to a different immutable ID.
+    pub async fn delete_database_if_id(&self, expected_id: &str) -> Result<()> {
+        check_database_selector(self.name())?;
+        check_expected_id(expected_id)?;
+        self.client()
+            .send_project(Req::new(
+                Method::DELETE,
+                vec!["v1", "databases", self.name(), "if-id", expected_id],
+            ))
+            .await?
+            .check_status(&[StatusCode::NO_CONTENT])
+    }
+
     pub(crate) async fn management<T: DeserializeOwned>(
         &self,
         method: Method,
@@ -161,5 +194,15 @@ impl Database {
         self.client()
             .management(method, segments, query, body, status)
             .await
+    }
+}
+
+fn check_expected_id(id: &str) -> Result<()> {
+    if valid_entity_id(id) {
+        Ok(())
+    } else {
+        Err(super::errors::Error::InvalidInput(
+            "expected database ID must be a canonical uppercase ULID".into(),
+        ))
     }
 }

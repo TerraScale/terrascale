@@ -93,6 +93,20 @@ class Fake:
             source = self.databases[db]
             self.databases[body["name"]] = {**source, "id": new_id(), "name": body["name"], "branchedFrom": source["id"]}
             return httpx.Response(201, json=self.databases[body["name"]])
+        guard = re.fullmatch(r"/branches/if-id/([^/]+)", rest)
+        if guard and db in self.databases:
+            source = self.databases[db]
+            if guard.group(1) != source["id"]:
+                return self._err(409, "database_identity_changed")
+            self.databases[body["name"]] = {**source, "id": new_id(), "name": body["name"], "branchedFrom": source["id"]}
+            return httpx.Response(201, json=self.databases[body["name"]])
+        plain = re.fullmatch(r"/if-id/([^/]+)", rest)
+        if plain and db in self.databases:
+            if plain.group(1) != self.databases[db]["id"]:
+                return self._err(409, "database_identity_mismatch")
+            del self.databases[db]
+            return httpx.Response(204)
+
         if rest == "/export" and db in self.databases:
             return httpx.Response(200, content=b"BEGIN;\nINSERT INTO \"todos\" VALUES (1,'ship');\nCOMMIT;",
                                   headers={"content-type": "application/sql"})

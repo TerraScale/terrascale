@@ -62,7 +62,7 @@ export function verifyCurrentSourceRoutes(routes) {
       .map(match => constant(match[1], owner));
     const requestMediaTypes = explicitMedia.length > 0 ? explicitMedia : /Endpoint<|RequestJson\.Read</u.test(source) ? ["application/json"] : [];
     assert.deepEqual([...route.requestMediaTypes].sort(), requestMediaTypes.sort(), `${route.operation}: producer request media drift.`);
-    const responseMediaType = route.operation === "deleteDatabase" ? "" :
+    const responseMediaType = route.operation === "deleteDatabase" || route.operation === "deleteDatabaseIfId" ? "" :
       source.includes('"text/event-stream"') ? "text/event-stream" : "application/json";
     assert.equal(route.responseMediaType, responseMediaType, `${route.operation}: producer response media drift.`);
     const successStatuses = [...statusNames].filter(([status, name]) => status === 200 ?
