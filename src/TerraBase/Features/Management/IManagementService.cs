@@ -71,10 +71,20 @@ public readonly union BranchDatabaseResult(ManagedDatabase, NotFound, Forbidden,
 
 public readonly union CopyDatabaseResult(ManagedDatabase, NotFound, Forbidden, Conflict, QuotaExceeded, Unavailable);
 
+/// <summary>The restore precheck passed, or the typed error its registration would return.</summary>
+public readonly union RestorePrecheckResult(Done, NotFound, Forbidden, Conflict, Unavailable);
+
 public sealed record ManagementPage<T>(IReadOnlyList<T> Items, string? Next);
 
 internal interface IManagementService
 {
+    /// <summary>
+    /// The name and allowance checks a restore into a new database makes before any replay work, refused with the same
+    /// errors its registration returns; the registration re-checks when it commits (races).
+    /// </summary>
+    ValueTask<RestorePrecheckResult> PrecheckRestoreAsync(
+        string userId, string organizationId, string projectId, string? name, CancellationToken cancellationToken);
+
     ValueTask<WritableDatabaseTenantResult> GetRecoveryDatabaseTenantAsync(
         string userId, string organizationId, string projectId, string databaseId, string? authorityToken, CancellationToken cancellationToken);
 

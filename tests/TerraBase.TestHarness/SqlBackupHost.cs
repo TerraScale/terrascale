@@ -12,13 +12,18 @@ using TerraBase.Testing;
 
 namespace TerraBase.Testing;
 
-internal sealed class SqlBackupHost(ManagementApi api, FakeTimeProvider time, ManagedDatabaseRef database, HttpClient data) : IAsyncDisposable
+internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvider time, ManagedDatabaseRef database, HttpClient data) : IAsyncDisposable
 {
     private long _stamped;
 
     public ManagementApi Api { get; } = api;
 
+    public FakeS3 S3 { get; } = s3;
+
     public ManagedDatabaseRef Database { get; } = database;
+
+    /// <summary>The database's backup object prefix: <c>v1/{organization}/{project}/{database}/nodes/local</c>.</summary>
+    public string File => $"v1/{Database.Organization}/{Database.Project}/{Database.Id}/nodes/local";
 
     public DateTimeOffset SnapshotAt { get; private set; }
 
@@ -41,7 +46,7 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeTimeProvider time, Ma
             var database = await api.CreateManagedDatabaseAsync("main");
             await api.SetPlanAsync(api.User, database.Organization, "pro", cancellationToken);
             var key = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "sql:read", "sql:write");
-            return new SqlBackupHost(api, time, database, api.DataClient(key));
+            return new SqlBackupHost(api, s3, time, database, api.DataClient(key));
         }
         catch
         {

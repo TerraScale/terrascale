@@ -185,18 +185,18 @@ internal sealed class EngineManagedBackupService(
     public ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform,
         long? ttlSeconds = null) =>
-        FromStagingAsync(userId, organizationId, database, at, destination,
+        FromStagingAsync(userId, organizationId, database, at, destination, name, intoNewDatabase: true,
             (source, staging) => CopyRestoredAsync(userId, organizationId, DatabaseOwner.Of(database), source.Name, staging.DatabaseId!, name, cancellationToken, ttlSeconds),
             cancellationToken);
 
     public ValueTask<RestoreBackupResult> RewindPointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, CancellationToken cancellationToken) =>
-        FromStagingAsync(userId, organizationId, database, at, destination,
+        FromStagingAsync(userId, organizationId, database, at, destination, name: null, intoNewDatabase: false,
             async (source, staging) => await rewind.RewindAsync(database, staging, cancellationToken).ConfigureAwait(false) ? source : new NotFound(),
             cancellationToken);
 
     private async ValueTask<RestoreBackupResult> FromStagingAsync(
-        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination,
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, string? name, bool intoNewDatabase,
         Func<ManagedDatabase, TenantContext, ValueTask<RestoreBackupResult>> restored, CancellationToken cancellationToken)
     {
         if (PlatformDatabases.IsPlatform(database.OrganizationId))
@@ -222,6 +222,26 @@ internal sealed class EngineManagedBackupService(
         if (source.Home(options.Region) != options.Region)
         {
             return new BackupElsewhere(source.Home(options.Region), source);
+        }
+
+        // Before the replay spends its work, the same checks the registration after it makes: the organization's
+        // database allowance and, for a chosen name, that the name is free (an automatic name is picked after the
+        // replay). Rewind overwrites the database in place, so it creates nothing and checks nothing. The registration
+        // re-checks both when it commits, so a concurrent taker still refuses there.
+        if (intoNewDatabase)
+        {
+            var prechecked = await management.PrecheckRestoreAsync(userId, organizationId, owner.ProjectId, name, cancellationToken).ConfigureAwait(false);
+            if (prechecked is not Done)
+            {
+                return prechecked switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    Conflict error => error,
+                    Unavailable error => error,
+                    Done => throw new UnreachableException(),
+                };
+            }
         }
 
         var staging = database with { DatabaseId = EntityIds.New().ToString() };

@@ -358,8 +358,15 @@ before its newest mark, or that mark's own time, to the millisecond, when the ma
 millisecond. A daily snapshot moves it only once stored, and a
 read stopped by its budget, which writes no mark, does not move it. It returns 404
 when no stored data falls within the plan's window, including when retained objects have all expired under the plan.
+Metadata scanning is bounded to 10,000 objects per scan; exhaustion returns `503` `pitr_plan_limit` (the preview's
+bound, `TS-1301`).
 `POST /v1/projects/{project}/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}`
-restores into a new database of the same project (`branchedFrom` set, like a backup restore). The restore:
+restores into a new database of the same project (`branchedFrom` set, like a backup restore). Before any replay work,
+the restore prechecks what the new database's registration would refuse: the organization's database allowance, and a
+chosen `name` against the project's taken names (`409` `name_taken` or `409` `database_limit`, the same errors create
+returns); an automatic `<source>-restore` name is picked after the replay, so only the allowance is prechecked for it.
+The registration re-checks both when it commits. A rewind restores in place and creates nothing, so it prechecks
+nothing. The restore:
 
 1. takes the newest snapshot at or before `pointInTime`;
 2. checks from object names that the history up to `pointInTime` can be complete (see
@@ -385,7 +392,8 @@ only when it proves the time.
 The shared restore service validates these bounds once before downloading or importing a database. It captures the
 retention reference time before reading metadata and uses one snapshot scan for both the window and snapshot selection,
 so metadata latency cannot move the retention floor during a restore. Window reads and previews also capture their
-reference time before reading metadata.
+reference time before reading metadata. Restore and window metadata scans are bounded like the preview's (10,000
+objects per scan, `503` `pitr_plan_limit` beyond), so a long history cannot make a restore scan unbounded.
 
 The result holds every transaction committed before `pointInTime`, or the restore answers `409`.
 
