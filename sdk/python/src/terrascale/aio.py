@@ -13,7 +13,7 @@ from . import _spec, models
 from . import sql as _sql
 from ._spec import Call
 from ._version import __version__
-from .auth import AsyncAPIKeyTokenSource, _scoped_key_call
+from .auth import AsyncAPIKeyTokenSource, _rotate_key_call, _scoped_key_call
 from .client import _error, _settings
 from .errors import CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes
 from .session import AsyncSqlSession
@@ -209,6 +209,10 @@ class AsyncTerraScale:
         """Mint a key for one database ULID, using this client's API key; the default lifetime is 3600 seconds."""
         return await self._send(_scoped_key_call(
             self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds))
+
+    async def rotate_api_key(self, key_id: str, grace_seconds: int = 0) -> models.RotatedApiKey:
+        """Issue a new secret for the caller's API key id; the previous one keeps working for grace_seconds (0 to 86400)."""
+        return await self._send(_rotate_key_call(self._api_key, self._issuer, key_id, grace_seconds))
 
 
 class AsyncDatabase:

@@ -938,6 +938,9 @@ pub struct AuthIdpApiKeyCreated {
     pub api_key: String,
     /// Granted scopes.
     pub scopes: Vec<String>,
+    /// Until when (unix seconds) the secret before the last rotation still works.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_secret_expires_at: Option<i64>,
 }
 
 impl std::fmt::Debug for AuthIdpApiKeyCreated {
@@ -985,6 +988,31 @@ impl AuthIdpApiKeys {
                 &Body {
                     name: name.trim(),
                     scopes,
+                },
+            )
+            .await
+    }
+
+    /// Rotate an API key's secret; the previous one keeps working for
+    /// `grace_seconds` (0 to 86400). The new secret is returned once.
+    pub async fn rotate(&self, key_id: &str, grace_seconds: u32) -> Result<AuthIdpApiKeyCreated> {
+        if grace_seconds > 86400 {
+            return Err(validation(
+                "invalid_grace_seconds",
+                "grace_seconds must be 0 to 86400 seconds",
+            ));
+        }
+        #[derive(Serialize)]
+        struct Body {
+            previous_secret_ttl: u32,
+        }
+        self.client
+            .management_json(
+                "auth_idp.api_keys.rotate",
+                Method::Post,
+                &format!("/api-keys/{}/rotate", path_id(key_id, "key_id")?),
+                &Body {
+                    previous_secret_ttl: grace_seconds,
                 },
             )
             .await

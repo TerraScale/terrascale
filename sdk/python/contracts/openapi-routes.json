@@ -6,6 +6,7 @@
   "DELETE /v1/projects/{project}/databases/{database}/ttl",
   "POST /v1/projects/{project}/databases/{database}/move-home",
   "POST /v1/terrascale/api-keys/self/scoped-keys",
+  "POST /v1/terrascale/api-keys/{key}/rotate",
   "PUT /v1/projects/{project}/databases/{database}/ttl"
  ],
  "routes": [
@@ -83,6 +84,7 @@
   "POST /v1/projects/{project}/databases/{database}/transactions",
   "POST /v1/projects/{project}/saved-queries",
   "POST /v1/terrascale/api-keys/self/scoped-keys",
+  "POST /v1/terrascale/api-keys/{key}/rotate",
   "PUT /v1/projects/{project}/backup-destination",
   "PUT /v1/projects/{project}/buckets/{bucket}/rules",
   "PUT /v1/projects/{project}/databases/{database}/backup-policy",

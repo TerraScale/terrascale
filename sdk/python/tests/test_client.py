@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 
 import httpx
 import pytest
@@ -37,6 +38,19 @@ def test_token_is_cached_and_refreshed_on_401(ts: TerraScale, fake: Fake) -> Non
     fake.reject_tokens.add("tok-1")
     ts.database("main").info()
     assert fake.tokens_issued == 2
+
+
+def test_rotates_an_api_key_with_a_grace_period(ts: TerraScale, fake: Fake) -> None:
+    key_id = "01ARZ3NDEKTSV4RRFFQ6000007"
+    rotated = ts.rotate_api_key(key_id, grace_seconds=3600)
+    request = fake.requests[-1]
+    assert str(request.url) == ISSUER.replace("/terrascale", "") + f"/v1/terrascale/api-keys/{key_id}/rotate"
+    assert request.method == "POST"
+    assert request.headers["content-type"] == "application/json"
+    assert json.loads(request.content) == {"previous_secret_ttl": 3600}
+    assert rotated.id == key_id
+    assert rotated.api_key == key_id + "_" + "b" * 52
+    assert rotated.previous_secret_expires_at == 1_788_230_400
 
 
 def test_bad_api_key_is_token_error(fake: Fake) -> None:

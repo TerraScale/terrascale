@@ -618,7 +618,14 @@ export class TsAuthSessionsClient {
  *   readonly name: string;
  *   readonly api_key: string; // One-time full sk_ bearer; only the creating call returns it.
  *   readonly scopes: readonly string[];
+ *   readonly previous_secret_expires_at?: number | null | undefined; // Unix seconds; only a rotation with grace sets it.
  * }} TsAuthApiKeyWithSecret
+ */
+
+/**
+ * @typedef {{
+ *   readonly graceSeconds?: number | undefined;
+ * }} TsAuthRotateApiKeyRequest
  */
 
 /**
@@ -675,6 +682,26 @@ export class TsAuthApiKeysClient {
       path: `v1/${this.#slug}/api-keys`,
       routeName: "tsauth.apiKeys.create",
       body: request,
+    });
+  }
+
+  /**
+   * @param {string} keyId
+   * @param {TsAuthRotateApiKeyRequest} [request={}]
+   * @param {TsAuthRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthApiKeyWithSecret>>}
+   */
+  rotate(keyId, request = {}, options = {}) {
+    const graceSeconds = request?.graceSeconds ?? 0;
+    if (!Number.isInteger(graceSeconds) || graceSeconds < 0 || graceSeconds > 86400) {
+      throw new TypeError("graceSeconds must be 0-86400 seconds.");
+    }
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${this.#slug}/api-keys/${segment(keyId, "key id")}/rotate`,
+      routeName: "tsauth.apiKeys.rotate",
+      body: { previous_secret_ttl: graceSeconds },
     });
   }
 

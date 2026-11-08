@@ -82,7 +82,23 @@ describe("ts-auth client", () => {
   test("sends exact management routes, bearer, and JSON bodies", async () => {
     /** @type {Request[]} */
     const requests = [];
-    const tsAuth = tsAuthClient((_request, index) => json(index === 1 ? user : { data: [user] }), requests);
+    const tsAuth = tsAuthClient(
+      (_request, index) =>
+        json(
+          index === 1
+            ? user
+            : index === 4
+              ? {
+                  id: "01ARZ3NDEKTSV4RRFFQ6000007",
+                  name: "CI",
+                  api_key: "01ARZ3NDEKTSV4RRFFQ6000007_" + "b".repeat(52),
+                  scopes: ["users:read"],
+                  previous_secret_expires_at: 1_788_230_400,
+                }
+              : { data: [user] },
+        ),
+      requests,
+    );
 
     const listed = await tsAuth.users.list({
       limit: 100,
@@ -149,6 +165,28 @@ describe("ts-auth client", () => {
       "/v1/acme/api-keys/01ARZ3NDEKTSV4RRFFQ6000007",
     );
     assert.equal(/** @type {Request} */ (requests[3]).method, "DELETE");
+
+    const rotated = await tsAuth.apiKeys.rotate(
+      "01ARZ3NDEKTSV4RRFFQ6000007",
+      { graceSeconds: 3600 },
+    );
+    assert.equal(rotated.ok, true);
+    if (rotated.ok) {
+      assert.equal(
+        rotated.value.api_key,
+        "01ARZ3NDEKTSV4RRFFQ6000007_" + "b".repeat(52),
+      );
+      assert.equal(rotated.value.previous_secret_expires_at, 1_788_230_400);
+    }
+    assert.equal(
+      new URL(/** @type {Request} */ (requests[4]).url).pathname,
+      "/v1/acme/api-keys/01ARZ3NDEKTSV4RRFFQ6000007/rotate",
+    );
+    assert.equal(/** @type {Request} */ (requests[4]).method, "POST");
+    assert.deepEqual(
+      JSON.parse(await /** @type {Request} */ (requests[4]).text()),
+      { previous_secret_ttl: 3600 },
+    );
   });
 
   test("maps nested management and flat OAuth error envelopes", async () => {

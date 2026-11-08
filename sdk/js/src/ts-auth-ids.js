@@ -2,7 +2,7 @@ import { requireId } from "./ids.js";
 
 const singleEntityRoutes = new Set([
   "tsauth.users.get", "tsauth.users.create", "tsauth.users.update",
-  "tsauth.apiKeys.create",
+  "tsauth.apiKeys.create", "tsauth.apiKeys.rotate",
   "tsauth.organizations.get", "tsauth.organizations.create", "tsauth.organizations.update",
   "tsauth.organizations.createMembership", "tsauth.organizations.updateMembership",
   "tsauth.organizations.createInvitation", "tsauth.organizations.revokeInvitation", "tsauth.organizations.createDomain",
