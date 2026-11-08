@@ -33,12 +33,6 @@ public static class LegacyRoutes
     private static (PathString Path, LegacyManagementRoute Identity)? Alias(HttpContext context)
     {
         var parts = context.Request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts is { Length: 8 } && parts[0].Equals("management", StringComparison.OrdinalIgnoreCase)
-            && parts[^1].Equals("query-shapes", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsGet(context.Request.Method))
-        {
-            parts = ["v1", .. parts];
-        }
-
         if (parts is null || parts.Length < 7
             || !parts[0].Equals("v1", StringComparison.OrdinalIgnoreCase)
             || !parts[1].Equals("management", StringComparison.OrdinalIgnoreCase)
@@ -56,7 +50,7 @@ public static class LegacyRoutes
         if (suffix is ["databases", _, ..] && suffix.Length > 2)
         {
             suffix[2] = suffix[2].ToLowerInvariant();
-            if (suffix is ["databases", _, "sql" or "point-in-time", _])
+            if (suffix is ["databases", _, "point-in-time", _])
             {
                 suffix[3] = suffix[3].ToLowerInvariant();
             }
@@ -71,7 +65,6 @@ public static class LegacyRoutes
         {
             ["usage"] when HttpMethods.IsGet(method) => suffix,
             ["backup-destination"] when HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method) => suffix,
-            ["saved-queries", ..] when suffix.Length <= 2 => suffix,
             ["databases"] when HttpMethods.IsGet(method) || HttpMethods.IsPost(method) => suffix,
             ["databases", _, ..] when DatabaseSuffix(suffix[2..], method) => suffix,
             _ => null,
@@ -89,12 +82,7 @@ public static class LegacyRoutes
         ["backup-policy"] => HttpMethods.IsGet(method) || HttpMethods.IsPut(method),
         ["point-in-time"] => HttpMethods.IsGet(method),
         ["point-in-time", "plan" or "restore" or "rewind"] => HttpMethods.IsPost(method),
-        ["indexes"] => HttpMethods.IsGet(method) || HttpMethods.IsPost(method),
-        ["indexes", _] => HttpMethods.IsDelete(method),
-        ["index-recommendations"] => HttpMethods.IsGet(method),
-        ["index-recommendations", _, "apply"] => HttpMethods.IsPost(method),
-        ["usage"] or ["query-shapes"] => HttpMethods.IsGet(method),
-        ["sql"] or ["sql", "check"] => HttpMethods.IsPost(method),
+        ["usage"] => HttpMethods.IsGet(method),
         _ => false,
     };
 }
