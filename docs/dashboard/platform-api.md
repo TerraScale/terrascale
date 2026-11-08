@@ -16,7 +16,9 @@ chat or a shared request log.
 
 Read operations return JSON. Mutations use the media type documented for the
 operation, generally `application/x-www-form-urlencoded`, and require the current
-page's `_csrf` token and same-origin browser context. Membership and role checks
+page's `_csrf` token and same-origin browser context. A mutation sent with any other
+content type (for example JSON) returns `415 Unsupported Media Type`; TerraBase's `/v1`
+API is the JSON API for these resources. Membership and role checks
 run for each action. Follow documented `303` redirects after forms; do not interpret
 the redirect itself as a JSON response. Missing sessions return `401`; rejected
 CSRF and access checks return the operation's documented `400` or `403` response.

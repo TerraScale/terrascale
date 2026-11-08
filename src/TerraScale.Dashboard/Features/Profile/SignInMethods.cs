@@ -13,12 +13,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 return Results.Unauthorized();
             }
 
-            if (!http.Request.HasFormContentType)
-            {
-                return Results.BadRequest();
-            }
-
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
                 return Results.StatusCode(403);

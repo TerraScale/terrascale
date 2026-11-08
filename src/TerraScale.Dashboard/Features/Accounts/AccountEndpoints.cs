@@ -35,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Accounts
                     return Results.Unauthorized();
                 }
 
-                var form = await http.Request.ReadFormAsync(http.RequestAborted);
+                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
                 if (!Csrf.Validate(http, form))
                 {
                     return Results.BadRequest("Invalid form token.");
@@ -58,7 +58,7 @@ namespace TerraScale.Dashboard.Features.Accounts
                     return Results.Unauthorized();
                 }
 
-                var form = await http.Request.ReadFormAsync(http.RequestAborted);
+                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
                 if (!Csrf.Validate(http, form))
                 {
                     return Results.BadRequest("Invalid form token.");

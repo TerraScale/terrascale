@@ -202,7 +202,7 @@ namespace TerraScale.Dashboard.Features.Backups
                 {
                     (context, var database) = await recovery.SourceAsync(context, databaseId, http.RequestAborted);
                     http.Response.Headers.CacheControl = "no-store";
-                    var form = HttpMethods.IsPost(http.Request.Method) ? await http.Request.ReadFormAsync(http.RequestAborted) : null;
+                    var form = HttpMethods.IsPost(http.Request.Method) ? await FormRequests.ReadAsync(http, http.RequestAborted) : null;
                     if (form is not null && !Csrf.Validate(http, form))
                     {
                         return Results.BadRequest("Invalid form token.");

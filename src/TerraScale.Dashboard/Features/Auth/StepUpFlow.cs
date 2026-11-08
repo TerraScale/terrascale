@@ -94,7 +94,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public static async Task<IResult> StartAsync(HttpContext http, AccountContext context, string purpose, string audience, string? receipt = null, McpAuthorization? mcp = null)
         {
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             // API clients receive an actionable refusal; proofs must never be submitted in forms or URLs.
             if (!http.Request.Headers.Accept.ToString().Contains("text/html", StringComparison.OrdinalIgnoreCase) && http.Request.Headers["Sec-Fetch-Mode"] != "navigate")
             {

@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public static async Task<IResult> DeleteAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
         {
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return Results.StatusCode(403);
@@ -131,7 +131,7 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public static async Task<IResult> ContinueAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
         {
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
                 return Results.StatusCode(403);

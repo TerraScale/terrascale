@@ -116,6 +116,20 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             await Assert.That(observations.RootElement.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
         }
 
+        // A non-form body reaches the form read, not a 500: the dashboard's form endpoints answer 415 and point at /v1 for JSON.
+        [Test]
+        public async Task CreateWithAJsonBodyAnswersUnsupportedMediaType()
+        {
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            using var client = scenario.CreateClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+
+            using var refused = await client.PostAsJsonAsync("/api/v1/dashboard/databases", new { name = "orders", homeRegion = "GRU" });
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
+            await Assert.That(refused.Content.Headers.ContentType?.MediaType).IsEqualTo("application/problem+json");
+            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("use the /v1 API for JSON");
+        }
+
         [Test]
         public async Task ReplicaRegionsAreAddedAndTheHomeMovesToAReplica()
         {

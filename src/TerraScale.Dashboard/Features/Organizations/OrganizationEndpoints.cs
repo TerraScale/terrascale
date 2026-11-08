@@ -152,7 +152,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     return Results.StatusCode(403);
                 }
 
-                var form = await http.Request.ReadFormAsync(http.RequestAborted);
+                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
                 if (!Csrf.Validate(http, form))
                 {
                     return Results.BadRequest("Invalid form token.");
@@ -249,7 +249,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 return Results.Unauthorized();
             }
 
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
                 return Results.BadRequest("Invalid form token.");
@@ -298,7 +298,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 return Results.Unauthorized();
             }
 
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
                 return Results.StatusCode(403);
@@ -343,7 +343,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 return Results.Unauthorized();
             }
 
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
                 return Results.BadRequest("Invalid form token.");

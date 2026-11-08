@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return AccountRequest.LoginRedirect(http);
             }
 
-            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
                 return Results.Text("Invalid CSRF token.", statusCode: 403);
