@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using TerraBase.Hosting;
+using ZLogger;
 
 namespace TerraBase.Features.Management;
 
@@ -10,7 +12,7 @@ namespace TerraBase.Features.Management;
 /// The local database page of one peer region, fetched from its internal listener behind the shared peer credential.
 /// An unreachable, slow or unreadable peer answers null; the caller serves what the cluster still lists.
 /// </summary>
-internal sealed class RemoteDatabases(IHttpClientFactory http, InternalCredential credential)
+internal sealed class RemoteDatabases(IHttpClientFactory http, InternalCredential credential, ILogger<RemoteDatabases> logger)
 {
     public const string HttpClientName = "terrabase-regions";
 
@@ -53,17 +55,17 @@ internal sealed class RemoteDatabases(IHttpClientFactory http, InternalCredentia
     /// <summary>
     /// Tells <paramref name="peer"/> its record of a database this region deleted at its home. Best effort before the
     /// delete answers: a peer that cannot be reached keeps its record until its own sweep forgets it, and the merged
-    /// listing still drops the database because its home no longer lists it.
+    /// listing still drops the database because its home no longer lists it. Never throws.
     /// </summary>
-    public Task ForgetAsync(Uri peer, string organization, string project, string database, CancellationToken cancellationToken)
+    public Task ForgetAsync(string region, Uri peer, string organization, string project, string database, CancellationToken cancellationToken)
     {
         var secret = credential.CorrelationKey
             ?? throw new InvalidOperationException("the cluster peer credential is required to reach peer regions");
         var address = new Uri(peer, $"v1/sync/organizations/{Uri.EscapeDataString(organization)}/projects/{Uri.EscapeDataString(project)}/databases/{Uri.EscapeDataString(database)}");
-        return SendForgetAsync(address, secret, cancellationToken);
+        return SendForgetAsync(region, address, secret, cancellationToken);
     }
 
-    private async Task SendForgetAsync(Uri address, string secret, CancellationToken cancellationToken)
+    private async Task SendForgetAsync(string region, Uri address, string secret, CancellationToken cancellationToken)
     {
         try
         {
@@ -75,11 +77,15 @@ internal sealed class RemoteDatabases(IHttpClientFactory http, InternalCredentia
             request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
             request.Headers.Add(InternalCredential.HeaderName, secret);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
-            _ = response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.ZLogWarning($"Replica region {region:@Region} did not accept the forget push for a deleted database ({((int)response.StatusCode).ToString(CultureInfo.InvariantCulture)}:@Status); its own sweep forgets it");
+            }
         }
         catch (Exception error) when (error is HttpRequestException
             || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
+            logger.ZLogWarning(error, $"Telling replica region {region:@Region} to forget a deleted database failed ({error.GetType().Name:@Error}); its own sweep forgets it");
         }
     }
 }
