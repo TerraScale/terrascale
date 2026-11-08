@@ -144,6 +144,31 @@ public sealed class SqlNativeRestTests
     }
 
     [Test]
+    public async Task The_free_plan_lists_ids_and_deletes_large_rows_by_id()
+    {
+        // A fresh organization is on the Hobby (free) plan, whose scan budget is 16 MiB: the 24 rows below hold
+        // 24 x 700 KiB, so a scan that charged each row's payload would exceed it about 24 KiB past the limit.
+        await using var db = await StartAsync();
+        await db.OkAsync("CREATE TABLE blobs (id TEXT PRIMARY KEY, body BLOB NOT NULL)");
+        for (var i = 0; i < 24; i++)
+        {
+            await db.OkAsync(Stmt("INSERT INTO blobs (id, body) VALUES (?, randomblob(716800))", $"row-{i:D3}"));
+        }
+
+        var ids = await db.OkAsync("SELECT id FROM blobs");
+        var deleted = await db.OkAsync(Stmt("DELETE FROM blobs WHERE id = ?", "row-010"));
+        var after = await db.OkAsync("SELECT id FROM blobs");
+        var remaining = await db.OkAsync(Stmt("SELECT id FROM blobs WHERE id = ?", "row-011"));
+        var fullRow = await db.RefusedAsync("SELECT id, body FROM blobs");
+
+        await Assert.That(ids[0].GetProperty("rows").GetArrayLength()).IsEqualTo(24);
+        await Assert.That(deleted[0].GetProperty("rows_affected").GetInt64()).IsEqualTo(1);
+        await Assert.That(after[0].GetProperty("rows").GetArrayLength()).IsEqualTo(23);
+        await Assert.That(remaining[0].GetProperty("rows").GetArrayLength()).IsEqualTo(1);
+        await Assert.That((fullRow.Status, fullRow.Code)).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "too_large"));
+    }
+
+    [Test]
     public async Task Blobs_round_trip_as_base64()
     {
         await using var db = await StartSharedAsync();
