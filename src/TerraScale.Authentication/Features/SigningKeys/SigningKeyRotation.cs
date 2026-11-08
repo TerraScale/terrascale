@@ -64,9 +64,11 @@ public sealed class SigningKeyRotation(AuthStore store, ClientRegistration clien
         try
         {
             await store.ProvisionAsync(stoppingToken).ConfigureAwait(false);
-            await platform.EnsureAsync(stoppingToken).ConfigureAwait(false);
-            await clients.RegisterAllAsync(stoppingToken).ConfigureAwait(false);
-            if (await ring.ProvisionAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
+            var platformTask = platform.EnsureAsync(stoppingToken);
+            var clientsTask = clients.RegisterAllAsync(stoppingToken);
+            var ringTask = ring.ProvisionAsync(OidcIssuer.InstanceId, stoppingToken);
+            await Task.WhenAll(platformTask, clientsTask, ringTask).ConfigureAwait(false);
+            if (ringTask.Result)
             {
                 this.Log(target => target.ZLogInformation($"Audit: startup provisioned the platform issuer's first signing key"));
             }

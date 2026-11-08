@@ -60,20 +60,27 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     public async Task<(TerraBaseTestTenant Tenant, TerraBaseSqlDatabase Database)> CreateDatabaseAsync(bool provision = true)
     {
-        // The fixture owns the Enterprise organization and its setup credential.
-        // Each test still owns a separate project and database, without repeating
-        // organization creation, plan changes and credential issuance in every journey.
-        var shared = this.owner ?? throw new InvalidOperationException("TerraBase fixture has not initialized its owner.");
-        var project = await this.Server.Management().CreateProjectAsync(shared.UserId, shared.Organization.Id, AuthStore.NewId());
-        var tenant = shared with { Project = project };
-        await this.Server.Databases(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
-        var database = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
+        var tenant = await this.CreateProjectTenantAsync();
+        var database = await this.CreateAuthDatabaseAsync(tenant);
         if (provision)
         {
             await new AuthStore(database, TimeProvider.System).ProvisionAsync();
         }
 
         return (tenant, database);
+    }
+
+    public async Task<TerraBaseTestTenant> CreateProjectTenantAsync()
+    {
+        var shared = this.owner ?? throw new InvalidOperationException("TerraBase fixture has not initialized its owner.");
+        var project = await this.Server.Management().CreateProjectAsync(shared.UserId, shared.Organization.Id, AuthStore.NewId());
+        return shared with { Project = project };
+    }
+
+    public async Task<TerraBaseSqlDatabase> CreateAuthDatabaseAsync(TerraBaseTestTenant tenant)
+    {
+        await this.Server.Databases(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
+        return this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
     }
 
     /// <summary>
