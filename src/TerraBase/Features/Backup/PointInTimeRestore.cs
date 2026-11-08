@@ -66,6 +66,7 @@ internal sealed class PointInTimeRestore(
     IWalBackup engine, IRecoverySnapshotReader scratch, BackupTargets targets, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time, TerraBaseOptions options)
     : IPointInTimeRestore
 {
+    // Bounds one metadata listing; restore and the window scan with it too, so a long history cannot scan unbounded.
     private const int MaxPlanItems = 10_000;
 
     // Segments, newest first, whose ends a window reads for a read mark.
@@ -183,7 +184,12 @@ internal sealed class PointInTimeRestore(
         }
 
         var file = BackupLayout.File(database, options.MachineId);
-        var snapshots = await ScanSnapshotsAsync(backup.Store, file, DateTimeOffset.MaxValue, int.MaxValue, cancellationToken).ConfigureAwait(false);
+        var snapshots = await ScanSnapshotsAsync(backup.Store, file, DateTimeOffset.MaxValue, MaxPlanItems, cancellationToken).ConfigureAwait(false);
+        if (snapshots is null)
+        {
+            return PlanLimit();
+        }
+
         return await WindowAsync(database, file, snapshots, now, backup, destination, proven: true, cancellationToken).ConfigureAwait(false);
     }
 
@@ -313,8 +319,13 @@ internal sealed class PointInTimeRestore(
         }
 
         var file = BackupLayout.File(source, options.MachineId);
-        var snapshots = await ScanSnapshotsAsync(backup.Store, file, at, int.MaxValue, cancellationToken).ConfigureAwait(false);
-        if (snapshots?.First is null)
+        var snapshots = await ScanSnapshotsAsync(backup.Store, file, at, MaxPlanItems, cancellationToken).ConfigureAwait(false);
+        if (snapshots is null)
+        {
+            return PlanLimit();
+        }
+
+        if (snapshots.First is null)
         {
             return new NotFound("continuous backup holds nothing of this database");
         }
@@ -340,16 +351,17 @@ internal sealed class PointInTimeRestore(
             };
         }
 
-        if (snapshots?.Chosen is not { } chosen)
+        if (snapshots.Chosen is not { } chosen)
         {
             return new NotFound("continuous backup holds nothing of this database");
         }
 
         // Object names alone refuse most incomplete histories before anything downloads; the replay checks the rest.
-        if (await ScanSegmentsAsync(backup.Store, file, chosen, snapshots.Next, at, int.MaxValue, stopAfterTarget: true, cancellationToken)
-            .ConfigureAwait(false) is not { Proven: true })
+        var segments = await ScanSegmentsAsync(backup.Store, file, chosen, snapshots.Next, at, MaxPlanItems, stopAfterTarget: true, cancellationToken)
+            .ConfigureAwait(false);
+        if (segments is not { Proven: true })
         {
-            return HistoryIncomplete();
+            return segments is null ? PlanLimit() : HistoryIncomplete();
         }
 
         RestoredBackup restored;
@@ -388,7 +400,7 @@ internal sealed class PointInTimeRestore(
             : "the database was deleted and its backup keys destroyed; its backups cannot be restored",
         "database_shredded");
 
-    private static Unavailable PlanLimit() => new("the point-in-time plan metadata scan exceeds 10000 objects", "pitr_plan_limit");
+    private static Unavailable PlanLimit() => new($"the point-in-time metadata scan exceeds {MaxPlanItems} objects", "pitr_plan_limit");
 
     private readonly union OutsideResult(Validation, Conflict, Unavailable);
 

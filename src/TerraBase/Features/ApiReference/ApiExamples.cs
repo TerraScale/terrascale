@@ -166,6 +166,7 @@ internal static class ApiExamples
         "429" => "tenant_busy, tenant_memory",
         "503" when id == "moveDatabaseHome" => "replica_not_ready, move_unresolved, storage_busy",
         "503" when id == "planPointInTime" => "pitr_plan_limit, pitr_plan_timeout, pitr_plan_unavailable, storage_busy",
+        "503" when id is "getRestoreWindow" or "restorePointInTime" or "rewindPointInTime" => "pitr_plan_limit, storage_busy, capacity, unavailable",
         "503" when id == "healthz" => "bucket_missing",
         "503" => "storage_busy, capacity, unavailable",
         _ => "internal_error",
