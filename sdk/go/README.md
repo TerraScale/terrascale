@@ -18,13 +18,11 @@ should use ULID keys from `v1.NewID()` and avoid `AUTOINCREMENT`.
 
 ## Source and module availability
 
-The published [`v0.0.6`](https://github.com/TerraScale/terrascale/releases/tag/history/ts-go/v0.0.6)
-module and CLI predate the SQL-only API; use them only with that revision's
-contracts. Install the
-module with `go get terrascale.tech/sdk@v0.0.6`; follow the
-[CLI installation instructions](docs/cli-releases.md) for the released executable.
-Use that revision's API and contract files. Source, fixture and package build results
-do not establish production qualification for every method. Releases remain `0.0.X`.
+Install the module with `go get terrascale.tech/sdk@v0.0.15`; the tag carries the
+current SQL API (`Database.Execute`, `Query`, `Batch` and the WebSocket session).
+Follow the [CLI installation instructions](docs/cli-releases.md) for the released
+executable. The historical `history/ts-go/*` releases predate the SQL-only API;
+use them only with that revision's contracts. Releases remain `0.0.X`.
 
 ## Zero-configuration operating contract
 

@@ -14,11 +14,9 @@ const locales = new Set(LOCALES.map(({ code }) => code).filter((code) => code !=
 test('active SDK installation pins match the dashboard manifest', () => {
   // The dashboard's manifest lives in this monorepo (the ts-dashboard repository was merged in).
   const versions = JSON.parse(readFileSync(new URL('../src/TerraScale.Dashboard/sdk-versions.json', root), 'utf8'));
-  assert.deepEqual(Object.keys(versions).sort(), ['go', 'javascript', 'python', 'rust']);
+  assert.deepEqual(Object.keys(versions).sort(), ['go', 'javascript', 'pythonRef']);
   assert.match(versions.javascript, /^\d+\.\d+\.\d+$/);
-  for (const language of ['go', 'python', 'rust']) {
-    assert.match(versions[language], /^v\d+\.\d+\.\d+$/);
-  }
+  assert.match(versions.go, /^v\d+\.\d+\.\d+$/);
 
   for (const path of [
     'examples/server-token-provider', 'create-terrascale-app/template',

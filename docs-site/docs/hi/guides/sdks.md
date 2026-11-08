@@ -16,7 +16,7 @@ Official SDKs for the TerraBase SQL API at `https://api.terrascale.tech`. Every 
 | --- | --- | --- | --- |
 | JavaScript / TypeScript | `@terrascale/sdk` on npm | `npm install @terrascale/sdk` (SQL quickstart: `npm pack` from the monorepo) | [JavaScript quickstart](/hi/getting-started/javascript) |
 | C# / .NET | `TerraScale.DotNet` (source; NuGet pending) | `dotnet pack` from the monorepo into a local package folder | [C# quickstart](/hi/getting-started/csharp) |
-| Go | `terrascale.tech/sdk` | `go get terrascale.tech/sdk@main` (the SQL surface predates the latest tag) | [Go quickstart](/hi/getting-started/go) |
+| Go | `terrascale.tech/sdk` | `go get terrascale.tech/sdk@v0.0.15` | [Go quickstart](/hi/getting-started/go) |
 | Python | `terrascale` (source; PyPI pending) | `pip install "git+https://github.com/TerraScale/terrascale@main#subdirectory=sdk/python"` | [Python quickstart](/hi/getting-started/python) |
 | Rust | `terrascale` (source; crates.io pending) | `terrascale = { git = "https://github.com/TerraScale/terrascale.git" }` in `Cargo.toml` | [Rust quickstart](/hi/getting-started/rust) |
 

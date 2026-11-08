@@ -35,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 new("js", "JavaScript", $$"""
                     import { createTerraBaseV1Client } from "@terrascale/sdk";
 
-                    const db = createTerraBaseV1Client({ project: "{{projectId}}", token }).database("{{database}}");
+                    const db = createTerraBaseV1Client({ project: "{{projectId}}", token, baseUrl: "{{ApiUrl}}" }).database("{{database}}");
                     const rows = await db.query("SELECT 1");
                     """),
                 new("go", "Go", $$"""
@@ -58,7 +58,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     var rows = await db.QueryAsync("SELECT 1", null, ct);
                     """),
                 new("rust", "Rust", $"""
-                    let client = Client::for_project_api_key("{projectId}", &api_key).build()?;
+                    let client = terrascale::v1::Client::for_project_api_key("{projectId}", &api_key).build()?;
                     let db = client.database("{database}").sql();
                     let rows = db.query("SELECT 1", &[]).await?;
                     """)
