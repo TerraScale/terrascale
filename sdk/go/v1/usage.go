@@ -56,9 +56,9 @@ func (u *ManagementUser) Usage(ctx context.Context, org, project, database strin
 	if err != nil {
 		return nil, err
 	}
-	path := projectPath(org, project, "usage")
+	path := projectAPIPath(project, "usage")
 	if database != "" {
-		path = databasePath(org, project, database, "usage")
+		path = databasePath(project, database, "usage")
 	}
 	return get[Usage](ctx, u, path, query)
 }
