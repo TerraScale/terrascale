@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using System.Reflection;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Health;
@@ -28,7 +27,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
     private readonly TimeProvider _time;
     private readonly ILogger<PressureSignals> _logger;
     private readonly string _processId = EntityIds.New().ToString();
-    private readonly string _release = typeof(ServiceVersion).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+    private readonly string _release = ServiceVersion.Informational;
     private PressureBody _snapshot;
     private StorageSample? _storage;
     private long _untracked;
