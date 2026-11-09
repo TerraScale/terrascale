@@ -7,13 +7,17 @@ client: authorization code with S256 PKCE, `state` and `nonce`.
 
 - `GET /login` starts a new flow. The state, nonce, PKCE verifier and
   `returnTo` are encrypted with `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` and stored
-  in TerraBase's `dashboard_auth_flows` table.
+  as one row of the `auth_flows` table (see [state storage](../state-storage.md)),
+  keyed by the SHA-256 of the cookie's bearer and kept until its `expires_at`.
 - The browser gets one HttpOnly, `SameSite=Lax` cookie per flow, named
   `ts-dashboard-oidc-<first 16 hex of SHA-256(state)>`. Its value is a random
   bearer for the stored flow, never the state or the verifier.
 - `GET /login/callback` finds the flow from the returned `state`, checks that
   state in constant time, deletes the stored flow and clears that cookie.
-  A flow works once.
+  A flow works once: the delete must remove the row, so two callbacks racing
+  for one flow take it once.
+- A flow the browser never finishes stays until the storage sweeper deletes it,
+  at most 10 minutes after its one-hour lifetime ends.
 - Starting a flow never ends another one. Sign-ins started in other tabs, by
   token, MCP or step-up continuations, or by a background request that was
   redirected to `/login` all keep their own flows.
