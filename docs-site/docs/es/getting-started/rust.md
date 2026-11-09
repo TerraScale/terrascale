@@ -167,5 +167,6 @@ Replica reads are eventually consistent; see [regions](/es/concepts/regions).
 - [SDK reference](/es/guides/sdks) — the five SDKs and their install commands
 - [JavaScript](/es/getting-started/javascript), [C#](/es/getting-started/csharp), [Go](/es/getting-started/go) and [Python](/es/getting-started/python) quickstarts
 - [SQL over HTTP](/es/guides/sql-http) for the raw HTTP interface and [concepts](/es/concepts/sql) for the SQL dialect
+- [Typed SQL with the Rust SDK](/es/guides/rust-sql) for typed `query_as` selects, session transactions and batches
 
 </div>

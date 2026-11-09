@@ -14,6 +14,7 @@ Use the [quickstart](/getting-started/) to establish one working application con
 - [Use Drizzle ORM](/guides/orm-drizzle): run Drizzle's SQLite dialect over the JavaScript SDK.
 - [Use Prisma ORM](/guides/orm-prisma): run Prisma's SQLite dialect over the JavaScript SDK's driver adapter.
 - [Use SQLAlchemy and Alembic](/guides/orm-sqlalchemy): run SQLAlchemy's SQLite dialect, the ORM and Alembic migrations over the Python SDK.
+- [Typed SQL with the Rust SDK](/guides/rust-sql): queries, typed `query_as` selects, transactions over the session and batches in Rust.
 - [Errors and safe retries](/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
 - [Functions](/guides/functions) (being updated for SQL).
