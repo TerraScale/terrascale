@@ -363,7 +363,7 @@ internal sealed class SqlSocket(
 
                 var outcome = SqlBatch.Commands(request.Statements) switch
                 {
-                    List<SqlCommand> commands => await SqlBatch.RunAsync(Session, commands, cancellationToken).ConfigureAwait(false),
+                    List<SqlPlannedCommand> commands => await SqlBatch.RunAsync(Session, commands, cancellationToken).ConfigureAwait(false),
                     SqlBatchFailure failure => failure,
                 };
                 _failed = outcome is SqlBatchFailure && !Session.IsAutocommit;

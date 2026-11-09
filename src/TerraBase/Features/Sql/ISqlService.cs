@@ -28,6 +28,8 @@ internal readonly record struct SqlValue(SqlValueKind Kind, long Integer = 0, do
 
 internal sealed record SqlCommand(string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named);
 
+internal sealed record SqlPlannedCommand(SqlStatementPlan Plan, SqlCommand Command);
+
 internal sealed record SqlColumn(string Name, string? DeclType);
 
 internal sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid)
@@ -61,29 +63,29 @@ internal interface ISqlSession : IAsyncDisposable
 
     void BeginRequest();
 
-    ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken);
+    ValueTask<SqlOutcome> ExecuteAsync(SqlPlannedCommand planned, CancellationToken cancellationToken);
 
-    ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken);
+    ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken);
+
+    ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken);
+
+    ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken);
 
     ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken);
 
     ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken);
 
-    ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken);
+    ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken);
 
     ValueTask EndRequestAsync();
 
-    void Prefer(WriteOverride preference)
-    {
-    }
+    void Prefer(WriteOverride preference);
 
-    WriteRoute? LastRoute => null;
+    WriteRoute? LastRoute { get; }
 
-    void KeepCommitted()
-    {
-    }
+    void KeepCommitted();
 
-    IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => [];
+    IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed { get; }
 }
 
 internal sealed record SqlTableColumn(string Name, string? DeclType, bool NotNull, bool PrimaryKey, string? Default = null);
@@ -97,10 +99,10 @@ internal readonly union ReplicaSqlOutcome(IReadOnlyList<SqlResult>, ReplicaSqlFa
 internal interface ISqlService
 {
     ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
-        TenantContext database, IReplicaReader reader, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements, CancellationToken cancellationToken);
+        TenantContext database, IReplicaReader reader, IReadOnlyList<SqlPlannedCommand> statements, CancellationToken cancellationToken);
 
     ValueTask<ReplicaSqlOutcome> ExecuteOnCopyAsync(
-        TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements,
+        TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<SqlPlannedCommand> statements,
         bool write, CancellationToken cancellationToken, Action<string, double>? timing = null);
 
     void RecordLocalWrites(TenantContext database, long rows);

@@ -751,7 +751,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 SqlDescription? shape = null;
                 var guarded = await GuardAsync(session, async (_, token) =>
                 {
-                    switch (await session.Sql.DescribeAsync(new SqlCommand(statement.Sql, [], NoNamed), token).ConfigureAwait(false))
+                    switch (await DescribeStatementAsync(session, statement, token).ConfigureAwait(false))
                     {
                         case SqlError error:
                             return PostgresStatements.Error(error);
@@ -817,19 +817,41 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
             PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, statement.Text, token).ConfigureAwait(false),
             PgKind.Savepoint => await SavepointAsync(session, statement.Text, token).ConfigureAwait(false),
-            _ => await session.Sql.ExecuteAsync(new SqlCommand(statement.Sql, args, NoNamed), token).ConfigureAwait(false) switch
+            _ => await StatementAsync(session, statement, args, token).ConfigureAwait(false),
+        }, cancellationToken, counting).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<PgOutcome> StatementAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken token) =>
+        SqlScript.Classify(statement.Sql) switch
+        {
+            SqlError error => PostgresStatements.Error(error),
+            SqlStatementPlan plan => await session.Sql.ExecuteAsync(new SqlPlannedCommand(plan, new SqlCommand(statement.Sql, args, NoNamed)), token).ConfigureAwait(false) switch
             {
                 SqlResult result => new[] { PostgresStatements.Result(statement, result) with { ReadCharge = result.ReadCharge } },
                 SqlError error => PostgresStatements.Error(error),
             },
-        }, cancellationToken, counting).ConfigureAwait(false);
-    }
+        };
+
+    private static async ValueTask<SqlDescribeOutcome> DescribeStatementAsync(Session session, PgStatement statement, CancellationToken token) =>
+        SqlScript.Classify(statement.Sql) switch
+        {
+            SqlError error => error,
+            SqlStatementPlan plan => await session.Sql.DescribeAsync(plan, new SqlCommand(statement.Sql, [], NoNamed), token).ConfigureAwait(false),
+        };
 
     private static async ValueTask<PgOutcome> SavepointAsync(Session session, string text, CancellationToken cancellationToken)
     {
-        if (await session.Sql.ExecuteAsync(new SqlCommand(text, [], NoNamed), cancellationToken).ConfigureAwait(false) is SqlError error)
+        switch (SqlScript.Classify(text))
         {
-            return PostgresStatements.Error(error);
+            case SqlError error:
+                return PostgresStatements.Error(error);
+            case SqlStatementPlan plan:
+                if (await session.Sql.ExecuteAsync(new SqlPlannedCommand(plan, new SqlCommand(text, [], NoNamed)), cancellationToken).ConfigureAwait(false) is SqlError failed)
+                {
+                    return PostgresStatements.Error(failed);
+                }
+
+                break;
         }
 
         session.Failed &= !PostgresStatements.RollsBackTo(text);
@@ -840,7 +862,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         async ValueTask<PgOutcome> Run(string verb)
         {
-            return await session.Sql.ExecuteAsync(new SqlCommand(verb, [], NoNamed), cancellationToken).ConfigureAwait(false) is SqlError error
+            return await session.Sql.ExecuteAsync(SqlBatch.Control(verb), cancellationToken).ConfigureAwait(false) is SqlError error
                 ? PostgresStatements.Error(error)
                 : new[] { new PgResult(null, [], verb) };
         }
@@ -856,7 +878,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         if (kind == PgKind.Begin)
         {
             var mode = PostgresStatements.BeginReadOnly(text) ? "BEGIN READ ONLY" : verb;
-            return await session.Sql.ExecuteAsync(new SqlCommand(mode, [], NoNamed), cancellationToken).ConfigureAwait(false) is SqlError error
+            return await session.Sql.ExecuteAsync(SqlBatch.Control(mode), cancellationToken).ConfigureAwait(false) is SqlError error
                 ? PostgresStatements.Error(error)
                 : new[] { new PgResult(null, [], verb) };
         }

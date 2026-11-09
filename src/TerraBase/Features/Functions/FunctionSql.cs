@@ -65,7 +65,7 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId)
         return SqlBatch.Commands(request?.Statements) switch
         {
             SqlBatchFailure invalid => Failure(invalid),
-            List<SqlCommand> commands => await SqlBatch.RunAsync(session, commands, cancellationToken).ConfigureAwait(false) switch
+            List<SqlPlannedCommand> commands => await SqlBatch.RunAsync(session, commands, cancellationToken).ConfigureAwait(false) switch
             {
                 SqlExecuteBody body => JsonSerializer.Serialize(body, TerraBaseJsonContext.Default.SqlExecuteBody),
                 SqlBatchFailure failure => Failure(failure),

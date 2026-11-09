@@ -132,15 +132,23 @@ internal sealed class HomeSessionEndpoint(
                         var command = new SqlCommand(call.Sql, call.Args ?? [], call.Named ?? new Dictionary<string, SqlValue>());
                         answer = call.Op switch
                         {
-                            "execute" => await session.ExecuteAsync(command, cancellationToken).ConfigureAwait(false) switch
+                            "execute" => SqlScript.Classify(call.Sql) switch
                             {
-                                SqlResult result => Answered(session, result),
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
+                                SqlStatementPlan plan => await session.ExecuteAsync(new SqlPlannedCommand(plan, command), cancellationToken).ConfigureAwait(false) switch
+                                {
+                                    SqlResult result => Answered(session, result),
+                                    SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
+                                },
                             },
-                            "describe" => await session.DescribeAsync(command, cancellationToken).ConfigureAwait(false) switch
+                            "describe" => SqlScript.Classify(call.Sql) switch
                             {
-                                SqlDescription description => new HomeSessionAnswer(session.IsAutocommit, Description: description),
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
+                                SqlStatementPlan plan => await session.DescribeAsync(plan, command, cancellationToken).ConfigureAwait(false) switch
+                                {
+                                    SqlDescription description => new HomeSessionAnswer(session.IsAutocommit, Description: description),
+                                    SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
+                                },
                             },
                             "batch" => await BatchAsync(session, call.Batch, cancellationToken).ConfigureAwait(false),
                             _ => new HomeSessionAnswer(session.IsAutocommit, new SqlError(SqlErrors.InvalidRequest, "op is execute, describe or batch")),
@@ -168,12 +176,35 @@ internal sealed class HomeSessionEndpoint(
             return new HomeSessionAnswer(session.IsAutocommit, SqlBatch.TooManyStatements);
         }
 
-        var commands = batch.Select(call => new SqlCommand(call.Sql, call.Args ?? [], call.Named ?? new Dictionary<string, SqlValue>())).ToList();
-        var control = commands.FindIndex(command => SqlScript.Classify(command.Sql) is SqlStatementPlan { IsControl: true });
+        var commands = new List<SqlPlannedCommand>(batch.Count);
+        SqlError? refused = null;
+        var refusal = -1;
+        var control = -1;
+        for (var i = 0; i < batch.Count; i++)
+        {
+            switch (SqlScript.Classify(batch[i].Sql))
+            {
+                case SqlStatementPlan { IsControl: true } when control < 0:
+                    control = i;
+                    break;
+                case SqlError refusedError when refused is null:
+                    (refused, refusal) = (refusedError, i);
+                    break;
+                case SqlStatementPlan plan:
+                    commands.Add(new(plan, new SqlCommand(batch[i].Sql ?? "", batch[i].Args ?? [], batch[i].Named ?? new Dictionary<string, SqlValue>())));
+                    break;
+            }
+        }
+
         if (control >= 0)
         {
             return new HomeSessionAnswer(session.IsAutocommit,
                 new SqlError(SqlErrors.TransactionState, "BEGIN, COMMIT and ROLLBACK are not statements here: a batch runs as one transaction"), Statement: control);
+        }
+
+        if (refused is not null)
+        {
+            return new HomeSessionAnswer(session.IsAutocommit, refused, Statement: refusal);
         }
 
         return await SqlBatch.RunAsync(session, commands, cancellationToken).ConfigureAwait(false) switch

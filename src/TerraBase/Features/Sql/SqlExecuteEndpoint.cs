@@ -86,10 +86,10 @@ internal sealed class SqlExecuteEndpoint(
         => SqlBatch.Commands(statements) switch
         {
             SqlBatchFailure invalid => Error(invalid),
-            List<SqlCommand> commands => await RunAsync(database, commands, body, all, cancellationToken),
+            List<SqlPlannedCommand> commands => await RunAsync(database, commands, body, all, cancellationToken),
         };
 
-    private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
+    private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlPlannedCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
         SqlRequestTiming.Mark(HttpContext, "tenant");
         if (await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
@@ -135,7 +135,7 @@ internal sealed class SqlExecuteEndpoint(
     }
 
     private async ValueTask<IResult> ReplicaAsync(
-        TenantContext database, DatabasePlacement placement, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
+        TenantContext database, DatabasePlacement placement, List<SqlPlannedCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
         if (WritePreference.Parse(HttpContext.Request.Headers[WritePreference.Header]) is not { } preference)
         {
@@ -147,29 +147,9 @@ internal sealed class SqlExecuteEndpoint(
             return Error(new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, "TerraScale-Durability is home or local"), 0));
         }
 
-        var statements = new List<(SqlStatementPlan, SqlCommand)>(commands.Count);
-        var every = new List<(SqlStatementPlan, SqlCommand)>(commands.Count);
-        var writes = false;
-        for (var i = 0; i < commands.Count; i++)
-        {
-            switch (SqlScript.Classify(commands[i].Sql))
-            {
-                case SqlError error:
-                    return Error(new SqlBatchFailure(error, i));
-                case SqlStatementPlan { Kind: SqlStatementKind.Read } plan:
-                    statements.Add((plan, commands[i]));
-                    every.Add((plan, commands[i]));
-                    break;
-                case SqlStatementPlan { Kind: SqlStatementKind.Write } plan:
-                    writes = true;
-                    every.Add((plan, commands[i]));
-                    break;
-                case SqlStatementPlan { IsControl: true }:
-                    return Error(new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, "transaction statements are not accepted: every request runs as one transaction"), i));
-                case SqlStatementPlan:
-                    break;
-            }
-        }
+        List<SqlPlannedCommand> statements = [.. commands.Where(command => command.Plan.Kind is SqlStatementKind.Read)];
+        List<SqlPlannedCommand> every = [.. commands.Where(command => command.Plan.Kind is SqlStatementKind.Read or SqlStatementKind.Write)];
+        var writes = every.Count > statements.Count;
 
         IReplicaReader? reader;
         try
@@ -186,7 +166,7 @@ internal sealed class SqlExecuteEndpoint(
             WriteRoute? route = null;
             if (writes)
             {
-                route = await router.RouteAsync(database, reader, [.. commands.Select(command => command.Sql)], preference, homeDurable, cancellationToken);
+                route = await router.RouteAsync(database, reader, [.. commands.Select(command => command.Command.Sql)], preference, homeDurable, cancellationToken);
                 SqlRequestTiming.Mark(HttpContext, "route");
             }
 
@@ -242,7 +222,7 @@ internal sealed class SqlExecuteEndpoint(
     }
 
     private async ValueTask<IResult?> LocalAsync(
-        TenantContext database, WriteRoute route, List<(SqlStatementPlan, SqlCommand)> statements, bool homeDurable, CancellationToken cancellationToken)
+        TenantContext database, WriteRoute route, List<SqlPlannedCommand> statements, bool homeDurable, CancellationToken cancellationToken)
     {
         ILocalTransaction? transaction;
         try

@@ -33,7 +33,7 @@ internal sealed class SqlService(
             is TenantDatabaseRecord { Placement.Home: var home } && home == options.Region;
 
     public ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
-        TenantContext database, IReplicaReader reader, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements, CancellationToken cancellationToken)
+        TenantContext database, IReplicaReader reader, IReadOnlyList<SqlPlannedCommand> statements, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(reader);
         return ExecuteOnCopyAsync(database, statement => reader.ExecuteAsync(statement, cancellationToken), statements, write: false, cancellationToken);
@@ -48,7 +48,7 @@ internal sealed class SqlService(
     }
 
     public async ValueTask<ReplicaSqlOutcome> ExecuteOnCopyAsync(
-        TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements,
+        TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<SqlPlannedCommand> statements,
         bool write, CancellationToken cancellationToken, Action<string, double>? timing = null)
     {
         ArgumentNullException.ThrowIfNull(database);
@@ -215,8 +215,6 @@ internal sealed class SqlSession(
     private SqlError? _lost;
     private int _generation;
     private int _expiring = -1;
-    private string? _plannedSql;
-    private SqlPlanOutcome _planned;
     private List<IReadOnlyList<CapturedRowChange>>? _committed;
 
     public bool IsAutocommit => !_inTransaction;
@@ -231,26 +229,32 @@ internal sealed class SqlSession(
         _requestExecution = 0;
     }
 
-    public ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken) =>
-        ExecuteAsync(command, admit: null, cancellationToken);
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlPlannedCommand planned, CancellationToken cancellationToken) =>
+        ExecuteAsync(planned.Plan, planned.Command, admit: null, cancellationToken);
 
-    public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken) =>
+        ExecuteAsync(plan, command, admit: null, cancellationToken);
+
+    public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return Plan(command.Sql) switch
-            {
-                SqlError error => error,
-                SqlStatementPlan plan => await ExecuteLockedAsync(plan, command, admit, first: false, cancellationToken).ConfigureAwait(false),
-            };
+            return await ExecuteLockedAsync(plan, command, admit, first: false, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _gate.Release();
         }
     }
+
+    public ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<SqlBatchOutcome?>(null);
+
+    public void Prefer(WriteOverride preference) => _ = preference;
+
+    public WriteRoute? LastRoute => null;
 
     public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken) =>
         ExecuteScriptAsync(sql, MaxStatements, cancellationToken);
@@ -324,18 +328,12 @@ internal sealed class SqlSession(
         return last;
     }
 
-    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
+    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var planned = Plan(command.Sql);
-            if (planned is not SqlStatementPlan plan)
-            {
-                return planned is SqlError error ? error : SqlErrors.Error("the statement cannot be described");
-            }
-
             await ExpireIfDueAsync().ConfigureAwait(false);
             if (_lost is { } lost)
             {
@@ -427,17 +425,6 @@ internal sealed class SqlSession(
     private void ChargeExecution(TimeSpan execution)
     {
         _requestExecution += execution.Ticks;
-    }
-
-    private SqlPlanOutcome Plan(string sql)
-    {
-        if (!string.Equals(sql, _plannedSql, StringComparison.Ordinal))
-        {
-            _planned = SqlScript.Classify(sql);
-            _plannedSql = sql;
-        }
-
-        return _planned;
     }
 
     private TimeSpan StatementTimeout()

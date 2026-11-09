@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 
 namespace TerraBase.Features.Sql;
@@ -6,7 +7,7 @@ internal sealed record SqlBatchFailure(SqlError Error, int Statement);
 
 internal readonly union SqlBatchOutcome(SqlExecuteBody, SqlBatchFailure);
 
-internal readonly union SqlCommandsOutcome(List<SqlCommand>, SqlBatchFailure);
+internal readonly union SqlCommandsOutcome(List<SqlPlannedCommand>, SqlBatchFailure);
 
 internal static class SqlBatch
 {
@@ -17,7 +18,8 @@ internal static class SqlBatch
 
     public static SqlError TooManyStatements { get; } = new(SqlErrors.InvalidRequest, "statements holds 1 to 256 statements");
 
-    public static SqlCommand Control(string sql) => new(sql, [], NoNamed);
+    public static SqlPlannedCommand Control(string sql) =>
+        SqlScript.Classify(sql) is SqlStatementPlan plan ? new(plan, new SqlCommand(sql, [], NoNamed)) : throw new UnreachableException();
 
     public static SqlCommandsOutcome Commands(IReadOnlyList<SqlExecuteStatement>? statements)
     {
@@ -26,7 +28,7 @@ internal static class SqlBatch
             return new SqlBatchFailure(TooManyStatements, 0);
         }
 
-        var commands = new List<SqlCommand>(statements.Count);
+        var commands = new List<SqlPlannedCommand>(statements.Count);
         for (var i = 0; i < statements.Count; i++)
         {
             switch (SqlJson.Command(statements[i]))
@@ -34,13 +36,18 @@ internal static class SqlBatch
                 case Validation error:
                     return new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, error.Message), i);
                 case SqlCommand command:
-                    if (SqlScript.Classify(command.Sql) is SqlStatementPlan { IsControl: true })
+                    switch (SqlScript.Classify(command.Sql))
                     {
-                        return new SqlBatchFailure(new SqlError(SqlErrors.TransactionState,
-                            "BEGIN, COMMIT and ROLLBACK are not statements here: a batch runs as one transaction"), i);
+                        case SqlError error:
+                            return new SqlBatchFailure(error, i);
+                        case SqlStatementPlan { IsControl: true }:
+                            return new SqlBatchFailure(new SqlError(SqlErrors.TransactionState,
+                                "BEGIN, COMMIT and ROLLBACK are not statements here: a batch runs as one transaction"), i);
+                        case SqlStatementPlan plan:
+                            commands.Add(new(plan, command));
+                            break;
                     }
 
-                    commands.Add(command);
                     break;
             }
         }
@@ -48,11 +55,12 @@ internal static class SqlBatch
         return commands;
     }
 
-    public static async ValueTask<SqlBatchOutcome> RunAsync(ISqlSession session, IReadOnlyList<SqlCommand> commands, CancellationToken cancellationToken)
+    public static async ValueTask<SqlBatchOutcome> RunAsync(ISqlSession session, IReadOnlyList<SqlPlannedCommand> commands,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(commands);
-        if (session is ReplicaSqlSession replica && await replica.TryBatchAsync(commands, cancellationToken).ConfigureAwait(false) is { } forwarded)
+        if (await session.TryBatchAsync(commands, cancellationToken).ConfigureAwait(false) is { } forwarded)
         {
             return forwarded;
         }
@@ -65,7 +73,7 @@ internal static class SqlBatch
             return inside;
         }
 
-        var write = commands.Any(command => SqlScript.Classify(command.Sql) is SqlStatementPlan { Kind: SqlStatementKind.Write });
+        var write = commands.Any(command => command.Plan.Kind is SqlStatementKind.Write);
         if (await session.ExecuteAsync(Control(write ? "BEGIN" : "BEGIN READ ONLY"), cancellationToken).ConfigureAwait(false) is SqlError refused)
         {
             return new SqlBatchFailure(refused, 0);
@@ -96,13 +104,13 @@ internal static class SqlBatch
         }
     }
 
-    private static async ValueTask<SqlBatchOutcome> RunInAsync(ISqlSession session, IReadOnlyList<SqlCommand> commands, List<SqlReadCharge> charges,
-        CancellationToken cancellationToken)
+    private static async ValueTask<SqlBatchOutcome> RunInAsync(ISqlSession session, IReadOnlyList<SqlPlannedCommand> commands,
+        List<SqlReadCharge> charges, CancellationToken cancellationToken)
     {
         var results = new List<SqlStatementBody>(commands.Count);
         for (var i = 0; i < commands.Count; i++)
         {
-            switch (await session.ExecuteAsync(commands[i], cancellationToken).ConfigureAwait(false))
+            switch (await session.ExecuteAsync(commands[i].Plan, commands[i].Command, cancellationToken).ConfigureAwait(false))
             {
                 case SqlError error:
                     return new SqlBatchFailure(error, i);

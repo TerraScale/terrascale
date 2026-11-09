@@ -35,25 +35,27 @@ internal sealed class ReplicaSqlSession(
 
     public void Prefer(WriteOverride preference) => _preference = preference;
 
+    public void KeepCommitted() => _home?.KeepCommitted();
+
+    public IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => _home?.Committed ?? [];
+
     public void BeginRequest() => _home?.BeginRequest();
 
     public ValueTask EndRequestAsync() => _home?.EndRequestAsync() ?? ValueTask.CompletedTask;
 
-    public ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken) => ExecuteAsync(command, admit: null, cancellationToken);
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlPlannedCommand planned, CancellationToken cancellationToken) =>
+        ExecuteAsync(planned.Plan, planned.Command, admit: null, cancellationToken);
 
-    public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken) =>
+        ExecuteAsync(plan, command, admit: null, cancellationToken);
+
+    public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         await UsePrimaryAsync(cancellationToken).ConfigureAwait(false);
         if (_primary || _home is { IsAutocommit: false })
         {
-            return await HomeAsync(command, admit, cancellationToken).ConfigureAwait(false);
-        }
-
-        var planned = SqlScript.Classify(command.Sql);
-        if (planned is not SqlStatementPlan plan)
-        {
-            return planned is SqlError refused ? refused : SqlErrors.Error("the statement cannot be run");
+            return await HomeAsync(new(plan, command), admit, cancellationToken).ConfigureAwait(false);
         }
 
         if (_readOnlyTransaction)
@@ -74,7 +76,7 @@ internal sealed class ReplicaSqlSession(
                 return SqlErrors.Auth;
             case SqlStatementKind.Write:
                 await RouteAsync([command.Sql], cancellationToken).ConfigureAwait(false);
-                return await HomeAsync(command, admit, cancellationToken).ConfigureAwait(false);
+                return await HomeAsync(new(plan, command), admit, cancellationToken).ConfigureAwait(false);
             case SqlStatementKind.Noop:
                 return Empty;
             case SqlStatementKind.Rollback when _home is null:
@@ -84,18 +86,18 @@ internal sealed class ReplicaSqlSession(
             case SqlStatementKind.Savepoint or SqlStatementKind.Release or SqlStatementKind.RollbackTo when _home is null:
                 return SqlErrors.Error("savepoints run only inside a transaction: BEGIN one first");
             default:
-                return await HomeAsync(command, admit, cancellationToken, marks: plan.Kind != SqlStatementKind.Read).ConfigureAwait(false);
+                return await HomeAsync(new(plan, command), admit, cancellationToken, marks: plan.Kind != SqlStatementKind.Read).ConfigureAwait(false);
         }
     }
 
-    internal async ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlCommand> commands, CancellationToken cancellationToken)
+    public async ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken)
     {
         if (_readOnlyTransaction)
         {
             return null;
         }
 
-        var writes = commands.Any(command => SqlScript.Classify(command.Sql) is SqlStatementPlan { Kind: SqlStatementKind.Write });
+        var writes = commands.Any(command => command.Plan.Kind is SqlStatementKind.Write);
         if ((writes && !canWrite) || (!writes && _preference != WriteOverride.Home && _home is not { IsAutocommit: false }))
         {
             return null;
@@ -103,7 +105,7 @@ internal sealed class ReplicaSqlSession(
 
         if (writes)
         {
-            await RouteAsync([.. commands.Select(command => command.Sql)], cancellationToken).ConfigureAwait(false);
+            await RouteAsync([.. commands.Select(command => command.Command.Sql)], cancellationToken).ConfigureAwait(false);
         }
 
         switch (await OpenHomeAsync(cancellationToken).ConfigureAwait(false))
@@ -111,7 +113,7 @@ internal sealed class ReplicaSqlSession(
             case (_, { } error):
                 return new SqlBatchFailure(error, 0);
             case (HomeSqlSession remote, _):
-                var outcome = await remote.BatchAsync(commands, cancellationToken).ConfigureAwait(false);
+                var outcome = await remote.BatchAsync([.. commands.Select(command => command.Command)], cancellationToken).ConfigureAwait(false);
                 _ = await MarkAsync(Empty).ConfigureAwait(false);
                 return outcome;
             default:
@@ -133,19 +135,13 @@ internal sealed class ReplicaSqlSession(
             (var home, _) => await MarkAsync(await home!.ExecuteScriptAsync(sql, maxStatements, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false),
         };
 
-    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
+    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         await UsePrimaryAsync(cancellationToken).ConfigureAwait(false);
         if (_primary || _home is { IsAutocommit: false })
         {
-            return await DescribeAtHomeAsync(command, cancellationToken).ConfigureAwait(false);
-        }
-
-        var planned = SqlScript.Classify(command.Sql);
-        if (planned is not SqlStatementPlan plan)
-        {
-            return planned is SqlError refused ? refused : SqlErrors.Error("the statement cannot be described");
+            return await DescribeAtHomeAsync(new(plan, command), cancellationToken).ConfigureAwait(false);
         }
 
         if (plan.Kind is not (SqlStatementKind.Read or SqlStatementKind.Write))
@@ -171,7 +167,7 @@ internal sealed class ReplicaSqlSession(
                 return refused;
             }
 
-            return await DescribeAtHomeAsync(command, cancellationToken).ConfigureAwait(false);
+            return await DescribeAtHomeAsync(new(plan, command), cancellationToken).ConfigureAwait(false);
         }
 
         if (_readOnlyTransaction)
@@ -182,13 +178,13 @@ internal sealed class ReplicaSqlSession(
 
         if (plan.Kind == SqlStatementKind.Write)
         {
-            return await DescribeAtHomeAsync(command, cancellationToken).ConfigureAwait(false);
+            return await DescribeAtHomeAsync(new(plan, command), cancellationToken).ConfigureAwait(false);
         }
 
         var reader = await replicas.BeginReadAsync(database, _position, cancellationToken).ConfigureAwait(false);
         if (reader is null)
         {
-            return await DescribeAtHomeAsync(command, cancellationToken).ConfigureAwait(false);
+            return await DescribeAtHomeAsync(new(plan, command), cancellationToken).ConfigureAwait(false);
         }
 
         await using (reader.ConfigureAwait(false))
@@ -223,7 +219,7 @@ internal sealed class ReplicaSqlSession(
 
     private async ValueTask<SqlOutcome> RunOnAsync(IReplicaReader reader, SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit,
         CancellationToken cancellationToken) =>
-        await service.ExecuteOnReplicaAsync(database, reader, [(plan, command)], cancellationToken).ConfigureAwait(false) switch
+        await service.ExecuteOnReplicaAsync(database, reader, [new(plan, command)], cancellationToken).ConfigureAwait(false) switch
         {
             IReadOnlyList<SqlResult> results => admit?.Invoke(results[0]) is { } refused ? refused : results[0],
             ReplicaSqlFailure failed => failed.Error,
@@ -261,14 +257,14 @@ internal sealed class ReplicaSqlSession(
             case SqlStatementKind.Write when _declaredReadOnly:
                 return ReadOnlyWrite;
             case SqlStatementKind.Read when !_declaredReadOnly && _first is null && router.Remembers(database, command.Sql):
-                return await PromoteAsync(command, admit, write: false, cancellationToken).ConfigureAwait(false);
+                return await PromoteAsync(command, plan, admit, write: false, cancellationToken).ConfigureAwait(false);
             case SqlStatementKind.Read:
                 (_first, _readLocally) = (_first ?? command.Sql, true);
                 return await RunOnAsync(_snapshot!, plan, command, admit, cancellationToken).ConfigureAwait(false);
             case SqlStatementKind.Write or SqlStatementKind.Savepoint or SqlStatementKind.Release or SqlStatementKind.RollbackTo when !_declaredReadOnly:
                 if (!_readLocally)
                 {
-                    return await PromoteAsync(command, admit, plan.Kind == SqlStatementKind.Write, cancellationToken).ConfigureAwait(false);
+                    return await PromoteAsync(command, plan, admit, plan.Kind == SqlStatementKind.Write, cancellationToken).ConfigureAwait(false);
                 }
 
                 router.Remember(database, _first!);
@@ -281,7 +277,7 @@ internal sealed class ReplicaSqlSession(
         }
     }
 
-    private async ValueTask<SqlOutcome> PromoteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, bool write, CancellationToken cancellationToken)
+    private async ValueTask<SqlOutcome> PromoteAsync(SqlCommand command, SqlStatementPlan plan, Func<SqlResult, SqlError?>? admit, bool write, CancellationToken cancellationToken)
     {
         await DropSnapshotAsync().ConfigureAwait(false);
         _readOnlyTransaction = false;
@@ -295,7 +291,7 @@ internal sealed class ReplicaSqlSession(
             await RouteAsync([command.Sql], cancellationToken).ConfigureAwait(false);
         }
 
-        return await HomeAsync(command, admit, cancellationToken, marks: write).ConfigureAwait(false);
+        return await HomeAsync(new(plan, command), admit, cancellationToken, marks: write).ConfigureAwait(false);
     }
 
     internal async ValueTask<WriteRoute> RouteAsync(IReadOnlyList<string> statements, CancellationToken cancellationToken)
@@ -338,20 +334,21 @@ internal sealed class ReplicaSqlSession(
         }
     }
 
-    private async ValueTask<SqlOutcome> HomeAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken, bool marks = true) =>
+    private async ValueTask<SqlOutcome> HomeAsync(SqlPlannedCommand planned, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken,
+        bool marks = true) =>
         await OpenHomeAsync(cancellationToken).ConfigureAwait(false) switch
         {
             (_, { } error) => error,
             (var home, _) => marks
-                ? await MarkAsync(await home!.ExecuteAsync(command, admit, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false)
-                : await ReleaseBrokenAsync(await home!.ExecuteAsync(command, admit, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false),
+                ? await MarkAsync(await home!.ExecuteAsync(planned.Plan, planned.Command, admit, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false)
+                : await ReleaseBrokenAsync(await home!.ExecuteAsync(planned.Plan, planned.Command, admit, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false),
         };
 
-    private async ValueTask<SqlDescribeOutcome> DescribeAtHomeAsync(SqlCommand command, CancellationToken cancellationToken) =>
+    private async ValueTask<SqlDescribeOutcome> DescribeAtHomeAsync(SqlPlannedCommand planned, CancellationToken cancellationToken) =>
         await OpenHomeAsync(cancellationToken).ConfigureAwait(false) switch
         {
             (_, { } error) => error,
-            (var home, _) => await home!.DescribeAsync(command, cancellationToken).ConfigureAwait(false),
+            (var home, _) => await home!.DescribeAsync(planned.Plan, planned.Command, cancellationToken).ConfigureAwait(false),
         };
 
     private async ValueTask<SqlOutcome> MarkAsync(SqlOutcome outcome)
