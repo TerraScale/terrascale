@@ -21,7 +21,6 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
             return;
         }
         var r2 = settings.Endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
-        // Customer files use their own identity. Tigris is accepted only in development tests.
         if (!r2 && (!environment.IsDevelopment() || settings.Endpoint.Host != "fly.storage.tigris.dev"))
         {
             return;
@@ -52,7 +51,6 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
         };
         request.Headers.ContentLength = file.Size;
         request.Headers["x-amz-checksum-sha256"] = file.Sha256;
-        // Replays can only contain the same bytes. Content-Length and checksum are signed headers.
         return ValueTask.FromResult(new FileSignedUrl(file.Id, Client.GetPreSignedURL(request), file.UploadExpiresAt,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -92,7 +90,6 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
             {
                 return false;
             }
-            // Verify bytes rather than trusting caller-supplied object metadata or an opaque multipart ETag.
             var hash = await SHA256.HashDataAsync(response.ResponseStream, cancellationToken).ConfigureAwait(false);
             return Convert.ToBase64String(hash) == file.Sha256;
         }

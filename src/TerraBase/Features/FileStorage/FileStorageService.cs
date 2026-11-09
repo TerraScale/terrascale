@@ -259,7 +259,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             {
                 return Denied;
             }
-            // Ready files the caller may read, in id order; a page reads at most MaxListScan files.
             List<FileObject> items = [];
             var cursor = after;
             for (var scanned = 0; scanned < MaxListScan;)
@@ -363,7 +362,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             }
             try { await SweepAsync(stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (OperationCanceledException) { /* One bounded cleanup pass expired; retry on the next tick. */ }
+            catch (OperationCanceledException);
             catch (Exception error) when (StoreFailure(error) || error is QueryCapacityException)
             {
                 CleanupIncomplete(logger, null);
