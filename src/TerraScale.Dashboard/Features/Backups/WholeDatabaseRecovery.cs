@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.TerraBase.Contracts.Management;
@@ -28,7 +29,7 @@ namespace TerraScale.Dashboard.Features.Backups
         public RestoreProgress? Restore { get; init; }
     }
 
-    public sealed class WholeDatabaseRecovery(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases, IDashboardState state)
+    public sealed class WholeDatabaseRecovery(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases, IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
     {
         public async Task<(AccountContext Context, DatabaseRecord Database)> SourceAsync(AccountContext context, string id, CancellationToken ct)
         {
@@ -128,9 +129,7 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new AccountAccessException("Restore could not be confirmed. Check the database list before submitting another restore.", 503);
             }
 
-            await state.PutAsync(BackupService.PendingRestoresTable, operation.OperationId,
-                JsonSerializer.SerializeToElement(new PendingRestore(operation.OperationId, context.Organization!.Id, context.Project!.Id, source.Id), BackupBackendJson.Default.PendingRestore),
-                StatePrecondition.Absent, ct);
+            await storage.RecordRestoreAsync(operation.OperationId, context.Organization!.Id, context.Project!.Id, source.Id, time.GetUtcNow(), ct);
             return new(operation.OperationId, operation.Status);
         }
 

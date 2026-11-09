@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
@@ -10,19 +11,19 @@ namespace TerraScale.Dashboard.Features.Profile
         // so an ordinary closure lands on /account-deleted without the user returning to check.
         private const int AutomaticChecks = 20;
 
-        public static Task<IResult> ProgressAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity, ITsAuthPlatform platform)
+        public static Task<IResult> ProgressAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, ITsAuthPlatform platform)
         {
-            return CheckStatusAsync(http, state, identity, platform);
+            return CheckStatusAsync(http, storage, identity, platform);
         }
 
         // This page's continuation never calls DELETE or billing, even for an unknown receipt.
-        public static Task<IResult> StatusAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity,
+        public static Task<IResult> StatusAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity,
             ITsAuthPlatform platform, DashboardSessions sessions, AccessTokens tokens)
         {
-            return CheckStatusAsync(http, state, identity, platform, sessions, tokens);
+            return CheckStatusAsync(http, storage, identity, platform, sessions, tokens);
         }
 
-        private static async Task<IResult> CheckStatusAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity,
+        private static async Task<IResult> CheckStatusAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity,
             ITsAuthPlatform platform, DashboardSessions? sessions = null, AccessTokens? tokens = null)
         {
             var caller = http.RequestAborted;
@@ -49,13 +50,13 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
 
                 attempt = Math.Clamp(attempt, 0, AutomaticChecks);
-                if (await CompletedAsync(http, state))
+                if (await CompletedAsync(http, storage))
                 {
                     http.Response.Cookies.Delete(Cookie);
                     return HttpRedirects.SeeOther("/account-deleted");
                 }
 
-                var operation = await ReadOperationAsync(http, state, identity);
+                var operation = await ReadOperationAsync(http, storage, identity);
                 if (operation is null)
                 {
                     return PendingPage(http, "Deletion status needs attention", "This browser has no saved deletion receipt. Sign in to review your account; missing records do not confirm deletion.", attempt, 403, attention: true);
@@ -64,7 +65,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 var completed = await platform.AccountDeletionCompletedAsync(operation.Receipt, budget.Token);
                 if (completed && sessions is not null && tokens is not null)
                 {
-                    return await CompleteAsync(http, sessions, platform, state, tokens, null, operation);
+                    return await CompleteAsync(http, sessions, platform, storage, tokens, null, operation);
                 }
 
                 return PendingPage(http, completed ? "Finalizing dashboard cleanup" : "Account deletion is pending",

@@ -83,7 +83,6 @@ namespace TerraScale.Dashboard
             builder.Services.AddSingleton<ServiceSloTelemetry>();
             builder.Services.AddSingleton(TimeProvider.System);
             builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
-            builder.Services.AddSingleton<IDashboardState, TerraBaseDashboardState>();
             builder.Services.AddDashboardStorage();
             builder.Services.AddSingleton<TerraBasePlanSync>();
             builder.Services.AddSingleton<DashboardStateInitializer>();

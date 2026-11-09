@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Primitives;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.ApiKeys;
@@ -5,6 +6,7 @@ using TerraScale.Dashboard.Features.AuthenticationManagement;
 using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -151,7 +153,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 return intent.Purpose switch
                 {
                     "change_email" => await EmailChange.SubmitAsync(http, sessions, accounts, services.GetRequiredService<IAuthEmailChangeGateway>(), false),
-                    "delete_account" => await AccountDeletion.DeleteAsync(http, sessions, accounts, services.GetRequiredService<ITsAuthPlatform>(), services.GetRequiredService<TerraScale.Dashboard.Platform.Persistence.IDashboardState>(), services.GetRequiredService<AccessTokens>(), services.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>(), services.GetRequiredService<TerraScale.Dashboard.Platform.Persistence.IDashboardIdentity>()),
+                    "delete_account" => await AccountDeletion.DeleteAsync(http, sessions, accounts, services.GetRequiredService<ITsAuthPlatform>(), services.GetRequiredService<IDbContextFactory<DashboardDbContext>>(), services.GetRequiredService<AccessTokens>(), services.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>(), services.GetRequiredService<TerraScale.Dashboard.Platform.Persistence.IDashboardIdentity>()),
                     "create_pat" => await AuthEndpoints.AuthorizeAsync(http, "/profile?tab=access-tokens", intent.Form.GetValueOrDefault("name")?.SingleOrDefault() ?? "", intent.Mcp is null ? int.Parse(intent.Form["expiresInDays"].Single(), System.Globalization.CultureInfo.InvariantCulture) : 0, mcp: intent.Mcp, stepUp: intent),
                     "create_api_key" => await CreateDashboardCredentialEndpoint.CreateAsync(http, "api-key", sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "rotate_api_key" => await RotateDashboardCredentialEndpoint.RotateAsync(http, sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),

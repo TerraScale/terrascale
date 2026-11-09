@@ -227,7 +227,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     context.Account.Notifications = account.Notifications;
                     return;
                 }
-                catch (StateConflictException) when (attempt < 7) { }
+                catch (DbUpdateConcurrencyException) when (attempt < 7) { }
             }
         }
     }

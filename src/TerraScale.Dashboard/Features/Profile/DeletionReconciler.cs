@@ -10,10 +10,10 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     // Local fences guard CAS writers; immutable authorization and enrollment references
     // replay after ACK to repair delayed regional writes.
-    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDashboardState state, IDbContextFactory<DashboardDbContext> storage, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
+    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDbContextFactory<DashboardDbContext> storage, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
         AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ILogger<DeletionReconciler> logger) : BackgroundService
     {
-        private readonly DeletionCleanupJournal journal = new(state, storage, organizations);
+        private readonly DeletionCleanupJournal journal = new(storage, organizations, clock);
         private readonly DeletionProjectRecords projectRecords = new(storage);
         private readonly DeletionRelatedRecords related = new(storage, accounts);
 
@@ -33,11 +33,10 @@ namespace TerraScale.Dashboard.Features.Profile
             // Replay does not depend on producer availability or delivery of an already ACKed proof.
             try
             {
-                foreach (var row in await state.ListAsync(DeletionCleanupJournal.Table, cancellationToken))
+                foreach (var entry in await journal.ListAsync(cancellationToken))
                 {
                     try
                     {
-                        var entry = await journal.ReadAsync(row, cancellationToken);
                         Validate(entry.Proof);
                         await CleanAsync(entry, cancellationToken);
                     }
@@ -83,7 +82,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     await sessions.RevokeUserAsync(proof.SubjectId, cancellationToken);
                     await sessions.ForgetUserAsync(proof.SubjectId, cancellationToken);
                     await related.CleanAccountAsync(proof.SubjectId, cancellationToken);
-                    await AccountDeletion.CleanOperationsAsync(state, identity, proof.SubjectId, clock, cancellationToken);
+                    await AccountDeletion.CleanOperationsAsync(storage, identity, proof.SubjectId, clock, cancellationToken);
                     if (await accounts.FindAsync(proof.SubjectId, cancellationToken) is not { Erased: true })
                     {
                         throw new IOException("Erasure fence is unavailable.");
@@ -194,13 +193,13 @@ namespace TerraScale.Dashboard.Features.Profile
                     await (stored is null ? organizations.CreateAsync(org, cancellationToken) : organizations.ReplaceAsync(stored, cancellationToken));
                     return;
                 }
-                catch (StateConflictException) when (attempt < 3) { }
+                catch (DbUpdateConcurrencyException) when (attempt < 3) { }
             }
         }
 
         private static bool Retryable(Exception error, CancellationToken cancellationToken)
         {
-            return error is IOException or HttpRequestException or TerraScale.TerraBase.Contracts.TerraBaseException or JsonException or AccountAccessException or Stripe.StripeException or TimeoutException or InvalidOperationException or FormatException or ArgumentException or System.Security.Cryptography.CryptographicException ||
+            return error is IOException or HttpRequestException or DbUpdateException or TerraScale.TerraBase.Contracts.TerraBaseException or JsonException or AccountAccessException or Stripe.StripeException or TimeoutException or InvalidOperationException or FormatException or ArgumentException or System.Security.Cryptography.CryptographicException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
         }
 

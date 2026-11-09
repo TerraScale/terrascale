@@ -34,7 +34,8 @@ and `TERRABASE_PEER_SECRET`. Names, validation and ownership are in
 [identity-descriptor.md](identity-descriptor.md). CI secrets remain in GitHub
 Actions secrets. Never print values or copy them into code or configuration.
 
-Dashboard state remains in its separate TerraBase database through MagicOnion;
+Dashboard state lives in relational tables of its separate TerraBase database,
+reached through the TerraBase EF Core provider ([state storage](state-storage.md));
 ts-auth owns authorization. Missing credentials or dependencies fail closed.
 ts-status remains on Cloudflare Workers + D1 and monitors public HTTP endpoints.
 

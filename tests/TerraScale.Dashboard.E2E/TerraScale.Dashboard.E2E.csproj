@@ -30,7 +30,5 @@
       <_Parameter1>TerraBaseBinary</_Parameter1>
       <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../src/TerraBase/bin/$(Configuration)/net11.0/terrabase'))</_Parameter2>
     </AssemblyAttribute>
-    <!-- TUnit.Core also has a TestState. -->
-    <Using Include="TerraScale.Dashboard.E2E.Demo.TestState" Alias="TestState" />
   </ItemGroup>
 </Project>

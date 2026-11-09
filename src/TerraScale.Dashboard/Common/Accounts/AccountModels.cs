@@ -24,10 +24,6 @@ namespace TerraScale.Dashboard.Common.Accounts
         public DateTimeOffset CreatedAt { get; set; }
     }
 
-    // No profile or identity data survives; the erasure marker prevents create-only
-    // writers with an already-loaded session from resurrecting these private keys.
-    public sealed record DeletionFence(string ErasureId);
-
     // Dashboard-owned state of a ts-auth organization, keyed by its ts-auth ID. The
     // [JsonIgnore] members are ts-auth's: AccountService fills them from ts-auth on
     // every read and before every write, and they are never stored.

@@ -2,7 +2,7 @@
 
 This is the consumer contract the application implements
 (`src/TerraScale.Dashboard/Platform/Persistence/DashboardIdentity.cs` and
-`TerraBaseDashboardState.cs`). It lists names, formats and owners only. It
+`DashboardStorage.cs`). It lists names, formats and owners only. It
 contains no credential values, and none may be added here, to an issue, a chat
 or a command line.
 
@@ -105,15 +105,13 @@ the invitations the dashboard sends. ts-auth does not enforce it.
 
 The dashboard keeps its own state in the `ts-dashboard` database of the
 ts-dashboard project `00000000000000000000000005`, which TerraBase seeds on every
-start (terrascale `PlatformDatabases.cs`). State calls use MagicOnion on TerraBase's
-private listener, with the peer credential and no customer token. gru stays the
-single home until cross-region conditional writes are proven. In gru the listener
-is `TS_DASHBOARD_TERRABASE_URL`; other regions discover gru's NetBird address in
-`TS_PEERS_FILE` and use the same private port. Missing gru membership fails closed,
-so a regional dashboard never creates independent sessions or Personal workspaces
-in its local platform database. Development without peers uses its local listener.
-The RPC transport follows no redirects. Startup creates missing SQL tables and
-never creates or replaces the database. The platform project has
+start (terrascale `PlatformDatabases.cs`). State calls are SQL requests of the
+TerraBase EF Core provider to TerraBase's private listener `TS_DASHBOARD_TERRABASE_URL`,
+with the peer credential and no customer token ([state storage](state-storage.md)).
+Every request carries `TerraScale-Write: home`, so TerraBase runs it at the
+database's home and a regional dashboard never keeps independent sessions or
+Personal workspaces. Startup applies the EF Core migrations and never creates or
+replaces the database. The platform project has
 no customer members or keys; no customer token reaches this database.
 
 ## TerraBase origin and regions

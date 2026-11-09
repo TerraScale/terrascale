@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using TerraScale.TerraBase.Contracts;
 using System.Numerics;
 using System.Text.Json;
@@ -43,9 +44,11 @@ namespace TerraScale.Dashboard.Features.Billing
             try
             {
                 application = buildApplication([]) ?? throw new InvalidOperationException("The command application is unavailable.");
-                // Commands receive exactly the same automatic persistent-schema
-                // initialization as the hosted application's admission boundary.
-                await application.Services.GetRequiredService<IDashboardState>().InitializeAsync(cancellationToken);
+                await using (var db = await application.Services.GetRequiredService<IDbContextFactory<DashboardDbContext>>().CreateDbContextAsync(cancellationToken))
+                {
+                    await db.Database.MigrateAsync(cancellationToken);
+                }
+
                 var auth = application.Services.GetRequiredService<TsAuthGateway>();
                 var accounts = application.Services.GetRequiredService<AccountService>();
                 grant = await auth.DeviceSignInAsync(output, cancellationToken);

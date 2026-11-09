@@ -38,7 +38,7 @@ internal static class RowSync
         }
         catch (DbUpdateException error) when (Duplicate(error))
         {
-            throw new StateConflictException();
+            throw new DbUpdateConcurrencyException("Dashboard storage changed concurrently.", error);
         }
     }
 
@@ -47,10 +47,6 @@ internal static class RowSync
         try
         {
             await db.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            throw new StateConflictException();
         }
         catch (DbUpdateException error) when (Duplicate(error))
         {

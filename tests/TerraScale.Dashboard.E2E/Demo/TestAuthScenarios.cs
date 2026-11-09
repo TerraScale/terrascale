@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -30,7 +31,6 @@ namespace TerraScale.Dashboard.E2E
         private WebApplication? second;
         private ProducerTransport? transport;
         private readonly ScenarioClock clock = new();
-        private readonly TestState state = new();
         private readonly ScenarioProvider provider;
         private readonly ScenarioIdentity identity = new();
         private readonly DemoEnvironment environment = new();
@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.E2E
         private string root = "";
         private bool liveProjects;
 
-        private AuthProviderScenario() => provider = new(clock, state, environment.Workspace, environment.StorageAsync, cliRequests);
+        private AuthProviderScenario() => provider = new(clock, environment.Workspace, environment.StorageAsync, cliRequests);
 
         public Uri Origin { get; private set; } = null!;
         public Uri ReplicaOrigin { get; private set; } = null!;
@@ -137,7 +137,6 @@ namespace TerraScale.Dashboard.E2E
         {
             var stripe = (TestStripeTransport)application.Services.Last(descriptor => descriptor.ServiceType == typeof(TestStripeTransport)).ImplementationInstance!;
             transport!.UseStripe(stripe);
-            application.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(provider.Billing));
             application.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
             application.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock));
             application.Services.AddSingleton(provider.StepUp);
@@ -307,7 +306,7 @@ namespace TerraScale.Dashboard.E2E
             }
         }
 
-        private sealed class ScenarioProvider(ScenarioClock clock, TestState state, TestWorkspace workspace, Func<Task<DashboardDbContext>> storage, ConcurrentQueue<string> cliRequests) : IDisposable
+        private sealed class ScenarioProvider(ScenarioClock clock, TestWorkspace workspace, Func<Task<DashboardDbContext>> storage, ConcurrentQueue<string> cliRequests) : IDisposable
         {
             private static readonly string[] ResponseTypes = ["code"];
             private static readonly string[] GrantTypes = ["authorization_code", "refresh_token"];
@@ -331,7 +330,7 @@ namespace TerraScale.Dashboard.E2E
             private TestStepUpGateway? stepUp;
             public TestStepUpGateway StepUp => stepUp ??= new(clock, ResolveActiveBearer);
             public TestAuthApiKeys ApiKeys => apiKeys ??= new(ResolveActiveBearer, workspace.ProjectRole);
-            public InternalBillingProducer Billing => billing ??= new(state, workspace, storage, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
+            public InternalBillingProducer Billing => billing ??= new(workspace, storage, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
             public OwnershipSdkProtocol? Ownership { get; private set; }
             public Func<HttpContext, Task<IResult?>>? ReportingExtension { get; set; }
             public Func<HttpContext, Task<IResult?>>? ProjectExtension { get; set; }
@@ -1115,7 +1114,13 @@ namespace TerraScale.Dashboard.E2E
 
             private async Task<IResult> ObservationsAsync()
             {
-                var plaintext = state.Items.Values.Select(item => item.Body.GetRawText()).ToArray();
+                List<SessionRow> stored;
+                await using (var db = await storage())
+                {
+                    stored = await db.Sessions.AsNoTracking().ToListAsync();
+                }
+
+                var plaintext = stored.Select(row => string.Join('\n', row.Id, row.TokenHash, row.UserId, row.Device, Encoding.UTF8.GetString(row.Ciphertext))).ToArray();
                 return Results.Json(new
                 {
                     refreshes,
@@ -1143,8 +1148,6 @@ namespace TerraScale.Dashboard.E2E
                     registeredPrincipals = principals.Values.Select(principal => new { userId = principal.Subject, email = principal.Email, platformRole = principal.PlatformRole }).ToArray(),
                     issuedAdminRoleGrantsByUser = access.Values.GroupBy(grant => grant.Subject).ToDictionary(group => group.Key, group => group.Count(grant => grant.PlatformRole == "admin")),
                     issuedAdminRoleGrants = access.Values.Count(grant => grant.PlatformRole == "admin"),
-                    encryptedCredentialRecords = state.Items.Keys.Count(key => key.StartsWith("auth_credentials/", StringComparison.Ordinal)),
-                    accessTokenHashRecords = state.Items.Keys.Count(key => key.StartsWith("dashboard_access_token_hashes/", StringComparison.Ordinal)),
                     credentialsEncrypted = access.Keys.Concat(refresh.Keys).All(token => plaintext.All(body => !body.Contains(token, StringComparison.Ordinal)))
                 });
             }

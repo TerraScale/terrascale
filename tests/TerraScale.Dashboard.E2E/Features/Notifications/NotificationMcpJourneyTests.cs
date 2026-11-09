@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using System.Net;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -126,7 +127,7 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
                     await accounts.ReplaceAsync(row, CancellationToken.None);
                     return ids;
                 }
-                catch (StateConflictException) when (attempt < 7) { }
+                catch (DbUpdateConcurrencyException) when (attempt < 7) { }
             }
         }
 
@@ -149,7 +150,7 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
                         await accounts.ReplaceAsync(row, CancellationToken.None);
                         return;
                     }
-                    catch (StateConflictException) { }
+                    catch (DbUpdateConcurrencyException) { }
                 }
             }
             catch (Exception error) { Console.Error.WriteLine("E2E notification seed cleanup: " + error.Message); }

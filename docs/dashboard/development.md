@@ -1,7 +1,8 @@
 # Dashboard development
 
-The dashboard uses .NET 10, RazorSlices, Datastar and MagicOnion over the
-shared contracts library in one production application, `src/TerraScale.Dashboard`.
+The dashboard uses .NET 11, RazorSlices, Datastar, Entity Framework Core over the
+TerraBase provider for its state and MagicOnion over the shared contracts library
+for TerraBase's product APIs, in one production application, `src/TerraScale.Dashboard`.
 Node.js and npm build the Lightning CSS stylesheet and browser assets, and
 nothing else: the npm project is `src/TerraScale.Dashboard/web` (`package.json`,
 `.browserslistrc`, and the scripts in `web/build/`). Tests are C# only.
@@ -152,8 +153,9 @@ validates their recorded hashes. Monaco
 loads only on editor pages, and map code/data loads only where needed.
 Brand marks are file-backed SVG assets under `web/static/brand`.
 
-The application reaches TerraBase over MagicOnion through the shared contracts
-library.
+The application keeps its state in relational tables through the TerraBase EF
+Core provider ([state storage](state-storage.md)) and reaches TerraBase's product
+APIs over MagicOnion through the shared contracts library.
 Production state belongs in TerraBase, authorization belongs to ts-auth,
 and secrets arrive through ts-orch from OCI Vault using instance principal ([secrets](identity-descriptor.md)). Feature flags,
 production demo selection and manual endpoint/secret overrides are prohibited.

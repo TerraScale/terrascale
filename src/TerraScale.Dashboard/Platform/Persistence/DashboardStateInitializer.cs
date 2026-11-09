@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
-    public sealed class DashboardStateInitializer(IDashboardIdentity identity, IDashboardState state, IDbContextFactory<DashboardDbContext> storage, TimeProvider time,
+    public sealed class DashboardStateInitializer(IDashboardIdentity identity, IDbContextFactory<DashboardDbContext> storage, TimeProvider time,
         ILogger<DashboardStateInitializer> logger) : BackgroundService
     {
         private static readonly TimeSpan FirstRetry = TimeSpan.FromSeconds(1);
@@ -62,7 +62,6 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
         private async Task InitializeAsync(CancellationToken cancellationToken)
         {
-            await state.InitializeAsync(cancellationToken);
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
             await db.Database.MigrateAsync(cancellationToken);
         }

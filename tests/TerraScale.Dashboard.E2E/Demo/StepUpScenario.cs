@@ -90,7 +90,10 @@ namespace TerraScale.Dashboard.E2E
         public async Task AssertNoEffectsAsync()
         {
             await Assert.That(Effects()).IsEqualTo(effects);
-            await Assert.That((await Environment.State.ListAsync("account_deletions", default)).Count).IsEqualTo(0);
+            await using (var storage = await Environment.StorageAsync())
+            {
+                await Assert.That(await storage.AccountDeletions.CountAsync()).IsEqualTo(0);
+            }
             await using (var storage = await Environment.StorageAsync())
             {
                 await Assert.That(await storage.Sessions.CountAsync(row => row.Kind == SessionRow.Credential)).IsEqualTo(0);
