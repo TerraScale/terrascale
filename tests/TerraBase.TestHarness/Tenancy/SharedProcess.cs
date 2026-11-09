@@ -18,10 +18,11 @@ internal static class SharedProcess
     {
         var options = provider.GetRequiredService<TerraBaseOptions>();
         return new TursoStorageEngine(
-            options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
+            new StorageEngineOptions(
+                options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
+                options.ShutdownGrace, MaxWriters: maxWriters, BackupTime: provider.GetRequiredService<TimeProvider>()),
             provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
             provider.GetRequiredService<ILogger<TursoStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(EngineExtensions.DatabaseMasterKey),
-            options.ShutdownGrace, maxWriters: maxWriters, backupTime: provider.GetRequiredService<TimeProvider>(),
             schemaMemory: provider.GetRequiredService<TerraBase.Features.Memory.IMemoryBudget>(),
             nativeTemporaryStorage: provider.GetRequiredService<INativeTemporaryStorage>(), diskBudget: provider.GetRequiredService<IDiskBudget>());
     });

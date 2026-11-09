@@ -24,9 +24,11 @@ using ZLogger;
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoReplicas(
-    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, IMemoryBudget memory, ILogger<TursoReplicas> logger, TimeProvider time)
+    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, IMemoryBudget memory, ILogger<TursoReplicas> logger, TimeProvider? time = null)
     : IDatabaseReplicas, IAsyncDisposable
 {
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
+
     internal const string DirectoryName = ".replicas";
     internal const string KeyHeader = "TERRABASE-REPLICA-KEY-1\n";
     private const int MaxIdleConnections = 4;
@@ -261,7 +263,7 @@ internal sealed partial class TursoReplicas(
         {
             try
             {
-                return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, time, pulled: true);
+                return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: true);
             }
             catch (TursoException error)
             {
@@ -271,7 +273,7 @@ internal sealed partial class TursoReplicas(
 
         _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
-        var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, time, pulled: false);
+        var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: false);
         try
         {
             _ = await replica.PullAsync(fromHome: true, CancellationToken.None).ConfigureAwait(false);

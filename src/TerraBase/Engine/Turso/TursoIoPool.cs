@@ -78,7 +78,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
     private int _closed;
     private readonly Lazy<Task> _disposal;
 
-    public TursoIoPool(int threads, int maxAdmitted, Meter meter, Func<ThreadStart, Thread>? createWorker = null)
+    public TursoIoPool(int threads, int maxAdmitted, Meter meter)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(threads);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxAdmitted);
@@ -114,7 +114,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
                         exited.SetResult();
                     }
                 }
-                var worker = createWorker is null ? new Thread(Run) : createWorker(Run);
+                var worker = new Thread(Run);
                 worker.IsBackground = true;
                 worker.Name = "terrabase-turso";
                 _threads[i] = exited.Task;

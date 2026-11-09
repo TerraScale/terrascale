@@ -41,20 +41,24 @@ internal static class RevisionManifestFile
         }
 
         var reader = new Reader(bytes.AsSpan(5, bytes.Length - 5 - ChecksumBytes));
-        var manifest = new RevisionManifest { Incarnation = new Ulid(reader.Bytes(16)), Generation = reader.U64() };
+        var incarnation = new Ulid(reader.Bytes(16));
+        var generation = reader.U64();
+        (uint, uint)? salt = null;
         if (reader.U8() == 1)
         {
-            manifest.WalSalt = (reader.U32(), reader.U32());
+            salt = (reader.U32(), reader.U32());
         }
 
+        FileStamp? stamp = null;
         if (reader.U8() == 1)
         {
-            manifest.DatabaseFile = new FileStamp((long)reader.U64(), (long)reader.U64());
+            stamp = new FileStamp((long)reader.U64(), (long)reader.U64());
         }
 
+        var sealedGenerations = new List<SealedGeneration>();
         for (var count = reader.U16(); count > 0; count--)
         {
-            var generation = reader.U64();
+            var entryGeneration = reader.U64();
             var end = reader.U64();
             var full = reader.U8() == 1;
             var pages = new Dictionary<uint, ulong>();
@@ -63,31 +67,34 @@ internal static class RevisionManifestFile
                 pages[reader.U32()] = reader.U64();
             }
 
-            manifest.Sealed.Add(new SealedGeneration(generation, end, full, pages));
+            sealedGenerations.Add(new SealedGeneration(entryGeneration, end, full, pages));
         }
 
+        var horizon = new List<HorizonBucket>();
         for (var count = reader.U16(); count > 0; count--)
         {
-            var bucket = new HorizonBucket(reader.U64());
+            var firstGeneration = reader.U64();
+            var endFrames = new List<ulong>();
             for (var n = reader.U16(); n > 0; n--)
             {
-                bucket.EndFrames.Add(reader.U64());
+                endFrames.Add(reader.U64());
             }
 
+            var pages = new HashSet<uint>();
             for (var n = reader.U32(); n > 0; n--)
             {
-                bucket.Pages.Add(reader.U32());
+                pages.Add(reader.U32());
             }
 
-            manifest.Horizon.Add(bucket);
+            horizon.Add(new HorizonBucket(firstGeneration, endFrames, pages));
         }
 
-        if (!reader.End || manifest.Generation == 0 || manifest.Horizon.Any(bucket => bucket.EndFrames.Count == 0))
+        if (!reader.End || generation == 0 || horizon.Any(bucket => bucket.EndFrames.Count == 0))
         {
             throw new InvalidDataException("the revision manifest is damaged or of another format");
         }
 
-        return manifest;
+        return new RevisionManifest(incarnation, generation, salt, stamp, sealedGenerations, horizon);
     }
 
     public static void Store(string databasePath, RevisionManifest manifest)

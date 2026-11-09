@@ -68,7 +68,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private readonly ILogger<TursoStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
-    private readonly Action<TursoDatabaseStore>? _afterBootstrap;
 
     internal TursoIoPool Io { get; }
 
@@ -291,20 +290,16 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal TursoSessionPool Pool { get; }
 
     public TursoStorageEngine(
-    string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<TursoStorageEngine> logger,
-    IMasterKey masterKey,
-    TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, int? maxWriters = null, Func<ThreadStart, Thread>? createWorker = null,
-    TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
-    Action<TursoDatabaseStore>? afterBootstrap = null, TimeSpan? queryBudget = null,
-    TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null,
+    StorageEngineOptions configured, Meter meter, ILogger<TursoStorageEngine> logger, IMasterKey masterKey,
+    DatabaseLifecycleCheckpoint? checkpoint = null, IMemoryBudget? schemaMemory = null,
     INativeTemporaryStorage? nativeTemporaryStorage = null, IDiskBudget? diskBudget = null)
     {
         ArgumentNullException.ThrowIfNull(masterKey);
-        var clock = time ?? TimeProvider.System;
+        var clock = configured.Time ?? TimeProvider.System;
         Encryption = new DatabaseKeys(masterKey);
-        _dataDirectory = dataDirectory;
-        Fences = new DatabaseFences(Path.Combine(dataDirectory, ".fences"), clock);
-        Disk = diskBudget ?? new DiskBudget(dataDirectory, meter);
+        _dataDirectory = configured.DataDirectory;
+        Fences = new DatabaseFences(Path.Combine(configured.DataDirectory, ".fences"), clock);
+        Disk = diskBudget ?? new DiskBudget(configured.DataDirectory, meter);
         _schemaMemory = schemaMemory;
         _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented record and shape SELECT executions, by path (point, query, shape, shape_body).");
         _writerHeld = meter.CreateHistogram<double>("terrabase.storage.writer_held", "s",
@@ -318,21 +313,20 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             "Healthy rewrite work by bounded step and database kind.",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
         _logger = logger;
-        _shutdownGrace = shutdownGrace;
+        _shutdownGrace = configured.ShutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
-        _afterBootstrap = afterBootstrap;
-        HostTime = backupTime ?? clock;
-        _readinessCacheTtl = readinessCacheTtl ?? TimeSpan.FromSeconds(1);
+        HostTime = configured.BackupTime ?? clock;
+        _readinessCacheTtl = configured.ReadinessCacheTtl ?? TimeSpan.FromSeconds(1);
         Time = clock;
-        QueryBudget = queryBudget ?? TursoDatabaseStore.DefaultQueryBudget;
+        QueryBudget = configured.QueryBudget ?? TursoDatabaseStore.DefaultQueryBudget;
 
-        _pragmas = TursoSession.Pragmas(memoryBudget, threads);
-        Pool = new(maxIdle: maxIdle ?? 4 * Environment.ProcessorCount, maxIdlePerDatabase: maxIdlePerDatabase ?? Environment.ProcessorCount,
-            maxWriters: maxWriters ?? Math.Max(64, 8 * threads));
+        _pragmas = TursoSession.Pragmas(configured.MemoryBudget, configured.Threads);
+        Pool = new(maxIdle: 4 * Environment.ProcessorCount, maxIdlePerDatabase: Environment.ProcessorCount,
+            maxWriters: configured.MaxWriters ?? Math.Max(64, 8 * configured.Threads));
         meter.CreateObservableGauge("terrabase.cdc.retained.rows", () => _stores.Values.Sum(store => store.RetainedCdcRows),
             description: "Retained CDC row span across open tenant databases, sampled by retention maintenance.");
         meter.CreateObservableGauge("terrabase.storage.open_writers", () => Pool.OpenWriters, description: "Client databases holding an open writer connection.");
-        _ownership = Own(dataDirectory);
+        _ownership = Own(configured.DataDirectory);
         try
         {
             nativeTemporaryStorage?.Initialize();
@@ -341,7 +335,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             Ledger = new StorageFaultLedger(this, logger, schemaMemory);
             Leases = new HomeLeaseGate(clock);
 
-            Io = new(threads, queue, meter, createWorker);
+            Io = new(configured.Threads, configured.Queue, meter);
         }
         catch
         {
@@ -1591,7 +1585,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             RejectDatabaseLinks(path);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
-            _afterBootstrap?.Invoke(store);
 
             await Ledger.LoadAsync(store, lifetime.Token).ConfigureAwait(false);
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);
