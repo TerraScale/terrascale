@@ -4,10 +4,8 @@ using Turso.Raw.Public;
 
 namespace Turso.Data.Sqlite.Tests;
 
-/// <summary>The native WAL revision contract through the driver: manual WAL, frame metadata and snapshot page reads.</summary>
 public sealed class WalRevisionContractTests
 {
-    /// <summary>Manual WAL keeps every frame and the database file untouched until a bounded truncate; snapshot reads decrypt; busy or stale truncates keep the WAL.</summary>
     [Test]
     public async Task ManualWalKeepsFramesUntilAnExplicitTruncate()
     {
