@@ -1,25 +1,16 @@
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Common.Accounts;
 
 public static class AccountEnrollment
 {
-    public static async Task ThrowIfErasedAsync(IDashboardState state, string userId, CancellationToken ct)
+    public static async Task ThrowIfErasedAsync(IDbContextFactory<DashboardDbContext> storage, string userId, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(userId);
-        var key = AccountService.AccountStorageKey(userId);
-        var row = await state.GetAsync(AccountService.AccountsTable, key, ct);
-        if (row is null)
-        {
-            return;
-        }
-
-        if (row.Id != key)
-        {
-            throw new IOException("Account identity is invalid.");
-        }
-
-        if (AccountService.IsDeletionFence(row))
+        var hash = AccountService.AccountStorageKey(userId);
+        await using var db = await storage.CreateDbContextAsync(ct);
+        if (await db.Accounts.AnyAsync(account => account.SubjectHash == hash && account.ErasureId != null, ct))
         {
             throw new AccountAccessException("Account was erased.", 401);
         }

@@ -14,7 +14,7 @@ namespace TerraScale.Dashboard.Features.Logs
         Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, string after, CancellationToken cancellationToken);
     }
 
-    public sealed partial class LogDrains(IDbContextFactory<DashboardDbContext> storage, IDashboardState state, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
+    public sealed partial class LogDrains(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
         TimeProvider clock, ILogger<LogDrains> logger)
     {
         private static readonly string[] ReservedHeaders = ["host", "content-length", "content-type", "transfer-encoding", "connection", "te", "upgrade", "expect", "cookie"];
@@ -123,8 +123,8 @@ namespace TerraScale.Dashboard.Features.Logs
                 return;
             }
 
-            if (await state.GetAsync(AccountService.OrganizationsTable, drain.OrganizationId, cancellationToken) is not { } organizationRow ||
-                !AccountService.Read<OrganizationRecord>(organizationRow).Projects.TryGetValue(drain.ProjectId, out var project))
+            if (await organizations.FindAsync(drain.OrganizationId, cancellationToken) is not { } organizationRow ||
+                !(organizationRow.Erased ? throw new IOException("Dashboard record was erased.") : organizationRow.Organization).Projects.TryGetValue(drain.ProjectId, out var project))
             {
                 return;
             }

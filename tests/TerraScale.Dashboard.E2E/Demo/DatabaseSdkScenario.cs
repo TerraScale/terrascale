@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -142,8 +143,9 @@ namespace TerraScale.Dashboard.E2E
             await environment.InitializeAsync();
             void Configure(WebApplicationBuilder application)
             {
-                state ??= new((IDashboardState)application.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!, environment.Workspace);
+                state ??= new((IDashboardState)application.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!);
                 protocol.State = state;
+                protocol.Organizations = environment.Organizations;
                 protocol.Workspace = environment.Workspace;
                 protocol.Platform ??= ProjectCounter.Wrap(environment.Workspace, protocol.CountProject);
                 application.Services.Replace(ServiceDescriptor.Singleton(protocol.Platform));
@@ -169,6 +171,11 @@ namespace TerraScale.Dashboard.E2E
             await second.StartAsync();
             Origin = Address(first);
             ReplicaOrigin = Address(second);
+        }
+
+        public Task<DashboardDbContext> StorageAsync()
+        {
+            return first!.Services.GetRequiredService<IDbContextFactory<DashboardDbContext>>().CreateDbContextAsync();
         }
 
         private static Uri Address(WebApplication app)
@@ -251,57 +258,15 @@ namespace TerraScale.Dashboard.E2E
             }
         }
 
-        private sealed class RecordingState(IDashboardState inner, TestWorkspace workspace) : IDashboardState
+        private sealed class RecordingState(IDashboardState inner) : IDashboardState
         {
             // The encrypted data-key registry is gone; recording its former table shows nothing writes customer keys again.
             private const string Credentials = "dashboard_data_credentials";
             private readonly ConcurrentQueue<string> encrypted = new();
             private int credentialReads;
-            private TaskCompletionSource? quotaGate;
-            private int pausedQuotaCommits;
-            private int quotaCasFailures;
-            private string targetProjectOrg = "";
-            private string targetProjectName = "";
-            private int projectMetadataArmed;
-            private int failedProjectMetadataWrites;
-            private string targetDeletionOrg = "";
-            private string targetDeletionProject = "";
-            private int projectDeletionMetadataArmed;
-            private int failedProjectDeletionMetadataWrites;
-            private string targetDatabaseOrg = "";
-            private string targetDatabaseProject = "";
-            private string targetDatabaseName = "";
-            private int databaseMetadataArmed;
-            private int failedDatabaseMetadataWrites;
             public bool ConflictCredentials { get; set; }
             public string[] Encrypted => encrypted.ToArray();
             public int CredentialReads => Volatile.Read(ref credentialReads);
-            public int PausedQuotaCommits => Volatile.Read(ref pausedQuotaCommits);
-            public int QuotaCasFailures => Volatile.Read(ref quotaCasFailures);
-            public int FailedProjectMetadataWrites => Volatile.Read(ref failedProjectMetadataWrites);
-            public int FailedProjectDeletionMetadataWrites => Volatile.Read(ref failedProjectDeletionMetadataWrites);
-            public int FailedDatabaseMetadataWrites => Volatile.Read(ref failedDatabaseMetadataWrites);
-            public void ArmDatabaseMetadataFailure(string organizationId, string projectId, string name)
-            {
-                targetDatabaseOrg = organizationId; targetDatabaseProject = projectId; targetDatabaseName = name;
-                Volatile.Write(ref databaseMetadataArmed, 1);
-            }
-            public void ArmProjectMetadataFailure(string organizationId, string name)
-            {
-                targetProjectOrg = organizationId; targetProjectName = name;
-                Volatile.Write(ref projectMetadataArmed, 1);
-            }
-            public void ArmProjectDeletionMetadataFailure(string organizationId, string projectId)
-            {
-                targetDeletionOrg = organizationId; targetDeletionProject = projectId;
-                Volatile.Write(ref projectDeletionMetadataArmed, 1);
-            }
-            public void PauseQuotaCommits()
-            {
-                Interlocked.Exchange(ref pausedQuotaCommits, 0);
-                quotaGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            }
-            public void ReleaseQuotaCommits() { quotaGate?.TrySetResult(); quotaGate = null; }
             public Task InitializeAsync(CancellationToken ct)
             {
                 return inner.InitializeAsync(ct);
@@ -325,54 +290,7 @@ namespace TerraScale.Dashboard.E2E
             }
             public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition condition, CancellationToken ct)
             {
-                var databaseCommit = table == AccountService.OrganizationsTable &&
-                    row.GetProperty("Projects").EnumerateObject().Any(project => project.Value.GetProperty("Databases").EnumerateObject().Any());
-                if (databaseCommit && quotaGate is { } paused)
-                {
-                    Interlocked.Increment(ref pausedQuotaCommits);
-                    await paused.Task.WaitAsync(ct);
-                }
-                if (table == AccountService.OrganizationsTable && id == targetDatabaseOrg &&
-                    Volatile.Read(ref databaseMetadataArmed) == 1 && row.GetProperty("Projects").TryGetProperty(targetDatabaseProject, out var databaseProject) &&
-                    databaseProject.GetProperty("Databases").EnumerateObject().Any(database => database.Value.GetProperty("Name").GetString() == targetDatabaseName))
-                {
-                    var prior = await inner.GetAsync(table, id, ct);
-                    if (prior is not null && prior.Body.GetProperty("Projects").TryGetProperty(targetDatabaseProject, out var priorProject) &&
-                        !priorProject.GetProperty("Databases").EnumerateObject().Any(database => database.Value.GetProperty("Name").GetString() == targetDatabaseName) &&
-                        Interlocked.CompareExchange(ref databaseMetadataArmed, 0, 1) == 1)
-                    {
-                        Interlocked.Increment(ref failedDatabaseMetadataWrites);
-                        throw new IOException("Test-only database metadata write interrupted.");
-                    }
-                }
-                // Stored project settings carry no name; ts-auth's canonical project with the armed name identifies the target.
-                if (table == AccountService.OrganizationsTable && id == targetProjectOrg &&
-                    Volatile.Read(ref projectMetadataArmed) == 1 && CanonicalProjectId(targetProjectOrg, targetProjectName) is { } targetProject &&
-                    row.GetProperty("Projects").TryGetProperty(targetProject, out _))
-                {
-                    var prior = await inner.GetAsync(table, id, ct);
-                    if (prior is not null && !prior.Body.GetProperty("Projects").TryGetProperty(targetProject, out _) &&
-                        Interlocked.CompareExchange(ref projectMetadataArmed, 0, 1) == 1)
-                    {
-                        Interlocked.Increment(ref failedProjectMetadataWrites);
-                        throw new IOException("Test-only project metadata write interrupted.");
-                    }
-                }
-                if (table == AccountService.OrganizationsTable && id == targetDeletionOrg &&
-                    Volatile.Read(ref projectDeletionMetadataArmed) == 1 && !row.GetProperty("Projects").TryGetProperty(targetDeletionProject, out _))
-                {
-                    var prior = await inner.GetAsync(table, id, ct);
-                    if (prior is not null && prior.Body.GetProperty("Projects").TryGetProperty(targetDeletionProject, out var project) &&
-                        project.GetProperty("Id").GetString() == targetDeletionProject &&
-                        Interlocked.CompareExchange(ref projectDeletionMetadataArmed, 0, 1) == 1)
-                    {
-                        Interlocked.Increment(ref failedProjectDeletionMetadataWrites);
-                        throw new IOException("Test-only project deletion metadata write interrupted.");
-                    }
-                }
-                try { await inner.PutAsync(table, id, row, condition, ct); }
-                catch (StateConflictException) when (databaseCommit)
-                { Interlocked.Increment(ref quotaCasFailures); throw; }
+                await inner.PutAsync(table, id, row, condition, ct);
                 if (table == Credentials)
                 {
                     encrypted.Enqueue(row.GetRawText());
@@ -391,14 +309,6 @@ namespace TerraScale.Dashboard.E2E
             public Task DeleteAsync(string table, string id, string version, CancellationToken ct)
             {
                 return inner.DeleteAsync(table, id, version, ct);
-            }
-
-            private string? CanonicalProjectId(string organizationId, string name)
-            {
-                lock (workspace.Gate)
-                {
-                    return workspace.Organizations.GetValueOrDefault(organizationId)?.Projects.Values.SingleOrDefault(project => project.Name == name)?.Id;
-                }
             }
         }
 
@@ -443,6 +353,7 @@ namespace TerraScale.Dashboard.E2E
             private int branchCreates;
             private int branchConflicts;
             public RecordingState State { get; set; } = null!;
+            public OrganizationStore Organizations { get; set; } = null!;
             // ts-auth's canonical organizations, projects and memberships for this fixture; the producer stores no identity.
             public TestWorkspace Workspace { get; set; } = null!;
             public ITsAuthPlatform? Platform { get; set; }
@@ -486,7 +397,7 @@ namespace TerraScale.Dashboard.E2E
             // TerraBase's /v1/regions catalog; unset, it names only the answering region, as /healthz does.
             public string[]? Catalog { get; set; }
 
-            public void Release() { ApiKeys?.ReleaseLists(); createGate?.TrySetResult(); State?.ReleaseQuotaCommits(); }
+            public void Release() { ApiKeys?.ReleaseLists(); createGate?.TrySetResult(); }
 
             // Each database's relational tables live in its own SQL engine for the scenario's lifetime.
             private TestSqlEngine SqlEngine(string databaseId)
@@ -650,8 +561,6 @@ namespace TerraScale.Dashboard.E2E
                     case "release-key-list": ApiKeys!.ReleaseLists(); break;
                     case "pause-database-creates": Interlocked.Exchange(ref pausedCreates, 0); createGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                     case "release-database-creates": createGate?.TrySetResult(); createGate = null; break;
-                    case "pause-quota-commits": State.PauseQuotaCommits(); break;
-                    case "release-quota-commits": State.ReleaseQuotaCommits(); break;
                     case "credential-conflict": State.ConflictCredentials = body.GetProperty("value").GetBoolean(); break;
                     case "role": Workspace.Role = body.GetProperty("value").GetString()!; break;
                     case "backup-failure": backupFailure = body.GetProperty("value").GetString()!; break;
@@ -707,83 +616,12 @@ namespace TerraScale.Dashboard.E2E
                         }
 
                         break;
-                    case "fail-database-metadata":
-                    case "database-status":
-                        var databaseOrgId = body.GetProperty("organizationId").GetString()!;
-                        var databaseProjectId = body.GetProperty("projectId").GetString()!;
-                        var databaseValue = await State.GetAsync(AccountService.OrganizationsTable, databaseOrgId, http.RequestAborted)
-                            ?? throw new InvalidOperationException("Database fixture control targets a canonical organization");
-                        var databaseOrg = databaseValue.Body.Deserialize<OrganizationRecord>()!;
-                        databaseOrg.Projects.TryGetValue(databaseProjectId, out var fixtureProject);
-                        Require(Workspace.Role == "owner" && databaseValue.Id == databaseOrg.Id && databaseOrg.Id == databaseOrgId && databaseOrg.Status == "active" &&
-                            Owner(databaseOrgId).Length > 0 && fixtureProject is not null,
-                            "Database fixture control targets its current owner's canonical project");
-                        Require(CanonicalProject(databaseOrgId, databaseProjectId), "Database fixture control agrees with ts-auth's canonical project");
-                        if (body.GetProperty("command").GetString() == "fail-database-metadata")
-                        {
-                            var databaseName = body.GetProperty("name").GetString()!;
-                            Require(databaseName.Length > 0 && !fixtureProject!.Databases.Values.Any(database => database.Name == databaseName),
-                                "Database metadata interruption targets a new name only");
-                            State.ArmDatabaseMetadataFailure(databaseOrgId, databaseProjectId, databaseName);
-                        }
-                        else
-                        {
-                            var fixtureDatabaseId = body.GetProperty("databaseId").GetString()!;
-                            var status = body.GetProperty("value").GetString()!;
-                            fixtureProject!.Databases.TryGetValue(fixtureDatabaseId, out var fixtureDatabase);
-                            Require(status is "ready" or "provisioning" or "accepted" or "pending" or "failed" && fixtureDatabase is not null,
-                                "A database presentation fixture changes only an existing canonical row's recorded status");
-                            lock (gate)
-                            {
-                                Require(databases.TryGetValue(fixtureDatabaseId, out var remoteDatabase) && remoteDatabase.ProjectId == databaseProjectId,
-                                "The presentation fixture owns its actual producer database");
-                            }
-
-                            fixtureDatabase!.Status = status;
-                            await State.PutAsync(AccountService.OrganizationsTable, databaseOrgId, JsonSerializer.SerializeToElement(databaseOrg),
-                                StatePrecondition.Matches(databaseValue.Version), http.RequestAborted);
-                        }
-                        break;
-                    case "fail-project-metadata":
-                        var faultOrganizationId = body.GetProperty("organizationId").GetString()!;
-                        var faultName = body.GetProperty("name").GetString()!.Trim();
-                        var faultValue = await State.GetAsync(AccountService.OrganizationsTable, faultOrganizationId, http.RequestAborted)
-                            ?? throw new InvalidOperationException("Project metadata failure targets an existing organization");
-                        var faultOrg = faultValue.Body.Deserialize<OrganizationRecord>()!;
-                        bool faultNameTaken;
-                        lock (Workspace.Gate)
-                        {
-                            faultNameTaken = Workspace.Organizations.GetValueOrDefault(faultOrganizationId)?.Projects.Values.Any(project => project.Name == faultName) != false;
-                        }
-
-                        Require(TerraScaleIds.IsValid(faultOrganizationId) && faultValue.Id == faultOrg.Id && faultOrg.Id == faultOrganizationId &&
-                            faultOrg.Status == "active" && Owner(faultOrganizationId).Length > 0 && faultName.Length > 0 && !faultNameTaken,
-                            "Project metadata fault is limited to a new project of a current canonical owner");
-                        State.ArmProjectMetadataFailure(faultOrganizationId, faultName);
-                        break;
-                    case "fail-project-deletion-metadata":
-                        var deletionOrgId = body.GetProperty("organizationId").GetString()!;
-                        var deletionProjectId = body.GetProperty("projectId").GetString()!;
-                        var deletionValue = await State.GetAsync(AccountService.OrganizationsTable, deletionOrgId, http.RequestAborted)
-                            ?? throw new InvalidOperationException("Project deletion metadata failure targets an existing organization");
-                        var deletionOrg = deletionValue.Body.Deserialize<OrganizationRecord>()!;
-                        Require(TerraScaleIds.IsValid(deletionOrgId) && TerraScaleIds.IsValid(deletionProjectId) &&
-                            deletionValue.Id == deletionOrgId && deletionOrg.Id == deletionOrgId && deletionOrg.Status == "active" &&
-                            Owner(deletionOrgId).Length > 0 && deletionOrg.Projects.Count > 1 &&
-                            deletionOrg.Projects.TryGetValue(deletionProjectId, out var deleting) && deleting.Id == deletionProjectId &&
-                            !deleting.IsDefault && deleting.Databases.Count == 0,
-                            "Project deletion metadata fault is limited to an existing empty nondefault project of a current canonical owner");
-                        Require(Workspace.Role == "owner" && CanonicalProject(deletionOrgId, deletionProjectId), "Project deletion metadata fault matches ts-auth's canonical project");
-                        State.ArmProjectDeletionMetadataFailure(deletionOrgId, deletionProjectId);
-                        break;
                     case "plan":
                         var organizationId = body.GetProperty("organizationId").GetString()!;
-                        var current = await State.GetAsync(AccountService.OrganizationsTable, organizationId, http.RequestAborted)
+                        var current = await Organizations.FindAsync(organizationId, http.RequestAborted)
                             ?? throw new InvalidOperationException("The fixture plan targets an existing organization");
-                        var organization = current.Body.Deserialize<OrganizationRecord>()!;
-                        organization.PlanId = body.GetProperty("value").GetString()!;
-                        await State.PutAsync(AccountService.OrganizationsTable, organizationId, JsonSerializer.SerializeToElement(organization),
-                            StatePrecondition.Matches(current.Version), http.RequestAborted);
+                        current.Organization.PlanId = body.GetProperty("value").GetString()!;
+                        await Organizations.ReplaceAsync(current, http.RequestAborted);
                         break;
                     default: throw new InvalidOperationException("Unknown test producer control");
                 }
@@ -818,17 +656,12 @@ namespace TerraScale.Dashboard.E2E
                         projectConflicts,
                         projectDeletes,
                         projectDeleteNotFound,
-                        failedProjectMetadataWrites = State.FailedProjectMetadataWrites,
-                        failedProjectDeletionMetadataWrites = State.FailedProjectDeletionMetadataWrites,
-                        failedDatabaseMetadataWrites = State.FailedDatabaseMetadataWrites,
                         workspaceProjects,
                         backups = snapshots.Values.Select(value => value.Backup).ToArray(),
                         credentials = (ApiKeys?.Issued() ?? []).Select(value => new { value.Key.Id, value.Key.Name, Secret = value.Secret, Host = "auth.terrascale.tech", value.Key.Scopes, value.Key.Database }).ToArray(),
                         authKeys = ApiKeys?.Observations(),
                         encrypted = State.Encrypted,
                         credentialReads = State.CredentialReads,
-                        pausedQuotaCommits = State.PausedQuotaCommits,
-                        quotaCasFailures = State.QuotaCasFailures,
                         databases = databases.Values.ToArray()
                     });
                 }

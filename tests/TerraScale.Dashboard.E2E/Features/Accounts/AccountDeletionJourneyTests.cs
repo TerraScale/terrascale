@@ -27,8 +27,8 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(lastOwner.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
                 await Assert.That(await lastOwner.Content.ReadAsStringAsync()).Contains("Transfer ownership of your shared organizations before deleting your account.");
             }
-            await Assert.That(await scenario.ExistsAsync(AccountService.AccountsTable, AccountService.AccountStorageKey(UserId))).IsTrue();
-            await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsTable, personal)).IsTrue();
+            await Assert.That(await scenario.AccountExistsAsync(UserId)).IsTrue();
+            await Assert.That(await scenario.OrganizationExistsAsync(personal)).IsTrue();
             await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsTrue();
             using var profile = await scenario.Client.GetAsync("/profile?tab=danger");
             await Assert.That(profile.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -70,26 +70,24 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                     .And.Contains("without a refund").And.Contains("Shared organizations keep their data and plans");
                 await Assert.That(consent).DoesNotContain("Delete your databases first");
             }
-            var personalProjection = await scenario.Environment.State.GetAsync(AccountService.OrganizationsTable, personal, default);
-            await Assert.That(personalProjection!.Body.Deserialize<OrganizationRecord>()!.Projects.Values.Any(project => project.Databases.ContainsKey(databaseId))).IsTrue();
-            await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsTable, shared)).IsTrue();
+            var personalProjection = await scenario.Environment.Organizations.FindAsync(personal, default);
+            await Assert.That(personalProjection!.Organization.Projects.Values.Any(project => project.Databases.ContainsKey(databaseId))).IsTrue();
+            await Assert.That(await scenario.OrganizationExistsAsync(shared)).IsTrue();
 
             using (var deleted = await scenario.DeleteAsync("  USER@example.com "))
             {
                 await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
                 await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
             }
-            var key = AccountService.AccountStorageKey(UserId);
-            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsTable, key, default))!)).IsTrue();
-            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.IdentitiesTable, key, default))!)).IsTrue();
+            await Assert.That((await scenario.Environment.Accounts.FindAsync(UserId, default))!.Erased).IsTrue();
             await using (var storage = await scenario.Environment.StorageAsync())
             {
                 await Assert.That(await storage.AccessTokens.AnyAsync(row => row.UserId == UserId)).IsFalse();
                 await Assert.That(await storage.Sessions.AnyAsync(row => row.UserId == UserId)).IsFalse();
             }
 
-            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.OrganizationsTable, personal, default))!)).IsTrue();
-            await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsTable, shared)).IsTrue().Because("shared organizations keep their data");
+            await Assert.That(await scenario.Environment.Organizations.IsErasedAsync(personal, default)).IsTrue();
+            await Assert.That(await scenario.OrganizationExistsAsync(shared)).IsTrue().Because("shared organizations keep their data");
             await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
             await Assert.That(scenario.Environment.Workspace.Organizations[shared].Members.ContainsKey(UserId)).IsFalse();
             using var session = await scenario.Client.GetAsync("/__test/session");
@@ -145,7 +143,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That(scenario.Environment.BillingPlans.Mutations(binding.CustomerId).Count(path => path == "DELETE /v1/subscriptions/" + binding.SubscriptionId)).IsEqualTo(1);
             // The binding stays until DeletionReconciler fences it from the same auth proof.
             await Assert.That(StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Table, personal, default))!, personal).Status).IsEqualTo("canceled");
-            await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsTable, AccountService.AccountStorageKey(userId), default))!)).IsTrue();
+            await Assert.That((await scenario.Environment.Accounts.FindAsync(userId, default))!.Erased).IsTrue();
             await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
         }
 
@@ -175,7 +173,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(unconfirmed.StatusCode).IsNotEqualTo(HttpStatusCode.SeeOther);
             }
 
-            await Assert.That(await scenario.ExistsAsync(AccountService.AccountsTable, AccountService.AccountStorageKey(userId))).IsTrue();
+            await Assert.That(await scenario.AccountExistsAsync(userId)).IsTrue();
             await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("active");
             using (var deleted = await scenario.DeleteAsync(email))
             {
@@ -241,9 +239,14 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 return ((HttpClientHandler)Handler).CookieContainer.GetCookies(Client.BaseAddress!)[name]!.Value;
             }
 
-            public async Task<bool> ExistsAsync(string table, string id)
+            public async Task<bool> AccountExistsAsync(string userId)
             {
-                return await Environment.State.GetAsync(table, id, default) is not null;
+                return await Environment.Accounts.FindAsync(userId, default) is { Erased: false };
+            }
+
+            public async Task<bool> OrganizationExistsAsync(string id)
+            {
+                return await Environment.Organizations.FindAsync(id, default) is { Erased: false };
             }
 
             public async ValueTask DisposeAsync()

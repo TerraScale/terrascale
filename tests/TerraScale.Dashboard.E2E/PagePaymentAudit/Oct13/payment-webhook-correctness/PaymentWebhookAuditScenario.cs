@@ -121,8 +121,6 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
     internal sealed class PaymentWebhookAuditState(IDashboardState underlying) : IDashboardState
     {
         public BillingBinding? Billing { get; private set; }
-        public bool FailNextOrganizationWrite { get; set; }
-        public int InterruptedWrites { get; private set; }
         public Task InitializeAsync(CancellationToken cancellationToken)
         {
             return underlying.InitializeAsync(cancellationToken);
@@ -150,12 +148,6 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
 
         public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition precondition, CancellationToken cancellationToken)
         {
-            if (table == AccountService.OrganizationsTable && id == Billing?.OrganizationId && FailNextOrganizationWrite)
-            {
-                FailNextOrganizationWrite = false;
-                InterruptedWrites++;
-                throw new IOException("Local audit: billing persisted, organization projection interrupted.");
-            }
             await underlying.PutAsync(table, id, row, precondition, cancellationToken);
             if (table == StripeBilling.Table)
             {

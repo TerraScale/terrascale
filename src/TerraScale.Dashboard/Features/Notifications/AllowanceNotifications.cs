@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken);
     }
 
-    public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, IDashboardState state, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger)
+    public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger)
     {
         public const string OperationsContract = "write-units-4kib-global-v2";
         public const string StorageContract = "stored-byte-hours-global-v1";
@@ -88,17 +88,13 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         private async Task ObserveAsync(AllowanceUsageObservation item, DateTimeOffset month, CancellationToken cancellationToken)
         {
-            var organizationRow = await state.GetAsync(AccountService.OrganizationsTable, item.OrganizationId, cancellationToken);
-            if (organizationRow is null || AccountService.IsDeletionFence(organizationRow))
+            var stored = await organizations.FindAsync(item.OrganizationId, cancellationToken);
+            if (stored is not { Erased: false })
             {
                 return;
             }
 
-            var organization = AccountService.Read<OrganizationRecord>(organizationRow);
-            if (organizationRow.Id != item.OrganizationId || organization.Id != item.OrganizationId)
-            {
-                throw new IOException("Allowance organization identity is invalid.");
-            }
+            var organization = stored.Organization;
 
             if (organization.Status != "active" || organization.Archived || organization.DeletionRequested || PlanCatalog.For(organization) is null)
             {
@@ -194,7 +190,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 
     public static class AllowanceNotificationInbox
     {
-        public static async Task HydrateAsync(IDbContextFactory<DashboardDbContext> storage, IDashboardState state, AccountContext context, CancellationToken cancellationToken)
+        public static async Task HydrateAsync(IDbContextFactory<DashboardDbContext> storage, AccountStore accounts, AccountContext context, CancellationToken cancellationToken)
         {
             if (context.Organization is not { } organization || organization.RoleFor(context.UserId) != "owner")
             {
@@ -212,24 +208,22 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return;
             }
 
-            var key = AccountService.AccountStorageKey(context.UserId);
             for (var attempt = 0; attempt < 8; attempt++)
             {
-                var row = await state.GetAsync(AccountService.AccountsTable, key, cancellationToken) ?? throw new IOException("Allowance owner inbox is unavailable.");
-                var account = AccountService.Read<AccountRecord>(row);
-                var identityRow = await state.GetAsync(AccountService.IdentitiesTable, key, cancellationToken) ?? throw new IOException("Allowance owner identity is unavailable.");
-                var identity = AccountService.Read<AccountIdentityBinding>(identityRow);
-                if (row.Id != key || identityRow.Id != key || account.Id != context.Account.Id || account.UserId != context.UserId || identity.UserId != context.UserId || identity.AccountId != account.Id)
+                var stored = await accounts.FindAsync(context.UserId, cancellationToken);
+                if (stored is not { Erased: false } || stored.Account.Id != context.Account.Id)
                 {
-                    throw new IOException("Allowance owner identity is invalid.");
+                    throw new IOException("Allowance owner inbox is unavailable.");
                 }
+
+                var account = stored.Account;
 
                 var missing = alerts.Where(alert => !account.Notifications.Any(notification => notification.Id == alert.Id)).ToArray();
                 if (missing.Length == 0) { context.Account.Notifications = account.Notifications; return; }
                 account.Notifications.AddRange(missing.Select(alert => AllowanceNotifications.Alert(alert).Notification()));
                 try
                 {
-                    await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(row.Version), cancellationToken);
+                    await accounts.ReplaceAsync(stored, cancellationToken);
                     context.Account.Notifications = account.Notifications;
                     return;
                 }

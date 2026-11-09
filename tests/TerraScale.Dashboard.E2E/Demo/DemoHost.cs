@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -56,7 +57,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             billingPlans = new TestBillingPlanTransport(stripe);
             checkoutPersistence = new TestBillingCheckoutPersistence(state);
             apiKeys = new TestAuthApiKeys(auth.ResolveAccessToken, workspace.ProjectRole);
-            reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys);
+            reporting = new TestReportingTransport(Organizations, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys);
         }
 
         internal TestWorkspace Workspace => workspace;
@@ -74,13 +75,17 @@ namespace TerraScale.Dashboard.E2E.Demo
             return terraBase.Open(database);
         }
 
+        internal AccountStore Accounts => new(new TestStorageFactory(StorageAsync), TimeProvider.System);
+
+        internal OrganizationStore Organizations => new(new TestStorageFactory(StorageAsync));
+
         public async Task InitializeAsync()
         {
             var personal = workspace.SeedPersonal(new("test-user", "Test User", "user@example.com", "", null, clock.GetUtcNow().AddHours(1)));
-            await state.PutAsync(AccountService.OrganizationsTable, personal.Id, JsonSerializer.SerializeToElement(personal), StatePrecondition.Absent, default);
+            await Organizations.CreateAsync(personal, default);
             var account = new AccountRecord
             {
-                Id = AccountService.AccountId("test-user"),
+                Id = AccountService.NewId(),
                 UserId = "test-user",
                 Name = "Test User",
                 Email = "user@example.com",
@@ -92,7 +97,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 ActiveProjectId = personal.Projects.Keys.First(),
                 CreatedAt = clock.GetUtcNow()
             };
-            await state.PutAsync(AccountService.AccountsTable, account.Id, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
+            await Accounts.CreateAsync(account, default);
         }
 
         // contentRoot holds web/static: the project directory, or the published application directory.
@@ -432,6 +437,19 @@ namespace TerraScale.Dashboard.E2E.Demo
             return codes.TryRemove(code, out var session)
                     ? Task.FromResult(session)
                     : Task.FromException<SessionRecord>(new SignInRejectedException());
+        }
+    }
+
+    sealed class TestStorageFactory(Func<Task<DashboardDbContext>> open) : IDbContextFactory<DashboardDbContext>
+    {
+        public DashboardDbContext CreateDbContext()
+        {
+            throw new NotSupportedException("Dashboard storage is async only.");
+        }
+
+        public Task<DashboardDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+        {
+            return open();
         }
     }
 

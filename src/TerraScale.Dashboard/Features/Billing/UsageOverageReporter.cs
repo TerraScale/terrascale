@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    public sealed class UsageOverageReporter(IDashboardState state, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
+    public sealed class UsageOverageReporter(IDashboardState state, OrganizationStore organizations, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
     {
         private const int ClosingDays = 3;
 
@@ -47,17 +47,13 @@ namespace TerraScale.Dashboard.Features.Billing
 
         public async Task ReportAsync(string organizationId, long units, long? storageByteHours, DateTimeOffset month, CancellationToken cancellationToken)
         {
-            var row = await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken);
+            var row = await organizations.FindAsync(organizationId, cancellationToken);
             if (row is null)
             {
                 return;
             }
 
-            var organization = AccountService.Read<OrganizationRecord>(row);
-            if (row.Id != organizationId || organization.Id != organizationId)
-            {
-                throw new IOException("Overage organization identity is invalid.");
-            }
+            var organization = row.Erased ? throw new IOException("Dashboard record was erased.") : row.Organization;
             // Internal billing reports usage without Stripe charges.
             if (organization.InternalBilling is not null || PlanCatalog.For(organization) is not { PriceCents: > 0 } plan)
             {

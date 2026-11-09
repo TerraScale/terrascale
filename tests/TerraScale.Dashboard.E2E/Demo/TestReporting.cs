@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.E2E.Demo
 {
     // Test-only producer protocol. Real dashboard HTTP endpoints, reporting
     // adapters, SDK retention requests and persisted CAS writes remain in use.
-    sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,
+    sealed class TestReportingTransport(OrganizationStore organizationStore, TestWorkspace workspace, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,
         Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> resolveProjectToken, TestAuthApiKeys apiKeys) : HttpMessageHandler
     {
 
@@ -150,7 +150,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
                 }
                 // Auth owns identity and membership; dashboard storage owns the database references used by reporting fixtures.
-                var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsTable + "/" + org.Id)?.Body.Deserialize<OrganizationRecord>();
+                var settings = (await organizationStore.FindAsync(org.Id, cancellationToken))?.Organization;
                 if (settings?.Projects.TryGetValue(id, out var storedProject) == true)
                 {
                     project.Databases = storedProject.Databases;

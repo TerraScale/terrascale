@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Accounts
     {
         public static IServiceCollection AddAccountFeatures(this IServiceCollection services)
         {
-            return services.AddSingleton<AccountService>();
+            return services.AddSingleton<AccountStore>().AddSingleton<OrganizationStore>().AddSingleton<AccountService>();
         }
 
         internal static async Task<IResult> SwitchAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, string field,

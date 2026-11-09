@@ -95,7 +95,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 await Assert.That(discoveredWithoutState.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That(await discoveredWithoutState.Content.ReadAsStringAsync()).Contains(database);
             }
-            await Assert.That(await platform.StoredAsync(AccountService.OrganizationsTable, org)).IsFalse();
+            await Assert.That(await platform.StoredAsync(org)).IsFalse();
 
             var saved = new OrganizationRecord
             {
@@ -594,7 +594,6 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             private readonly List<WebApplication> hosts = [];
             private readonly ConcurrentDictionary<string, Principal> principals = new();
             private TestAuth? auth;
-            private IDashboardState? state;
             private TestDatabases? databases;
             public PlatformProducer Producer { get; private set; } = null!;
             public Uri Origin => origin;
@@ -619,7 +618,6 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 var app = await environment.CreateTestHostAsync(Root, 0, publicOrigin, builder =>
                 {
                     auth ??= (TestAuth)builder.Services.Last(service => service.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
-                    state ??= (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
                     databases ??= (TestDatabases)builder.Services.Last(service => service.ServiceType == typeof(IDatabaseBackend)).ImplementationInstance!;
                     Producer ??= new(auth.ResolveAccessToken)
                     {
@@ -674,48 +672,29 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             });
             }
 
-            public async Task<bool> StoredAsync(string table, string key)
+            public async Task<bool> StoredAsync(string org)
             {
-                return await state!.GetAsync(table, key, default) is not null;
+                return await environment.Organizations.FindAsync(org, default) is not null;
             }
 
             public Task StoreAsync(OrganizationRecord org)
             {
-                return state!.PutAsync(AccountService.OrganizationsTable, org.Id,
-                            JsonSerializer.SerializeToElement(org), StatePrecondition.Absent, default);
+                return environment.Organizations.CreateAsync(org, default);
             }
 
             public async Task<string?> VersionAsync(string org)
             {
-                return (await state!.GetAsync(AccountService.OrganizationsTable, org, default))?.Version;
+                return (await environment.Organizations.FindAsync(org, default))?.Version;
             }
 
-            public async Task AccountAsync(string user, Action<AccountRecord> change)
-            {
-                var key = AccountService.AccountStorageKey(user);
-                var stored = (await state!.GetAsync(AccountService.AccountsTable, key, default))!;
-                var account = stored.Body.Deserialize<AccountRecord>()!;
-                change(account);
-                await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(stored.Version), default);
-            }
             public Task FenceAsync(string org)
             {
-                return AccountService.FenceOrganizationDeletionAsync(state!, org, AccountService.NewId(), default);
+                return environment.Organizations.FenceAsync(org, AccountService.NewId(), default);
             }
 
             public void SeedDatabase(ManagedDatabase database)
             {
                 databases!.SeedFixtureDatabase(database);
-            }
-
-            public async Task<bool> ErasedAccountAsync(string key)
-            {
-                return AccountService.IsDeletionFence((await state!.GetAsync(AccountService.AccountsTable, key, default))!);
-            }
-
-            public async Task<bool> ErasedOrganizationAsync(string key)
-            {
-                return AccountService.IsDeletionFence((await state!.GetAsync(AccountService.OrganizationsTable, key, default))!);
             }
 
             public Task<OrganizationRecord> PlanAsync(string organizationId, string planId)
@@ -725,18 +704,16 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
             public async Task<OrganizationRecord> ProjectionAsync(string organizationId, Action<OrganizationRecord>? change = null)
             {
-                var current = await state!.GetAsync(AccountService.OrganizationsTable, organizationId, default)
+                var current = await environment.Organizations.FindAsync(organizationId, default)
                     ?? throw new InvalidOperationException("The fixture targets an existing organization");
-                var organization = current.Body.Deserialize<OrganizationRecord>()!;
                 if (change is null)
                 {
-                    return organization;
+                    return current.Organization;
                 }
 
-                change(organization);
-                await state.PutAsync(AccountService.OrganizationsTable, organizationId, JsonSerializer.SerializeToElement(organization),
-                    StatePrecondition.Matches(current.Version), default);
-                return organization;
+                change(current.Organization);
+                await environment.Organizations.ReplaceAsync(current, default);
+                return current.Organization;
             }
 
             public HttpClient Client(bool replica = false)

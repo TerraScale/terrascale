@@ -9,7 +9,7 @@ using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    public sealed class InternalBillingService(IDashboardState state, AccountService accounts, IPlatformRoleGateway roles,
+    public sealed class InternalBillingService(IDashboardState state, AccountStore accountStore, OrganizationStore organizations, AccountService accounts, IPlatformRoleGateway roles,
         IUsageMeasurements measurements, TimeProvider time, ITsAuthPlatform platform)
     {
         public const string Table = "dashboard_internal_billing";
@@ -72,8 +72,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 target.Organization.PaidExcess = true;
                 try
                 {
-                    await state.PutAsync(AccountService.OrganizationsTable, config.OrganizationId,
-                        JsonSerializer.SerializeToElement(target.Organization), StatePrecondition.Matches(target.Record.Version), cancellationToken);
+                    await organizations.ReplaceAsync(target.Record, cancellationToken);
                     await ActivateAsync(reservation, cancellationToken);
                     return;
                 }
@@ -390,7 +389,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 alert = new(Organization.OwnerUserId, observed.InternalBilling.ConfigurationId, bill.SpendCapCents,
                     alert?.Id ?? ids.NewId(), month, bill.Alert!, time.GetUtcNow());
                 Organization.InternalBillingAlerts[alertKey] = alert;
-                try { await state.PutAsync(AccountService.OrganizationsTable, observed.Id, JsonSerializer.SerializeToElement(Organization), StatePrecondition.Matches(record.Version), cancellationToken); break; }
+                try { await organizations.ReplaceAsync(record, cancellationToken); break; }
                 catch (StateConflictException) when (attempt < 7) { alert = null; }
             }
             if (alert is null || alert.Month != month || alert.Id.Length == 0 || alert.OwnerUserId.Length == 0)
@@ -398,19 +397,15 @@ namespace TerraScale.Dashboard.Features.Billing
                 throw new IOException("Internal billing cap alert is unavailable.");
             }
 
-            var key = AccountService.AccountStorageKey(alert.OwnerUserId);
             for (var attempt = 0; attempt < 8; attempt++)
             {
-                var row = await state.GetAsync(AccountService.AccountsTable, key, cancellationToken) ?? throw new IOException("Internal billing owner account is unavailable.");
-                var account = AccountService.Read<AccountRecord>(row);
-                var identityRow = await state.GetAsync(AccountService.IdentitiesTable, key, cancellationToken) ?? throw new IOException("Internal billing owner identity is unavailable.");
-                var identity = AccountService.Read<AccountIdentityBinding>(identityRow);
-                if (row.Id != key || identityRow.Id != key || account.UserId != alert.OwnerUserId || identity.UserId != account.UserId ||
-                    identity.AccountId != account.Id ||
-                    !(TerraScaleIds.IsValid(account.Id) || account.Id == key))
+                var row = await accountStore.FindAsync(alert.OwnerUserId, cancellationToken);
+                if (row is not { Erased: false })
                 {
-                    throw new IOException("Internal billing owner account identity is invalid.");
+                    throw new IOException("Internal billing owner account is unavailable.");
                 }
+
+                var account = row.Account;
 
                 principal = await RefreshAdministratorAsync(principal, refreshAuthority, cancellationToken);
                 // The CLI's explicit target need not be the browser selection.
@@ -443,7 +438,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 });
                 // The account CAS deduplicates inbox writes; it cannot atomically
                 // guard a later change to the separate organization row.
-                try { await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(row.Version), cancellationToken); return; }
+                try { await accountStore.ReplaceAsync(row, cancellationToken); return; }
                 catch (StateConflictException) when (attempt < 7) { }
             }
             throw new IOException("Internal billing owner inbox changed concurrently.");
@@ -471,19 +466,13 @@ namespace TerraScale.Dashboard.Features.Billing
             return fresh;
         }
 
-        private async Task<(StateRecord Record, OrganizationRecord Organization)> OrganizationAsync(string id, CancellationToken cancellationToken)
+        private async Task<(StoredOrganization Record, OrganizationRecord Organization)> OrganizationAsync(string id, CancellationToken cancellationToken)
         {
-            var row = await state.GetAsync(AccountService.OrganizationsTable, id, cancellationToken) ?? throw new AccountAccessException("Organization was not found.", 404);
-            var organization = AccountService.Read<OrganizationRecord>(row);
-            if (row.Id != id || organization.Id != id || organization.InternalBillingAlerts is null)
-            {
-                throw new IOException("Internal billing organization identity is invalid.");
-            }
-
-            return (row, organization);
+            var row = await organizations.FindAsync(id, cancellationToken) ?? throw new AccountAccessException("Organization was not found.", 404);
+            return row.Erased ? throw new IOException("Dashboard record was erased.") : (row, row.Organization);
         }
 
-        private async Task<(StateRecord Record, OrganizationRecord Organization, OrganizationRecord Authority)> AuthorizedOrganizationAsync(AccountContext principal, string id, CancellationToken cancellationToken)
+        private async Task<(StoredOrganization Record, OrganizationRecord Organization, OrganizationRecord Authority)> AuthorizedOrganizationAsync(AccountContext principal, string id, CancellationToken cancellationToken)
         {
             // Capture the CAS version before awaited canonical reads so a newer dashboard projection cannot be overwritten.
             var (Row, Organization) = await OrganizationAsync(id, cancellationToken);
