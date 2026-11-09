@@ -140,13 +140,16 @@ slice removes every replica) or `AllRegions`. `MoveDatabaseHome` waits up to
 `MoveHomeTimeout` (5 minutes) and retries only `503 move_unresolved`, at most five
 times, after `Retry-After` or 1 second. `ManagedDatabase` carries `HomeRegion`,
 `ReplicaRegions` and `AllRegions`. [Contract fixtures](contracts/terrabase/placement/)
-qualify the HTTP boundary. Automatic all-regions placement and moving the home region are coming on the server.
+qualify the HTTP boundary. All-regions placement (`AllRegions`) keeps a replica in every
+serving region, including regions added later; `MoveDatabaseHome` moves the home to a
+replica region (`ts db move-home`, `ts db placement ... -all-regions`).
 
 A database has one home region for writes and can have encrypted read replicas in other serving regions.
 REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
-preserve read-your-writes; use the home for REST reads that must see a previous write. Automatic all-regions
-placement is coming; use an explicit replica-region list today.
+preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
+placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
+serving region; otherwise set an explicit replica-region list.
 
 The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
 storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
@@ -620,6 +623,7 @@ ts keys create backend app         # printed once on stdout
 ts db info app
 ts db create orders -home-region gru -replica-regions sjc
 ts db placement orders -replica-regions fra,sjc
+ts db regions orders
 ts backup create app && ts backup list app
 ts functions deploy app hello.js
 ts functions deploy app ./report -cron '0 * * * *'   # deploys report/index.js as report

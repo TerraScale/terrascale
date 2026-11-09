@@ -75,6 +75,8 @@ Options go before or after the command and its operands; -- ends options.
   db placement <db> (-replica-regions <a,b> | -all-regions)
                                           set the database's replica regions
   db move-home <db> <region>              move the home to a replica region
+  db regions <db>                         print the home region and each
+                                          replica's pull progress
   backup list | create <db>               list or take a database's backups
   backup policy <db>                      read the snapshot schedule and retention
   backup policy-set <db> <cron|none> <days> set five-field UTC cron and 1..35 days
@@ -216,6 +218,7 @@ var commands = map[string][]int{
 	"db export":          {1},
 	"db placement":       {1},
 	"db move-home":       {2},
+	"db regions":         {1},
 	"backup list":        {1},
 	"backup create":      {1},
 	"backup restore":     {3},
@@ -1056,6 +1059,34 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			return err
 		}
 		return emitJSON(out, m)
+	case "db regions":
+		r, err := db.Regions(ctx)
+		if err != nil {
+			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, r)
+		}
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "REGION\tROLE\tLAG MS\tLAST PULL\tLAST VERIFIED\tREVISION")
+		fmt.Fprintf(w, "%s\thome\t\t\t\t\n", r.HomeRegion)
+		for _, rep := range r.Replicas {
+			lag, pull, verified, revision := "-", "-", "-", "-"
+			if rep.LagMs != nil {
+				lag = fmt.Sprintf("%.0f", *rep.LagMs)
+			}
+			if rep.LastPulledAt != nil {
+				pull = rep.LastPulledAt.Format(time.RFC3339)
+			}
+			if rep.LastVerified != nil {
+				verified = rep.LastVerified.Format(time.RFC3339)
+			}
+			if rep.Revision != nil {
+				revision = *rep.Revision
+			}
+			fmt.Fprintf(w, "%s\treplica\t%s\t%s\t%s\t%s\n", rep.Region, lag, pull, verified, revision)
+		}
+		return w.Flush()
 	case "db rename", "databases rename":
 		id := args[0]
 		if v1.ValidateID(id) != nil {
