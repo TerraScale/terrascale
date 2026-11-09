@@ -50,7 +50,7 @@ internal sealed class LocalOutcomeUnknownException(string message, Exception inn
 
 internal sealed class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
-    IInRegionAck partner, IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger)
+    IInRegionAck partner, RegionalOwners owners, IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger)
     : BackgroundService, ILocalWrites, ILocalCommitPath
 {
     internal const int MaxPayloadBytes = 8 << 20;
@@ -98,7 +98,7 @@ internal sealed class HomePush(
 
     public bool TwoNodeAck => LocalAckAvailable && partner.PartnerHealthy;
 
-    private bool RegionWriter => services.GetService<RegionalOwners>()?.Writer ?? true;
+    private bool RegionWriter => owners.Writer;
 
     public bool LocalAckAvailable => RegionWriter && _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
         && partner.QuorumHealthy && services.GetService<ILocalWriteClock>() is { Allowed: true };
