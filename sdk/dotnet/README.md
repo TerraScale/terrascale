@@ -40,7 +40,8 @@ ADO.NET and Dapper: `TerraBaseDbConnection` wraps a `TerraBaseSqlDatabase` as a 
 `QueryAsync<T>`/`ExecuteAsync` from Dapper (or plain `DbCommand` readers) work over SQL REST autocommit
 statements (`ExecuteNonQueryAsync`, `ExecuteScalarAsync`, `ExecuteDbDataReaderAsync`; the sync overloads throw —
 the SDK is async-only). Parameters map to `?` positional or `@name`/`:name`/`$name` named arguments. Transactions
-arrive with the next slice; `BeginTransaction` throws until then.
+run over the SQL WebSocket session: `BeginTransactionAsync`/`CommitAsync`/`RollbackAsync` (Serializable only; the
+sync transaction methods throw like the other sync paths).
 
 - `ApiKey` is a project or organization API key from the dashboard. The client exchanges it at ts-auth
   (`client_credentials`) for an access token to the project named in `Database(projectId, …)`, caches the token and
