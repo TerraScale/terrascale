@@ -20,7 +20,6 @@ internal static class EntityIds
         }
     }
 
-    // Crockford base32 as ULIDs print it: uppercase, without I, L, O and U.
     private static readonly SearchValues<char> Canonical = SearchValues.Create("0123456789ABCDEFGHJKMNPQRSTVWXYZ");
 
     public static bool IsValid([NotNullWhen(true)] string? id) =>

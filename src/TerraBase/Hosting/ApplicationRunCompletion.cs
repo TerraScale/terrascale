@@ -5,8 +5,6 @@ using ZLogger;
 
 namespace TerraBase.Hosting;
 
-// Per-host completion of Program, including service disposal and its errors. ApplicationStopped alone precedes
-// disposal and does not carry StopAsync failures; an in-process owner must observe the full run.
 internal sealed class ApplicationRunCompletion
 {
     public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -27,7 +25,6 @@ internal sealed class ApplicationRunCompletion
         TursoStorageEngine? storage = null;
         try
         {
-            // Retain instances even if startup fails after launching only some of their tasks.
             background = [.. app.Services.GetServices<IHostedService>().OfType<BackgroundService>()];
             storage = app.Services.GetRequiredService<TursoStorageEngine>();
             await app.StartAsync().ConfigureAwait(false);
@@ -42,7 +39,6 @@ internal sealed class ApplicationRunCompletion
 
         if (!started)
         {
-            // StartAsync can fail after some services started. Stop/join them before disposing their dependencies.
             try
             {
                 await app.StopAsync().ConfigureAwait(false);
@@ -54,8 +50,6 @@ internal sealed class ApplicationRunCompletion
         }
 
         LogStep("hosted services", stoppingAt);
-        // The host's stop deadline can expire while workers still use DI. Owner completion waits beyond that
-        // grace, independently of a caller's cancellation, before releasing their dependencies.
         var joined = Task.WhenAll(background.Select(service => service.ExecuteTask).OfType<Task>());
         try
         {
@@ -63,23 +57,19 @@ internal sealed class ApplicationRunCompletion
         }
         catch (OperationCanceledException) when (joined.IsCanceled)
         {
-            // A genuinely canceled ExecuteTask is a normal background-service exit.
         }
         catch (Exception) when (joined.IsFaulted)
         {
-            // Await throws only one failure; retain every worker's fault, including faulted cancellation exceptions.
             errors.AddRange(joined.Exception!.InnerExceptions);
         }
 
         await Task.WhenAll(observations).ConfigureAwait(false);
-        // All requests and workers, including backup taps and final usage writes, have released storage first.
         var closingAt = Stopwatch.GetTimestamp();
         try
         {
             if (storage is not null)
             {
                 await storage.DisposeAsync().ConfigureAwait(false);
-                // Failed startup can return a lease to its caller; cleanup ownership outlives the reported start error.
                 if (started)
                 {
                     await storage.CleanupCompletion.ConfigureAwait(false);
@@ -103,7 +93,6 @@ internal sealed class ApplicationRunCompletion
         }
 
         LogStep("service and storage disposal", disposingAt);
-        // StopAsync can report the same worker fault the execution join observes.
         var failures = new AggregateException(errors).Flatten().InnerExceptions.Distinct<Exception>(ReferenceEqualityComparer.Instance).ToArray();
         if (failures.Length == 1)
         {

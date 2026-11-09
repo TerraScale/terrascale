@@ -3,8 +3,6 @@ using Microsoft.OpenApi;
 
 namespace TerraBase.Hosting;
 
-// Describes a request body in OpenAPI only: Accepts would add a routing constraint whose 415 carries no listener
-// metadata and so becomes a 404 on the client listener. Endpoints check media types themselves.
 public sealed record RequestBodyMetadata(Type Type, string ContentType);
 
 public static class RequestBodies

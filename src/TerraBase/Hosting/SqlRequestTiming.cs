@@ -4,7 +4,6 @@ using TerraBase.Configuration;
 
 namespace TerraBase.Hosting;
 
-// Bounded stage names only: no SQL, tenant identifiers or authentication data in response headers.
 internal sealed class SqlRequestTiming
 {
     private readonly long _started = Stopwatch.GetTimestamp();

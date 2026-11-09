@@ -57,10 +57,8 @@ public interface ITenantDirectory
 
     ValueTask<DatabaseRecordResult> DatabaseRecordAsync(TenantContext database, CancellationToken cancellationToken);
 
-    // Read a page before asking the home region for heads, so a newer registration is not mistaken for a deletion there.
     ValueTask<ReadDatabaseRecordsResult> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken);
 
-    // Only a catalog primary registers, records or deletes; followers follow its catalog (docs/cross-region.md).
     ValueTask<AdoptDatabaseResult> AdoptDatabaseAsync(TenantContext database, string name, DatabasePlacement placement, CancellationToken cancellationToken);
 
     ValueTask<UpdatePlacementResult> UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken);
