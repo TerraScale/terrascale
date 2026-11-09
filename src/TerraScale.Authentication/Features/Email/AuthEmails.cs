@@ -30,7 +30,6 @@ public enum AuthEmailKind
     /// <summary>A one-time code for the second sign-in factor.</summary>
     MfaCode,
 
-    /// <summary>A one-time code that confirms the signed-in user's identity for a sensitive change.</summary>
     StepUpCode,
 
     /// <summary>An alert about a sign-in from a device not seen before.</summary>
