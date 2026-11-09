@@ -44,9 +44,10 @@ function passkeyDecode(text) {
 (function () {
   var form = document.getElementById('passkey-add');
   if (!form) return;
+  var i18n = JSON.parse(form.dataset.i18n || '{}');
   function json(response) {
     return response.json().then(function (body) {
-      if (!response.ok) throw new Error(body.error && body.error.message || 'The passkey was not added.');
+      if (!response.ok) throw new Error(body.error && body.error.message || i18n.notAdded || '');
       return body;
     });
   }
@@ -64,13 +65,14 @@ function passkeyDecode(text) {
       var head = document.querySelector('.head');
       (head || document.body).after(alert);
     }
-    alert.innerHTML = '<strong>Passkey not added</strong><p></p>';
+    alert.innerHTML = '<strong></strong><p></p>';
+    alert.querySelector('strong').textContent = i18n.notAddedTitle || '';
     alert.querySelector('p').textContent = message;
   }
   form.addEventListener('submit', function (event) {
     event.preventDefault();
     var button = form.querySelector('button[type="submit"]');
-    if (!window.PublicKeyCredential) { fail(button, 'This browser cannot create passkeys.'); return; }
+    if (!window.PublicKeyCredential) { fail(button, i18n.unsupported || ''); return; }
     var name = (form.querySelector('input[name="name"]') || { value: '' }).value;
     var sealed = null;
     fetch(form.dataset.options, { method: 'POST', headers: { 'Accept': 'application/json' } })
@@ -92,7 +94,7 @@ function passkeyDecode(text) {
         } });
       })
       .then(function (assertion) {
-        if (!assertion) throw new Error('The passkey was not created.');
+        if (!assertion) throw new Error(i18n.notCreated || '');
         return fetch(form.dataset.verify, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -113,12 +115,13 @@ function passkeyDecode(text) {
         }).then(json);
       })
       .then(function () { window.location.reload(); })
-      .catch(function (error) { fail(button, error.message || 'The passkey was not added.'); });
+      .catch(function (error) { fail(button, error.message || i18n.notAdded || ''); });
   });
 })();
 (function () {
   var button = document.getElementById('passkey-sign-in');
   if (!button || !window.PublicKeyCredential) return;
+  var i18n = JSON.parse(button.dataset.i18n || '{}');
   button.hidden = false;
   var email = document.getElementById('sign-in-email');
   function reset() {
@@ -138,11 +141,13 @@ function passkeyDecode(text) {
       var head = document.querySelector('.head');
       (head || document.body).after(alert);
     }
-    alert.innerHTML = '<strong>' + message + '</strong><p>' + body + '</p>';
+    alert.innerHTML = '<strong></strong><p></p>';
+    alert.querySelector('strong').textContent = message;
+    alert.querySelector('p').textContent = body;
   }
   function json(response) {
     return response.json().then(function (body) {
-      if (!response.ok) throw new Error('The passkey sign-in failed.');
+      if (!response.ok) throw new Error(i18n.signInFailed || '');
       return body;
     });
   }
@@ -159,7 +164,7 @@ function passkeyDecode(text) {
     var address = email ? email.value.trim() : '';
     if (!address) {
       if (email) email.focus();
-      fail('Enter your email address', 'Enter your email address to sign in with a passkey.');
+      fail(i18n.emailTitle || '', i18n.emailBody || '');
       return;
     }
     button.disabled = true;
@@ -183,7 +188,7 @@ function passkeyDecode(text) {
         } });
       })
       .then(function (assertion) {
-        if (!assertion) throw new Error('The passkey sign-in failed.');
+        if (!assertion) throw new Error(i18n.signInFailed || '');
         return fetch(button.dataset.verify, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -206,13 +211,13 @@ function passkeyDecode(text) {
         });
       })
       .then(function (response) {
-        if (!response.ok) throw new Error('The passkey sign-in failed.');
+        if (!response.ok) throw new Error(i18n.signInFailed || '');
         return response.text();
       })
       .then(follow)
       .catch(function (error) {
         if (error && error.name === 'NotAllowedError') { reset(); return; }
-        fail('Passkey sign-in failed', 'The passkey sign-in failed; start again.');
+        fail(i18n.signInFailedTitle || '', i18n.signInAgain || '');
       });
   });
 })();
@@ -220,9 +225,10 @@ function passkeyDecode(text) {
   document.querySelectorAll('button[data-wait-seconds]').forEach(function (button) {
     var remaining = parseInt(button.getAttribute('data-wait-seconds'), 10);
     var label = button.getAttribute('data-label') || button.textContent;
+    var format = button.getAttribute('data-wait-format') || '{0} {1}';
     function tick() {
       if (remaining > 0) {
-        button.textContent = label + ' in ' + remaining + 's';
+        button.textContent = format.replace('{0}', label).replace('{1}', remaining);
         remaining -= 1;
         setTimeout(tick, 1000);
       } else {
