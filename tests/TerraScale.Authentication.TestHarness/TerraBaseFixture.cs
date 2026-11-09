@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -20,12 +21,15 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     private int nextManagement = -1;
     private readonly Lazy<Task<OidcHarness>>[] shared;
     private int nextShared = -1;
+    private readonly Lazy<Task<ProvisionedDatabase>>[] pool;
+    private int nextPool = -1;
     private readonly Lazy<Task> initialized;
 
     public TerraBaseFixture()
     {
         this.management = Enumerable.Range(0, 4).Select(_ => new Lazy<Task<OidcHarness>>(this.StartManagementAsync)).ToArray();
         this.shared = Enumerable.Range(0, 4).Select(_ => new Lazy<Task<OidcHarness>>(this.StartSharedAsync)).ToArray();
+        this.pool = Enumerable.Range(0, 22).Select(_ => new Lazy<Task<ProvisionedDatabase>>(this.CreatePooledAsync)).ToArray();
         this.initialized = new(this.InitializeCoreAsync);
     }
 
@@ -40,6 +44,42 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     public Task<OidcHarness> SharedAsync() =>
         this.shared[(uint)Interlocked.Increment(ref this.nextShared) % (uint)this.shared.Length].Value;
+
+    internal Task InitializePoolAsync()
+    {
+        foreach (var slot in this.pool)
+        {
+            _ = slot.Value;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    internal async Task<(TerraBaseTestTenant Tenant, TerraBaseSqlDatabase Database, string MasterKey)> TakeProvisionedAsync()
+    {
+        var index = (uint)Interlocked.Increment(ref this.nextPool);
+        if (index >= (uint)this.pool.Length)
+        {
+            var (tenant, database) = await this.CreateDatabaseAsync();
+            return (tenant, database, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+        }
+
+        var provisioned = await this.pool[index].Value.ConfigureAwait(false);
+        return (provisioned.Tenant, provisioned.Database, provisioned.MasterKey);
+    }
+
+    private Task<ProvisionedDatabase> CreatePooledAsync()
+    {
+        using var flow = ExecutionContext.SuppressFlow();
+        return Task.Run(async () =>
+        {
+            await this.InitializeAsync().ConfigureAwait(false);
+            var (tenant, database) = await this.CreateDatabaseAsync().ConfigureAwait(false);
+            return new ProvisionedDatabase(tenant, database, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+        });
+    }
+
+    private sealed record ProvisionedDatabase(TerraBaseTestTenant Tenant, TerraBaseSqlDatabase Database, string MasterKey);
 
     private Task<OidcHarness> StartSharedAsync()
     {

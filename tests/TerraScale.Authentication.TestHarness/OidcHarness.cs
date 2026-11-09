@@ -185,12 +185,8 @@ public sealed partial class OidcHarness : IAsyncDisposable
         CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null, bool runClosureWorker = true,
         Action<WebApplicationBuilder>? configure = null)
     {
-        // The real application's startup bootstrap provisions its tables.
-        // Repeating that setup here would create every table twice for each
-        // harness without testing another behavior.
-        var (tenant, database) = await fixture.CreateDatabaseAsync(provision: false);
+        var (tenant, database, masterKey) = await fixture.TakeProvisionedAsync();
         email ??= new CapturingEmailSender();
-        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var server = await StartServerAsync(fixture, tenant, email, values =>
         {
             values["master-key"] = masterKey;
