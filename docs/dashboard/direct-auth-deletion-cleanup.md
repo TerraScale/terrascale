@@ -55,9 +55,9 @@ permit removing local Checkout/customer mappings and replacing billing and
 organization roots with minimal erasure markers. No subscription is canceled
 merely because the auth endpoint is missing.
 
-Organization cleanup removes projected projects, saved queries, alert rules, log
-drains, their exact global-index entries, billing change receipts, allowance-alert
-ledgers and notifications scoped to that organization in surviving accounts.
+Organization cleanup removes projected projects, saved queries, alert rules with
+their pending events, log drains with their cursors, billing change receipts,
+allowance alerts and notifications scoped to that organization in surviving accounts.
 The `dashboard_internal_billing/organization` singleton is conditionally removed
 only while it still belongs to the proven organization. Retained replay cleans a
 late rewrite and preserves a singleton allocated to a replacement organization.

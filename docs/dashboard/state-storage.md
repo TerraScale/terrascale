@@ -9,8 +9,8 @@ against the same database today:
 
 | Data | Store |
 |---|---|
-| OIDC and step-up flows, browser sessions, PAT and MCP credentials, access tokens, MCP OAuth clients and codes, saved queries, SQL workspaces | Relational tables (below) |
-| Accounts, identities, organizations, billing, Stripe customers, checkouts and plan changes, internal billing, allowance alerts, alert rules, log drains, account deletions and the deletion cleanup journal | JSON-body tables (`IDashboardState`, last section) |
+| OIDC and step-up flows, browser sessions, PAT and MCP credentials, access tokens, MCP OAuth clients and codes, saved queries, SQL workspaces, allowance alerts, alert rules and their events, log drains and their cursors | Relational tables (below) |
+| Accounts, identities, organizations, billing, Stripe customers, checkouts and plan changes, internal billing, account deletions and the deletion cleanup journal | JSON-body tables (`IDashboardState`, last section) |
 
 ## Relational tables
 
@@ -40,6 +40,11 @@ calls named `state/sql/execute`.
 | `mcp_codes` | A pending single-use authorization code | `id` ULID; unique `code_hash`; foreign keys to `mcp_clients` and to the credential in `sessions`, both cascade |
 | `saved_queries` | A project's saved SQL query | `id` ULID; unique `(organization_id, project_id, database_id, name)` with a `NOCASE` name |
 | `sql_workspaces` | A user's SQL draft, history and latest run receipt for one database | `id` ULID; unique `(organization_id, project_id, database_id, user_id)`; draft at most 16 KiB; at most 20 history entries; `version` concurrency token |
+| `allowance_alerts` | An organization's operations (80 % and 100 %) or spending-alert notice for one UTC month, with its email outcome | `id` ULID, also the inbox notification id; unique `(organization_id, billing_month, metric, threshold)`; `metric` is `operations`, `storage` or `spend`; `threshold` 80 or 100 (spend only 100); `email_status` is `pending` or a final ts-auth answer |
+| `alert_rules` | A project's metric alert rule and its current state | `id` ULID; unique `(project_id, slot)` with `slot` 0 to 19, so a project holds at most 20 rules; index on `organization_id`; known metric; threshold above 0 and at most 1e12; webhook URL and sealed signing secret together or not at all; `firing` needs `since` and `alert_id`; `version` concurrency token |
+| `alert_events` | One firing or resolved transition still waiting for its email or webhook delivery | `id` ULID, the webhook `X-TerraScale-Delivery`; `rule_id` foreign key to `alert_rules` with cascade delete; index `(rule_id, id)`; a row exists only while the email or the webhook is `pending`; at most 3 webhook attempts |
+| `log_drains` | A project's OTLP/HTTP log drain | `id` ULID; unique `project_id`; index on `organization_id`; `https://` URL up to 2048 characters; header name and sealed value together or not at all; `revision` concurrency token |
+| `log_drain_cursors` | The drain's TerraBase request-log cursor for one database | `id` ULID; unique `(drain_id, database_id)`; `drain_id` foreign key to `log_drains` with cascade delete; cursor is a ULID |
 
 Grants (access and refresh tokens) stay encrypted with `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` (AES-GCM) in
 `nonce`, `ciphertext` and `tag` columns; owner, kind, device and expiry are plain columns, so listing, revocation and
@@ -48,6 +53,21 @@ rotates a grant; a stale token makes the save write nothing and the caller rerea
 
 A constraint violation (a duplicate saved query name, a second redemption of an MCP code) fails the one request and
 writes nothing; the dashboard answers it as the feature's conflict (`409`, `invalid_grant`).
+
+Alerts and log drains:
+
+- Creating an alert rule takes the lowest free slot; a create that loses the slot to a concurrent one takes the next,
+  and a project with all 20 slots taken answers `409`. A threshold change writes a new `version`, so a worker that
+  evaluated the old threshold saves nothing and evaluates again a minute later.
+- The alert worker finds projects through `alert_rules`. A state change saves the rule, and for a rule that emails or posts a webhook inserts its event, in one
+  `SaveChangesAsync`; a rule keeps its 10 newest pending events. After delivery a finished event is deleted and a
+  pending one keeps its statuses and attempts. Deleting a rule deletes its events.
+- The allowance worker records each notice once through the unique index: a concurrent insert of the same notice
+  fails and the worker rereads. A raised spending alert replaces the month's `spend` row in the same save, and
+  rows of earlier months are deleted. Owners' inboxes copy the rows by `id`.
+- A log drain edit keeps the row, its cursors and a stored header whose name is unchanged and value left blank; it
+  writes a new `revision` and clears the delivery status. The drain worker saves cursors and status with the
+  `revision` it read, so a save that races an edit writes nothing and the new endpoint receives those requests.
 
 ### Migrations
 
@@ -74,6 +94,9 @@ backoff from 1 to 30 seconds. `/readyz` reports TerraBase unavailable while a mi
 
 `StorageSweeper` runs every 10 minutes and deletes expired `auth_flows`, `sessions` (and with them their access tokens
 and codes), expired `mcp_codes`, and MCP clients that never finished a first sign-in within 24 hours.
+
+Project and organization deletion delete `alert_rules` and `log_drains` (their events and cursors cascade) and the
+organization's `allowance_alerts`.
 
 ## JSON-body tables
 
