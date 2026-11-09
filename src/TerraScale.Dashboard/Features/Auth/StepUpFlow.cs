@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Primitives;
+using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Features.AuthenticationManagement;
+using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
 
@@ -157,6 +159,10 @@ namespace TerraScale.Dashboard.Features.Auth
                     "create_api_key" => await CreateDashboardCredentialEndpoint.CreateAsync(http, "api-key", sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "rotate_api_key" => await RotateDashboardCredentialEndpoint.RotateAsync(http, sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "create_oauth_client" => await AuthenticationConsole.PostAsync(http, "clients", sessions, accounts, services.GetRequiredService<ITsAuthProjects>()),
+                    "delete_organization" => await OrganizationEndpoints.LifecycleAsync(http, sessions, accounts,
+                        services.GetRequiredService<OrganizationLifecycleService>(), services.GetRequiredService<IWorkspacePlacement>(), "delete"),
+                    "start_ownership_transfer" => await OrganizationEndpoints.AccessMutationAsync(http, sessions, accounts,
+                        services.GetRequiredService<IOrganizationAccess>(), services.GetRequiredService<IWorkspacePlacement>(), "ownership"),
                     _ => throw Required()
                 };
             }
