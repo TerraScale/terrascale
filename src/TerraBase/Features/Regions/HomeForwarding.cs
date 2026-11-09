@@ -87,14 +87,17 @@ internal static class HomeForwarding
         }
 
         var services = context.RequestServices;
+        var options = services.GetRequiredService<TerraBaseOptions>();
+        var management = services.GetRequiredService<IManagementService>();
+        var peers = services.GetRequiredService<IRegionPeers>();
         var organization = await services.GetRequiredService<IProjectCatalog>().ProjectOrganizationAsync(project, context.RequestAborted).ConfigureAwait(false);
         if (organization is string found)
         {
             if (database is not null && context.GetEndpoint()?.Metadata.GetMetadata<OriginNoStore>() is not null
                 && context.Request.RouteValues.ContainsKey("table")
-                && await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase shapeDatabase
-                && shapeDatabase.Home(services.GetRequiredService<TerraBaseOptions>().Region) is { } shapeHome
-                && shapeHome != services.GetRequiredService<TerraBaseOptions>().Region)
+                && await management.FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase shapeDatabase
+                && shapeDatabase.Home(options.Region) is { } shapeHome
+                && shapeHome != options.Region)
             {
                 var tenant = new TenantContext(found, PlanTier.Hobby, project, shapeDatabase.Id);
                 if (context.Request.Query["live"] == "true" && services.GetRequiredService<IDatabaseReplicas>().Holds(tenant))
@@ -102,27 +105,23 @@ internal static class HomeForwarding
                     return null;
                 }
 
-                var peer = (await services.GetRequiredService<IRegionPeers>().OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
-                    .FirstOrDefault(candidate => candidate.Region == shapeHome);
-                return peer is null ? null : new HomeNode(shapeHome, peer.Address);
+                return await HomeAtAsync(peers, shapeHome, context.RequestAborted).ConfigureAwait(false);
             }
 
             // A session WebSocket whose record is here but places the database elsewhere never reaches the endpoint:
             // the placement check answers 421 first, and a WebSocket cannot follow that. Relay the whole socket to the
             // home instead. A replica region keeps serving the socket itself, as every route does.
             if (socket && database is not null
-                && await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase socketDatabase
-                && socketDatabase.Home(services.GetRequiredService<TerraBaseOptions>().Region) is { } socketHome
-                && socketHome != services.GetRequiredService<TerraBaseOptions>().Region
-                && !(socketDatabase.AllRegions || socketDatabase.Replicas.Contains(services.GetRequiredService<TerraBaseOptions>().Region)))
+                && await management.FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase socketDatabase
+                && socketDatabase.Home(options.Region) is { } socketHome
+                && socketHome != options.Region
+                && !(socketDatabase.AllRegions || socketDatabase.Replicas.Contains(options.Region)))
             {
-                var peer = (await services.GetRequiredService<IRegionPeers>().OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
-                    .FirstOrDefault(candidate => candidate.Region == socketHome);
-                return peer is null ? null : new HomeNode(socketHome, peer.Address);
+                return await HomeAtAsync(peers, socketHome, context.RequestAborted).ConfigureAwait(false);
             }
 
             if (database is null
-                || await services.GetRequiredService<IManagementService>().FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is not NotFound)
+                || await management.FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is not NotFound)
             {
                 return null;
             }
@@ -135,6 +134,12 @@ internal static class HomeForwarding
         return await services.GetRequiredService<IHomeLocator>().LocateAsync(project, database, context.RequestAborted).ConfigureAwait(false);
     }
 
+    private static async ValueTask<HomeNode?> HomeAtAsync(IRegionPeers peers, string home, CancellationToken cancellationToken)
+    {
+        var peer = (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(candidate => candidate.Region == home);
+        return peer is null ? null : new HomeNode(home, peer.Address);
+    }
+
     /// <summary>
     /// Copies the client request's headers onto <paramref name="request"/> for a peer in <paramref name="region"/> and signs
     /// it with the peer credential, so the peer serves it as the same client request.
@@ -143,7 +148,7 @@ internal static class HomeForwarding
     {
         foreach (var (name, values) in context.Request.Headers)
         {
-            if (!Unforwarded.Contains(name) && !name.StartsWith(':'))
+            if (IsForwardable(name))
             {
                 request.Headers.TryAddWithoutValidation(name, (IEnumerable<string?>)values);
             }
