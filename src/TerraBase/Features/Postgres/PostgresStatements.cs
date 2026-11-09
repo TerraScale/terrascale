@@ -301,7 +301,7 @@ internal static partial class PostgresStatements
         {
             return token is Word word
                 && named.SelectMany(table => table.Columns).Where(column => column.Name.Equals(word.Value, StringComparison.OrdinalIgnoreCase))
-                    .Select(column => Oid(column.DeclType) switch { PgOid.Numeric => PgOid.Float8, 1082 or 1114 or 1184 => PgOid.Text, var oid => oid }).Distinct().ToList() is [var only]
+                    .Select(column => PgOid.Of(column.DeclType) switch { PgOid.Numeric => PgOid.Float8, 1082 or 1114 or 1184 => PgOid.Text, var oid => oid }).Distinct().ToList() is [var only]
                 ? only
                 : 0;
         }
@@ -414,7 +414,7 @@ internal static partial class PostgresStatements
     public static PgResult Result(PgStatement statement, SqlResult result)
     {
         PgColumn[]? columns = result.Columns.Count == 0 ? null : [.. result.Columns.Select((column, i) => new PgColumn(column.Name,
-            Oid(column.DeclType) is > 0 and var oid ? oid
+            PgOid.Of(column.DeclType) is > 0 and var oid ? oid
             : result.Rows.Select(row => row[i].Kind).FirstOrDefault(value => value != SqlValueKind.Null) switch
             {
                 SqlValueKind.Integer => PgOid.Int8,
@@ -434,29 +434,9 @@ internal static partial class PostgresStatements
         return new PgResult(columns, result.Rows, tag);
     }
 
-    public static int Oid(string? declared) => (declared?.Split('(')[0].Trim().ToUpperInvariant() ?? "") switch
-    {
-        "BIGINT" or "INT8" => PgOid.Int8,
-        "SMALLINT" or "INT2" => PgOid.Int2,
-        "INTEGER" or "INT" or "INT4" => PgOid.Int4,
-        "REAL" or "FLOAT" or "FLOAT4" or "FLOAT8" or "DOUBLE" or "DOUBLE PRECISION" => PgOid.Float8,
-        "NUMERIC" or "DECIMAL" => PgOid.Numeric,
-        "TEXT" => PgOid.Text,
-        "VARCHAR" or "CHAR" or "CHARACTER" or "CHARACTER VARYING" => PgOid.Varchar,
-        "BOOLEAN" or "BOOL" => PgOid.Bool,
-        "JSON" => PgOid.Json,
-        "JSONB" => PgOid.Jsonb,
-        "BLOB" or "BYTEA" => PgOid.Bytea,
-        "UUID" => PgOid.Uuid,
-        "DATE" => PgOid.Date,
-        "TIMESTAMP" or "TIMESTAMP WITHOUT TIME ZONE" => PgOid.Timestamp,
-        "TIMESTAMPTZ" or "TIMESTAMP WITH TIME ZONE" => PgOid.Timestamptz,
-        _ => 0,
-    };
-
-    public static int DescribedOid(SqlColumn column) => Oid(column.DeclType) is > 0 and var declared ? declared
+    public static int DescribedOid(SqlColumn column) => PgOid.Of(column.DeclType) is > 0 and var declared ? declared
         : ExpressionPattern().Match(column.Name) is { Success: true } match
-            ? match.Groups[1].Success ? 20 : match.Groups[2].Success ? 701 : Oid(match.Groups[3].Value) is > 0 and var cast ? cast : PgOid.Text
+            ? match.Groups[1].Success ? 20 : match.Groups[2].Success ? 701 : PgOid.Of(match.Groups[3].Value) is > 0 and var cast ? cast : PgOid.Text
             : PgOid.Text;
 
     [GeneratedRegex(@"\A(?:((?:count|length|instr|unicode|row_number|rank|dense_rank|ntile)\()|((?:avg|total)\()|CAST\(.+\bAS\s+(\w+)\)\z)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
@@ -465,9 +445,6 @@ internal static partial class PostgresStatements
     public static bool RollsBackTo(string text) => text.StartsWith("ROLLBACK", StringComparison.OrdinalIgnoreCase);
 
     public static PgError Error(SqlError error) => new(error.Sqlstate, error.Message);
-
-    public static bool Binary(int oid) => oid is PgOid.Bool or PgOid.Bytea or PgOid.Int8 or PgOid.Int2 or PgOid.Int4 or PgOid.Text or PgOid.Json or PgOid.Float8
-        or PgOid.Varchar or PgOid.Date or PgOid.Timestamp or PgOid.Timestamptz or PgOid.Uuid or PgOid.Jsonb or PgOid.Numeric;
 
     public static bool TryEncode(SqlValue value, int oid, bool binary, out byte[]? bytes)
     {

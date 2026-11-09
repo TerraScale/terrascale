@@ -6,13 +6,7 @@ namespace TerraBase.Features.Postgres;
 
 internal static partial class PgCatalog
 {
-    private static readonly (int Oid, string Name)[] Types =
-    [
-        (PgOid.Bool, "bool"), (PgOid.Bytea, "bytea"), (PgOid.Int8, "int8"), (PgOid.Int2, "int2"), (PgOid.Int4, "int4"), (PgOid.Text, "text"),
-        (PgOid.Json, "json"), (PgOid.Float4, "float4"), (PgOid.Float8, "float8"), (PgOid.Unknown, "unknown"), (PgOid.Varchar, "varchar"),
-        (PgOid.Date, "date"), (PgOid.Timestamp, "timestamp"), (PgOid.Timestamptz, "timestamptz"), (PgOid.Numeric, "numeric"),
-        (PgOid.Uuid, "uuid"), (PgOid.Jsonb, "jsonb"),
-    ];
+    private static readonly (int Oid, string Name)[] Types = [.. PgOid.Types.Select(type => (type.Oid, type.CatalogName))];
 
     private static readonly string[] VerboseNames = ["attstorage", "attcompression", "attstattarget", "description"];
     private static readonly string?[] VerboseValues = ["x", "", null, null];
@@ -136,25 +130,9 @@ internal static partial class PgCatalog
             }
         });
 
-    private static string TypeName(string? declared) => PostgresStatements.Oid(declared) switch
-    {
-        PgOid.Int8 => "bigint",
-        PgOid.Int2 => "smallint",
-        PgOid.Int4 => "integer",
-        PgOid.Float8 => "double precision",
-        PgOid.Numeric => "numeric",
-        PgOid.Text => "text",
-        PgOid.Varchar => "character varying",
-        PgOid.Bool => "boolean",
-        PgOid.Json => "json",
-        PgOid.Jsonb => "jsonb",
-        PgOid.Bytea => "bytea",
-        PgOid.Uuid => "uuid",
-        PgOid.Date => "date",
-        PgOid.Timestamp => "timestamp without time zone",
-        PgOid.Timestamptz => "timestamp with time zone",
-        _ => string.IsNullOrEmpty(declared) ? "text" : declared.ToLowerInvariant(),
-    };
+    private static string TypeName(string? declared) => PgOid.Name(PgOid.Of(declared)) is { } named
+        ? named
+        : string.IsNullOrEmpty(declared) ? "text" : declared.ToLowerInvariant();
 
     private static IReadOnlyList<SqlValue> Row(params string?[] values) => [.. values.Select(value => value is null ? SqlValue.Null : SqlValue.Of(value))];
 

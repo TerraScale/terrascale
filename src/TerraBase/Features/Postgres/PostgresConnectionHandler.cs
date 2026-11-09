@@ -978,7 +978,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             output.Int32(columns[i].Oid);
             output.Int16(-1);
             output.Int32(-1);
-            output.Int16(Format(formats, i) == 1 && PostgresStatements.Binary(columns[i].Oid) ? 1 : 0);
+            output.Int16(Format(formats, i) == 1 && PgOid.Binary(columns[i].Oid) ? 1 : 0);
         }
 
         output.End();
@@ -1004,7 +1004,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             for (var i = 0; i < row.Count; i++)
             {
                 var oid = columns is not null && i < columns.Length ? columns[i].Oid : PgOid.Text;
-                if (!PostgresStatements.TryEncode(row[i], oid, Format(formats, i) == 1 && PostgresStatements.Binary(oid), out var bytes))
+                if (!PostgresStatements.TryEncode(row[i], oid, Format(formats, i) == 1 && PgOid.Binary(oid), out var bytes))
                 {
                     return new PgError(row[i].Kind == SqlValueKind.Integer ? "22003" : "22P02", $"a value of column {i + 1} does not fit its type");
                 }
