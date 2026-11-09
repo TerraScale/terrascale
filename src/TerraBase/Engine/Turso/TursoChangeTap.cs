@@ -442,7 +442,7 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     internal static TursoChangeTap RewriteFrom(TursoDatabaseStore store, TursoIoPool io, TursoConnection source)
     {
-        var tap = new TursoChangeTap(store, io, TimeProvider.System, source, store.Lineage);
+        var tap = new TursoChangeTap(store, io, store.Time, source, store.Lineage);
         tap.Reset(source, publish: false);
         store.RewriteAnchor = tap._anchor;
         return tap;

@@ -16,7 +16,7 @@ using ZLogger;
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoDatabaseStore(
-    string name, string path, TursoSessionPool pool, TursoIoPool io, string pragmas, TenantContext? tenant, TimeProvider? time,
+    string name, string path, TursoSessionPool pool, TursoIoPool io, string pragmas, TenantContext? tenant, TimeProvider time,
     Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null,
     Counter<long>? storageReads = null, DatabaseKeys? encryption = null) : IDatabaseStore, IDisposable
 {
@@ -155,9 +155,9 @@ internal sealed partial class TursoDatabaseStore(
 
     public bool IsClosed => Closed;
 
-    internal TimeProvider Time => time ?? TimeProvider.System;
+    internal TimeProvider Time { get; } = time;
 
-    internal TimeProvider HostTime { get; init; } = TimeProvider.System;
+    internal required TimeProvider HostTime { get; init; }
 
     internal static readonly TimeSpan DefaultQueryBudget = TimeSpan.FromSeconds(TerraBaseOptions.DefaultQueryBudgetSeconds);
 

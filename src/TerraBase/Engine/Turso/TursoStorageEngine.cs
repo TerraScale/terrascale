@@ -100,8 +100,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private long _probeStarted;
     private long? _probeCompleted;
 
-    internal TimeProvider ReadinessClock { get; set; } = TimeProvider.System;
-
     private static readonly StoragePressure UnknownStoragePressure = new(null, []);
     private StoragePressure _storagePressure = UnknownStoragePressure;
     private long _committedWrites;
@@ -234,9 +232,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 return false;
             }
 
-            var now = ReadinessClock.GetTimestamp();
+            var now = Time.GetTimestamp();
             if (_probe is null || (_probe.IsCompleted && _probeCompleted is { } completed
-                && ReadinessClock.GetElapsedTime(completed, now) >= _readinessCacheTtl))
+                && Time.GetElapsedTime(completed, now) >= _readinessCacheTtl))
             {
                 _probeStarted = now;
                 _probeCompleted = null;
@@ -245,13 +243,13 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             }
 
             probe = _probe;
-            remaining = StalledProbe - ReadinessClock.GetElapsedTime(_probeStarted, now);
+            remaining = StalledProbe - Time.GetElapsedTime(_probeStarted, now);
         }
 
         try
         {
 
-            var writable = await probe.WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, ReadinessClock, cancellationToken).ConfigureAwait(false);
+            var writable = await probe.WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, Time, cancellationToken).ConfigureAwait(false);
             return writable && !Volatile.Read(ref _disposed);
         }
         catch (TimeoutException)
@@ -276,7 +274,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         {
             lock (_readinessGate)
             {
-                _probeCompleted = ReadinessClock.GetTimestamp();
+                _probeCompleted = Time.GetTimestamp();
             }
         }
     }
@@ -302,9 +300,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     INativeTemporaryStorage? nativeTemporaryStorage = null, IDiskBudget? diskBudget = null)
     {
         ArgumentNullException.ThrowIfNull(masterKey);
+        var clock = time ?? TimeProvider.System;
         Encryption = new DatabaseKeys(masterKey);
         _dataDirectory = dataDirectory;
-        Fences = new DatabaseFences(Path.Combine(dataDirectory, ".fences"));
+        Fences = new DatabaseFences(Path.Combine(dataDirectory, ".fences"), clock);
         Disk = diskBudget ?? new DiskBudget(dataDirectory, meter);
         _schemaMemory = schemaMemory;
         _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented record and shape SELECT executions, by path (point, query, shape, shape_body).");
@@ -322,9 +321,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         _shutdownGrace = shutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
         _afterBootstrap = afterBootstrap;
-        HostTime = backupTime ?? TimeProvider.System;
+        HostTime = backupTime ?? clock;
         _readinessCacheTtl = readinessCacheTtl ?? TimeSpan.FromSeconds(1);
-        Time = time ?? TimeProvider.System;
+        Time = clock;
         QueryBudget = queryBudget ?? TursoDatabaseStore.DefaultQueryBudget;
 
         _pragmas = TursoSession.Pragmas(memoryBudget, threads);
@@ -340,7 +339,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             CheckIntentJournal();
             DeleteRewriteScratch();
             Ledger = new StorageFaultLedger(this, logger, schemaMemory);
-            Leases = new HomeLeaseGate();
+            Leases = new HomeLeaseGate(clock);
 
             Io = new(threads, queue, meter, createWorker);
         }
