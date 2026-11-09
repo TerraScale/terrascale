@@ -16,8 +16,8 @@ test("drizzleProxy maps execute and batch results to sqlite-proxy callback shape
   const { query, batch } = drizzleProxy(client.database("app"));
 
   expect(await query("SELECT id, name FROM people", [], "all")).toEqual({ rows: [[1, "Ada"], [2, "Grace"]] });
-  expect(await query("SELECT id, name FROM people", [], "get")).toEqual({ rows: [[1, "Ada"]] });
-  expect(await query("SELECT * FROM missing", [], "get")).toEqual({ rows: [] });
+  expect(await query("SELECT id, name FROM people", [], "get")).toEqual({ rows: [1, "Ada"] });
+  expect(await query("SELECT * FROM missing", [], "get")).toEqual({ rows: undefined });
   expect(await query("INSERT INTO t VALUES (?)", ["x"], "run")).toEqual({ rows: [] });
   expect(await query("SELECT id, name FROM people", [], "values")).toEqual({ rows: [[1, "Ada"], [2, "Grace"]] });
 
@@ -26,7 +26,7 @@ test("drizzleProxy maps execute and batch results to sqlite-proxy callback shape
     { sql: "SELECT id, name FROM people", params: [], method: "get" },
   ]);
   expect(requests).toHaveLength(6);
-  expect(results).toEqual([{ rows: [] }, { rows: [[1, "Ada"]]}]);
+  expect(results).toEqual([{ rows: [] }, { rows: [1, "Ada"] }]);
   const batchRequest = requests.at(-1);
   expect(batchRequest?.url.pathname).toBe(`${prefix}/databases/app/sql/execute`);
   expect(JSON.parse(batchRequest?.body ?? "").statements).toEqual([

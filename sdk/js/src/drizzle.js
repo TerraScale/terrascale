@@ -1,15 +1,15 @@
 import { V1Database } from "./v1/terrabase-v1.js";
 
 /** @typedef {"run" | "all" | "values" | "get"} DrizzleProxyMethod */
-/** @typedef {{ readonly rows: readonly unknown[] }} DrizzleProxyResult */
+/** @typedef {{ readonly rows?: unknown[] | undefined }} DrizzleProxyResult */
 /** @typedef {{ readonly sql: string; readonly params: readonly unknown[]; readonly method: DrizzleProxyMethod }} DrizzleProxyQuery */
-/** @typedef {(sql: string, params: readonly unknown[], method: DrizzleProxyMethod) => Promise<{ rows: unknown[] }>} DrizzleQueryCallback */
-/** @typedef {(queries: readonly DrizzleProxyQuery[]) => Promise<{ rows: unknown[] }[]>} DrizzleBatchCallback */
+/** @typedef {(sql: string, params: readonly unknown[], method: DrizzleProxyMethod) => Promise<DrizzleProxyResult>} DrizzleQueryCallback */
+/** @typedef {(queries: readonly DrizzleProxyQuery[]) => Promise<DrizzleProxyResult[]>} DrizzleBatchCallback */
 
 /** @param {import("./v1/sql-execute.js").V1SqlExecuteResult} result @param {DrizzleProxyMethod} method */
 function proxyResult(result, method) {
   if (method === "run") return { rows: [] };
-  if (method === "get") return { rows: result.rows.length > 0 ? [result.rows[0]] : [] };
+  if (method === "get") return { rows: result.rows[0] === undefined ? undefined : [...result.rows[0]] };
   return { rows: result.rows.map((row) => [...row]) };
 }
 
