@@ -1,0 +1,3 @@
+[
+  {"path": "^src/TerraScale\\.Endpoints/RequestBinder\\.cs$", "repo": "terrascale", "terms": ["documents", "collections"], "match": "\\b(?:document|documentOptions|ReadDocumentAsync|IsMutableCollection|collection|collections)\\b", "reason": "Shared HTTP JSON/reflection binder locals and helpers; storage API identifiers remain scanned."}
+]

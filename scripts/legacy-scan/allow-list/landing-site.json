@@ -1,0 +1,5 @@
+[
+  {"path": "^landing-site/.*\\.(?:html|svelte|ts)$", "repo": "terrascale", "terms": ["documents"], "match": "\\bdocument\\.(?:documentElement|activeElement)\\b|\\bdocumentElement\\b|\\btypeof document\\b|\\bsyncDocumentLang\\b", "reason": "Browser DOM document and the helper that sets its lang attribute."},
+  {"path": "^landing-site/docs/DESIGN_SYSTEM\\.md$", "repo": "terrascale", "terms": ["documents"], "match": "(?i)\\bdocument (?:shell|root)\\b", "reason": "HTML document shell in the design system."},
+  {"path": "^landing-site/scripts/icons-(?:manifest|sync)\\.mjs$", "repo": "terrascale", "terms": ["collections"], "match": "\\bcollection\\b", "reason": "Iconify icon-set collection names."}
+]

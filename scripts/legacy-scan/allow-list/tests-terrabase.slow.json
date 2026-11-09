@@ -1,0 +1,4 @@
+[
+  {"path": "^tests/TerraBase\\.Slow/(?:Sync/LocalWriteWorld|Shapes/RegionShapeStreamTests)\\.cs$", "repo": "terrascale", "terms": ["engine-brand"], "match": "\\b(?:TerraBase\\.Engine\\.Turso|TursoReplicas)\\b", "reason": "Retained replication fixture namespace and type references bind the pinned SQL engine; no retired public API."},
+  {"path": "^tests/TerraBase\\.Slow/Sql/SqlSurfaceParityTests\\.cs$", "repo": "terrascale", "terms": ["engine-brand", "libsql"], "match": "turso\\|libsql\\|sqlite", "reason": "Negative SQL surface tests assert that backend brands never leak in public errors."}
+]

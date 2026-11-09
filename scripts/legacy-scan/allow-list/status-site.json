@@ -1,0 +1,6 @@
+[
+  {"repo": "terrascale", "path": "^status-site/", "terms": ["document-feeds"], "match": "(?i:\\bfeeds?\\b)", "reason": "Status page Atom, RSS and iCalendar feeds of incidents and maintenance, not the retired database change feeds."},
+  {"repo": "terrascale", "path": "^status-site/", "terms": ["webhooks"], "match": "(?i:webhooks?)", "reason": "Status subscribers' notification webhooks (Discord, Slack, signed generic), not the retired database event API."},
+  {"repo": "terrascale", "path": "^status-site/(?:schema\\.sql|src/probe/terrabase\\.ts)$", "terms": ["documents"], "match": "'documents'|\\bSQL_PROBE = \"documents\"", "reason": "Stored D1 endpoints.probe value for the SQL probe; changing it means rebuilding endpoints, whose ON DELETE CASCADE children hold the status history."},
+  {"repo": "terrascale", "path": "^status-site/src/assets/client\\.js$", "terms": ["documents"], "match": "\\blocalize\\(document\\)", "reason": "Browser DOM document passed to the page's time localizer."}
+]
