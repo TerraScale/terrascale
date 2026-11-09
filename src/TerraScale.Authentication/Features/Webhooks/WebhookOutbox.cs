@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Store;
 
 namespace TerraScale.Authentication.Features.Webhooks;
@@ -10,19 +11,23 @@ public sealed record WebhookOutboxRecord(string InstanceId, string ProjectId, st
 
 public sealed record WebhookEventPayload(string UserId, string? Email = null, string? Provider = null);
 
-public sealed class WebhookOutbox(WebhookEndpoints endpoints, TimeProvider clock)
+public sealed class WebhookOutbox(ProjectAuthSettings settings, TimeProvider clock)
 {
     public const string PendingStatus = "pending";
 
-    public async Task<StoreOperation?> CreateAsync(string projectId, string eventType, string userId, string? email, string? provider, CancellationToken cancellationToken)
+    public Task<StoreOperation?> CreateAsync(string projectId, string eventType, string userId, string? email, string? provider, CancellationToken cancellationToken) =>
+        this.CreateAsync(projectId, eventType, userId, email, provider, null, cancellationToken);
+
+    public async Task<StoreOperation?> CreateAsync(string projectId, string eventType, string userId, string? email, string? provider,
+        IReadOnlyList<string>? subscribed, CancellationToken cancellationToken)
     {
         if (!Tenancy.IsProject(projectId))
         {
             return null;
         }
 
-        var registered = await endpoints.ListAsync(projectId, cancellationToken).ConfigureAwait(false);
-        if (!registered.Any(endpoint => endpoint.EventTypes.Contains(eventType, StringComparer.Ordinal)))
+        subscribed ??= (await settings.GetAsync(projectId, cancellationToken).ConfigureAwait(false)).SubscribedWebhookEvents;
+        if (subscribed is null || !subscribed.Contains(eventType))
         {
             return null;
         }

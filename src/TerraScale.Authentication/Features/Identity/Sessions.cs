@@ -48,9 +48,14 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
     public async Task<IssuedSession> CreateAsync(UserRecord user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
-        var lifetime = await this.GetLifetimeAsync(user.InstanceId, cancellationToken).ConfigureAwait(false);
+        var project = Tenancy.IsProject(user.InstanceId)
+            ? await this.settings.GetAsync(user.InstanceId, cancellationToken).ConfigureAwait(false)
+            : null;
+        var lifetime = project is null ? Lifetime
+            : TimeSpan.FromSeconds(project.Configuration?.SessionLifetimeSeconds ?? ConfigurationBody.Default.SessionLifetimeSeconds);
         var createdAt = clock.GetUtcNow();
-        var signedIn = await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, cancellationToken).ConfigureAwait(false);
+        var signedIn = project?.SubscribedWebhookEvents is null ? null
+            : await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, project.SubscribedWebhookEvents, cancellationToken).ConfigureAwait(false);
         return await this.IssueAsync(user, createdAt, createdAt + lifetime, cancellationToken, signedIn).ConfigureAwait(false)
             ?? throw new ApiException(401, "invalid_credentials", "Authentication could not be completed.");
     }

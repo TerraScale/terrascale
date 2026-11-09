@@ -9,6 +9,7 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Hosting;
@@ -64,8 +65,7 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     private static Users UsersIn(TerraBaseSqlDatabase copy)
     {
         var store = new AuthStore(copy, TimeProvider.System);
-        var options = AuthOptions.Load(AuthTestServer.DefaultSettings());
-        return new Users(store, new WebhookOutbox(new WebhookEndpoints(store, options, TimeProvider.System), TimeProvider.System), TimeProvider.System);
+        return new Users(store, new WebhookOutbox(new ProjectAuthSettings(store), TimeProvider.System), TimeProvider.System);
     }
 
     // A project of the issuer's instance in the copy: its tenant's discovery document is served while it exists.

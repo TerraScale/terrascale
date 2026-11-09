@@ -9,6 +9,7 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Store;
@@ -52,7 +53,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
     private (Users Users, Sessions Sessions, Passcodes Passcodes) Stack(TerraBaseTestTenant tenant, TimeProvider clock, AuthOptions options)
     {
         var store = new AuthStore(fixture.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth"), clock);
-        var outbox = new WebhookOutbox(new WebhookEndpoints(store, options, clock), clock);
+        var outbox = new WebhookOutbox(new ProjectAuthSettings(store), clock);
         var users = new Users(store, outbox, clock);
         var totp = new TotpCredentials(store, users, new AttemptLimiter(new TerraBaseRecordStore(store), clock, options), options, clock);
         var sessions = new Sessions(store, users, totp, outbox, clock);

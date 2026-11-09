@@ -24,7 +24,8 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 /// <param name="EmailMessage">Optional plain-text message in authentication emails, never HTML or a template expression.</param>
 public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode = true, bool Password = true, bool SignUp = true, string? Name = null, string? LogoUrl = null, string? ThemeColor = null,
     IReadOnlyList<SocialProviderRecord>? Providers = null, int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null,
-    string? BackgroundColor = null, string? TextColor = null, ConfigurationBody? Configuration = null, string? EmailMessage = null)
+    string? BackgroundColor = null, string? TextColor = null, ConfigurationBody? Configuration = null, string? EmailMessage = null,
+    IReadOnlyList<string>? SubscribedWebhookEvents = null)
 {
     /// <summary>The configured <paramref name="provider"/>, or null.</summary>
     public SocialProviderRecord? Provider(string provider) => this.Providers?.FirstOrDefault(record => record.Provider == provider);
@@ -69,6 +70,11 @@ public sealed class ProjectAuthSettings(AuthStore store)
 
         throw ApiException.Unavailable();
     }
+
+    internal Task<(ProjectAuthSettingsRecord Settings, string? Version)> ReadVersionedAsync(string projectId, CancellationToken cancellationToken) => this.ReadAsync(projectId, cancellationToken);
+
+    internal static JsonElement Stored(ProjectAuthSettingsRecord settings) =>
+        JsonSerializer.SerializeToElement(settings, ProjectAuthSettingsJson.Default.ProjectAuthSettingsRecord);
 
     private async Task<(ProjectAuthSettingsRecord Settings, string? Version)> ReadAsync(string projectId, CancellationToken cancellationToken) =>
         await store.GetAsync(Table, projectId, projectId, cancellationToken).ConfigureAwait(false) is { } rowData

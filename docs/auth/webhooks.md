@@ -57,7 +57,12 @@ Each end-user lifecycle change writes one event record in the same store
 transaction as the change itself, so an event exists if and only if the change
 committed. Events are written only when the project has at least one registered
 endpoint subscribed to that event type; nothing is dispatched yet (delivery
-arrives with a later slice).
+arrives with a later slice). The subscribed event types are kept as a compact
+set on the project's auth settings record — the record sign-in already reads —
+and endpoint registration and deletion maintain it in their own store
+transactions, so the check adds no store call to sign-in. Subscription is
+evaluated at the start of the change, so an endpoint added mid-change may miss
+that event.
 
 | Event | Written when |
 | --- | --- |
