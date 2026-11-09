@@ -135,7 +135,7 @@ public sealed class AttemptLimiter(IRecordStore storage, TimeProvider clock, Aut
         for (var attempt = 0; attempt < Math.Min(burst + 2L, MaxRounds); attempt++)
         {
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
-            var components = await Task.WhenAll(keys.Select(component => source.GetAsync<AttemptBucket>(Table, instanceId, component, cancellationToken)));
+            var components = await source.GetManyAsync<AttemptBucket>(Table, instanceId, keys, cancellationToken);
             // Window: the writer's clock at the write, in Unix milliseconds. Used: its debt then, in milliseconds.
             if (components.Any(component => component is not null && (component.Body is not { Window: >= 0, Used: >= 0 }
                 || component.Body.Used > capacity || component.Body.Window > now + MaxClockSkew)))
@@ -286,7 +286,7 @@ public sealed class AttemptLimiter(IRecordStore storage, TimeProvider clock, Aut
             var now = clock.GetUtcNow();
             var number = cooldown ? now.ToUnixTimeMilliseconds() : now.ToUnixTimeSeconds() / windowSeconds;
             // Each serving region owns one component, so concurrent regional increments retain their own counts.
-            var components = await Task.WhenAll(keys.Select(component => source.GetAsync<AttemptBucket>(Table, instanceId, component, cancellationToken)));
+            var components = await source.GetManyAsync<AttemptBucket>(Table, instanceId, keys, cancellationToken);
             foreach (var component in components)
             {
                 if (component is not null && (component.Body is not { Window: >= 0, Used: >= 0 }

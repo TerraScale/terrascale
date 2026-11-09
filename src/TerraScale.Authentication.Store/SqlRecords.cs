@@ -76,6 +76,26 @@ internal sealed class SqlRecords(TerraBaseSqlDatabase database)
         return rows.Count == 0 ? null : Read(rows[0]);
     }
 
+    public async Task<IReadOnlyDictionary<string, StoredRow>> GetManyAsync(string table, IReadOnlyList<string> ids, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        if (ids.Count == 0)
+        {
+            return new Dictionary<string, StoredRow>();
+        }
+
+        var args = new TerraBaseSqlValue[ids.Count];
+        var filter = new StringBuilder();
+        for (var index = 0; index < ids.Count; index++)
+        {
+            filter.Append(index == 0 ? "?" : ", ?");
+            args[index] = ids[index];
+        }
+
+        var rows = await database.QueryAsync($"SELECT id, body, version FROM {Table(table)} WHERE id IN ({filter})", args, cancellationToken).ConfigureAwait(false);
+        return rows.ToDictionary(row => row.GetString("id"), Read);
+    }
+
     public async Task<StoredPage> QueryAsync(string table, string? instanceId, JsonElement? filter, IReadOnlyList<StoreSort>? sort, int limit, string? cursor, bool count, CancellationToken cancellationToken)
     {
         if (limit is < 1 or > 1000)

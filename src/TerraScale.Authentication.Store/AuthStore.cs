@@ -130,6 +130,9 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
     public Task<StoredRow?> GetAsync(string table, string instanceId, string key, CancellationToken cancellationToken = default) =>
         AuthStorageTelemetry.ReadAsync(table, "get", () => this.sql.GetAsync(table, NaturalKeyId(instanceId, table, key), cancellationToken));
 
+    public Task<IReadOnlyDictionary<string, StoredRow>> GetManyAsync(string table, string instanceId, IReadOnlyList<string> keys, CancellationToken cancellationToken = default) =>
+        AuthStorageTelemetry.ReadAsync(table, "get-many", () => this.sql.GetManyAsync(table, keys.Select(key => NaturalKeyId(instanceId, table, key)).ToList(), cancellationToken));
+
     public Task<StoredRow?> GetLocalAsync(string table, string instanceId, string key, CancellationToken cancellationToken = default) =>
         this.GetAsync(table, instanceId, key, cancellationToken);
 

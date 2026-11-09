@@ -74,6 +74,25 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
 
     // Every hosted email-code start shares the same mail cooldown.
 
+    [Test]
+    public async Task Parallel_wrong_code_attempts_admit_exactly_the_email_budget()
+    {
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        var user = await oidc.CreateUserAsync(oidc.UniqueEmail("race"));
+        using var requested = await oidc.PostFormAsync(SignIn, new() { ["email"] = user.Email, ["next"] = string.Empty });
+        var attempts = await Task.WhenAll(Enumerable.Range(0, Passcodes.MaxAttempts + 7).Select(_ =>
+            oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = user.Email, ["code"] = "000000", ["next"] = string.Empty })));
+        var admitted = attempts.Count(response => response.StatusCode == HttpStatusCode.Unauthorized);
+        var limited = attempts.Count(response => response.StatusCode == HttpStatusCode.TooManyRequests);
+        foreach (var response in attempts)
+        {
+            response.Dispose();
+        }
+
+        await Assert.That(admitted).IsEqualTo(Passcodes.MaxAttempts);
+        await Assert.That(limited).IsEqualTo(7);
+    }
+
     private static async Task<string?> PasswordSignInAsync(OidcHarness oidc, string address, string password)
     {
         using var response = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-in/password", new() { ["email"] = address, ["password"] = password, ["next"] = string.Empty });

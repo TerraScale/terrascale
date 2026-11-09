@@ -9,6 +9,8 @@ public interface IRecordStore
 {
     Task<Versioned<T>?> GetAsync<T>(string table, string instanceId, string key, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<Versioned<T>?>> GetManyAsync<T>(string table, string instanceId, IReadOnlyList<string> keys, CancellationToken cancellationToken);
+
     Task<bool> TryCreateAsync<T>(string table, string instanceId, string key, T rowData, CancellationToken cancellationToken);
 
     Task<bool> TryReplaceAsync<T>(string table, string instanceId, string key, T rowData, string version, CancellationToken cancellationToken);
@@ -20,6 +22,14 @@ public sealed class TerraBaseRecordStore(AuthStore store) : IRecordStore
         await store.GetAsync(table, instanceId, key, cancellationToken).ConfigureAwait(false) is { } found
             ? new Versioned<T>(found.Body.Deserialize<T>() ?? throw new JsonException($"A {table} record is empty."), found.Version)
             : null;
+
+    public async Task<IReadOnlyList<Versioned<T>?>> GetManyAsync<T>(string table, string instanceId, IReadOnlyList<string> keys, CancellationToken cancellationToken)
+    {
+        var found = await store.GetManyAsync(table, instanceId, keys, cancellationToken).ConfigureAwait(false);
+        return keys.Select(key => found.TryGetValue(AuthStore.NaturalKeyId(instanceId, table, key), out var row) && row.Body.Deserialize<T>() is { } body
+            ? new Versioned<T>(body, row.Version)
+            : null).ToList();
+    }
 
     public async Task<bool> TryCreateAsync<T>(string table, string instanceId, string key, T rowData, CancellationToken cancellationToken)
     {
@@ -42,6 +52,9 @@ public sealed class FailClosedRecordStore(IRecordStore inner) : IRecordStore
 {
     public Task<Versioned<T>?> GetAsync<T>(string table, string instanceId, string key, CancellationToken cancellationToken) =>
         Guard(() => inner.GetAsync<T>(table, instanceId, key, cancellationToken), cancellationToken);
+
+    public Task<IReadOnlyList<Versioned<T>?>> GetManyAsync<T>(string table, string instanceId, IReadOnlyList<string> keys, CancellationToken cancellationToken) =>
+        Guard(() => inner.GetManyAsync<T>(table, instanceId, keys, cancellationToken), cancellationToken);
 
     public Task<bool> TryCreateAsync<T>(string table, string instanceId, string key, T rowData, CancellationToken cancellationToken) =>
         Guard(() => inner.TryCreateAsync(table, instanceId, key, rowData, cancellationToken), cancellationToken);
