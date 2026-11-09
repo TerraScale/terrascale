@@ -1,8 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Errors;
-using TerraBase.Features.Management;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -424,7 +425,7 @@ internal sealed partial class ContinuousBackup
             var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
-                await transaction.PutAsync(kind, id, JsonSerializer.SerializeToUtf8Bytes(record, TerraBaseJsonContext.Default.BackupStatusRecord), cancellationToken)
+                await transaction.PutAsync(kind, id, JsonSerializer.SerializeToUtf8Bytes(record, BackupJsonContext.Default.BackupStatusRecord), cancellationToken)
                     .ConfigureAwait(false);
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }

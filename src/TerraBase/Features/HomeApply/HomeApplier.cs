@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Clock;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -330,14 +331,14 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
     private static async ValueTask<HomeApplyResult?> RecordedAsync(IStorageTransaction transaction, string id, CancellationToken cancellationToken)
     {
         var found = await transaction.RunAsync("SELECT result FROM _ts_applied WHERE id = ?", [id], cancellationToken).ConfigureAwait(false);
-        return found.Rows is [[string result]] ? JsonSerializer.Deserialize(result, TerraBaseJsonContext.Default.HomeApplyResult) : null;
+        return found.Rows is [[string result]] ? JsonSerializer.Deserialize(result, HomeApplyJsonContext.Default.HomeApplyResult) : null;
     }
 
     private async ValueTask RecordAsync(
         IStorageTransaction transaction, RegionTransaction region, HomeApplyResult result, List<ConflictRecord> conflicts, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
-        _ = await transaction.RunAsync("INSERT INTO _ts_applied (id, region, state, result, applied_at) VALUES (?, ?, ?, ?, ?)", [region.Id, region.Region, result.State, JsonSerializer.Serialize(result, TerraBaseJsonContext.Default.HomeApplyResult), now.ToUnixTimeMilliseconds()], cancellationToken)
+        _ = await transaction.RunAsync("INSERT INTO _ts_applied (id, region, state, result, applied_at) VALUES (?, ?, ?, ?, ?)", [region.Id, region.Region, result.State, JsonSerializer.Serialize(result, HomeApplyJsonContext.Default.HomeApplyResult), now.ToUnixTimeMilliseconds()], cancellationToken)
             .ConfigureAwait(false);
         _ = await transaction.RunAsync("DELETE FROM _ts_applied WHERE id IN (SELECT id FROM _ts_applied WHERE id < ? LIMIT 16)", [FloorId(now - KeptApplied)], cancellationToken).ConfigureAwait(false);
         foreach (var conflict in conflicts)

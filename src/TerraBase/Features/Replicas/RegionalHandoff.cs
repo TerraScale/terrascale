@@ -1,13 +1,14 @@
-using System.Text.Json;
-using System.Net.Http.Headers;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
+using System.Net.Http.Headers;
+using System.Text.Json;
 using TerraBase.Configuration;
-using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
-using TerraBase.Hosting;
+using TerraBase.Engine;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replicas;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -532,7 +533,7 @@ internal sealed partial class RegionalHandoff(
 
             var address = peer.InternalListener(options.InternalPort);
             var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, promoting
-                ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null, transfer.Id), TerraBaseJsonContext.Default.RegionalPrepare);
+                ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null, transfer.Id), ReplicasJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
             {
                 return Refuse("preparation payload bound reached");
@@ -597,9 +598,9 @@ internal sealed partial class RegionalHandoff(
 
     private static TenantContext Database(RegionalPosition position) => new(position.Organization, PlanTier.Hobby, position.Project, position.Database);
 
-    private static byte[] Encode(RegionalOwner owner) => JsonSerializer.SerializeToUtf8Bytes(owner, TerraBaseJsonContext.Default.RegionalOwner);
+    private static byte[] Encode(RegionalOwner owner) => JsonSerializer.SerializeToUtf8Bytes(owner, ReplicasJsonContext.Default.RegionalOwner);
 
-    private static RegionalOwner Decode(byte[] value) => JsonSerializer.Deserialize(value, TerraBaseJsonContext.Default.RegionalOwner)
+    private static RegionalOwner Decode(byte[] value) => JsonSerializer.Deserialize(value, ReplicasJsonContext.Default.RegionalOwner)
         ?? throw new InvalidDataException("invalid regional owner");
 
     private async Task<ServingNode?> SelfRegionPeerAsync(string node, CancellationToken cancellationToken)
@@ -612,7 +613,7 @@ internal sealed partial class RegionalHandoff(
     {
         using var response = await _http.GetAsync(address, cancellationToken).ConfigureAwait(false);
         return response.IsSuccessStatusCode
-            ? await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, cancellationToken).ConfigureAwait(false)
+            ? await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.RegionalStatus, cancellationToken).ConfigureAwait(false)
             : null;
     }
 

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Features.LocalAck;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -34,7 +35,7 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
     public async ValueTask<bool> PutAsync(HeldTransaction held, CancellationToken cancellationToken)
     {
         await CountAsync(cancellationToken).ConfigureAwait(false);
-        var body = JsonSerializer.SerializeToUtf8Bytes(held, TerraBaseJsonContext.Default.HeldTransaction);
+        var body = JsonSerializer.SerializeToUtf8Bytes(held, LocalAckJsonContext.Default.HeldTransaction);
         lock (_totalsGate)
         {
             if (_count >= MaxHeld || _bytes + body.Length > MaxHeldBytes)
@@ -162,7 +163,7 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
         var page = await transaction.ListAsync(Kind, after is null ? prefix : Id(origin, after.Organization!, after.Project!, after.Database!, after.Sequence),
             limit, PageBytes, cancellationToken).ConfigureAwait(false);
         return [.. page.Records.TakeWhile(record => record.Id.StartsWith(prefix, StringComparison.Ordinal))
-            .Select(record => JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.HeldTransaction))
+            .Select(record => JsonSerializer.Deserialize(record.Json.Span, LocalAckJsonContext.Default.HeldTransaction))
             .Where(held => held is { Version: 1, Payload: not null })
             .Select(held => held!)];
     }

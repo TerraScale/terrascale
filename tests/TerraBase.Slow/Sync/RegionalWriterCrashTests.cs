@@ -235,7 +235,7 @@ public sealed partial class RegionalWriterCrashTests
         while (after is not null);
         var snapshot = new RegionalPrepare(node, positions, 0,
             await RegionalCatalog.ExportAsync(api.Server.Services.GetRequiredService<IStorageEngine>(), token));
-        await File.WriteAllBytesAsync(directory + ".snapshot.new", JsonSerializer.SerializeToUtf8Bytes(snapshot, TerraBaseJsonContext.Default.RegionalPrepare), token);
+        await File.WriteAllBytesAsync(directory + ".snapshot.new", JsonSerializer.SerializeToUtf8Bytes(snapshot, ReplicasJsonContext.Default.RegionalPrepare), token);
         File.Move(directory + ".snapshot.new", directory + ".snapshot", overwrite: true);
         await nativeRows;
     }
@@ -335,7 +335,7 @@ public sealed partial class RegionalWriterCrashTests
         {
             await File.WriteAllTextAsync(DirectoryPath + ".snapshot-request", "export", token);
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(DirectoryPath + ".snapshot")), TimeSpan.FromSeconds(10));
-            return JsonSerializer.Deserialize(await File.ReadAllBytesAsync(DirectoryPath + ".snapshot", token), TerraBaseJsonContext.Default.RegionalPrepare)!;
+            return JsonSerializer.Deserialize(await File.ReadAllBytesAsync(DirectoryPath + ".snapshot", token), ReplicasJsonContext.Default.RegionalPrepare)!;
         }
         internal async Task<string[]> NativeRowsAsync(TenantContext tenant, CancellationToken token)
         {

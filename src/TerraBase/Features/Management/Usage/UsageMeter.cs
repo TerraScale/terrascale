@@ -1,11 +1,12 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Stats;
 using TerraBase.Hosting;
@@ -177,11 +178,11 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         {
             if (!meters)
             {
-                return JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!.Counts;
+                return JsonSerializer.Deserialize(record.Json.Span, ManagementJsonContext.Default.UsageTotals)!.Counts;
             }
 
             using var parsing = filter?.Hold(record.Json.Length * ParsedBytesPerJsonByte);
-            return Shape(JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.OpCounts)!);
+            return Shape(JsonSerializer.Deserialize(record.Json.Span, ManagementJsonContext.Default.OpCounts)!);
         }
 
         var owner = DatabaseOwner.Of(database);

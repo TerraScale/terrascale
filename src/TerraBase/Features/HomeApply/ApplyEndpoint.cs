@@ -2,6 +2,7 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
@@ -51,7 +52,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         RegionTransaction? transaction;
         try
         {
-            transaction = await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionTransaction, cancellationToken).ConfigureAwait(false);
+            transaction = await HttpContext.Request.ReadFromJsonAsync(HomeApplyJsonContext.Default.RegionTransaction, cancellationToken).ConfigureAwait(false);
         }
         catch (JsonException)
         {
@@ -85,7 +86,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
             using (QosContext.Enter(database, memory))
             {
                 return await apply.ApplyAsync(database, transaction!, cancellationToken).ConfigureAwait(false) is { } result
-                    ? TypedResults.Json(result, TerraBaseJsonContext.Default.HomeApplyResult)
+                    ? TypedResults.Json(result, HomeApplyJsonContext.Default.HomeApplyResult)
                     : ErrorResponse.From(new NotFound("the database is not stored on this node"));
             }
         }

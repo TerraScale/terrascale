@@ -64,7 +64,7 @@ public sealed class CompleteShreddingTests
         var snapshot = tenant with { DatabaseId = backupBody.RootElement.GetProperty("id").GetString()! };
         var snapshotPayload = await crypto.SealAsync(snapshot, packed, token);
         using var holdBody = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(
-            new HeldTransaction(1, "sjc-1", "gru", tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, 1, payload), TerraBaseJsonContext.Default.HeldTransaction));
+            new HeldTransaction(1, "sjc-1", "gru", tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, 1, payload), LocalAckJsonContext.Default.HeldTransaction));
         holdBody.Headers.ContentType = new("application/json");
         using var held = await api.Server.Client.PostAsync(ManagementApi.Uri("/v1/sync/holds"), holdBody, token);
         await Assert.That(held.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -73,7 +73,7 @@ public sealed class CompleteShreddingTests
         {
             var record = (await read.ListAsync(HoldStore.Kind, null, 2, 1024 * 1024, token)).Records.Single();
             await Assert.That(Encoding.UTF8.GetString(record.Json.Span).Contains(sentinel, StringComparison.Ordinal)).IsFalse();
-            var persisted = JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.HeldTransaction)!;
+            var persisted = JsonSerializer.Deserialize(record.Json.Span, LocalAckJsonContext.Default.HeldTransaction)!;
             await Assert.That(await crypto.OpenAsync(tenant, persisted.Payload!, token)).IsEquivalentTo(packed);
         }
         var nativeReplica = remote.Server.Services.GetRequiredService<IDatabaseReplicas>();
@@ -185,9 +185,9 @@ public sealed class CompleteShreddingTests
         _ = await catalog.WriteDurableAsync(async transaction =>
         {
             var record = await SystemCatalog.GetAsync(transaction, DatabasePurge.Kind, tenant.DatabaseId!,
-                TerraBaseJsonContext.Default.DatabasePurgeRecord, token);
+                ManagementJsonContext.Default.DatabasePurgeRecord, token);
             await SystemCatalog.PutAsync(transaction, DatabasePurge.Kind, tenant.DatabaseId!,
-                record! with { BackupVerifiedAt = DateTimeOffset.UtcNow }, TerraBaseJsonContext.Default.DatabasePurgeRecord, token);
+                record! with { BackupVerifiedAt = DateTimeOffset.UtcNow }, ManagementJsonContext.Default.DatabasePurgeRecord, token);
             return true;
         }, _ => false, token);
         s3.FailPut = _ => false;

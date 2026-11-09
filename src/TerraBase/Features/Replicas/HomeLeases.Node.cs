@@ -1,8 +1,9 @@
-using System.Globalization;
-using System.Text.Json;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
+using System.Globalization;
+using System.Text.Json;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using ZLogger;
 
@@ -18,7 +19,7 @@ internal sealed partial class HomeLeases
             var sent = time.GetTimestamp();
             try
             {
-                var lease = JsonSerializer.SerializeToUtf8Bytes(new NodeLease(options.MachineId, options.Region, _session), TerraBaseJsonContext.Default.NodeLease);
+                var lease = JsonSerializer.SerializeToUtf8Bytes(new NodeLease(options.MachineId, options.Region, _session), ReplicasJsonContext.Default.NodeLease);
                 var fresh = _nodeRevision is null;
                 _nodeRevision = _nodeRevision is { } revision
                     ? await PublishNodeAsync(js, lease, revision, cancellationToken).ConfigureAwait(false)

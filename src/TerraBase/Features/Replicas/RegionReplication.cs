@@ -1,16 +1,17 @@
+using NATS.Client.Core;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
-using System.Net;
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text.Json;
 using System.Threading.Channels;
-using NATS.Client.Core;
 using TerraBase.Configuration;
-using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
-using TerraBase.Features.Memory;
+using TerraBase.Engine;
 using TerraBase.Features.HomePush;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Memory;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -263,7 +264,7 @@ internal sealed partial class RegionReplication(
                 {
                     try
                     {
-                        if (message.Data is { } data && JsonSerializer.Deserialize(data, TerraBaseJsonContext.Default.ReplicaHeldNotice) is { } notice)
+                        if (message.Data is { } data && JsonSerializer.Deserialize(data, ReplicasJsonContext.Default.ReplicaHeldNotice) is { } notice)
                         {
                             holds.Held(notice);
                         }
@@ -289,7 +290,7 @@ internal sealed partial class RegionReplication(
         }
 
         var notice = new ReplicaHeldNotice(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, held.ToString());
-        _ = PublishHeldAsync(nats, ReplicaSubjects.Held(home, database.DatabaseId!), JsonSerializer.SerializeToUtf8Bytes(notice, TerraBaseJsonContext.Default.ReplicaHeldNotice));
+        _ = PublishHeldAsync(nats, ReplicaSubjects.Held(home, database.DatabaseId!), JsonSerializer.SerializeToUtf8Bytes(notice, ReplicasJsonContext.Default.ReplicaHeldNotice));
     }
 
     private async Task PublishHeldAsync(NatsConnection nats, string subject, byte[] data)
@@ -780,7 +781,7 @@ internal sealed partial class RegionReplication(
             try
             {
                 using var content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(
-                    new ReplicaStatusReport(_owner.Region, _state, LagMs, _syncedAt, _verifiedAt), TerraBaseJsonContext.Default.ReplicaStatusReport));
+                    new ReplicaStatusReport(_owner.Region, _state, LagMs, _syncedAt, _verifiedAt), ReplicasJsonContext.Default.ReplicaStatusReport));
                 content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
                 using var response = await _owner._http.PostAsync(new Uri(_source + "/replica-status"), content, timeout.Token).ConfigureAwait(false);
                 if (response.IsSuccessStatusCode)

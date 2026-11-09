@@ -39,7 +39,7 @@ public sealed class RegionalHandoffTests
         var foreignPlatform = new HomeLease(PlatformDatabases.OrganizationId, PlatformDatabases.AuthProjectId,
             PlatformDatabases.AuthId, "sjc", "sjc-2", 3, EntityIds.New().ToString());
         _ = await homes.PutAsync("home." + foreignPlatform.DatabaseId,
-            JsonSerializer.SerializeToUtf8Bytes(foreignPlatform, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            JsonSerializer.SerializeToUtf8Bytes(foreignPlatform, ReplicasJsonContext.Default.HomeLease), cancellationToken: token);
         using var issuer = new TestIssuer();
         var storage = new FakeS3();
         var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -81,14 +81,14 @@ public sealed class RegionalHandoffTests
             var regionalId = (await regionalOnly.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
             await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().PrimeAsync("gru-1", token)).IsTrue();
             var foreign = new HomeLease(organization, project, regionalId, "sjc", "sjc-1", 1, EntityIds.New().ToString());
-            _ = await homes.PutAsync("home." + regionalId, JsonSerializer.SerializeToUtf8Bytes(foreign, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            _ = await homes.PutAsync("home." + regionalId, JsonSerializer.SerializeToUtf8Bytes(foreign, ReplicasJsonContext.Default.HomeLease), cancellationToken: token);
             var foreignDashboard = foreignPlatform with { ProjectId = PlatformDatabases.DashboardProjectId, DatabaseId = PlatformDatabases.DashboardId };
             _ = await homes.PutAsync("home." + foreignDashboard.DatabaseId,
-                JsonSerializer.SerializeToUtf8Bytes(foreignDashboard, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+                JsonSerializer.SerializeToUtf8Bytes(foreignDashboard, ReplicasJsonContext.Default.HomeLease), cancellationToken: token);
             var observed = await homes.GetEntryAsync<byte[]>("home." + database, cancellationToken: token);
-            var barrier = JsonSerializer.Deserialize(observed.Value!, TerraBaseJsonContext.Default.HomeLease)!;
+            var barrier = JsonSerializer.Deserialize(observed.Value!, ReplicasJsonContext.Default.HomeLease)!;
             barrier = barrier with { Epoch = barrier.Epoch + 1 };
-            _ = await homes.PutAsync("home." + database, JsonSerializer.SerializeToUtf8Bytes(barrier, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            _ = await homes.PutAsync("home." + database, JsonSerializer.SerializeToUtf8Bytes(barrier, ReplicasJsonContext.Default.HomeLease), cancellationToken: token);
             foreach (var api in new[] { first, second })
             {
                 var leases = api.Server.Services.GetRequiredService<HomeLeases>();
@@ -138,11 +138,11 @@ public sealed class RegionalHandoffTests
             var ids = (await reconciled.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows");
             await Assert.That(ids.EnumerateArray().Select(row => row[0].GetString()!).ToArray()).IsEquivalentTo(AcknowledgedRows);
             var retained = await homes.GetEntryAsync<byte[]>("home." + regionalId, cancellationToken: token);
-            await Assert.That(JsonSerializer.Deserialize(retained.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(foreign);
+            await Assert.That(JsonSerializer.Deserialize(retained.Value!, ReplicasJsonContext.Default.HomeLease)).IsEqualTo(foreign);
             foreach (var ignored in new[] { foreignPlatform, foreignDashboard })
             {
                 var original = await homes.GetEntryAsync<byte[]>("home." + ignored.DatabaseId, cancellationToken: token);
-                await Assert.That(JsonSerializer.Deserialize(original.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(ignored);
+                await Assert.That(JsonSerializer.Deserialize(original.Value!, ReplicasJsonContext.Default.HomeLease)).IsEqualTo(ignored);
             }
 
             async Task ExecuteAsync(HttpClient client, string statement)

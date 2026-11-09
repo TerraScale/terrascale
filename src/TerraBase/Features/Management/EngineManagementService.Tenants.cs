@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -389,7 +390,7 @@ internal sealed partial class EngineManagementService
             if (placement.Home == options.Region)
             {
                 await PutAsync(transaction, EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, DatabaseOwner.Of(database),
-                    TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
+                    ManagementJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
             }
             else
             {

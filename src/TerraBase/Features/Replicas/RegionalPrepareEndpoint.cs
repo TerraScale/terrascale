@@ -1,4 +1,5 @@
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -38,7 +39,7 @@ internal sealed class RegionalPrepareEndpoint(RegionalHandoff handoff, IMemoryBu
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
-        var request = await context.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalPrepare, cancellationToken).ConfigureAwait(false);
+        var request = await context.Request.ReadFromJsonAsync(ReplicasJsonContext.Default.RegionalPrepare, cancellationToken).ConfigureAwait(false);
         return request is not null && await act(request, cancellationToken).ConfigureAwait(false)
             ? TypedResults.NoContent() : TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
     }

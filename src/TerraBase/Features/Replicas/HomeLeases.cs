@@ -1,17 +1,18 @@
+using NATS.Client.Core;
+using NATS.Client.JetStream.Models;
+using NATS.Client.JetStream;
+using NATS.Client.KeyValueStore;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
-using NATS.Client.Core;
-using NATS.Client.JetStream;
-using NATS.Client.JetStream.Models;
-using NATS.Client.KeyValueStore;
 using TerraBase.Configuration;
-using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
+using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -201,7 +202,7 @@ internal sealed partial class HomeLeases(
         }
 
         var taken = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId, epoch, _session);
-        var value = JsonSerializer.SerializeToUtf8Bytes(taken, TerraBaseJsonContext.Default.HomeLease);
+        var value = JsonSerializer.SerializeToUtf8Bytes(taken, ReplicasJsonContext.Default.HomeLease);
         try
         {
             var revision = current is null
@@ -276,7 +277,7 @@ internal sealed partial class HomeLeases(
 
             var next = new HomeLease(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region,
                 options.MachineId, (previous?.Epoch ?? 0) + 1, _session);
-            var value = JsonSerializer.SerializeToUtf8Bytes(next, TerraBaseJsonContext.Default.HomeLease);
+            var value = JsonSerializer.SerializeToUtf8Bytes(next, ReplicasJsonContext.Default.HomeLease);
             var revision = current is null
                 ? await kv.CreateAsync(HomeKey(next.DatabaseId), value, cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await kv.UpdateAsync(HomeKey(next.DatabaseId), value, current.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -479,7 +480,7 @@ internal sealed partial class HomeLeases(
         }
 
         var lease = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId, Math.Max(placement.Version, existing?.Epoch ?? 0), _session);
-        var value = JsonSerializer.SerializeToUtf8Bytes(lease, TerraBaseJsonContext.Default.HomeLease);
+        var value = JsonSerializer.SerializeToUtf8Bytes(lease, ReplicasJsonContext.Default.HomeLease);
         try
         {
             var revision = current is null
@@ -519,7 +520,7 @@ internal sealed partial class HomeLeases(
         {
             var node = entry.Key["node.".Length..];
             if (entry.Operation == NatsKVOperation.Put && entry.Value is { } value
-                && JsonSerializer.Deserialize(value, TerraBaseJsonContext.Default.NodeLease) is { } lease)
+                && JsonSerializer.Deserialize(value, ReplicasJsonContext.Default.NodeLease) is { } lease)
             {
                 _nodes[node] = lease;
             }
@@ -670,7 +671,7 @@ internal sealed partial class HomeLeases(
         {
             using var response = await _http.GetAsync(new Uri(peer.Internal, ReplicaRoutes.DatabasePath(database, "held")), timeout.Token).ConfigureAwait(false);
             return response.StatusCode == HttpStatusCode.OK
-                ? await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.HeldRevisionAnswer, timeout.Token).ConfigureAwait(false)
+                ? await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.HeldRevisionAnswer, timeout.Token).ConfigureAwait(false)
                 : null;
         }
         catch (Exception error) when (error is HttpRequestException or TaskCanceledException or JsonException && !cancellationToken.IsCancellationRequested)
@@ -736,7 +737,7 @@ internal sealed partial class HomeLeases(
     {
         try
         {
-            return JsonSerializer.Deserialize(bytes, TerraBaseJsonContext.Default.HomeLease);
+            return JsonSerializer.Deserialize(bytes, ReplicasJsonContext.Default.HomeLease);
         }
         catch (JsonException)
         {

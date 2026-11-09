@@ -70,14 +70,14 @@ public sealed class BackupLeaseTests
 
     private static async ValueTask<BackupRecord?> RecordAsync(SystemCatalog catalog, SqlBackupHost host, string backupId, CancellationToken cancellationToken) =>
         await catalog.ReadAsync(
-            transaction => GetAsync(transaction, BackupCatalog.Records(host.Database.Organization), backupId, TerraBaseJsonContext.Default.BackupRecord, cancellationToken),
+            transaction => GetAsync(transaction, BackupCatalog.Records(host.Database.Organization), backupId, ManagementJsonContext.Default.BackupRecord, cancellationToken),
             _ => (BackupRecord?)null, cancellationToken);
 
     private static async ValueTask<List<BackupLease>> LeasesAsync(SystemCatalog catalog, SqlBackupHost host, string backupId, CancellationToken cancellationToken)
     {
         var leases = await catalog.ReadAsync(
             transaction => SystemCatalog.ListAllAsync(
-                transaction, BackupCatalog.Leases(host.Database.Organization), TerraBaseJsonContext.Default.BackupLease, cancellationToken),
+                transaction, BackupCatalog.Leases(host.Database.Organization), ManagementJsonContext.Default.BackupLease, cancellationToken),
             static _ => new List<BackupLease>(), cancellationToken);
         return [.. leases.Where(lease => lease.BackupId == backupId)];
     }
@@ -93,7 +93,7 @@ public sealed class BackupLeaseTests
         {
             await transaction.DeleteAsync(retention, current.UtcTicks.ToString("D19") + order, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, retention, aged.CompletedAt!.Value.UtcTicks.ToString("D19") + order, aged.Id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
-            await PutAsync(transaction, BackupCatalog.Records(aged.OrganizationId), aged.Id, aged, TerraBaseJsonContext.Default.BackupRecord, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, BackupCatalog.Records(aged.OrganizationId), aged.Id, aged, ManagementJsonContext.Default.BackupRecord, cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken);
     }

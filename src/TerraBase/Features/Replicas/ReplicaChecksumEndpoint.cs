@@ -1,7 +1,8 @@
 using System.Globalization;
-using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
+using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -61,7 +62,7 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
         {
             null => ErrorResponse.From(new NotFound("the database is not stored on this node")),
             var round => TypedResults.Json(new ReplicaChecksumPage(round.Revision.ToString(), round.Ranges is null, round.Ranges ?? [], round.Next),
-                TerraBaseJsonContext.Default.ReplicaChecksumPage),
+                ReplicasJsonContext.Default.ReplicaChecksumPage),
         };
     }
 

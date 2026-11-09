@@ -1,5 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.HomeApply;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -38,7 +39,7 @@ internal sealed class ApplyStateEndpoint(IHomeApply apply, ITenantDirectory tena
             return await tenants.FindDatabaseAsync(Value("organization"), Value("project"), Value("database"), cancellationToken).ConfigureAwait(false) switch
             {
                 TenantContext database when await apply.StateAsync(database, id, cancellationToken).ConfigureAwait(false) is { } state =>
-                    TypedResults.Json(state, TerraBaseJsonContext.Default.HomeApplyResult),
+                    TypedResults.Json(state, HomeApplyJsonContext.Default.HomeApplyResult),
                 Unavailable error => ErrorResponse.From(error),
                 _ => ErrorResponse.From(new NotFound("the database does not exist")),
             };

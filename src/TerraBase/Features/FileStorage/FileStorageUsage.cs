@@ -1,7 +1,8 @@
 using TerraBase.Engine;
-using TerraBase.Primitives;
+using TerraBase.Features.FileStorage;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 
 namespace TerraBase.Features.FileStorage;
 
@@ -52,7 +53,7 @@ internal sealed class FileStorageUsage(IStorageEngine engine) : IFileStorageUsag
                         {
                             throw new QueryCapacityException("file storage accounting exceeded its object budget") { Deterministic = true };
                         }
-                        var file = EntityPayload.Read(saved, TerraBaseJsonContext.Default.FileObject)!;
+                        var file = EntityPayload.Read(saved, FileStorageJsonContext.Default.FileObject)!;
                         total = checked(total + file.Size);
                         fileAfter = saved.Id;
                     }

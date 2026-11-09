@@ -1,5 +1,6 @@
 using NATS.Client.KeyValueStore;
 using System.Text.Json;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using ZLogger;
 
@@ -109,7 +110,7 @@ internal sealed partial class RegionalHandoff
             }
             var targetProof = await ReadAsync(kv, PreparedKey(transfer.Target), token).ConfigureAwait(false);
             if (targetProof?.Value is not { } proofBytes
-                || JsonSerializer.Deserialize(proofBytes, TerraBaseJsonContext.Default.RegionalPrepared) is not { } proof
+                || JsonSerializer.Deserialize(proofBytes, ReplicasJsonContext.Default.RegionalPrepared) is not { } proof
                 || proof.Source != transfer.Source || proof.Target != transfer.Target
                 || proof.Operation != transfer.Id || proof.Epoch != transfer.PreparedEpoch
                 || !await NodeReadyAsync(transfer.Target, token).ConfigureAwait(false))
@@ -235,7 +236,7 @@ internal sealed partial class RegionalHandoff
     private async Task WritePreparedAsync(INatsKVStore kv, RegionalPrepared prepared, CancellationToken token)
     {
         _ = await kv.PutAsync(PreparedKey(prepared.Target),
-            JsonSerializer.SerializeToUtf8Bytes(prepared, TerraBaseJsonContext.Default.RegionalPrepared), cancellationToken: token).ConfigureAwait(false);
+            JsonSerializer.SerializeToUtf8Bytes(prepared, ReplicasJsonContext.Default.RegionalPrepared), cancellationToken: token).ConfigureAwait(false);
     }
 
     private string PreparedKey(string target) => "prepared." + options.Region + "." + target;
@@ -244,7 +245,7 @@ internal sealed partial class RegionalHandoff
     {
         var entry = await ReadAsync(kv, PreparedKey(owner.Node), token).ConfigureAwait(false);
         var prepared = owner.Prepared ?? (entry?.Value is { } bytes
-            ? JsonSerializer.Deserialize(bytes, TerraBaseJsonContext.Default.RegionalPrepared) : null);
+            ? JsonSerializer.Deserialize(bytes, ReplicasJsonContext.Default.RegionalPrepared) : null);
         var source = owner.Previous ?? (owner.Version == 0 ? owner.Node : null);
         return prepared is not null && prepared.Target == owner.Node && prepared.Source == source && prepared.Epoch == owner.Epoch - 1
             && (owner.Transfer is not { Phase: Activating } transfer || transfer.Id == prepared.Operation);

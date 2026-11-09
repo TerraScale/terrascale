@@ -1,10 +1,11 @@
+using Amazon.Runtime;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
-using System.Text.Json;
 using System.Text.Json.Serialization;
-using Amazon.Runtime;
-using TerraBase.Features.Management;
+using System.Text.Json;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -180,7 +181,7 @@ internal sealed class DatabaseBackupPurge(
         do
         {
             var page = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.ListAsync(transaction,
-                BackupCatalog.Records(database.OrganizationId), after, 100, TerraBaseJsonContext.Default.BackupRecord,
+                BackupCatalog.Records(database.OrganizationId), after, 100, ManagementJsonContext.Default.BackupRecord,
                 record => record.Id, token), token).ConfigureAwait(false);
             foreach (var snapshot in page.Items.Where(record => record.ProjectId == database.ProjectId
                 && record.DatabaseId == database.DatabaseId))
@@ -272,7 +273,7 @@ internal sealed class DatabaseBackupPurge(
         failed |= !await AttemptAsync(job, BackupDestinationNames.Platform, null, prefix, progress.ObjectsAbsentAt, token).ConfigureAwait(false);
         var destinations = await catalog.ReadUncheckedAsync(transaction =>
             SystemCatalog.ListAsync(transaction, BackupDestinationHistory.Kind(job.Database.ProjectId!), progress.DestinationAfter,
-                16, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, record => record.Revision, token), token).ConfigureAwait(false);
+                16, BackupJsonContext.Default.ProjectBackupDestinationRecord, record => record.Revision, token), token).ConfigureAwait(false);
         foreach (var destination in destinations.Items)
         {
             failed |= !await AttemptAsync(job, destination.Revision, destination, prefix, progress.ObjectsAbsentAt, token).ConfigureAwait(false);

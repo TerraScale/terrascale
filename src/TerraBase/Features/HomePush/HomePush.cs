@@ -372,7 +372,7 @@ internal sealed class HomePush(
                     var result = await apply.ApplyAsync(database, transaction, cancellationToken).ConfigureAwait(false)
                         ?? throw new StorageBusyException();
                     await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
-                        JsonSerializer.SerializeToUtf8Bytes(result, TerraBaseJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
+                        JsonSerializer.SerializeToUtf8Bytes(result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
                     _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
                     if (message.Metadata is { } metadata)
                     {
@@ -475,7 +475,7 @@ internal sealed class HomePush(
                     HomeApplyResult? result;
                     try
                     {
-                        result = JsonSerializer.Deserialize(data, TerraBaseJsonContext.Default.HomeApplyResult);
+                        result = JsonSerializer.Deserialize(data, HomeApplyJsonContext.Default.HomeApplyResult);
                     }
                     catch (JsonException)
                     {
@@ -714,7 +714,7 @@ internal sealed class HomePush(
         }
 
         await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
-            JsonSerializer.SerializeToUtf8Bytes(result, TerraBaseJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
+            JsonSerializer.SerializeToUtf8Bytes(result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
         await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         if (message.Metadata is { } metadata)
         {
@@ -770,7 +770,7 @@ internal sealed class HomePush(
 
     internal static byte[] Encode(RegionTransaction transaction)
     {
-        var json = JsonSerializer.SerializeToUtf8Bytes(transaction, TerraBaseJsonContext.Default.RegionTransaction);
+        var json = JsonSerializer.SerializeToUtf8Bytes(transaction, HomeApplyJsonContext.Default.RegionTransaction);
         var packed = new byte[4 + LZ4.Block.GetMaxCompressedLength(json.Length)];
         BinaryPrimitives.WriteInt32BigEndian(packed, json.Length);
         var size = LZ4.Block.Compress(json, packed.AsSpan(4));
@@ -790,7 +790,7 @@ internal sealed class HomePush(
         {
             var json = new byte[length];
             if (LZ4.Block.Decompress(data.AsSpan(4), json, null) != length
-                || JsonSerializer.Deserialize(json, TerraBaseJsonContext.Default.RegionTransaction) is not { Id: not null, Region: not null, Hlc: not null, Changes: not null } decoded)
+                || JsonSerializer.Deserialize(json, HomeApplyJsonContext.Default.RegionTransaction) is not { Id: not null, Region: not null, Hlc: not null, Changes: not null } decoded)
             {
                 return false;
             }

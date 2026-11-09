@@ -1,11 +1,12 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Stats;
 using TerraBase.Hosting;
@@ -227,15 +228,15 @@ internal sealed partial class UsageMeter
 
     private static async ValueTask AddAsync(IStorageTransaction transaction, string kind, string id, OpCounts counts, CancellationToken cancellationToken)
     {
-        var saved = await SystemCatalog.GetAsync(transaction, kind, id, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
-        await PutAsync(transaction, kind, id, (saved ?? OpCounts.Zero) + counts, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
+        var saved = await SystemCatalog.GetAsync(transaction, kind, id, ManagementJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, kind, id, (saved ?? OpCounts.Zero) + counts, ManagementJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask AddUnitsAsync(IStorageTransaction transaction, string kind, string id, UsageTotals units, CancellationToken cancellationToken)
     {
-        var saved = await SystemCatalog.GetAsync(transaction, kind, id, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
+        var saved = await SystemCatalog.GetAsync(transaction, kind, id, ManagementJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, kind, id, (saved ?? new UsageTotals(0, 0)) with { Reads = (saved?.Reads ?? 0) + units.Reads, Writes = (saved?.Writes ?? 0) + units.Writes },
-            TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
+            ManagementJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
     }
 
 

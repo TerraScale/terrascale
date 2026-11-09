@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
@@ -35,7 +36,7 @@ internal sealed class HomeDatabaseCountEndpoint(IManagementService management) :
 
         return await management.CountOrganizationDatabasesHomedAsync(organization, cancellationToken).ConfigureAwait(false) switch
         {
-            long count => TypedResults.Json(new HomeCountBody(count), TerraBaseJsonContext.Default.HomeCountBody),
+            long count => TypedResults.Json(new HomeCountBody(count), ManagementJsonContext.Default.HomeCountBody),
             Unavailable error => ErrorResponse.From(error),
         };
     }

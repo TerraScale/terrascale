@@ -1,5 +1,6 @@
 using System.Net;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -43,7 +44,7 @@ internal sealed class PlanFanout(IRegionPeers peers, IHttpClientFactory http, In
                 Version = HttpVersion.Version20,
                 VersionPolicy = HttpVersionPolicy.RequestVersionExact,
                 Headers = { { ScopeHeader, RegionScope } },
-                Content = JsonContent.Create(new PlanRequest(plan), TerraBaseJsonContext.Default.PlanRequest),
+                Content = JsonContent.Create(new PlanRequest(plan), ManagementJsonContext.Default.PlanRequest),
             };
             credential.Sign(request.Headers);
             using var client = http.CreateClient(HomeLocator.HttpClientName);

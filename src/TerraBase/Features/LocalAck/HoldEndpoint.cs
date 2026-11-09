@@ -2,11 +2,12 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.HomePush;
-using static TerraBase.Features.HomePush.HomePush;
+using TerraBase.Features.LocalAck;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using static TerraBase.Features.HomePush.HomePush;
 
 namespace TerraBase.Features.LocalAck;
 
@@ -45,7 +46,7 @@ internal sealed class HoldEndpoint(HoldStore holds, IMemoryBudget memory) : Endp
         HeldTransaction? held;
         try
         {
-            held = await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.HeldTransaction, cancellationToken).ConfigureAwait(false);
+            held = await HttpContext.Request.ReadFromJsonAsync(LocalAckJsonContext.Default.HeldTransaction, cancellationToken).ConfigureAwait(false);
         }
         catch (JsonException)
         {

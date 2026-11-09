@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Features.Clock;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Clock;
@@ -99,7 +100,7 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
             var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
             _ = await transaction.PutAsync("node_clocks", options.MachineId,
-                JsonSerializer.SerializeToUtf8Bytes(new HlcState(1, reserved), TerraBaseJsonContext.Default.HlcState), cancellationToken).ConfigureAwait(false);
+                JsonSerializer.SerializeToUtf8Bytes(new HlcState(1, reserved), ClockJsonContext.Default.HlcState), cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             _reserved = reserved;
         }
@@ -116,7 +117,7 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
             return default;
         }
 
-        var state = JsonSerializer.Deserialize(json.Value.Span, TerraBaseJsonContext.Default.HlcState);
+        var state = JsonSerializer.Deserialize(json.Value.Span, ClockJsonContext.Default.HlcState);
         if (state is not { Version: 1 } || state.Timestamp.PhysicalMilliseconds < 0 || state.Timestamp.NodeId != options.MachineId)
         {
             throw new InvalidDataException("the persisted HLC is invalid");

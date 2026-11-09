@@ -66,7 +66,7 @@ public sealed class ReplicaStatusTests
 
             var verifiedAt = DateTimeOffset.UtcNow.AddSeconds(-1);
             var report = new ReplicaStatusReport("replica-region", ReplicaStates.Following, 999, null, verifiedAt);
-            using var content = new StringContent(JsonSerializer.Serialize(report, TerraBaseJsonContext.Default.ReplicaStatusReport), Encoding.UTF8, "application/json");
+            using var content = new StringContent(JsonSerializer.Serialize(report, ReplicasJsonContext.Default.ReplicaStatusReport), Encoding.UTF8, "application/json");
             using var reported = await api.Server.Client.PostAsync(new Uri(api.Server.BaseAddress,
                 $"/v1/sync/organizations/{managed.Organization}/projects/{managed.Project}/databases/{managed.Id}/replica-status"), content, token);
             await Assert.That(reported.StatusCode).IsEqualTo(HttpStatusCode.NoContent);

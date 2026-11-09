@@ -1,18 +1,19 @@
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Regions;
-using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -232,7 +233,7 @@ internal sealed partial class EngineManagementService
         {
             await CatalogTables.PutDatabaseAsync(transaction, database, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, EngineManagedBackupService.BackedUpDatabases, database.Id, DatabaseOwner.Of(tenant with { DatabaseId = database.Id }),
-                TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
+                ManagementJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
             _ = await CatalogTables.DeletePendingCleanupAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false);
         }
 

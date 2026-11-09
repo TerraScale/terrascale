@@ -142,15 +142,15 @@ public sealed partial class RegionalWriterCrashTests
         var context = new NatsKVContext(new NatsJSContext(drill.Connection));
         var owners = await context.GetStoreAsync(RegionalHandoff.Bucket, token);
         var current = await owners.GetEntryAsync<byte[]>("gru", cancellationToken: token);
-        var previous = JsonSerializer.Deserialize(current.Value!, TerraBaseJsonContext.Default.RegionalOwner)!;
+        var previous = JsonSerializer.Deserialize(current.Value!, ReplicasJsonContext.Default.RegionalOwner)!;
         var writers = await context.GetStoreAsync(RegionalWriterLease.Bucket, token);
         var recoverable = previous with
         {
             Transfer = new RegionalTransfer("manual-cas-proof", "gru-1", "gru-2",
                 (await RecoveryDrill.StatusAsync(drill.SourceHttp, token)).Session, "recovering", DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30)),
         };
-        var revision = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(recoverable, TerraBaseJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
-        using var payload = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(snapshot with { Epoch = previous.Epoch }, TerraBaseJsonContext.Default.RegionalPrepare));
+        var revision = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(recoverable, ReplicasJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
+        using var payload = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(snapshot with { Epoch = previous.Epoch }, ReplicasJsonContext.Default.RegionalPrepare));
         payload.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         using (var prepared = await drill.TargetHttp.PostAsync(ManagementApi.Uri("/v1/rollout/prepare"), payload, token))
         {
@@ -158,7 +158,7 @@ public sealed partial class RegionalWriterCrashTests
                 + "\nSOURCE: " + drill.Source.Diagnostics + "\nTARGET: " + drill.Target.Diagnostics);
         }
         var certificate = await owners.GetEntryAsync<byte[]>("prepared.gru.gru-2", cancellationToken: token);
-        await Assert.That(JsonSerializer.Deserialize(certificate.Value!, TerraBaseJsonContext.Default.RegionalPrepared))
+        await Assert.That(JsonSerializer.Deserialize(certificate.Value!, ReplicasJsonContext.Default.RegionalPrepared))
             .IsEqualTo(new RegionalPrepared("gru-1", "gru-2", previous.Epoch, null));
         var blocked = drill.SourceNats.Drop(static (subject, payload) =>
             subject.StartsWith("$JS.API.", StringComparison.Ordinal)
@@ -166,14 +166,14 @@ public sealed partial class RegionalWriterCrashTests
             && (subject.EndsWith(".gru", StringComparison.Ordinal)
                 || Encoding.UTF8.GetString(payload.Span).Contains("$KV." + RegionalHandoff.Bucket + ".gru", StringComparison.Ordinal)));
         var held = await writers.GetEntryAsync<byte[]>("gru", cancellationToken: token);
-        await Assert.That(JsonSerializer.Deserialize(held.Value!, TerraBaseJsonContext.Default.RegionalWriter)!.Node).IsEqualTo("gru-1");
+        await Assert.That(JsonSerializer.Deserialize(held.Value!, ReplicasJsonContext.Default.RegionalWriter)!.Node).IsEqualTo("gru-1");
         await Assert.That((await RecoveryDrill.StatusAsync(drill.SourceHttp, token)).Writer).IsTrue();
         await File.WriteAllTextAsync(drill.Source.Arm, drill.Database, token);
         var writing = drill.SourceHttp.PostAsJsonAsync(ManagementApi.Uri(drill.Sql),
             new { statements = new[] { new { sql = "INSERT INTO acked VALUES ('source-overlap')" } } }, token);
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(File.Exists(drill.Source.MidWrite)), TimeSpan.FromSeconds(5));
         var manual = new RegionalOwner("gru", "gru-2", previous.Epoch + 1, "gru-1", Version: 2);
-        _ = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(manual, TerraBaseJsonContext.Default.RegionalOwner), revision, cancellationToken: token);
+        _ = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(manual, ReplicasJsonContext.Default.RegionalOwner), revision, cancellationToken: token);
         await blocked.WaitAsync(TimeSpan.FromSeconds(5), token);
         using (var refused = await drill.TargetHttp.PostAsJsonAsync(ManagementApi.Uri(drill.Sql),
             new { statements = new[] { new { sql = "INSERT INTO acked VALUES ('target-too-early')" } } }, token))
@@ -207,7 +207,7 @@ public sealed partial class RegionalWriterCrashTests
         await Assert.That(await drill.OwnerAsync(token) is { Node: "gru-2", Activated: false, Transfer.Phase: "activating" }).IsTrue();
         var writers = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(RegionalWriterLease.Bucket, token);
         var held = await writers.GetEntryAsync<byte[]>("gru", cancellationToken: token);
-        await Assert.That(JsonSerializer.Deserialize(held.Value!, TerraBaseJsonContext.Default.RegionalWriter)!.Node).IsEqualTo("gru-2");
+        await Assert.That(JsonSerializer.Deserialize(held.Value!, ReplicasJsonContext.Default.RegionalWriter)!.Node).IsEqualTo("gru-2");
         await drill.Source.KillAsync();
         await drill.Target.KillAsync();
         await IgnoreControllerDisconnectAsync(draining);
@@ -235,8 +235,8 @@ public sealed partial class RegionalWriterCrashTests
         var mismatch = new HomeLease(EntityIds.New().ToString(), drill.Project, mismatchDb, "gru", "gru-1", 100, "mismatch-session");
         foreach (var conflict in new[] { foreign, third, mismatch })
         {
-            _ = await homes.PutAsync("node." + conflict.Node, JsonSerializer.SerializeToUtf8Bytes(new NodeLease(conflict.Node, conflict.Home, conflict.Session), TerraBaseJsonContext.Default.NodeLease), cancellationToken: token);
-            _ = await homes.PutAsync("home." + conflict.DatabaseId, JsonSerializer.SerializeToUtf8Bytes(conflict, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            _ = await homes.PutAsync("node." + conflict.Node, JsonSerializer.SerializeToUtf8Bytes(new NodeLease(conflict.Node, conflict.Home, conflict.Session), ReplicasJsonContext.Default.NodeLease), cancellationToken: token);
+            _ = await homes.PutAsync("home." + conflict.DatabaseId, JsonSerializer.SerializeToUtf8Bytes(conflict, ReplicasJsonContext.Default.HomeLease), cancellationToken: token);
         }
         var elapsed = Stopwatch.StartNew();
         await Task.WhenAll(drill.Source.StartAsync(token), drill.Target.StartAsync(token));
@@ -250,7 +250,7 @@ public sealed partial class RegionalWriterCrashTests
                 new { statements = new[] { new { sql = "CREATE TABLE must_not_commit(id TEXT)" } } }, token);
             await Assert.That(refused.IsSuccessStatusCode).IsFalse();
             var retained = await homes.GetEntryAsync<byte[]>("home." + conflict.DatabaseId, cancellationToken: token);
-            await Assert.That(JsonSerializer.Deserialize(retained.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(conflict);
+            await Assert.That(JsonSerializer.Deserialize(retained.Value!, ReplicasJsonContext.Default.HomeLease)).IsEqualTo(conflict);
         }
         await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "healthy-after-conflict"], token);
     }
@@ -284,12 +284,12 @@ public sealed partial class RegionalWriterCrashTests
         await using var drill = await RecoveryDrill.StartAsync(token);
         var homes = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(HomeLeases.Bucket, token);
         var before = await homes.GetEntryAsync<byte[]>("home." + drill.Database, cancellationToken: token);
-        var retained = JsonSerializer.Deserialize(before.Value!, TerraBaseJsonContext.Default.HomeLease)!;
+        var retained = JsonSerializer.Deserialize(before.Value!, ReplicasJsonContext.Default.HomeLease)!;
         await Assert.That(retained.Node).IsEqualTo("gru-1");
         await drill.Source.KillAsync();
         await Task.Delay(HomeLeases.Ttl + TimeSpan.FromSeconds(22), token);
         var after = await homes.GetEntryAsync<byte[]>("home." + drill.Database, cancellationToken: token);
-        await Assert.That(JsonSerializer.Deserialize(after.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(retained);
+        await Assert.That(JsonSerializer.Deserialize(after.Value!, ReplicasJsonContext.Default.HomeLease)).IsEqualTo(retained);
         await Assert.That(after.Revision).IsEqualTo(before.Revision);
         await Assert.That((await RecoveryDrill.StatusAsync(drill.TargetHttp, token)).Writer).IsFalse();
         await drill.Source.StartAsync(token);
@@ -305,7 +305,7 @@ public sealed partial class RegionalWriterCrashTests
         {
             return false;
         }
-        var owner = JsonSerializer.Deserialize(payload.Span, TerraBaseJsonContext.Default.RegionalOwner);
+        var owner = JsonSerializer.Deserialize(payload.Span, ReplicasJsonContext.Default.RegionalOwner);
         return owner?.Transfer?.Phase == phase;
     }
 
@@ -411,14 +411,14 @@ public sealed partial class RegionalWriterCrashTests
         {
             var store = await new NatsKVContext(new NatsJSContext(connection)).GetStoreAsync(RegionalHandoff.Bucket, token);
             var entry = await store.GetEntryAsync<byte[]>("gru", cancellationToken: token);
-            return JsonSerializer.Deserialize(entry.Value!, TerraBaseJsonContext.Default.RegionalOwner)!;
+            return JsonSerializer.Deserialize(entry.Value!, ReplicasJsonContext.Default.RegionalOwner)!;
         }
 
         internal static async Task<RegionalStatus> StatusAsync(HttpClient http, CancellationToken token)
         {
             using var response = await http.GetAsync(ManagementApi.Uri("/v1/rollout/status"), token);
             response.EnsureSuccessStatusCode();
-            return (await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, token))!;
+            return (await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.RegionalStatus, token))!;
         }
 
         internal static Task WaitWriterAsync(HttpClient http, TimeSpan bound, CancellationToken token) => TerraBaseTestServer.EventuallyAsync(async _ =>

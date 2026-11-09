@@ -1,15 +1,16 @@
-using System.Buffers;
-using System.Collections.Concurrent;
-using System.Net;
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
+using System.Buffers;
+using System.Collections.Concurrent;
+using System.Net.Http.Headers;
+using System.Net;
+using System.Text.Json.Serialization;
+using System.Text.Json;
+using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 
@@ -144,7 +145,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
                 return Refused;
             }
 
-            token = (await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthTokenResponse, cancellationToken).ConfigureAwait(false))?.AccessToken;
+            token = (await response.Content.ReadFromJsonAsync(UserAuthJsonContext.Default.TsAuthTokenResponse, cancellationToken).ConfigureAwait(false))?.AccessToken;
         }
         catch (JsonException)
         {

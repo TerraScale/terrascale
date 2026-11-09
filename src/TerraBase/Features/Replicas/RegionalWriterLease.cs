@@ -1,8 +1,9 @@
-using System.Globalization;
-using System.Text.Json;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
+using System.Globalization;
+using System.Text.Json;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replicas;
@@ -27,7 +28,7 @@ internal sealed class RegionalWriterLease(NatsJSContext js, INatsKVStore kv, str
             _mine = writer;
         }
 
-        var value = JsonSerializer.SerializeToUtf8Bytes(writer, TerraBaseJsonContext.Default.RegionalWriter);
+        var value = JsonSerializer.SerializeToUtf8Bytes(writer, ReplicasJsonContext.Default.RegionalWriter);
         try
         {
             if (_revision is { } revision)

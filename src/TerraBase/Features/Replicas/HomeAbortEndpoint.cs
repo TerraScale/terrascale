@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -22,5 +23,5 @@ internal sealed class HomeAbortEndpoint(HomeMoves moves) : Endpoint<HomeAbortReq
 
     public override async ValueTask<IResult> HandleAsync(HomeAbortRequest request, CancellationToken cancellationToken) =>
         ReplicaRoutes.Database(HttpContext) is not { } database ? ErrorResponse.From(new NotFound("the database does not exist"))
-        : TypedResults.Json(await moves.AbortAsync(database, request, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.HomePromoteAnswer);
+        : TypedResults.Json(await moves.AbortAsync(database, request, cancellationToken).ConfigureAwait(false), ReplicasJsonContext.Default.HomePromoteAnswer);
 }

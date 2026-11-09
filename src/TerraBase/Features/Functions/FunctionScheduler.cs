@@ -1,5 +1,6 @@
 using Cronos;
 using TerraBase.Configuration;
+using TerraBase.Features.Functions;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using ZLogger;
@@ -32,7 +33,7 @@ internal sealed class FunctionScheduler(SystemCatalog catalog, FunctionService f
     private async Task TickAsync(CancellationToken cancellationToken)
     {
         var schedules = await catalog.ReadAsync<IReadOnlyList<FunctionSchedule>?>(async transaction => await SystemCatalog.ListAllAsync(transaction,
-            FunctionService.Schedules, TerraBaseJsonContext.Default.FunctionSchedule, cancellationToken).ConfigureAwait(false),
+            FunctionService.Schedules, FunctionsJsonContext.Default.FunctionSchedule, cancellationToken).ConfigureAwait(false),
             static _ => null, cancellationToken).ConfigureAwait(false);
         if (schedules is null)
         {

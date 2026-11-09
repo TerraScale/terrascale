@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
-using System.Net;
 using System.Net.Http.Headers;
-using System.Text.Json;
+using System.Net;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.UserAuth;
@@ -323,7 +324,7 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
             using var response = await client.SendAsync(request, cancellation.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.OK)
             {
-                var status = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthKeyStatus, cancellation.Token).ConfigureAwait(false);
+                var status = await response.Content.ReadFromJsonAsync(UserAuthJsonContext.Default.TsAuthKeyStatus, cancellation.Token).ConfigureAwait(false);
                 return status?.KeyId == key.KeyId ? new KeyActive(until) : new Unavailable("ts-auth answered about another key");
             }
 
@@ -337,7 +338,7 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
                 return new Unavailable("ts-auth key status is unavailable");
             }
 
-            var body = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthErrorBody, cancellation.Token).ConfigureAwait(false);
+            var body = await response.Content.ReadFromJsonAsync(UserAuthJsonContext.Default.TsAuthErrorBody, cancellation.Token).ConfigureAwait(false);
             return new KeyRefused(body?.Error?.Code is "key_revoked" or "key_expired" ? body.Error.Code : "invalid_token");
         }
         catch (Exception error) when (error is JsonException or InvalidOperationException or NotSupportedException)

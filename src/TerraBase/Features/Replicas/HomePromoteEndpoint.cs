@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -27,7 +28,7 @@ internal sealed class HomePromoteEndpoint(HomeMoves moves) : Endpoint<HomePromot
         ReplicaRoutes.Database(HttpContext) is not { } database ? ErrorResponse.From(new NotFound("the database does not exist"))
         : await moves.PromoteAsync(database, request, cancellationToken).ConfigureAwait(false) switch
         {
-            HomePromoteAnswer answer => TypedResults.Json(answer, TerraBaseJsonContext.Default.HomePromoteAnswer),
+            HomePromoteAnswer answer => TypedResults.Json(answer, ReplicasJsonContext.Default.HomePromoteAnswer),
             Conflict error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
         };

@@ -1,6 +1,6 @@
-using System.Globalization;
-using Microsoft.AspNetCore.Authorization;
 using JsonResult = Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<TerraBase.Features.Sql.SqlErrorBody>;
+using Microsoft.AspNetCore.Authorization;
+using System.Globalization;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -12,6 +12,7 @@ using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Features.Shapes;
 using TerraBase.Features.Sql.Routing;
+using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -128,7 +129,7 @@ internal sealed class SqlExecuteEndpoint(
 
             return outcome switch
             {
-                SqlExecuteBody answered => TypedResults.Json(answered, TerraBaseJsonContext.Default.SqlExecuteBody),
+                SqlExecuteBody answered => TypedResults.Json(answered, SqlJsonContext.Default.SqlExecuteBody),
                 SqlBatchFailure failure => Error(failure),
             };
         }
@@ -189,7 +190,7 @@ internal sealed class SqlExecuteEndpoint(
             return await sql.ExecuteOnReplicaAsync(database, reader, statements, cancellationToken) switch
             {
                 IReadOnlyList<SqlResult> results => TypedResults.Json(new SqlExecuteBody([.. results.Select(SqlStatementBody.Of)]),
-                    TerraBaseJsonContext.Default.SqlExecuteBody),
+                    SqlJsonContext.Default.SqlExecuteBody),
                 ReplicaSqlFailure failed => Error(new SqlBatchFailure(failed.Error, failed.Statement)),
             };
         }
@@ -275,7 +276,7 @@ internal sealed class SqlExecuteEndpoint(
             }
 
             return TypedResults.Json(new SqlExecuteBody([.. results.Select(SqlStatementBody.Of)]),
-                TerraBaseJsonContext.Default.SqlExecuteBody);
+                SqlJsonContext.Default.SqlExecuteBody);
         }
     }
 
@@ -329,6 +330,6 @@ internal sealed class SqlExecuteEndpoint(
             Listeners.ReplayIn(HttpContext, home);
         }
 
-        return TypedResults.Json(SqlBatch.Body(failure, HttpContext.TraceIdentifier), TerraBaseJsonContext.Default.SqlErrorBody, statusCode: failure.Error.Status);
+        return TypedResults.Json(SqlBatch.Body(failure, HttpContext.TraceIdentifier), SqlJsonContext.Default.SqlErrorBody, statusCode: failure.Error.Status);
     }
 }

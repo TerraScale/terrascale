@@ -1,11 +1,12 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Stats;
 using TerraBase.Hosting;
@@ -33,7 +34,7 @@ internal sealed partial class UsageMeter
                 {
                     var kind = OrganizationMonths(organizationId);
                     var id = Own(month);
-                    var saved = await SystemCatalog.GetAsync(transaction, kind, id, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false)
+                    var saved = await SystemCatalog.GetAsync(transaction, kind, id, ManagementJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false)
                         ?? new UsageTotals(0, 0);
                     if (saved.SampledHour >= hour)
                     {
@@ -42,7 +43,7 @@ internal sealed partial class UsageMeter
 
                     var hours = saved.SampledHour >= 0 && MonthId(saved.SampledHour) == month ? hour - saved.SampledHour : 1;
                     await PutAsync(transaction, kind, id, saved with { StorageByteHours = checked(saved.StorageByteHours + (stored * hours)), SampledHour = hour },
-                        TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
+                        ManagementJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
                 }
 
                 return null;
@@ -84,7 +85,7 @@ internal sealed partial class UsageMeter
                             return units;
                         }
 
-                        var saved = JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!;
+                        var saved = JsonSerializer.Deserialize(record.Json.Span, ManagementJsonContext.Default.UsageTotals)!;
                         units = new(units.Reads + saved.Reads, units.Writes + saved.Writes) { StorageByteHours = checked(units.StorageByteHours + saved.StorageByteHours) };
                     }
 

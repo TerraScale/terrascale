@@ -55,7 +55,7 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId)
         SqlExecuteRequest? request;
         try
         {
-            request = JsonSerializer.Deserialize(json, TerraBaseJsonContext.Default.SqlExecuteRequest);
+            request = JsonSerializer.Deserialize(json, SqlJsonContext.Default.SqlExecuteRequest);
         }
         catch (JsonException)
         {
@@ -67,7 +67,7 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId)
             SqlBatchFailure invalid => Failure(invalid),
             List<SqlPlannedCommand> commands => await SqlBatch.RunAsync(session, commands, cancellationToken).ConfigureAwait(false) switch
             {
-                SqlExecuteBody body => JsonSerializer.Serialize(body, TerraBaseJsonContext.Default.SqlExecuteBody),
+                SqlExecuteBody body => JsonSerializer.Serialize(body, SqlJsonContext.Default.SqlExecuteBody),
                 SqlBatchFailure failure => Failure(failure),
             },
         };
@@ -82,5 +82,5 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId)
 
     private string Failure(SqlError error) => Failure(new SqlBatchFailure(error, 0));
 
-    private string Failure(SqlBatchFailure failure) => JsonSerializer.Serialize(SqlBatch.Body(failure, requestId), TerraBaseJsonContext.Default.SqlErrorBody);
+    private string Failure(SqlBatchFailure failure) => JsonSerializer.Serialize(SqlBatch.Body(failure, requestId), SqlJsonContext.Default.SqlErrorBody);
 }

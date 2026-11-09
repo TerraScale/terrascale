@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Errors;
+using TerraBase.Features.LocalAck;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
@@ -33,7 +34,7 @@ internal sealed class ReleaseHoldsEndpoint(HoldStore holds) : EndpointWithoutReq
         HoldRelease? release;
         try
         {
-            release = await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.HoldRelease, cancellationToken).ConfigureAwait(false);
+            release = await HttpContext.Request.ReadFromJsonAsync(LocalAckJsonContext.Default.HoldRelease, cancellationToken).ConfigureAwait(false);
         }
         catch (JsonException)
         {

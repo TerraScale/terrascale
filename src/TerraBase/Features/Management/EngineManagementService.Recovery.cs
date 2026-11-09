@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -123,7 +124,7 @@ internal sealed partial class EngineManagementService
     private static async ValueTask<bool> IsRegisteredAsync(IStorageTransaction transaction, TenantContext storage, CancellationToken cancellationToken) =>
         await OrganizationProjectAsync(transaction, storage.OrganizationId, storage.ProjectId!, cancellationToken).ConfigureAwait(false) is not null
         && (await CatalogTables.DatabaseAsync(transaction, storage.ProjectId!, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null
-            || await GetAsync(transaction, BackupCatalog.Records(storage.OrganizationId), storage.DatabaseId!, TerraBaseJsonContext.Default.BackupRecord, cancellationToken)
+            || await GetAsync(transaction, BackupCatalog.Records(storage.OrganizationId), storage.DatabaseId!, ManagementJsonContext.Default.BackupRecord, cancellationToken)
                 .ConfigureAwait(false) is { } backup && backup.ProjectId == storage.ProjectId);
 
     private readonly union CleanupRegistration(bool, Done, Unavailable);
@@ -165,7 +166,7 @@ internal sealed partial class EngineManagementService
 
         var authority = await ReadAsync<RecordedDeletion>(async transaction =>
         {
-            var purge = await GetAsync(transaction, DatabasePurge.Kind, storage.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            var purge = await GetAsync(transaction, DatabasePurge.Kind, storage.DatabaseId!, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
             if (purge is not null && (purge.FormatVersion != 1 || !DatabasePurge.SameDatabase(purge.Database, storage)))
             {
                 throw new InvalidOperationException("a database purge conflicts with its cleanup scope");

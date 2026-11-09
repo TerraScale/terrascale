@@ -1,23 +1,24 @@
-using ZLogger;
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Regions;
-using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Management;
 
@@ -228,7 +229,7 @@ internal sealed partial class EngineManagementService
         _ = await CatalogTables.DeleteDatabaseAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false);
         await StorageSweep.AddAsync(transaction, new SweepEntry(StorageSweep.DatabaseBackups, storage.OrganizationId, database.Id), cancellationToken).ConfigureAwait(false);
         _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false);
-        await PutAsync(transaction, RetiredDatabases, database.Id, DatabaseOwner.Of(storage), TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken)
+        await PutAsync(transaction, RetiredDatabases, database.Id, DatabaseOwner.Of(storage), ManagementJsonContext.Default.DatabaseOwner, cancellationToken)
             .ConfigureAwait(false);
 
         await transaction.DeleteKindsAsync(SystemCatalog.DatabaseState(database.Id), cancellationToken).ConfigureAwait(false);

@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
@@ -36,7 +37,7 @@ internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<P
         return await catalog.CloseProjectAsync(project, request.ClosureId!, request.AuthorityOrganizationId!, request.Version, cancellationToken).ConfigureAwait(false) switch
         {
             ProjectClosureStatus { Status: ProjectClosure.Accepted } accepted => TypedResults.Ok(accepted),
-            ProjectClosureStatus pending => TypedResults.Json(pending, TerraBaseJsonContext.Default.ProjectClosureStatus, statusCode: StatusCodes.Status202Accepted),
+            ProjectClosureStatus pending => TypedResults.Json(pending, ManagementJsonContext.Default.ProjectClosureStatus, statusCode: StatusCodes.Status202Accepted),
             Conflict error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
         };

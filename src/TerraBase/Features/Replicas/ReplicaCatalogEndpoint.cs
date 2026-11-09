@@ -1,5 +1,6 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -77,6 +78,6 @@ internal sealed class ReplicaCatalogEndpoint(IReplicaCatalog catalog, TerraBaseO
 
         var next = after is null ? null : $"{after.OrganizationId}:{after.ProjectId}:{after.DatabaseId}";
         HttpContext.Response.Headers.CacheControl = "no-store";
-        return TypedResults.Json(new ReplicaCatalogPage(entries, next), TerraBaseJsonContext.Default.ReplicaCatalogPage);
+        return TypedResults.Json(new ReplicaCatalogPage(entries, next), ReplicasJsonContext.Default.ReplicaCatalogPage);
     }
 }

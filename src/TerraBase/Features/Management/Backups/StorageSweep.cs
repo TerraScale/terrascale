@@ -1,4 +1,5 @@
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -20,13 +21,13 @@ internal static class StorageSweep
     private const string Kind = "storage_sweep";
 
     public static ValueTask AddAsync(IStorageTransaction transaction, SweepEntry entry, CancellationToken cancellationToken) =>
-        PutAsync(transaction, Kind, entry.Key, entry, TerraBaseJsonContext.Default.SweepEntry, cancellationToken);
+        PutAsync(transaction, Kind, entry.Key, entry, ManagementJsonContext.Default.SweepEntry, cancellationToken);
 
     public static async ValueTask RemoveAsync(IStorageTransaction transaction, SweepEntry entry, CancellationToken cancellationToken) =>
         await transaction.DeleteAsync(Kind, entry.Key, cancellationToken).ConfigureAwait(false);
 
     public static ValueTask<ManagementPage<SweepEntry>> ListAsync(IStorageTransaction transaction, string? after, int limit, CancellationToken cancellationToken) =>
-        SystemCatalog.ListAsync(transaction, Kind, after, limit, TerraBaseJsonContext.Default.SweepEntry, entry => entry.Key, cancellationToken);
+        SystemCatalog.ListAsync(transaction, Kind, after, limit, ManagementJsonContext.Default.SweepEntry, entry => entry.Key, cancellationToken);
 
     public static async ValueTask<bool> DeleteFilesAsync(IStorageEngine engine, TenantContext storage, ILogger logger)
     {

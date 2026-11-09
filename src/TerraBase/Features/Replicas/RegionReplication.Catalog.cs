@@ -1,10 +1,11 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Text.Json;
 using NATS.Client.Core;
+using System.Net.Http.Headers;
+using System.Net;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -156,7 +157,7 @@ internal sealed partial class RegionReplication
             do
             {
                 var address = new Uri(home.Internal, $"/v1/sync/regions/{options.Region}/databases" + (after is null ? "" : $"?after={Uri.EscapeDataString(after)}"));
-                var page = await _http.GetFromJsonAsync(address, TerraBaseJsonContext.Default.ReplicaCatalogPage, cancellationToken).ConfigureAwait(false);
+                var page = await _http.GetFromJsonAsync(address, ReplicasJsonContext.Default.ReplicaCatalogPage, cancellationToken).ConfigureAwait(false);
                 if (page is null)
                 {
                     return null;
@@ -201,7 +202,7 @@ internal sealed partial class RegionReplication
         }
 
         if (!response.IsSuccessStatusCode
-            || await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.ReplicaCatalogEntry, cancellationToken).ConfigureAwait(false) is not { } entry)
+            || await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.ReplicaCatalogEntry, cancellationToken).ConfigureAwait(false) is not { } entry)
         {
             return;
         }

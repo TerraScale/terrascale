@@ -117,7 +117,7 @@ internal sealed class LocalOverlay
                 [.. chunk.Select(entry => (object?)entry.Transaction.Id)]), cancellationToken).ConfigureAwait(false);
             foreach (var row in found.Rows)
             {
-                if (row is [string id, string result] && JsonSerializer.Deserialize(result, TerraBaseJsonContext.Default.HomeApplyResult) is { } recorded)
+                if (row is [string id, string result] && JsonSerializer.Deserialize(result, HomeApplyJsonContext.Default.HomeApplyResult) is { } recorded)
                 {
                     held[id] = recorded;
                 }

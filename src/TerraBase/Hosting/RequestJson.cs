@@ -27,7 +27,7 @@ public static class RequestJson
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         AllowDuplicateProperties = false,
         MaxDepth = 64,
-        TypeInfoResolver = TerraBaseJsonContext.Default.WithAddedModifier(RejectNullElements),
+        TypeInfoResolver = TerraBaseJson.Resolver.WithAddedModifier(RejectNullElements),
     };
 
     public const string TextRule = "strings must be valid UTF-8 without lone UTF-16 surrogate escapes";

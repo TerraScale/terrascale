@@ -1,9 +1,10 @@
-using System.Buffers;
 using System.Buffers.Binary;
+using System.Buffers;
 using System.Text.Json;
-using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
+using TerraBase.Engine;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.Sync;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -70,7 +71,7 @@ internal sealed class RevisionPush(IMemoryBudget memory, TenantContext database)
         var end = payload.Length - sizeof(uint);
         try
         {
-            notice = JsonSerializer.Deserialize(payload.Span[(end - (int)length)..end], TerraBaseJsonContext.Default.ReplicaRevisionNotice);
+            notice = JsonSerializer.Deserialize(payload.Span[(end - (int)length)..end], ReplicasJsonContext.Default.ReplicaRevisionNotice);
         }
         catch (JsonException)
         {
@@ -116,7 +117,7 @@ internal sealed class RevisionPush(IMemoryBudget memory, TenantContext database)
         var before = payload.WrittenCount;
         using (var json = new Utf8JsonWriter(payload))
         {
-            JsonSerializer.Serialize(json, notice, TerraBaseJsonContext.Default.ReplicaRevisionNotice);
+            JsonSerializer.Serialize(json, notice, ReplicasJsonContext.Default.ReplicaRevisionNotice);
         }
 
         BinaryPrimitives.WriteUInt32BigEndian(payload.GetSpan(sizeof(uint)), (uint)(payload.WrittenCount - before));

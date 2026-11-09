@@ -1,13 +1,14 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Diagnostics;
 using System.Globalization;
-using System.Diagnostics.Metrics;
 using System.Net;
 using TerraBase.Configuration;
-using TerraBase.Engine;
 using TerraBase.Engine.Turso;
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -189,7 +190,7 @@ internal sealed class HomeMoves(
 
     private async Task<bool?> PromoteAsync(ReplicaPeer peer, HomeMoveMarker marker, HomePromoteRequest request)
     {
-        using var response = await PostAsync(peer, marker, "promote", JsonContent.Create(request, TerraBaseJsonContext.Default.HomePromoteRequest), CancellationToken.None)
+        using var response = await PostAsync(peer, marker, "promote", JsonContent.Create(request, ReplicasJsonContext.Default.HomePromoteRequest), CancellationToken.None)
             .ConfigureAwait(false);
         if (response is { IsSuccessStatusCode: false })
         {
@@ -199,7 +200,7 @@ internal sealed class HomeMoves(
 
         return response switch
         {
-            { StatusCode: HttpStatusCode.OK } => (await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.HomePromoteAnswer).ConfigureAwait(false))?.Promoted,
+            { StatusCode: HttpStatusCode.OK } => (await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.HomePromoteAnswer).ConfigureAwait(false))?.Promoted,
             { StatusCode: HttpStatusCode.Conflict or HttpStatusCode.NotFound } => false,
             _ => null,
         };
@@ -208,9 +209,9 @@ internal sealed class HomeMoves(
     private async Task<bool?> SettleAsync(ReplicaPeer peer, HomeMoveMarker marker)
     {
         using var response = await PostAsync(peer, marker, "promote/abort",
-            JsonContent.Create(new HomeAbortRequest(marker.MoveId, marker.Version), TerraBaseJsonContext.Default.HomeAbortRequest), CancellationToken.None).ConfigureAwait(false);
+            JsonContent.Create(new HomeAbortRequest(marker.MoveId, marker.Version), ReplicasJsonContext.Default.HomeAbortRequest), CancellationToken.None).ConfigureAwait(false);
         return response is { StatusCode: HttpStatusCode.OK }
-            ? (await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.HomePromoteAnswer).ConfigureAwait(false))?.Promoted
+            ? (await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.HomePromoteAnswer).ConfigureAwait(false))?.Promoted
             : null;
     }
 

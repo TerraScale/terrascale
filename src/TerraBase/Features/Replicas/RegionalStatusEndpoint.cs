@@ -1,5 +1,6 @@
-using TerraBase.Hosting;
 using TerraBase.Configuration;
+using TerraBase.Features.Replicas;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
@@ -27,6 +28,6 @@ internal sealed class RegionalStatusEndpoint(RegionalHandoff handoff) : Endpoint
         {
             return TypedResults.BadRequest();
         }
-        return TypedResults.Json(await handoff.StatusAsync(region.Length > 0 ? region : null, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.RegionalStatus);
+        return TypedResults.Json(await handoff.StatusAsync(region.Length > 0 ? region : null, cancellationToken).ConfigureAwait(false), ReplicasJsonContext.Default.RegionalStatus);
     }
 }

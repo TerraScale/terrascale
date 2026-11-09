@@ -1,9 +1,10 @@
 using System.Buffers.Text;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
+using System.Text;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -56,7 +57,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
 
             return await transaction.GetAsync(Kind, keyId, cancellationToken).ConfigureAwait(false);
         }, cancellationToken).ConfigureAwait(false);
-        return stored is null || EntityPayload.Read(stored, TerraBaseJsonContext.Default.ApiKey) is not { OrganizationId: not null } key
+        return stored is null || EntityPayload.Read(stored, ApiKeysJsonContext.Default.ApiKey) is not { OrganizationId: not null } key
             || key.ExpiresAt <= time.GetUtcNow()
             ? new NotFound()
             : key;
@@ -65,7 +66,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
     public async ValueTask<RevocationResult> RevokeAsync(string keyId, CancellationToken cancellationToken) =>
         await catalog.WriteAsync<RevocationResult>(async transaction =>
         {
-            var key = await GetAsync(transaction, Kind, keyId, TerraBaseJsonContext.Default.ApiKey, cancellationToken).ConfigureAwait(false);
+            var key = await GetAsync(transaction, Kind, keyId, ApiKeysJsonContext.Default.ApiKey, cancellationToken).ConfigureAwait(false);
             if (key is null)
             {
                 return new NotFound();
@@ -73,7 +74,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
 
             var hash = await GetAsync(transaction, Hashes, keyId, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false)
                 ?? (key.ProjectId is { } owner
-                    ? (await GetAsync(transaction, ProjectKeys(owner), keyId, TerraBaseJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false))?.Hash
+                    ? (await GetAsync(transaction, ProjectKeys(owner), keyId, ApiKeysJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false))?.Hash
                     : null)
                 ?? throw new InvalidOperationException("the API key has no secret lookup");
             await RevokeCoreAsync(transaction, keyId, hash, key.ProjectId, cancellationToken).ConfigureAwait(false);
@@ -85,7 +86,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         var page = await transaction.ListAsync(ProjectKeys(project), null, limit, maxBytes, token).ConfigureAwait(false);
         foreach (var stored in page.Records)
         {
-            var entry = EntityPayload.Read(stored, TerraBaseJsonContext.Default.ProjectKeyEntry)
+            var entry = EntityPayload.Read(stored, ApiKeysJsonContext.Default.ProjectKeyEntry)
                 ?? throw new InvalidOperationException("a closing project's API key is invalid");
             await RevokeCoreAsync(transaction, stored.Id, entry.Hash, project, token).ConfigureAwait(false);
         }
@@ -108,12 +109,12 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
     {
         var key = new ApiKey(EntityIds.New(time).ToString(), name, scopes, organizationId, projectId, databaseId, expiresAt);
         var hash = Hash(secret);
-        await PutAsync(transaction, Kind, key.Id, key, TerraBaseJsonContext.Default.ApiKey, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, Kind, key.Id, key, ApiKeysJsonContext.Default.ApiKey, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, Hashes, hash, key.Id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, Hashes, key.Id, hash, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
         if (projectId is not null)
         {
-            await PutAsync(transaction, ProjectKeys(projectId), key.Id, new ProjectKeyEntry(hash), TerraBaseJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, ProjectKeys(projectId), key.Id, new ProjectKeyEntry(hash), ApiKeysJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false);
         }
 
         return key;

@@ -11,7 +11,7 @@ internal static class RestoreGenerationLeases
     {
         HashSet<Ulid> active = [];
         var leases = await SystemCatalog.ListAllAsync(
-            transaction, BackupCatalog.GenerationLeases(organizationId), TerraBaseJsonContext.Default.RestoreGenerationLease, cancellationToken).ConfigureAwait(false);
+            transaction, BackupCatalog.GenerationLeases(organizationId), ManagementJsonContext.Default.RestoreGenerationLease, cancellationToken).ConfigureAwait(false);
         foreach (var lease in leases)
         {
             if (lease.DatabaseId != databaseId || generation is { } only && lease.Generation != only || lease.Until <= now)
@@ -19,7 +19,7 @@ internal static class RestoreGenerationLeases
                 continue;
             }
 
-            if (await SystemCatalog.GetAsync(transaction, RestoreCatalog.Kind, lease.OperationId, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken)
+            if (await SystemCatalog.GetAsync(transaction, RestoreCatalog.Kind, lease.OperationId, ManagementJsonContext.Default.RestoreOperationRecord, cancellationToken)
                 .ConfigureAwait(false) is { State: RestoreOperationState.Running })
             {
                 _ = active.Add(lease.Generation);

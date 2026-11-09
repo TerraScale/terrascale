@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using TerraBase.Features.Management;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 using ZLogger;
@@ -44,7 +45,7 @@ internal sealed class EnrollmentFanout(IRegionPeers peers, IHttpClientFactory ht
             {
                 Version = HttpVersion.Version20,
                 VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-                Content = JsonContent.Create(new EnrollmentRequest(organization), TerraBaseJsonContext.Default.EnrollmentRequest),
+                Content = JsonContent.Create(new EnrollmentRequest(organization), ManagementJsonContext.Default.EnrollmentRequest),
             };
             credential.Sign(request.Headers);
             using var client = http.CreateClient(HomeLocator.HttpClientName);

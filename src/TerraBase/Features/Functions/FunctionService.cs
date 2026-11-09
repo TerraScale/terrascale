@@ -1,11 +1,12 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
+using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Management;
+using TerraBase.Features.Functions;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
@@ -63,12 +64,12 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
             }
 
             var record = new FunctionRecord(1, name, source, options.MachineId, existing?.CreatedAt ?? now, now, request.Cron);
-            await SystemCatalog.PutAsync(transaction, Records(tenant), name, record, TerraBaseJsonContext.Default.FunctionRecord, cancellationToken)
+            await SystemCatalog.PutAsync(transaction, Records(tenant), name, record, FunctionsJsonContext.Default.FunctionRecord, cancellationToken)
                 .ConfigureAwait(false);
             if (request.Cron is { } schedule)
             {
                 await SystemCatalog.PutAsync(transaction, Schedules, ScheduleId(tenant, name), new FunctionSchedule(tenant, name, schedule, options.MachineId),
-                    TerraBaseJsonContext.Default.FunctionSchedule, cancellationToken).ConfigureAwait(false);
+                    FunctionsJsonContext.Default.FunctionSchedule, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -83,7 +84,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
 
     public async ValueTask<FunctionResult> ListAsync(TenantContext tenant, CancellationToken cancellationToken) =>
         await catalog.ReadAsync<FunctionResult>(async transaction =>
-            (await SystemCatalog.ListAllAsync(transaction, Records(tenant), TerraBaseJsonContext.Default.FunctionRecord, cancellationToken)
+            (await SystemCatalog.ListAllAsync(transaction, Records(tenant), FunctionsJsonContext.Default.FunctionRecord, cancellationToken)
                 .ConfigureAwait(false)).Select(record => Body(record, withSource: false)).ToArray(),
             static error => error, cancellationToken).ConfigureAwait(false);
 
@@ -118,7 +119,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
                 return new NotFound();
             }
 
-            var logs = await SystemCatalog.ListAllAsync(transaction, Logs(tenant, name), TerraBaseJsonContext.Default.FunctionLogBody, cancellationToken)
+            var logs = await SystemCatalog.ListAllAsync(transaction, Logs(tenant, name), FunctionsJsonContext.Default.FunctionLogBody, cancellationToken)
                 .ConfigureAwait(false);
             return logs.AsEnumerable().Reverse().Take(limit).ToArray();
         }, static error => error, cancellationToken).ConfigureAwait(false);
@@ -170,7 +171,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
                 return false;
             }
 
-            await SystemCatalog.PutAsync(transaction, Logs(tenant, name), log.Id, log, TerraBaseJsonContext.Default.FunctionLogBody, cancellationToken)
+            await SystemCatalog.PutAsync(transaction, Logs(tenant, name), log.Id, log, FunctionsJsonContext.Default.FunctionLogBody, cancellationToken)
                 .ConfigureAwait(false);
             var kept = await transaction.ListAsync(Logs(tenant, name), null, KeptLogs + 1, 8 * 1024 * 1024, cancellationToken).ConfigureAwait(false);
             if (kept.Records.Count > KeptLogs)
@@ -204,7 +205,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
     internal static string ScheduleId(TenantContext tenant, string name) => tenant.DatabaseId + "-" + name;
 
     private static ValueTask<FunctionRecord?> GetAsync(IStorageTransaction transaction, TenantContext tenant, string name, CancellationToken cancellationToken) =>
-        SystemCatalog.GetAsync(transaction, Records(tenant), name, TerraBaseJsonContext.Default.FunctionRecord, cancellationToken);
+        SystemCatalog.GetAsync(transaction, Records(tenant), name, FunctionsJsonContext.Default.FunctionRecord, cancellationToken);
 
     private static string Records(TenantContext tenant) => SystemCatalog.DatabaseState(tenant.DatabaseId!) + "functions";
 

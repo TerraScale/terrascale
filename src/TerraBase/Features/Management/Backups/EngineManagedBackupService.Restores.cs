@@ -1,13 +1,14 @@
+using Cronos;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
-using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using Cronos;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
@@ -169,14 +170,14 @@ internal sealed partial class EngineManagedBackupService
     private static async ValueTask<RestoreOperationRecord?> GetRestoreOperationRecordAsync(
         IStorageTransaction transaction, string organizationId, string databaseId, string operationId, CancellationToken cancellationToken)
     {
-        var record = await GetAsync(transaction, RestoreCatalog.Kind, operationId, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken).ConfigureAwait(false);
+        var record = await GetAsync(transaction, RestoreCatalog.Kind, operationId, ManagementJsonContext.Default.RestoreOperationRecord, cancellationToken).ConfigureAwait(false);
         return record is { OrganizationId: var organization, SourceDatabaseId: var source } && organization == organizationId && source == databaseId
             ? record
             : null;
     }
 
     private static ValueTask PutRestoreOperationAsync(IStorageTransaction transaction, RestoreOperationRecord record, CancellationToken cancellationToken) =>
-        PutAsync(transaction, RestoreCatalog.Kind, record.Id, record, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken);
+        PutAsync(transaction, RestoreCatalog.Kind, record.Id, record, ManagementJsonContext.Default.RestoreOperationRecord, cancellationToken);
 
     private async ValueTask<StartRestoreResult> StartOperationAsync(
         string organizationId, DatabaseOwner owner, string kind, string? name,
@@ -187,7 +188,7 @@ internal sealed partial class EngineManagedBackupService
         _ = _runningRestores.TryAdd(id, 0);
         var admitted = await catalog.WriteAsync<StartRestoreResult>(async transaction =>
         {
-            var running = await SystemCatalog.ListAllAsync(transaction, RestoreCatalog.Kind, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken)
+            var running = await SystemCatalog.ListAllAsync(transaction, RestoreCatalog.Kind, ManagementJsonContext.Default.RestoreOperationRecord, cancellationToken)
                 .ConfigureAwait(false);
             if (name is not null && running.Any(current => current.State == RestoreOperationState.Running
                     && current.Region == options.Region
@@ -354,7 +355,7 @@ internal sealed partial class EngineManagedBackupService
     public async ValueTask RecoverInterruptedRestoresAsync(CancellationToken cancellationToken)
     {
         var running = await catalog.ReadAsync<IReadOnlyList<RestoreOperationRecord>?>(
-            async transaction => await SystemCatalog.ListAllAsync(transaction, RestoreCatalog.Kind, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken)
+            async transaction => await SystemCatalog.ListAllAsync(transaction, RestoreCatalog.Kind, ManagementJsonContext.Default.RestoreOperationRecord, cancellationToken)
                 .ConfigureAwait(false),
             static _ => null, cancellationToken).ConfigureAwait(false);
         foreach (var record in running ?? [])
@@ -531,23 +532,23 @@ internal sealed partial class EngineManagedBackupService
         PutAsync(
             transaction, BackupCatalog.Leases(organizationId), BackupCatalog.LeaseKey(backupId, operationId),
             new BackupLease(backupId, operationId, time.GetUtcNow() + RestoreLeaseExpiry),
-            TerraBaseJsonContext.Default.BackupLease, cancellationToken);
+            ManagementJsonContext.Default.BackupLease, cancellationToken);
 
     private ValueTask PutGenerationLeaseAsync(IStorageTransaction transaction, string organizationId, string databaseId, Ulid generation, string operationId, CancellationToken cancellationToken) =>
         PutAsync(
             transaction, BackupCatalog.GenerationLeases(organizationId), BackupCatalog.GenerationLeaseKey(databaseId, generation, operationId),
             new RestoreGenerationLease(databaseId, generation, operationId, time.GetUtcNow() + RestoreLeaseExpiry),
-            TerraBaseJsonContext.Default.RestoreGenerationLease, cancellationToken);
+            ManagementJsonContext.Default.RestoreGenerationLease, cancellationToken);
 
     private async ValueTask<bool> LeaseActiveAsync(IStorageTransaction transaction, BackupRecord record, CancellationToken cancellationToken)
     {
         var leases = await SystemCatalog.ListAllAsync(
-            transaction, BackupCatalog.Leases(record.OrganizationId), TerraBaseJsonContext.Default.BackupLease, cancellationToken).ConfigureAwait(false);
+            transaction, BackupCatalog.Leases(record.OrganizationId), ManagementJsonContext.Default.BackupLease, cancellationToken).ConfigureAwait(false);
         foreach (var lease in leases)
         {
             if (lease.BackupId == record.Id
                 && lease.Until > time.GetUtcNow()
-                && await GetAsync(transaction, RestoreCatalog.Kind, lease.OperationId, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken)
+                && await GetAsync(transaction, RestoreCatalog.Kind, lease.OperationId, ManagementJsonContext.Default.RestoreOperationRecord, cancellationToken)
                     .ConfigureAwait(false) is { State: RestoreOperationState.Running })
             {
                 return true;

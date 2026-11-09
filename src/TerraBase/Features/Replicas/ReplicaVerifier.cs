@@ -1,6 +1,7 @@
 using System.Globalization;
-using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
+using TerraBase.Engine;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -39,7 +40,7 @@ internal sealed class ReplicaVerifier(IDatabaseReplicas replicas, HttpClient htt
             return new VerificationRound(ReplicaVerdict.Moved, cursor, null);
         }
 
-        var page = await http.GetFromJsonAsync(Address(source, held, cursor), TerraBaseJsonContext.Default.ReplicaChecksumPage, cancellationToken).ConfigureAwait(false)
+        var page = await http.GetFromJsonAsync(Address(source, held, cursor), ReplicasJsonContext.Default.ReplicaChecksumPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("the home answered no checksums");
         if (page.Moved)
         {

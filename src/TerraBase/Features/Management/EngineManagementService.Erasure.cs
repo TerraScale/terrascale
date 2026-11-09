@@ -2,6 +2,7 @@ using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -35,7 +36,7 @@ internal sealed partial class EngineManagementService
             return false;
         }
 
-        if (await GetAsync(transaction, ProjectBackupDestinations.Kind(project), "current", TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, token).ConfigureAwait(false) is { } destination)
+        if (await GetAsync(transaction, ProjectBackupDestinations.Kind(project), "current", BackupJsonContext.Default.ProjectBackupDestinationRecord, token).ConfigureAwait(false) is { } destination)
         {
             await BackupDestinationHistory.SaveAsync(transaction, project, destination, token).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectBackupDestinations.Kind(project), "current", token).ConfigureAwait(false);
@@ -54,7 +55,7 @@ internal sealed partial class EngineManagementService
             var history = await transaction.ListAsync(DatabasePurge.Kind, after, CatalogPage, MaxPageBytes, token).ConfigureAwait(false);
             foreach (var stored in history.Records)
             {
-                var purge = EntityPayload.Read(stored, TerraBaseJsonContext.Default.DatabasePurgeRecord)
+                var purge = EntityPayload.Read(stored, ManagementJsonContext.Default.DatabasePurgeRecord)
                     ?? throw new InvalidOperationException("a database purge record is invalid");
                 if (purge.Database.ProjectId == project)
                 {
@@ -70,7 +71,7 @@ internal sealed partial class EngineManagementService
         var absent = !purges.HasMore;
         foreach (var stored in purges.Records)
         {
-            var purge = await GetAsync(transaction, DatabasePurge.Kind, stored.Id, TerraBaseJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false);
+            var purge = await GetAsync(transaction, DatabasePurge.Kind, stored.Id, ManagementJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false);
             var storage = EntityPayload.Read(stored, TerraBaseJsonContext.Default.TenantContext);
             if (purge is null || storage is null || storage.ProjectId != project || !DatabasePurge.SameDatabase(purge.Database, storage)
                 || !await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, purge, token).ConfigureAwait(false)

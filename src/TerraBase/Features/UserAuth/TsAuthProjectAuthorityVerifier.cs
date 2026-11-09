@@ -1,11 +1,12 @@
-using System.Net;
 using System.Net.Http.Headers;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Net;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.Json.Serialization;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.UserAuth;
@@ -27,21 +28,21 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
         CheckAsync(token, async (client, issuer) =>
         {
             var subject = await FetchAsync(client, new Uri(issuer.AbsoluteUri.TrimEnd('/') + "/oauth/userinfo"), token,
-                TerraBaseJsonContext.Default.TsAuthAuthoritySubject, cancellationToken).ConfigureAwait(false);
+                UserAuthJsonContext.Default.TsAuthAuthoritySubject, cancellationToken).ConfigureAwait(false);
             if (subject?.Sub != userId)
             {
                 return false;
             }
 
             var organization = await FetchAsync(client, OrganizationAddress(issuer, organizationId), token,
-                TerraBaseJsonContext.Default.TsAuthOrganizationAuthority, cancellationToken).ConfigureAwait(false);
+                UserAuthJsonContext.Default.TsAuthOrganizationAuthority, cancellationToken).ConfigureAwait(false);
             if (organization is not { Role: "owner" or "admin" } || organization.Id != organizationId)
             {
                 return false;
             }
 
             var project = await FetchAsync(client, ProjectAddress(issuer, organizationId, projectId), token,
-                TerraBaseJsonContext.Default.TsAuthProjectAuthority, cancellationToken).ConfigureAwait(false);
+                UserAuthJsonContext.Default.TsAuthProjectAuthority, cancellationToken).ConfigureAwait(false);
             return project is { Role: "admin" } && project.Id == projectId && project.OrganizationId == organizationId;
         }, cancellationToken);
 

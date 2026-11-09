@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -81,7 +82,7 @@ internal sealed partial class EngineManagementService
                         return false;
                     }
                     var id = OrphanId(database);
-                    var seen = await GetAsync(transaction, OrphanFiles, id, TerraBaseJsonContext.Default.OrphanDatabaseFile, cancellationToken).ConfigureAwait(false);
+                    var seen = await GetAsync(transaction, OrphanFiles, id, ManagementJsonContext.Default.OrphanDatabaseFile, cancellationToken).ConfigureAwait(false);
                     if (seen is not null && (seen.FormatVersion != 1 || seen.Database != database))
                     {
                         count++;
@@ -90,7 +91,7 @@ internal sealed partial class EngineManagementService
                     }
                     var next = new OrphanDatabaseFile(database, seen?.FirstSeen ?? time.GetUtcNow(), pass,
                         (seen?.Seen == pass ? seen.Files : 0) + 1, (seen?.Seen == pass ? seen.Bytes : 0) + size);
-                    await PutAsync(transaction, OrphanFiles, id, next, TerraBaseJsonContext.Default.OrphanDatabaseFile, cancellationToken).ConfigureAwait(false);
+                    await PutAsync(transaction, OrphanFiles, id, next, ManagementJsonContext.Default.OrphanDatabaseFile, cancellationToken).ConfigureAwait(false);
                     return next.FirstSeen >= started;
                 }, _ => { complete = false; return false; }, cancellationToken).ConfigureAwait(false);
                 if (firstSeen && file.Path.EndsWith(".db", StringComparison.Ordinal))
@@ -109,7 +110,7 @@ internal sealed partial class EngineManagementService
                         var records = await transaction.ListAsync(OrphanFiles, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
                         foreach (var stored in records.Records)
                         {
-                            if (JsonSerializer.Deserialize(stored.Json.Span, TerraBaseJsonContext.Default.OrphanDatabaseFile) is { FormatVersion: 1 } record && record.Seen != pass)
+                            if (JsonSerializer.Deserialize(stored.Json.Span, ManagementJsonContext.Default.OrphanDatabaseFile) is { FormatVersion: 1 } record && record.Seen != pass)
                             {
                                 await transaction.DeleteAsync(OrphanFiles, stored.Id, cancellationToken).ConfigureAwait(false);
                             }
@@ -123,7 +124,7 @@ internal sealed partial class EngineManagementService
                     }
                     foreach (var stored in page.Records)
                     {
-                        if (JsonSerializer.Deserialize(stored.Json.Span, TerraBaseJsonContext.Default.OrphanDatabaseFile) is not { FormatVersion: 1 } record || record.Seen != pass)
+                        if (JsonSerializer.Deserialize(stored.Json.Span, ManagementJsonContext.Default.OrphanDatabaseFile) is not { FormatVersion: 1 } record || record.Seen != pass)
                         {
                             continue;
                         }
@@ -192,7 +193,7 @@ internal sealed partial class EngineManagementService
         {
             var id = OrphanId(database);
             if (!catalogGate.Value.IsOpen || await OwnedFileAsync(transaction, database, token).ConfigureAwait(false)
-                || await GetAsync(transaction, OrphanFiles, id, TerraBaseJsonContext.Default.OrphanDatabaseFile, token).ConfigureAwait(false) != record)
+                || await GetAsync(transaction, OrphanFiles, id, ManagementJsonContext.Default.OrphanDatabaseFile, token).ConfigureAwait(false) != record)
             {
                 return false;
             }

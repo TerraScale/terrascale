@@ -1,4 +1,5 @@
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -36,7 +37,7 @@ internal static class DatabasePurge
         foreach (var holder in record.ExpectedHolders)
         {
             var receipt = await SystemCatalog.GetAsync(transaction, Receipts(record.Database.DatabaseId!), holder,
-                TerraBaseJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false);
+                ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false);
             if (receipt is null || !receipt.Binds(record, holder))
             {
                 return false;
@@ -52,7 +53,7 @@ internal static class DatabasePurge
         foreach (var holder in record.ExpectedHolders.Take(1024))
         {
             var receipt = await SystemCatalog.GetAsync(transaction, Receipts(record.Database.DatabaseId!), holder,
-                TerraBaseJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false);
+                ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false);
             if (receipt is null || !receipt.Binds(record, holder))
             {
                 missing.Add(holder);

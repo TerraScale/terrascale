@@ -1,13 +1,14 @@
+using Cronos;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
-using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using Cronos;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
@@ -97,7 +98,7 @@ internal sealed partial class EngineManagedBackupService(
         await catalog.ReadAsync<GetBackupPolicyResult>(async transaction =>
         {
             var policy = await GetPolicyAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false);
-            var schedule = await GetAsync(transaction, BackupCatalog.Schedule(databaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, cancellationToken).ConfigureAwait(false);
+            var schedule = await GetAsync(transaction, BackupCatalog.Schedule(databaseId), LastSchedule, ManagementJsonContext.Default.BackupSchedule, cancellationToken).ConfigureAwait(false);
             return new BackupPolicyStatus(
                 policy.FullBackupCron, policy.RetentionDays, policy.UpdatedAt,
                 schedule?.LastSucceededAt,
@@ -141,8 +142,8 @@ internal sealed partial class EngineManagedBackupService(
                 };
             }
 
-            await PutAsync(transaction, BackupCatalog.Policy(owner.DatabaseId), CurrentPolicy, policy, TerraBaseJsonContext.Default.BackupPolicy, cancellationToken).ConfigureAwait(false);
-            await PutAsync(transaction, BackedUpDatabases, owner.DatabaseId, owner, TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, BackupCatalog.Policy(owner.DatabaseId), CurrentPolicy, policy, ManagementJsonContext.Default.BackupPolicy, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, BackedUpDatabases, owner.DatabaseId, owner, ManagementJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
             return policy;
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
@@ -167,7 +168,7 @@ internal sealed partial class EngineManagedBackupService(
         do
         {
             var listed = await catalog.ReadAsync<CatalogResult<ManagementPage<DatabaseOwner>>>(
-                async transaction => await ListAsync(transaction, BackedUpDatabases, after, PageSize, TerraBaseJsonContext.Default.DatabaseOwner, owner => owner.DatabaseId, cancellationToken)
+                async transaction => await ListAsync(transaction, BackedUpDatabases, after, PageSize, ManagementJsonContext.Default.DatabaseOwner, owner => owner.DatabaseId, cancellationToken)
                     .ConfigureAwait(false),
                 static error => error, cancellationToken).ConfigureAwait(false);
             if (listed is not ManagementPage<DatabaseOwner> page)
@@ -217,7 +218,7 @@ internal sealed partial class EngineManagedBackupService(
                         && await EngineManagementService.DatabaseUncheckedAsync(transaction, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false) is { } database)
                     {
                         var policy = await GetPolicyAsync(transaction, owner.DatabaseId, cancellationToken).ConfigureAwait(false);
-                        var schedule = await GetAsync(transaction, BackupCatalog.Schedule(owner.DatabaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, cancellationToken)
+                        var schedule = await GetAsync(transaction, BackupCatalog.Schedule(owner.DatabaseId), LastSchedule, ManagementJsonContext.Default.BackupSchedule, cancellationToken)
                             .ConfigureAwait(false);
                         if (database.Home(options.Region) != options.Region || DueSince(policy, schedule, database.CreatedAt, time.GetUtcNow()) is null)
                         {
@@ -354,11 +355,11 @@ internal sealed partial class EngineManagedBackupService(
         await PutAsync(transaction, BackupCatalog.List(done.OrganizationId, done.DatabaseId), order, done.Id, Id, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, BackupCatalog.Retention(done.OrganizationId, done.DatabaseId), RetentionKey(now, order), done.Id, Id, cancellationToken).ConfigureAwait(false);
         await StorageSweep.RemoveAsync(transaction, SweepOf(done), cancellationToken).ConfigureAwait(false);
-        await PutAsync(transaction, BackedUpDatabases, done.DatabaseId, new DatabaseOwner(done.OrganizationId, done.ProjectId, done.DatabaseId), TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken)
+        await PutAsync(transaction, BackedUpDatabases, done.DatabaseId, new DatabaseOwner(done.OrganizationId, done.ProjectId, done.DatabaseId), ManagementJsonContext.Default.DatabaseOwner, cancellationToken)
             .ConfigureAwait(false);
         if (done.Trigger == Scheduled)
         {
-            await PutAsync(transaction, BackupCatalog.Schedule(done.DatabaseId), LastSchedule, new BackupSchedule(now, null, null, null), TerraBaseJsonContext.Default.BackupSchedule, cancellationToken)
+            await PutAsync(transaction, BackupCatalog.Schedule(done.DatabaseId), LastSchedule, new BackupSchedule(now, null, null, null), ManagementJsonContext.Default.BackupSchedule, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -380,10 +381,10 @@ internal sealed partial class EngineManagedBackupService(
                     && await EngineManagementService.DatabaseTenantUncheckedAsync(transaction, record.OrganizationId, record.ProjectId, record.DatabaseId, CancellationToken.None)
                         .ConfigureAwait(false) is not null)
                 {
-                    var schedule = await GetAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, CancellationToken.None)
+                    var schedule = await GetAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, ManagementJsonContext.Default.BackupSchedule, CancellationToken.None)
                         .ConfigureAwait(false);
                     var failure = (schedule ?? new BackupSchedule(null, null, null, null)) with { LastFailedAt = time.GetUtcNow(), LastErrorCode = errorCode, LastErrorMessage = errorMessage };
-                    await PutAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, failure, TerraBaseJsonContext.Default.BackupSchedule, CancellationToken.None)
+                    await PutAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, failure, ManagementJsonContext.Default.BackupSchedule, CancellationToken.None)
                         .ConfigureAwait(false);
                 }
 
@@ -409,7 +410,7 @@ internal sealed partial class EngineManagedBackupService(
             async transaction => new RetentionState(
                 await EngineManagementService.DatabaseUncheckedAsync(transaction, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false),
                 await GetPolicyAsync(transaction, owner.DatabaseId, cancellationToken).ConfigureAwait(false),
-                await GetAsync(transaction, BackupCatalog.Schedule(owner.DatabaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, cancellationToken).ConfigureAwait(false),
+                await GetAsync(transaction, BackupCatalog.Schedule(owner.DatabaseId), LastSchedule, ManagementJsonContext.Default.BackupSchedule, cancellationToken).ConfigureAwait(false),
                 await OldestRegisteredAsync(transaction, owner, cancellationToken).ConfigureAwait(false)),
             static error => error, cancellationToken).ConfigureAwait(false);
         if (selected is not RetentionState state)
@@ -597,12 +598,12 @@ internal sealed partial class EngineManagedBackupService(
                         && await EngineManagementService.DatabaseTenantUncheckedAsync(transaction, organizationId, record.ProjectId, record.DatabaseId, CancellationToken.None)
                             .ConfigureAwait(false) is not null)
                     {
-                        var schedule = await GetAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, TerraBaseJsonContext.Default.BackupSchedule, CancellationToken.None)
+                        var schedule = await GetAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, ManagementJsonContext.Default.BackupSchedule, CancellationToken.None)
                             .ConfigureAwait(false);
                         if (!(schedule?.LastSucceededAt >= record.StartedAt) && !(schedule?.LastFailedAt >= record.StartedAt))
                         {
                             var failure = (schedule ?? new BackupSchedule(null, null, null, null)) with { LastFailedAt = record.StartedAt, LastErrorCode = "abandoned", LastErrorMessage = "The scheduled attempt did not finish; its process stopped mid-way" };
-                            await PutAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, failure, TerraBaseJsonContext.Default.BackupSchedule, CancellationToken.None)
+                            await PutAsync(transaction, BackupCatalog.Schedule(record.DatabaseId), LastSchedule, failure, ManagementJsonContext.Default.BackupSchedule, CancellationToken.None)
                                 .ConfigureAwait(false);
                         }
                     }
@@ -693,10 +694,10 @@ internal sealed partial class EngineManagedBackupService(
             : EngineManagementService.AuthorizedDatabaseTenantAsync(transaction, userId, record.OrganizationId, record.ProjectId, record.DatabaseId, cancellationToken);
 
     private static ValueTask<BackupRecord?> GetRecordAsync(IStorageTransaction transaction, string organizationId, string backupId, CancellationToken cancellationToken) =>
-        GetAsync(transaction, BackupCatalog.Records(organizationId), backupId, TerraBaseJsonContext.Default.BackupRecord, cancellationToken);
+        GetAsync(transaction, BackupCatalog.Records(organizationId), backupId, ManagementJsonContext.Default.BackupRecord, cancellationToken);
 
     private static ValueTask PutRecordAsync(IStorageTransaction transaction, BackupRecord record, CancellationToken cancellationToken) =>
-        PutAsync(transaction, BackupCatalog.Records(record.OrganizationId), record.Id, record, TerraBaseJsonContext.Default.BackupRecord, cancellationToken);
+        PutAsync(transaction, BackupCatalog.Records(record.OrganizationId), record.Id, record, ManagementJsonContext.Default.BackupRecord, cancellationToken);
 
     private static SweepEntry SweepOf(BackupRecord record) => new(StorageSweep.Backup, record.OrganizationId, record.Id);
 
@@ -716,7 +717,7 @@ internal sealed partial class EngineManagedBackupService(
     }
 
     private static async ValueTask<BackupPolicy> GetPolicyAsync(IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken) =>
-        await GetAsync(transaction, BackupCatalog.Policy(databaseId), CurrentPolicy, TerraBaseJsonContext.Default.BackupPolicy, cancellationToken).ConfigureAwait(false)
+        await GetAsync(transaction, BackupCatalog.Policy(databaseId), CurrentPolicy, ManagementJsonContext.Default.BackupPolicy, cancellationToken).ConfigureAwait(false)
         ?? DefaultPolicy;
 
     private readonly union RecordPendingResult(Done, NotFound, Unavailable);

@@ -1,16 +1,17 @@
-using System.Buffers;
 using System.Buffers.Binary;
+using System.Buffers;
 using System.IO.Pipelines;
 using System.Net;
-using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Sql;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.Sql.Routing;
+using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -123,7 +124,7 @@ internal sealed class HomeSessions(
         {
             await HomeSessionFrames.WriteAsync(upstream.Writer,
                 new HomeSessionOpen(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, canWrite, local.LastPushed(database), epoch),
-                TerraBaseJsonContext.Default.HomeSessionOpen, cancellationToken).ConfigureAwait(false);
+                ReplicasJsonContext.Default.HomeSessionOpen, cancellationToken).ConfigureAwait(false);
             var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stop.Token).WaitAsync(cancellationToken).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
             {
@@ -287,7 +288,7 @@ internal sealed class HomeSqlSession(
 
     internal async ValueTask<HomeSessionAnswer?> ReceiveAsync(CancellationToken cancellationToken)
     {
-        var answer = await HomeSessionFrames.ReadAsync(downstream, TerraBaseJsonContext.Default.HomeSessionAnswer, memory, database, cancellationToken).ConfigureAwait(false);
+        var answer = await HomeSessionFrames.ReadAsync(downstream, ReplicasJsonContext.Default.HomeSessionAnswer, memory, database, cancellationToken).ConfigureAwait(false);
         if (answer is not null)
         {
             _autocommit = answer.Autocommit;
@@ -326,7 +327,7 @@ internal sealed class HomeSqlSession(
             {
                 using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 bounded.CancelAfter(SqlLimits.ForwardedRequestTime);
-                await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database) }, TerraBaseJsonContext.Default.HomeSessionCall,
+                await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database) }, ReplicasJsonContext.Default.HomeSessionCall,
                     bounded.Token).ConfigureAwait(false);
                 var answer = await ReceiveAsync(bounded.Token).ConfigureAwait(false) ?? Break();
                 local.Forwarded(database);

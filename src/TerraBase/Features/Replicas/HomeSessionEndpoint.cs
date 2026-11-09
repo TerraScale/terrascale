@@ -1,9 +1,10 @@
-using System.IO.Pipelines;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
+using System.IO.Pipelines;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -58,7 +59,7 @@ internal sealed class HomeSessionEndpoint(
         var output = HttpContext.Response.BodyWriter;
         try
         {
-            var open = await HomeSessionFrames.ReadAsync(input, TerraBaseJsonContext.Default.HomeSessionOpen, memory, tenant: null, cancellationToken).ConfigureAwait(false);
+            var open = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionOpen, memory, tenant: null, cancellationToken).ConfigureAwait(false);
             if (open is null)
             {
                 return Results.Empty;
@@ -113,7 +114,7 @@ internal sealed class HomeSessionEndpoint(
         await using (session.ConfigureAwait(false))
         {
             await AnswerAsync(output, new HomeSessionAnswer(true), cancellationToken).ConfigureAwait(false);
-            while (await HomeSessionFrames.ReadAsync(input, TerraBaseJsonContext.Default.HomeSessionCall, memory, database, cancellationToken).ConfigureAwait(false) is { } call)
+            while (await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionCall, memory, database, cancellationToken).ConfigureAwait(false) is { } call)
             {
                 HomeSessionAnswer answer;
                 if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, cancellationToken).ConfigureAwait(false))
@@ -220,5 +221,5 @@ internal sealed class HomeSessionEndpoint(
     }
 
     private static ValueTask AnswerAsync(PipeWriter output, HomeSessionAnswer answer, CancellationToken cancellationToken) =>
-        HomeSessionFrames.WriteAsync(output, answer, TerraBaseJsonContext.Default.HomeSessionAnswer, cancellationToken);
+        HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, cancellationToken);
 }

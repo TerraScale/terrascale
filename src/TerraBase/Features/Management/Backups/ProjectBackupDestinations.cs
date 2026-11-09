@@ -25,7 +25,7 @@ internal sealed class ProjectBackupDestinations(
 
     public ValueTask<ReadBackupDestinationResult> ReadAsync(string organizationId, string projectId, CancellationToken cancellationToken) =>
         catalog.ReadAsync<ReadBackupDestinationResult>(async transaction =>
-            await GetAsync(transaction, Kind(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false)
+            await GetAsync(transaction, Kind(projectId), Current, BackupJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false)
                 is { } record ? record : NotSet, static error => error, cancellationToken);
 
     public async Task<SaveBackupDestinationResult> SaveAsync(
@@ -109,7 +109,7 @@ internal sealed class ProjectBackupDestinations(
                 return ManagementErrors.NotFound;
             }
 
-            var previous = await GetAsync(transaction, Kind(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
+            var previous = await GetAsync(transaction, Kind(projectId), Current, BackupJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
             replaced = previous is not null;
             if (previous is not null)
             {
@@ -117,7 +117,7 @@ internal sealed class ProjectBackupDestinations(
             }
             await BackupDestinationHistory.SaveAsync(transaction, projectId, record, cancellationToken).ConfigureAwait(false);
 
-            await PutAsync(transaction, Kind(projectId), Current, record, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, Kind(projectId), Current, record, BackupJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
             return record.Destination;
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
@@ -140,7 +140,7 @@ internal sealed class ProjectBackupDestinations(
                 };
             }
 
-            if (await GetAsync(transaction, Kind(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false) is { } previous)
+            if (await GetAsync(transaction, Kind(projectId), Current, BackupJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false) is { } previous)
             {
                 await BackupDestinationHistory.SaveAsync(transaction, projectId, previous, cancellationToken).ConfigureAwait(false);
 
