@@ -136,7 +136,25 @@ public sealed record HostedPageCopy(
     string NoticeVerifyFailed,
     string TitleCancelEmailChange,
     string CancelEmailChangeButton,
-    string DoneCancelEmailChange);
+    string DoneCancelEmailChange,
+    string ErrorWrongCredentialsTitle,
+    string ErrorWrongCredentialsPasscode,
+    string ErrorWrongCredentialsReset,
+    string ErrorCheckDetailsTitle,
+    string ErrorEnterValidEmail,
+    string ErrorChoosePasswordTitle,
+    string NoticeResendSent,
+    string NoticeResetSent,
+    string ErrorTooManyTitle,
+    string ErrorTryAgainIn,
+    string ErrorTooManyCodesTitle,
+    string ErrorBudgetExhausted,
+    string ErrorWrongCodeTitle,
+    string ErrorWrongCode,
+    string ErrorTransientTitle,
+    string ErrorTransient,
+    string RetryWaitMinutes,
+    string RetryWaitSeconds);
 
 public static class HostedCopies
 {
@@ -274,7 +292,25 @@ public static class HostedCopies
         NoticeVerifyFailed: "Verification failed. Check your credentials or restart from the application.",
         TitleCancelEmailChange: "Cancel email change",
         CancelEmailChangeButton: "Cancel the change and sign out everywhere",
-        DoneCancelEmailChange: "No email change is pending any more, and every session of the account is signed out. If you didn't ask for the change, reset your password now.");
+        DoneCancelEmailChange: "No email change is pending any more, and every session of the account is signed out. If you didn't ask for the change, reset your password now.",
+        ErrorWrongCredentialsTitle: "Wrong email or password",
+        ErrorWrongCredentialsPasscode: "Check both and try again, or email yourself a sign-in code.",
+        ErrorWrongCredentialsReset: "Check both and try again, or reset your password.",
+        ErrorCheckDetailsTitle: "Check your details",
+        ErrorEnterValidEmail: "Enter a valid email address.",
+        ErrorChoosePasswordTitle: "Choose another password",
+        NoticeResendSent: "We sent a new code to {email}.",
+        NoticeResetSent: "If an account exists for {email}, we emailed it a new code.",
+        ErrorTooManyTitle: "Too many attempts",
+        ErrorTryAgainIn: "Try again in {wait}.",
+        ErrorTooManyCodesTitle: "Too many codes this hour",
+        ErrorBudgetExhausted: "You've requested several codes. Use the latest code you received, or try again in {wait}.",
+        ErrorWrongCodeTitle: "That code is wrong or expired",
+        ErrorWrongCode: "This code is wrong, expired, or already used. Check the latest email, or request a new code.",
+        ErrorTransientTitle: "Sign-in is unavailable right now",
+        ErrorTransient: "Something went wrong on our side. Nothing was sent yet. Try again in a moment.",
+        RetryWaitMinutes: "{minutes} minutes",
+        RetryWaitSeconds: "{seconds} seconds");
 
     public static readonly HostedPageCopy Portuguese = new(
         FooterNav: "Rodapé",
@@ -410,7 +446,25 @@ public static class HostedCopies
         NoticeVerifyFailed: "A verificação falhou. Confira suas credenciais ou reinicie pelo aplicativo.",
         TitleCancelEmailChange: "Cancelar alteração de e-mail",
         CancelEmailChangeButton: "Cancelar a alteração e encerrar todas as sessões",
-        DoneCancelEmailChange: "Não há mais nenhuma alteração de e-mail pendente, e todas as sessões da conta foram encerradas. Se você não pediu a alteração, redefina sua senha agora.");
+        DoneCancelEmailChange: "Não há mais nenhuma alteração de e-mail pendente, e todas as sessões da conta foram encerradas. Se você não pediu a alteração, redefina sua senha agora.",
+        ErrorWrongCredentialsTitle: "E-mail ou senha incorretos",
+        ErrorWrongCredentialsPasscode: "Confira ambos e tente de novo, ou envie um código de acesso para o seu e-mail.",
+        ErrorWrongCredentialsReset: "Confira ambos e tente de novo, ou redefina sua senha.",
+        ErrorCheckDetailsTitle: "Confira seus dados",
+        ErrorEnterValidEmail: "Digite um endereço de e-mail válido.",
+        ErrorChoosePasswordTitle: "Escolha outra senha",
+        NoticeResendSent: "Enviamos um novo código para {email}.",
+        NoticeResetSent: "Se existir uma conta para {email}, enviamos um novo código para ela.",
+        ErrorTooManyTitle: "Muitas tentativas",
+        ErrorTryAgainIn: "Tente novamente em {wait}.",
+        ErrorTooManyCodesTitle: "Muitos códigos nesta hora",
+        ErrorBudgetExhausted: "Você pediu vários códigos. Use o código mais recente que recebeu ou tente novamente em {wait}.",
+        ErrorWrongCodeTitle: "O código está errado ou expirou",
+        ErrorWrongCode: "Este código está errado, expirado ou já foi usado. Confira o e-mail mais recente ou peça um novo código.",
+        ErrorTransientTitle: "O acesso está indisponível no momento",
+        ErrorTransient: "Algo deu errado do nosso lado. Nada foi enviado ainda. Tente novamente em instantes.",
+        RetryWaitMinutes: "{minutes} minutos",
+        RetryWaitSeconds: "{seconds} segundos");
 
     public static HostedPageCopy For(string locale) => locale == AuthEmails.Portuguese ? Portuguese : English;
 }
