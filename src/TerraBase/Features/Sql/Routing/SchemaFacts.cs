@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
@@ -61,7 +62,7 @@ internal sealed class SchemaFactsCache
             var integerKey = false;
             foreach (var column in info.Rows)
             {
-                if (Convert.ToInt64(column[columnKey], System.Globalization.CultureInfo.InvariantCulture) > 0)
+                if (Convert.ToInt64(column[columnKey], CultureInfo.InvariantCulture) > 0)
                 {
                     key.Add((string)column[columnName]!);
                     integerKey = string.Equals(column[columnType] as string, "INTEGER", StringComparison.OrdinalIgnoreCase);
@@ -74,7 +75,7 @@ internal sealed class SchemaFactsCache
             var (indexName, indexUnique, indexOrigin) = (indexes.Index("name"), indexes.Index("unique"), indexes.Index("origin"));
             foreach (var index in indexes.Rows)
             {
-                if (Convert.ToInt64(index[indexUnique], System.Globalization.CultureInfo.InvariantCulture) == 0
+                if (Convert.ToInt64(index[indexUnique], CultureInfo.InvariantCulture) == 0
                     || (indexOrigin >= 0 && index[indexOrigin] as string == "pk") || index[indexName] is not string named)
                 {
                     continue;

@@ -3,6 +3,7 @@ using System.Globalization;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
+using RefetchResult = Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<TerraBase.Features.Shapes.ShapeErrorBody>;
 
 namespace TerraBase.Features.Shapes;
 
@@ -131,7 +132,7 @@ internal static class ShapeRoute
         _ => throw new System.Diagnostics.UnreachableException(),
     };
 
-    internal static Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<ShapeErrorBody> Refetch(HttpContext context, ShapeLineage lineage, string message)
+    internal static RefetchResult Refetch(HttpContext context, ShapeLineage lineage, string message)
     {
         context.Response.Headers["TB-Shape-Handle"] = lineage.Handle;
         return TypedResults.Json(new ShapeErrorBody(new ShapeErrorDetail("must_refetch", message, lineage.Handle)),

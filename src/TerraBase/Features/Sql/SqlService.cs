@@ -8,6 +8,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
+using TerraBase.Features.Sql.Routing;
 
 namespace TerraBase.Features.Sql;
 
@@ -15,7 +16,7 @@ internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime,
     IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options, IHomeApply apply,
-    Routing.WriteRouter router, DatabaseFences fences, RegionalOwners owners) : ISqlService
+    WriteRouter router, DatabaseFences fences, RegionalOwners owners) : ISqlService
 {
     private const int MaxTables = 10_000;
 

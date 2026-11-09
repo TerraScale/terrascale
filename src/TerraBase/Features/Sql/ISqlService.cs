@@ -1,5 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Tenancy;
+using TerraBase.Features.Sql.Routing;
 
 namespace TerraBase.Features.Sql;
 
@@ -72,11 +73,11 @@ internal interface ISqlSession : IAsyncDisposable
 
     ValueTask EndRequestAsync();
 
-    void Prefer(Routing.WriteOverride preference)
+    void Prefer(WriteOverride preference)
     {
     }
 
-    Routing.WriteRoute? LastRoute => null;
+    WriteRoute? LastRoute => null;
 
     /// <summary>Keeps the row changes of this session's commits for <see cref="Committed"/> (a forwarded write, PIVOT F7).</summary>
     void KeepCommitted()

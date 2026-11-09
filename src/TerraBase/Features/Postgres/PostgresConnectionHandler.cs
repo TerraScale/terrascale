@@ -22,6 +22,9 @@ using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
+using TerraBase.Configuration;
+using TerraBase.Features.Catalog;
+using TerraBase.Features.Sql.Routing;
 
 namespace TerraBase.Features.Postgres;
 
@@ -354,7 +357,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, bool relayed, CancellationToken cancellationToken)
     {
-        if (!services.GetRequiredService<TerraBase.Features.Catalog.ICatalogGate>().IsOpen)
+        if (!services.GetRequiredService<ICatalogGate>().IsOpen)
         {
             return new PgError("57P03", "this machine's catalog is not verified; retry");
         }
@@ -387,7 +390,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     /// <summary>Whether <paramref name="tenant"/>'s record places its database in another region only, so its session is relayed there.</summary>
     private async ValueTask<HomeNode?> AwayAsync(TenantContext tenant, CancellationToken cancellationToken)
     {
-        var region = services.GetRequiredService<Configuration.TerraBaseOptions>().Region;
+        var region = services.GetRequiredService<TerraBaseOptions>().Region;
         return await services.GetRequiredService<IReplicaCatalog>().FindAsync(tenant, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
             && !placement.Includes(region)
             && await services.GetRequiredService<IHomeLocator>().LocateAsync(tenant.ProjectId!, tenant.DatabaseId, cancellationToken).ConfigureAwait(false) is { } home
@@ -417,7 +420,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 var exchange = session.Exchange ??= new Exchange(Time.GetTimestamp(), output.Written, EntityIds.New(Time).ToString());
                 RequestLogOperations.Current.Value = exchange.Operations;
                 exchange.Received += 5 + body.Length;
-                if (!services.GetRequiredService<TerraBase.Features.Catalog.ICatalogGate>().IsOpen)
+                if (!services.GetRequiredService<ICatalogGate>().IsOpen)
                 {
                     output.Error("57P03", "this machine's catalog is not verified; retry", fatal: true);
                     await output.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -798,7 +801,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             case PgKind.Set or PgKind.Show:
                 session.Settings["terrascale.write_route"] = session.Sql.LastRoute?.Header ?? "none";
                 var answered = PostgresStatements.RunCommand(statement.Kind, statement.Text, session.Settings);
-                session.Sql.Prefer(SqlExecuteEndpoint.Preference(session.Settings["terrascale.write"]) ?? Features.Sql.Routing.WriteOverride.Auto);
+                session.Sql.Prefer(SqlExecuteEndpoint.Preference(session.Settings["terrascale.write"]) ?? WriteOverride.Auto);
                 return answered;
             case PgKind.Catalog when PgCatalog.Functions(statement.Text, session.Database, session.User) is { } functions:
                 return new[] { functions };

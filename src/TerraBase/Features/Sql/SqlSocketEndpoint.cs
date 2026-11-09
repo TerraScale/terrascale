@@ -6,6 +6,7 @@ using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
+using System.Net.WebSockets;
 
 namespace TerraBase.Features.Sql;
 
@@ -90,7 +91,7 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
         {
             await connection.RunAsync(database, canWrite, cancellationToken);
         }
-        catch (Exception error) when (error is OperationCanceledException or System.Net.WebSockets.WebSocketException or ConnectionResetException)
+        catch (Exception error) when (error is OperationCanceledException or WebSocketException or ConnectionResetException)
         {
         }
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using TerraBase.Engine;
 using TerraScale.TerraBase.Contracts;
@@ -332,7 +333,7 @@ internal static class SqlScript
             }
             else if (token.Value[0] == '?')
             {
-                if (int.TryParse(token.Value.AsSpan(1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var index) && index is > 0 and <= 32766)
+                if (int.TryParse(token.Value.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var index) && index is > 0 and <= 32766)
                 {
                     while (slots.Count < index)
                     {

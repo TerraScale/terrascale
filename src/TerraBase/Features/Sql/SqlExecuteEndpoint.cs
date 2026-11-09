@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using JsonResult = Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<TerraBase.Features.Sql.SqlErrorBody>;
 using TerraBase.Configuration;
@@ -248,7 +249,7 @@ internal sealed class SqlExecuteEndpoint(
         }
 
         if (through.Split(' ') is not [var origin, var position] || !TerraBaseOptions.IsRegion(origin)
-            || !ulong.TryParse(position, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var sequence))
+            || !ulong.TryParse(position, NumberStyles.None, CultureInfo.InvariantCulture, out var sequence))
         {
             return Error(new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, "the forwarded push position is malformed"), 0));
         }
