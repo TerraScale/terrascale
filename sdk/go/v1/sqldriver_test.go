@@ -46,7 +46,4 @@ func TestOpenDBDriver(t *testing.T) {
 	if id != "01JA0000000000000000000001" || name != "Ada" {
 		t.Fatalf("id=%s name=%s", id, name)
 	}
-	if _, err := db.Begin(); err == nil {
-		t.Fatal("begin: expected error")
-	}
 }

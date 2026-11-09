@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -18,7 +19,7 @@ type dbConnector struct {
 }
 
 func (c dbConnector) Connect(context.Context) (driver.Conn, error) {
-	return dbConn{db: c.db}, nil
+	return &dbConn{db: c.db}, nil
 }
 
 func (c dbConnector) Driver() driver.Driver {
@@ -32,31 +33,72 @@ func (dbDriver) Open(string) (driver.Conn, error) {
 }
 
 type dbConn struct {
-	db *Database
+	db      *Database
+	session *SQLSession
 }
 
-func (c dbConn) Prepare(query string) (driver.Stmt, error) {
+func (c *dbConn) Prepare(query string) (driver.Stmt, error) {
 	return dbStmt{conn: c, query: query}, nil
 }
 
-func (c dbConn) Close() error {
-	return nil
+func (c *dbConn) Close() error {
+	return c.endSession()
 }
 
-func (c dbConn) Begin() (driver.Tx, error) {
-	return nil, errors.New("terrascale: transactions arrive in the next SDK release")
+func (c *dbConn) Begin() (driver.Tx, error) {
+	return c.BeginTx(context.Background(), driver.TxOptions{})
 }
 
-func (c dbConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	res, err := c.db.Execute(ctx, query, namedValues(args)...)
+func (c *dbConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	if opts.Isolation != driver.IsolationLevel(sql.LevelDefault) && opts.Isolation != driver.IsolationLevel(sql.LevelSerializable) {
+		return nil, fmt.Errorf("terrascale: isolation level %d is not supported; use LevelDefault or LevelSerializable", opts.Isolation)
+	}
+	if c.session != nil {
+		return nil, errors.New("terrascale: transaction already open on this connection")
+	}
+	s, err := c.db.Connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Begin(ctx); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	c.session = s
+	return dbTx{conn: c}, nil
+}
+
+func (c *dbConn) endSession() error {
+	s := c.session
+	c.session = nil
+	if s == nil {
+		return nil
+	}
+	return s.Close()
+}
+
+func (c *dbConn) ResetSession(context.Context) error {
+	if c.session == nil {
+		return nil
+	}
+	_ = c.endSession()
+	return driver.ErrBadConn
+}
+
+func (c *dbConn) IsValid() bool {
+	return c.session == nil
+}
+
+func (c *dbConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	res, err := c.execute(ctx, query, args)
 	if err != nil {
 		return nil, err
 	}
 	return execResult{res: res}, nil
 }
 
-func (c dbConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	res, err := c.db.Execute(ctx, query, namedValues(args)...)
+func (c *dbConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	res, err := c.execute(ctx, query, args)
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +107,13 @@ func (c dbConn) QueryContext(ctx context.Context, query string, args []driver.Na
 		names[i] = col.Name
 	}
 	return &execRows{columns: names, rows: res.Rows}, nil
+}
+
+func (c *dbConn) execute(ctx context.Context, query string, args []driver.NamedValue) (*Result, error) {
+	if c.session != nil {
+		return c.session.Execute(ctx, query, namedValues(args)...)
+	}
+	return c.db.Execute(ctx, query, namedValues(args)...)
 }
 
 func namedValues(args []driver.NamedValue) []any {
@@ -80,6 +129,32 @@ func namedValues(args []driver.NamedValue) []any {
 		}
 	}
 	return out
+}
+
+type dbTx struct {
+	conn *dbConn
+}
+
+func (t dbTx) Commit() error {
+	s := t.conn.session
+	t.conn.session = nil
+	if s == nil {
+		return errors.New("terrascale: transaction already finished")
+	}
+	err := s.Commit(context.Background())
+	_ = s.Close()
+	return err
+}
+
+func (t dbTx) Rollback() error {
+	s := t.conn.session
+	t.conn.session = nil
+	if s == nil {
+		return errors.New("terrascale: transaction already finished")
+	}
+	err := s.Rollback(context.Background())
+	_ = s.Close()
+	return err
 }
 
 type execResult struct {
@@ -129,7 +204,7 @@ func (r *execRows) Next(dest []driver.Value) error {
 }
 
 type dbStmt struct {
-	conn  dbConn
+	conn  *dbConn
 	query string
 }
 
