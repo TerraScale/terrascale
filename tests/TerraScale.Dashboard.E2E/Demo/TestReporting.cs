@@ -248,6 +248,13 @@ namespace TerraScale.Dashboard.E2E.Demo
                 return Usage(project, segments, query, scenario);
             }
 
+            if (segments is ["v1", "projects", _, "databases", _, "functions"])
+            {
+                return scopedActor?.Scopes.Contains("sql:read") == true && scopedActor?.Scopes.Contains("sql:write") == true
+                    ? Json(Array.Empty<object>())
+                    : Json(new { error = new { code = "forbidden_scope", message = "sql:read and sql:write are required" } }, HttpStatusCode.Forbidden);
+            }
+
             if (segments.Last() is not ("analytics" or "replication"))
             {
                 throw new HttpRequestException("Unknown reporting fixture contract.");

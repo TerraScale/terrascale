@@ -1023,6 +1023,7 @@ namespace TerraScale.Dashboard.E2E
                 {
                     [_, _, _, _] or [_, _, _, _, _] when method == "GET" => "databases:read",
                     [_, _, _, _, _, "sql", "execute"] => "sql:read",
+                    [_, _, _, _, _, "functions", ..] => "sql:read",
                     [_, _, _, _, _, "backups" or "backup-policy" or "restores"] when method == "GET" => "databases:read",
                     [_, _, _, _, _, "restores", _] when method == "GET" => "databases:read",
                     _ => "databases:write"
@@ -1109,6 +1110,16 @@ namespace TerraScale.Dashboard.E2E
                 if (parts.Length >= 6 && parts[5] is "backups" or "backup-policy")
                 {
                     return await BackupsAsync(http, parts, project, current, callerRole);
+                }
+
+                if (parts.Length >= 6 && parts[5] == "functions")
+                {
+                    if (Authorize(http, project, "sql:write") is { } write)
+                    {
+                        return write;
+                    }
+
+                    return method == "GET" ? Results.Json(Array.Empty<object>()) : Error(404, "not_found");
                 }
 
                 var atHome = current.HomeRegion == answering;
