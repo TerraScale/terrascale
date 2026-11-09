@@ -214,6 +214,7 @@ internal sealed class SqlSession(
     private readonly SemaphoreSlim _gate = new(1, 1);
     private long? _transportStarted;
     private long? _scriptStarted;
+    private long _requestExecution;
     private bool _inTransaction;
     private bool _readOnlyTransaction;
     private Pinned? _pinned;
@@ -231,7 +232,11 @@ internal sealed class SqlSession(
 
     public IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => _committed ?? [];
 
-    public void BeginRequest() => _transportStarted = time.GetTimestamp();
+    public void BeginRequest()
+    {
+        _transportStarted = time.GetTimestamp();
+        _requestExecution = 0;
+    }
 
     public ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken) =>
         ExecuteAsync(command, admit: null, cancellationToken);
@@ -408,8 +413,12 @@ internal sealed class SqlSession(
     private int _consumed;
 
     private bool RequestExpired =>
-        Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue
-        && time.GetElapsedTime(started) > SqlLimits.MaxRequestTime;
+        (_transportStarted is not null || _scriptStarted is not null) && TimeSpan.FromTicks(_requestExecution) >= SqlLimits.MaxRequestTime;
+
+    private void ChargeExecution(TimeSpan execution)
+    {
+        _requestExecution += execution.Ticks;
+    }
 
     private SqlPlanOutcome Plan(string sql)
     {
@@ -430,9 +439,9 @@ internal sealed class SqlSession(
             timeout = Min(timeout, limit);
         }
 
-        if (Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue)
+        if (_transportStarted is not null || _scriptStarted is not null)
         {
-            timeout = Min(timeout, SqlLimits.MaxRequestTime - time.GetElapsedTime(started));
+            timeout = Min(timeout, SqlLimits.MaxRequestTime - TimeSpan.FromTicks(_requestExecution));
         }
 
         if (_pinned is { } pinned)
@@ -545,7 +554,7 @@ internal sealed class SqlSession(
                 long baseline = 0;
                 if (write)
                 {
-                    if (await MeasureAsync(transaction, cancellationToken).ConfigureAwait(false) is not long measured)
+                    if (await ChargedAsync(() => MeasureAsync(transaction, cancellationToken)).ConfigureAwait(false) is not long measured)
                     {
                         return SqlErrors.Busy("the database is busy; retry");
                     }
@@ -653,6 +662,7 @@ internal sealed class SqlSession(
         try
         {
             var result = await pinned.Transaction.ExecuteStatementAsync(Internal(sql) with { First = first }, cancellationToken).ConfigureAwait(false);
+            ChargeExecution(result.Execution);
             if (first)
             {
                 _consumed = result.Consumed;
@@ -688,10 +698,16 @@ internal sealed class SqlSession(
         try
         {
             raw = await transaction.ExecuteStatementAsync(
-                new SqlStatement(await RunTextAsync(plan, statement => transaction.ExecuteStatementAsync(statement, cancellationToken)).ConfigureAwait(false),
+                new SqlStatement(await RunTextAsync(plan, async statement =>
+                {
+                    var guard = await transaction.ExecuteStatementAsync(statement, cancellationToken).ConfigureAwait(false);
+                    ChargeExecution(guard.Execution);
+                    return guard;
+                }).ConfigureAwait(false),
                     [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal),
                     MaxRows, MaxBytes, StatementTimeout(), first),
                 cancellationToken).ConfigureAwait(false);
+            ChargeExecution(raw.Execution);
         }
         catch (SqlStatementException error)
         {
@@ -745,8 +761,13 @@ internal sealed class SqlSession(
     {
         try
         {
-            var run = await RunTextAsync(plan, statement => transaction.ExecuteStatementAsync(statement, cancellationToken)).ConfigureAwait(false);
-            var shape = await transaction.DescribeStatementAsync(run, cancellationToken).ConfigureAwait(false);
+            var run = await RunTextAsync(plan, async statement =>
+            {
+                var guard = await transaction.ExecuteStatementAsync(statement, cancellationToken).ConfigureAwait(false);
+                ChargeExecution(guard.Execution);
+                return guard;
+            }).ConfigureAwait(false);
+            var shape = await ChargedAsync(() => transaction.DescribeStatementAsync(run, cancellationToken)).ConfigureAwait(false);
             return new SqlDescription(shape.Parameters, [.. shape.Columns.Select(column => new SqlColumn(column.Name, column.DeclType))],
                 plan.IsExplain, plan.Kind != SqlStatementKind.Write);
         }
@@ -786,12 +807,25 @@ internal sealed class SqlSession(
         }
     }
 
+    private async ValueTask<T> ChargedAsync<T>(Func<ValueTask<T>> engine)
+    {
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            return await engine().ConfigureAwait(false);
+        }
+        finally
+        {
+            ChargeExecution(Stopwatch.GetElapsedTime(started));
+        }
+    }
+
     private async ValueTask<SqlError?> CommitAsync(IStorageTransaction transaction, StorageQuotaLease? lease, Tally tally, long baseline, CancellationToken cancellationToken)
     {
         try
         {
-            await apply.StampHomeWritesAsync(transaction, cancellationToken).ConfigureAwait(false);
-            if (await MeasureAsync(transaction, cancellationToken).ConfigureAwait(false) is not long after)
+            await ChargedAsync(async () => { await apply.StampHomeWritesAsync(transaction, cancellationToken).ConfigureAwait(false); return true; }).ConfigureAwait(false);
+            if (await ChargedAsync(() => MeasureAsync(transaction, cancellationToken)).ConfigureAwait(false) is not long after)
             {
                 return SqlErrors.Busy("the database is busy; retry");
             }
@@ -810,11 +844,16 @@ internal sealed class SqlSession(
 
             if (growth != 0)
             {
-                await transaction.AddSqlStorageAsync(growth, cancellationToken).ConfigureAwait(false);
+                await ChargedAsync(async () => { await transaction.AddSqlStorageAsync(growth, cancellationToken).ConfigureAwait(false); return true; }).ConfigureAwait(false);
             }
 
-            var captured = _committed is null ? null : await transaction.ReadCapturedChangesAsync(cancellationToken).ConfigureAwait(false);
-            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            var captured = _committed is null ? null : await ChargedAsync(() => transaction.ReadCapturedChangesAsync(cancellationToken)).ConfigureAwait(false);
+            if (RequestExpired)
+            {
+                return SqlErrors.Deadline;
+            }
+
+            _ = await ChargedAsync(() => transaction.CommitAsync(cancellationToken)).ConfigureAwait(false);
             if (captured is { Count: > 0 })
             {
                 _committed!.Add(captured);
