@@ -32,7 +32,7 @@ internal static class QosExtensions
             using var scope = QosContext.Enter(null, budget);
             try
             {
-                using var lookup = budget.TryReserve(MemoryLane.Foreground, 16 * 1024, null) ?? throw new QosMemoryException();
+                using var lookup = budget.TryReserve(16 * 1024, null) ?? throw new QosMemoryException();
                 context.Features.Set(new LookupMemory(lookup));
                 await next(context).ConfigureAwait(false);
             }
@@ -99,7 +99,7 @@ internal static class QosExtensions
 
         using var scope = QosContext.Enter(tenant, admission: admission);
         var bodyBytes = context.Request.ContentLength ?? 0;
-        using var body = budget.TryReserve(MemoryLane.Foreground, 16 * 1024 + bodyBytes * 3);
+        using var body = budget.TryReserve(16 * 1024 + bodyBytes * 3);
         if (body is null)
         {
             await RejectTenantMemoryAsync(context).ConfigureAwait(false);

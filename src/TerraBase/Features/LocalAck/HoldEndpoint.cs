@@ -36,7 +36,7 @@ internal sealed class HoldEndpoint(HoldStore holds, IMemoryBudget memory) : Endp
             return ErrorResponse.From(new Validation("the body is one held transaction of at most 16 MiB"));
         }
 
-        using var reservation = memory.TryReserve(MemoryLane.Foreground, checked(HttpContext.Request.ContentLength.Value * 4), tenant: null);
+        using var reservation = memory.TryReserve(checked(HttpContext.Request.ContentLength.Value * 4), tenant: null);
         if (reservation is null)
         {
             return ErrorResponse.From(new Unavailable("the node's memory budget is exhausted; retry"));

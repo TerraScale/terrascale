@@ -78,7 +78,7 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
 
         try
         {
-            using var admission = memory.TryReserve(MemoryLane.Foreground, 16 * 1024, scope.Database) ?? throw new QosMemoryException();
+            using var admission = memory.TryReserve(16 * 1024, scope.Database) ?? throw new QosMemoryException();
             var started = time.GetTimestamp();
             var at = offset.ToString(CultureInfo.InvariantCulture);
             while (true)

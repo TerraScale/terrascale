@@ -48,7 +48,7 @@ internal static class HomeSessionFrames
             throw new InvalidDataException("a home session frame holds 2 bytes to 24 MiB");
         }
 
-        using var reservation = memory.TryReserve(MemoryLane.Foreground, length, tenant) ?? throw new QosMemoryException();
+        using var reservation = memory.TryReserve(length, tenant) ?? throw new QosMemoryException();
         var body = await input.ReadAtLeastAsync(length, cancellationToken).ConfigureAwait(false);
         if (body.Buffer.Length < length)
         {

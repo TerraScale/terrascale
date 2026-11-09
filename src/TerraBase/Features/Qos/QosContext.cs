@@ -93,7 +93,7 @@ public static class QosContext
                     return;
                 }
 
-                if (_leases.Count == MaxResults || budget.TryReserve(MemoryLane.Foreground, bytes, tenant) is not { } lease)
+                if (_leases.Count == MaxResults || budget.TryReserve(bytes, tenant) is not { } lease)
                 {
                     throw new QosMemoryException();
                 }

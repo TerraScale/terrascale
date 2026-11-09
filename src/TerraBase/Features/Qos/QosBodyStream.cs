@@ -40,7 +40,7 @@ internal sealed class QosBodyStream(Stream inner, IMemoryBudget budget) : Stream
             return 0;
         }
 
-        if (_reservations.Count == MaxChunks || budget.TryReserve(MemoryLane.Foreground, read * 3L) is not { } reservation)
+        if (_reservations.Count == MaxChunks || budget.TryReserve(read * 3L) is not { } reservation)
         {
             throw new QosMemoryException();
         }

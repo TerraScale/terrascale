@@ -73,7 +73,7 @@ internal sealed partial class TursoReplicas(
     public bool Offer(TenantContext database, DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, long? cdcPosition = null)
     {
         if (!_replicas.TryGetValue(Key(database), out var opening) || !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully
-            || memory.TryReserve(MemoryLane.Bulk, answer.Length, database) is not { } reservation)
+            || memory.TryReserve(answer.Length, database) is not { } reservation)
         {
             return false;
         }
@@ -452,7 +452,7 @@ internal sealed partial class TursoReplicas(
 
         public async Task<Prefetched?> PrefetchAsync(DatabaseRevision held, IMemoryBudget memory, TenantContext tenant, CancellationToken cancellationToken)
         {
-            using var reservation = memory.TryReserve(MemoryLane.Bulk, MaxPrefetchBytes, tenant);
+            using var reservation = memory.TryReserve(MaxPrefetchBytes, tenant);
             if (reservation is null)
             {
                 return null;
@@ -492,7 +492,7 @@ internal sealed partial class TursoReplicas(
                 }
             }
 
-            if (memory.TryReserve(MemoryLane.Bulk, length, tenant) is not { } kept)
+            if (memory.TryReserve(length, tenant) is not { } kept)
             {
                 return null;
             }

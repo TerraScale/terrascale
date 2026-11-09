@@ -81,7 +81,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
 
         HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.ApplicationStopping);
-        using var preauth = memory.TryReserve(MemoryLane.Foreground, 16 * 1024, null);
+        using var preauth = memory.TryReserve(16 * 1024, null);
         if (preauth is null)
         {
             return ErrorResponse.From(new QuotaExceeded("shape connections are at capacity; retry later", "shape_busy"));
@@ -280,7 +280,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
 
     private async Task SendAsync(WebSocket socket, ShapeHintFrame frame, CancellationToken cancellationToken)
     {
-        using var admission = memory.TryReserve(MemoryLane.Foreground, 64 * 1024) ?? throw new QosMemoryException();
+        using var admission = memory.TryReserve(64 * 1024) ?? throw new QosMemoryException();
         var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, ShapeHintJsonContext.Default.ShapeHintFrame);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(5));

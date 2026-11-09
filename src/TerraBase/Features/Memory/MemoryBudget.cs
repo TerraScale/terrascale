@@ -21,9 +21,9 @@ internal sealed class MemoryBudget : IMemoryBudget
         meter.CreateObservableGauge("terrabase.memory.reserved", () => Volatile.Read(ref _reserved), "By", "Bytes reserved from memory-budget.");
     }
 
-    public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+    public IMemoryReservation? TryReserve(long bytes) => TryReserve(bytes, QosContext.Current);
 
-    public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
+    public IMemoryReservation? TryReserve(long bytes, TenantContext? tenant)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(bytes);
         var share = tenant is null ? 1 : QosPolicy.For(tenant.Plan).MemoryShare;

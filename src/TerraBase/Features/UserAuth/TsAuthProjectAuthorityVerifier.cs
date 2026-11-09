@@ -60,7 +60,7 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
                 return Unavailable();
             }
 
-            using var reservation = budget.TryReserve(MemoryLane.Foreground, 4L * MaxResponseBytes);
+            using var reservation = budget.TryReserve(4L * MaxResponseBytes);
             if (reservation is null)
             {
                 return Unavailable();

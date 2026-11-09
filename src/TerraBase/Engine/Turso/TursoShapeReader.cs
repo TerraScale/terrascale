@@ -856,7 +856,7 @@ internal sealed partial class TursoShapeReader(
 
         public long Bytes => _reservations.Sum(reservation => reservation.Bytes);
 
-        public void Reserve(long bytes) => _reservations.Add(memory.TryReserve(MemoryLane.Bulk, bytes, tenant) ?? throw new QosMemoryException());
+        public void Reserve(long bytes) => _reservations.Add(memory.TryReserve(bytes, tenant) ?? throw new QosMemoryException());
 
         public void TransferTo(ShapeMemory owner)
         {

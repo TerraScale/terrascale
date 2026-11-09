@@ -30,7 +30,7 @@ internal sealed partial class TursoStorageEngine
         internal RewriteBudget(TursoStorageEngine engine, long bytes, CancellationToken token)
         {
             _engine = engine;
-            _memory = engine._schemaMemory?.TryReserve(MemoryLane.Bulk, RewriteWorkingBytes, null);
+            _memory = engine._schemaMemory?.TryReserve(RewriteWorkingBytes, null);
             if (engine._schemaMemory is not null && _memory is null)
             {
                 _pressure.Cancel();
@@ -55,7 +55,7 @@ internal sealed partial class TursoStorageEngine
                 var io = _engine.Io;
                 var pressured = io.Queued >= Math.Max(2, io.WorkerCount)
                     || (long)(io.Admitted - 1) * 10 >= (long)io.AdmissionCapacity * 9;
-                using var probe = _engine._schemaMemory?.TryReserve(MemoryLane.Bulk, 4096, null);
+                using var probe = _engine._schemaMemory?.TryReserve(4096, null);
                 pressured |= _engine._schemaMemory is not null && probe is null;
                 if (pressured)
                 {

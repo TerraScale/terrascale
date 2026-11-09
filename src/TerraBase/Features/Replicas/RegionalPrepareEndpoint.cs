@@ -32,7 +32,7 @@ internal sealed class RegionalPrepareEndpoint(RegionalHandoff handoff, IMemoryBu
             return TypedResults.StatusCode(StatusCodes.Status413PayloadTooLarge);
         }
 
-        using var reservation = memory.TryReserve(MemoryLane.Bulk, context.Request.ContentLength.Value * 4, tenant: null);
+        using var reservation = memory.TryReserve(context.Request.ContentLength.Value * 4, tenant: null);
         if (reservation is null)
         {
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);

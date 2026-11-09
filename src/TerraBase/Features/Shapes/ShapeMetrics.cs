@@ -81,5 +81,5 @@ internal sealed class ShapeMetrics : IShapeMetrics
     public void RecordRedirect() => _redirects.Add(1);
 
     public IMemoryReservation? TryReserve(long bytes, TenantContext? tenant) =>
-        _memory.TryReserve(MemoryLane.Foreground, bytes, tenant);
+        _memory.TryReserve(bytes, tenant);
 }

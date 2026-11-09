@@ -109,7 +109,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             lock (_gate)
             {
                 if (!_trimming.Contains(handle) && _trimming.Count < TrimItems
-                    && _memory.TryReserve(MemoryLane.Bulk, TrimBytes, tenant) is { } admission)
+                    && _memory.TryReserve(TrimBytes, tenant) is { } admission)
                 {
                     if (_trims.Writer.TryWrite(new(tenant, handle, floor, admission)))
                     {
@@ -175,7 +175,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 return false;
             }
 
-            admission = _memory.TryReserve(MemoryLane.Bulk, sealedBody.Length + 2048L + (offset.Length + nextOffset.Length) * 2L, database);
+            admission = _memory.TryReserve(sealedBody.Length + 2048L + (offset.Length + nextOffset.Length) * 2L, database);
             if (admission is null)
             {
                 return false;
@@ -345,7 +345,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
         var deleted = 0;
         var owner = ShapeObjectStore.Owner(database);
-        using var admission = _memory.TryReserve(MemoryLane.Bulk, 512 * 1024, database);
+        using var admission = _memory.TryReserve(512 * 1024, database);
         if (admission is null)
         {
             return 0;
@@ -395,7 +395,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                     previous.Admission.Dispose();
                 }
 
-                if (more && _trimCursors.Count < CacheItems && _memory.TryReserve(MemoryLane.Bulk, 1024, database) is { } cursorAdmission)
+                if (more && _trimCursors.Count < CacheItems && _memory.TryReserve(1024, database) is { } cursorAdmission)
                 {
                     _trimCursors[handle] = new(after!, cursorAdmission);
                 }
@@ -418,7 +418,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             return false;
         }
 
-        using var admission = _memory.TryReserve(MemoryLane.Bulk, 512 * 1024, database);
+        using var admission = _memory.TryReserve(512 * 1024, database);
         if (admission is null)
         {
             return false;
@@ -584,7 +584,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         using var timer = new PeriodicTimer(TimeSpan.FromHours(1), _time);
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
-            using var admission = _memory.TryReserve(MemoryLane.Bulk, 512 * 1024, null);
+            using var admission = _memory.TryReserve(512 * 1024, null);
             if (admission is null)
             {
                 continue;
@@ -771,7 +771,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 Remove(_cache.Keys.First());
             }
 
-            var admission = _memory.TryReserve(MemoryLane.Bulk, 2048L + pending.NextOffset.Length * 2L, pending.Database);
+            var admission = _memory.TryReserve(2048L + pending.NextOffset.Length * 2L, pending.Database);
             if (admission is not null)
             {
                 Remove(key);
@@ -828,7 +828,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 first.Value.Admission.Dispose();
             }
 
-            if (_memory.TryReserve(MemoryLane.Bulk, 2048, database) is { } admission)
+            if (_memory.TryReserve(2048, database) is { } admission)
             {
                 _proofs[key] = new(head, admission);
             }
@@ -851,7 +851,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 first.Value.Admission.Dispose();
             }
 
-            if (_memory.TryReserve(MemoryLane.Bulk, 1024, database) is { } admission)
+            if (_memory.TryReserve(1024, database) is { } admission)
             {
                 _missing[key] = new(_time.GetUtcNow() + TimeSpan.FromSeconds(30), admission);
             }

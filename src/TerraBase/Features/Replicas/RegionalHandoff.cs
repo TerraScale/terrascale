@@ -471,7 +471,7 @@ internal sealed partial class RegionalHandoff(
                 return Refuse("regional owner changed");
             }
 
-            using var reservation = services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Bulk, 16L * 1024 * 1024, tenant: null);
+            using var reservation = services.GetRequiredService<IMemoryBudget>().TryReserve(16L * 1024 * 1024, tenant: null);
             if (reservation is null)
             {
                 return Refuse("bulk-memory reservation unavailable");

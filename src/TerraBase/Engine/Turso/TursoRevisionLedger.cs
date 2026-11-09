@@ -210,7 +210,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
                 throw new InvalidOperationException("a pull snapshot must match the revision index it was planned against");
             }
 
-            var reservation = memory?.TryReserve(MemoryLane.Bulk, BaseBytes + (IndexedPages() * PageNumberBytes * 2) + RevisionPullPlan.BatchBytes + pageSize, tenant);
+            var reservation = memory?.TryReserve(BaseBytes + (IndexedPages() * PageNumberBytes * 2) + RevisionPullPlan.BatchBytes + pageSize, tenant);
             if (memory is not null && reservation is null)
             {
                 throw new StorageBusyException();
@@ -283,7 +283,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
             return;
         }
 
-        if (memory.TryReserve(MemoryLane.Bulk, needed, tenant) is { } fresh)
+        if (memory.TryReserve(needed, tenant) is { } fresh)
         {
             _retained?.Dispose();
             _retained = fresh;

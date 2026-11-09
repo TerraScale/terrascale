@@ -195,7 +195,7 @@ internal sealed class SqlSocket(
 
     private async ValueTask<(byte[] Bytes, int Length, IMemoryReservation Reservation)?> ReceiveAsync(int maxBytes, CancellationToken cancellationToken)
     {
-        var reservation = memory.TryReserve(MemoryLane.Foreground, FirstBufferBytes, _database);
+        var reservation = memory.TryReserve(FirstBufferBytes, _database);
         if (reservation is null)
         {
             await CloseAsync(WebSocketCloseStatus.InternalServerError, "organization memory budget exceeded").ConfigureAwait(false);
@@ -219,7 +219,7 @@ internal sealed class SqlSocket(
                     }
 
                     var size = Math.Min(buffer.Length * 2, maxBytes);
-                    var grown = memory.TryReserve(MemoryLane.Foreground, size, _database);
+                    var grown = memory.TryReserve(size, _database);
                     if (grown is null)
                     {
                         await CloseAsync(WebSocketCloseStatus.InternalServerError, "organization memory budget exceeded").ConfigureAwait(false);

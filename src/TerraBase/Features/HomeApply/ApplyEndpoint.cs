@@ -42,7 +42,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         }
 
         var length = HttpContext.Request.ContentLength.Value;
-        using var reservation = memory.TryReserve(MemoryLane.Foreground, checked(length * 4), tenant: null);
+        using var reservation = memory.TryReserve(checked(length * 4), tenant: null);
         if (reservation is null)
         {
             return ErrorResponse.From(new Unavailable("the node's memory budget is exhausted; retry"));

@@ -134,7 +134,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
         {
             return new NotFound();
         }
-        using var reserved = memory.TryReserve(MemoryLane.Foreground, FunctionRunner.MemoryBytes + 2 * eventJson.Length, tenant);
+        using var reserved = memory.TryReserve(FunctionRunner.MemoryBytes + 2 * eventJson.Length, tenant);
         if (reserved is null)
         {
             return Busy;

@@ -1036,7 +1036,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             throw new InvalidDataException("message length out of bounds");
         }
 
-        var reservation = Memory.TryReserve(MemoryLane.Foreground, length) ?? throw new QosMemoryException();
+        var reservation = Memory.TryReserve(length) ?? throw new QosMemoryException();
         try
         {
             return (header[0], await ReadAsync(input, length - 4, cancellationToken).ConfigureAwait(false), reservation);

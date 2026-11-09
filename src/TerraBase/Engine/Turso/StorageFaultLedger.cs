@@ -410,7 +410,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         await InSystemAsync(system, command => ReadRow(command, key), cancellationToken, write: false).ConfigureAwait(false);
 
     private IMemoryReservation? Reserve(int rows) =>
-        memory is null ? null : memory.TryReserve(MemoryLane.Bulk, rows * RowBytes, tenant: null) ?? throw new StorageBusyException();
+        memory is null ? null : memory.TryReserve(rows * RowBytes, tenant: null) ?? throw new StorageBusyException();
 
     private static string Bounded(string reason) => reason.Length <= MaxReason ? reason : reason[..MaxReason];
 

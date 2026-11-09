@@ -136,7 +136,7 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
         {
             for (var page = 0; page < MaxPages; page++)
             {
-                using var admission = memory.TryReserve(MemoryLane.Bulk, PageBytes, tenant);
+                using var admission = memory.TryReserve(PageBytes, tenant);
                 if (admission is null)
                 {
                     totals.Refused++;

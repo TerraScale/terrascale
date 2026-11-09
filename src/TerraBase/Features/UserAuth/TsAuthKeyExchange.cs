@@ -125,7 +125,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
                 return Unavailable();
             }
 
-            using var reservation = budget.TryReserve(MemoryLane.Foreground, 4L * MaxResponseBytes);
+            using var reservation = budget.TryReserve(4L * MaxResponseBytes);
             if (reservation is null)
             {
                 return Unavailable();

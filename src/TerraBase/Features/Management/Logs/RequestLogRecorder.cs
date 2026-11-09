@@ -52,7 +52,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
                 reserved = entries.RemoveOldest().Memory;
                 _count--;
             }
-            else if (_count >= MaxPending || memory.TryReserve(MemoryLane.Foreground, MaxRecordBytes, tenant: null) is not { } admitted)
+            else if (_count >= MaxPending || memory.TryReserve(MaxRecordBytes, tenant: null) is not { } admitted)
             {
                 RecordingLimited = true;
                 _drops.Add(1);
@@ -83,7 +83,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         try
         {
             lock (_gate) { if (_disposed) { return new Unavailable("request logs are shutting down"); } }
-            reserved = memory.TryReserve(MemoryLane.Foreground, ReadBytes, database);
+            reserved = memory.TryReserve(ReadBytes, database);
             if (reserved is null) { return new Unavailable("request logs are at memory capacity", "capacity"); }
             var admission = reserved;
             var result = await catalog.ReadAsync<RequestLogReadResult>(async transaction =>
@@ -158,7 +158,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     private async ValueTask<bool> FlushOwnerAsync(DatabaseOwner owner, CancellationToken cancellationToken)
     {
         lock (_gate) { if (!_pending.ContainsKey(owner)) { return true; } }
-        using var admission = memory.TryReserve(MemoryLane.Foreground, FlushBytes, tenant: null);
+        using var admission = memory.TryReserve(FlushBytes, tenant: null);
         if (admission is null) { return false; }
         DatabaseRequestLog[] batch;
         lock (_gate)

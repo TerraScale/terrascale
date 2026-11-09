@@ -85,7 +85,7 @@ internal sealed class RevisionPush(IMemoryBudget memory, TenantContext database)
     {
         var bytes = (long)start.Pages * PullAnswer.PageBytes(start.PageSize) + 64;
         if (start.Full is not null || bytes > MaxAnswerBytes
-            || memory.TryReserve(MemoryLane.Bulk, bytes + NoticeBytes, database) is not { } reservation)
+            || memory.TryReserve(bytes + NoticeBytes, database) is not { } reservation)
         {
             return ValueTask.FromResult(false);
         }

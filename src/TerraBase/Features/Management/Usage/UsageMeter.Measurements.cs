@@ -154,7 +154,7 @@ internal sealed partial class UsageMeter
 
             if (needed > 0)
             {
-                if (memory.TryReserve(MemoryLane.Foreground, needed, tenant: null) is not { } reservation)
+                if (memory.TryReserve(needed, tenant: null) is not { } reservation)
                 {
                     _measurementDrops.Add(1);
                     AddCore(key, counts with { Meters = null });
