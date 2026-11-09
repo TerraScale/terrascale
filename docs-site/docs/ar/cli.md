@@ -49,7 +49,9 @@ go install terrascale.tech/sdk/cmd/ts@latest
 ```
 
 Release builds print `ts 0.0.X`; `go install` and source builds print `ts dev`.
-`ts help` (or `ts --help`) lists every command. Invalid arguments exit with
+`ts help` (or `ts --help`) lists every command. Options accept one or two
+dashes (`-json` or `--json`) and go before or after the command and its
+operands. Invalid arguments exit with
 status 2 and other failures with status 1.
 
 ### Upgrade
@@ -229,7 +231,7 @@ ts db regions example
 
 Database deletion asks you to type the database name in a terminal before it
 deletes data. For an unattended script, explicitly consent
-with `ts -project my-project -yes db delete example`. Keep `-yes` before the command.
+with `ts -project my-project -yes db delete example`.
 
 ## Backups
 
@@ -374,14 +376,14 @@ See [Schema migrations](/ar/guides/migrations) for the file format, history and 
 ## Schema files
 
 ```sh
-ts --database example schema pull
-ts --database example schema diff schema.sql
-ts --database example schema apply schema.sql
+ts schema pull example
+ts schema diff example schema.sql
+ts schema apply example schema.sql
 ```
 
 `schema pull` writes `schema.sql` from the database, `schema diff` prints the
 DDL needed to reach the file, and `schema apply` applies it atomically;
-`--dry-run` previews and `--allow-drop` consents to DROP operations.
+`-dry-run` previews and `-allow-drop` consents to DROP operations.
 
 ## API keys
 
@@ -413,7 +415,7 @@ CLI without confirmation.
 ### Key lifetime and allowed networks
 
 Keys default to no expiry and read/write scopes. Prefer an expiry and a database
-restriction. Put key-creation flags before the command:
+restriction. Key-creation options go before or after the command:
 
 ```sh
 ts -expires 30d -allow-cidr 203.0.113.0/24 keys create app 01JD2V5QANWG7Z4KQVKJFM8RHT
