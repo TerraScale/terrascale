@@ -41,7 +41,7 @@ internal sealed partial class TursoStorageEngine
         }
 
         internal CancellationToken Token => _linked.Token;
-        internal RewriteRefusal Reason => _pressure.IsCancellationRequested ? RewriteRefusal.Pressure : RewriteRefusal.Deadline;
+        internal RewriteRefusal Reason => _pressure.IsCancellationRequested ? new Pressure() : new Deadline();
         internal bool Expired => _deadline.IsCancellationRequested || _pressure.IsCancellationRequested;
 
         private void Sample()

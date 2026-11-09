@@ -418,17 +418,8 @@ internal sealed partial class TursoDatabaseStore(
         signal.SetResult();
     }
 
-    internal void LogAfterCommit(string step, Exception error)
-    {
-        try
-        {
-            logger?.ZLogError(error, $"Database {name:@Database} committed, but {step:@Step} after its commit failed");
-        }
-        catch (Exception)
-        {
-
-        }
-    }
+    internal void LogAfterCommit(string step, Exception error) =>
+        logger?.ZLogError(error, $"Database {name:@Database} committed, but {step:@Step} after its commit failed");
 
     private async ValueTask AcquireWriterAsync(string writer, CancellationToken cancellationToken, string? file = null, int line = 0)
     {
@@ -527,18 +518,8 @@ internal sealed partial class TursoDatabaseStore(
         }
     }
 
-    private void LogLongHold(TimeSpan held, string? holder, string holderAt)
-    {
-        try
-        {
-
-            logger?.ZLogWarning($"A database's writer was held {Math.Round(held.TotalSeconds, 1):@Held} s by {holder ?? "nothing recorded":@Holder} ({holderAt:@HolderAt})");
-        }
-        catch (Exception)
-        {
-
-        }
-    }
+    private void LogLongHold(TimeSpan held, string? holder, string holderAt) =>
+        logger?.ZLogWarning($"A database's writer was held {Math.Round(held.TotalSeconds, 1):@Held} s by {holder ?? "nothing recorded":@Holder} ({holderAt:@HolderAt})");
 
     private TursoSession? _writerSession;
 
@@ -562,7 +543,7 @@ internal sealed partial class TursoDatabaseStore(
         {
             var statistics = Volatile.Read(ref _statistics);
             var connectionString = await ConnectionStringAsync(WriteLane, cancellationToken).ConfigureAwait(false);
-            session = await TursoSession.OpenAsync(WriteLane, connectionString, pragmas, cancellationToken, this).ConfigureAwait(false);
+            session = await TursoSession.OpenAsync(WriteLane, connectionString, pragmas, Time, cancellationToken, this).ConfigureAwait(false);
             session.Statistics = statistics;
         }
         catch (Exception error)
@@ -1047,14 +1028,7 @@ internal sealed partial class TursoDatabaseStore(
         {
 
             commit = committedAt;
-            try
-            {
-                logger?.ZLogError(error, $"A group commit of database {name:@Database} committed, but the work after its commit failed; its writes are answered as committed");
-            }
-            catch (Exception)
-            {
-
-            }
+            logger?.ZLogError(error, $"A group commit of database {name:@Database} committed, but the work after its commit failed; its writes are answered as committed");
         }
         catch (Exception error)
         {
@@ -1176,7 +1150,7 @@ internal sealed partial class TursoDatabaseStore(
         {
             var statistics = Volatile.Read(ref _statistics);
             var connectionString = await ConnectionStringAsync(runner, cancellationToken).ConfigureAwait(false);
-            session = await TursoSession.OpenAsync(runner, connectionString, pragmas, cancellationToken, this).ConfigureAwait(false);
+            session = await TursoSession.OpenAsync(runner, connectionString, pragmas, Time, cancellationToken, this).ConfigureAwait(false);
             session.Statistics = statistics;
         }
         catch (Exception error)

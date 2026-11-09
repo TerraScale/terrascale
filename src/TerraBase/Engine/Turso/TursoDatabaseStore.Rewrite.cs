@@ -125,7 +125,7 @@ internal sealed partial class TursoDatabaseStore
                         throw new RewriteRefusedException("the database's readers did not end before its writer was taken");
                     }
 
-                    await Task.Delay(QuietPoll, cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(QuietPoll, Time, cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -155,7 +155,7 @@ internal sealed partial class TursoDatabaseStore
                 {
                     throw new RewriteRefusedException("the database's backup readers did not end before its writer was taken");
                 }
-                await Task.Delay(QuietPoll, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(QuietPoll, Time, cancellationToken).ConfigureAwait(false);
             }
 
             await PrepareRewriteLogAsync(cancellationToken).ConfigureAwait(false);
@@ -225,7 +225,7 @@ internal sealed partial class TursoDatabaseStore
                     }
                     catch (OperationCanceledException error) when (quiet.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                     {
-                        throw new RewriteRefusedException("the database's operations did not end before its writer was taken", error, RewriteRefusal.Deadline);
+                        throw new RewriteRefusedException("the database's operations did not end before its writer was taken", error, new Deadline());
                     }
                 }
             }
@@ -278,7 +278,7 @@ internal sealed partial class TursoDatabaseStore
                         RewriteFinalStarting?.Invoke(cancellationToken);
                         if (new FileInfo(FilePath + "-wal") is { Exists: true, Length: > RewriteFinalWalBytes })
                         {
-                            throw new RewriteRefusedException("the final rewrite WAL exceeds its byte budget", reason: RewriteRefusal.Budget);
+                            throw new RewriteRefusedException("the final rewrite WAL exceeds its byte budget", reason: new Budget());
                         }
                     }
                     cancellationToken.ThrowIfCancellationRequested();
@@ -361,7 +361,7 @@ internal sealed partial class TursoDatabaseStore
 
                             if (round + 1 == RewriteRounds)
                             {
-                                throw new RewriteRefusedException("the rewrite could not catch up within its round budget", reason: RewriteRefusal.Budget);
+                                throw new RewriteRefusedException("the rewrite could not catch up within its round budget", reason: new Budget());
                             }
                         }
 

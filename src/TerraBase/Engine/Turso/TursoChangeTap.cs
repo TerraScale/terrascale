@@ -473,7 +473,7 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
                 if (++count > 1024 || bytes > PageBytes || !rows.IsDBNull(3) && rows.GetString(3) == "sqlite_schema")
                 {
                     FaultAwareCopySource.Abort(rows);
-                    throw new RewriteRefusedException("the final rewrite delta exceeds its budget", reason: RewriteRefusal.Budget);
+                    throw new RewriteRefusedException("the final rewrite delta exceeds its budget", reason: new Budget());
                 }
                 if (rows.GetInt64(1) == 2)
                 {

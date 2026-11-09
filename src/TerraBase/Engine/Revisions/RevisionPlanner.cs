@@ -1,22 +1,13 @@
 namespace TerraBase.Engine.Revisions;
 
-internal closed record class FullReason
+internal enum FullReason
 {
-    private sealed record class BootstrapCase : FullReason;
-    private sealed record class UnrecognizedCase : FullReason;
-    private sealed record class OtherIncarnationCase : FullReason;
-    private sealed record class AheadCase : FullReason;
-    private sealed record class ExpiredCase : FullReason;
-    private sealed record class RewrittenCase : FullReason;
-
-    internal static readonly FullReason Bootstrap = new BootstrapCase();
-    internal static readonly FullReason Unrecognized = new UnrecognizedCase();
-    internal static readonly FullReason OtherIncarnation = new OtherIncarnationCase();
-    internal static readonly FullReason Ahead = new AheadCase();
-    internal static readonly FullReason Expired = new ExpiredCase();
-    internal static readonly FullReason Rewritten = new RewrittenCase();
-
-    public override string ToString() => GetType().Name[..^4];
+    Bootstrap,
+    Unrecognized,
+    OtherIncarnation,
+    Ahead,
+    Expired,
+    Rewritten,
 }
 
 internal readonly record struct RevisionPlan(FullReason? Full, IReadOnlySet<uint> Pages)

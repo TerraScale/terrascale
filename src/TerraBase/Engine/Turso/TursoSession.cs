@@ -8,7 +8,7 @@ using Turso.Raw.Public.Handles;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed class TursoSession(SqliteConnection connection) : IDisposable
+internal sealed class TursoSession(SqliteConnection connection, TimeProvider time) : IDisposable
 {
     private readonly Dictionary<string, SqliteCommand> _commands = [with(StringComparer.Ordinal)];
 
@@ -104,13 +104,13 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             """);
     }
 
-    public static async Task<TursoSession> OpenAsync(TursoRunner io, string connectionString, string pragmas, CancellationToken cancellationToken, TursoDatabaseStore? store = null)
+    public static async Task<TursoSession> OpenAsync(TursoRunner io, string connectionString, string pragmas, TimeProvider time, CancellationToken cancellationToken, TursoDatabaseStore? store = null)
     {
         var connection = new SqliteConnection(connectionString)
         {
             CloseRefusal = store is null ? null : () => store.CloseRefusal,
         };
-        var session = new TursoSession(connection);
+        var session = new TursoSession(connection, time);
         var opening = false;
         try
         {
@@ -185,7 +185,7 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             }
             catch (SqliteException error) when (Busy(error) && (timeout == 0 || Stopwatch.GetElapsedTime(started).TotalSeconds < timeout))
             {
-                await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromMilliseconds(50), time, cancellationToken).ConfigureAwait(false);
             }
         }
     }
