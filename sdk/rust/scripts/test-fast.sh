@@ -7,4 +7,5 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 toolchain_use
 # Artifacts from another toolchain must never enter this SDK's Fast build graph.
 export CARGO_TARGET_DIR="$PWD/target/1.99.1"
-cargo test --locked
+cargo test --locked --no-run
+python3 ../../scripts/ci/fast-budget.py sdk-rust --format rust -- cargo test --locked
