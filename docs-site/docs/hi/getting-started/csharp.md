@@ -22,6 +22,7 @@ Run a complete SQL workflow against your TerraScale database in about ten minute
 read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY   # keeps the key out of history
 export TERRASCALE_PROJECT_ID=YOUR_PROJECT_ULID
 export TERRASCALE_DATABASE_NAME=main                       # your database's name
+export TERRASCALE_REGION=gru                               # your database's home region
 ```
 
 ## Install the SDK
@@ -44,7 +45,7 @@ dotnet add package TerraScale.DotNet --source ~/.nuget/packages-terrascale
 
 ## Run the quickstart
 
-Replace `Program.cs` with this. `TerraBaseSqlClient` exchanges the dashboard key for short-lived project access tokens itself; every operation goes through the SQL client.
+Replace `Program.cs` with this. `TerraBaseSqlClient.FromEnvironment` reads `TERRASCALE_API_KEY` and `TERRASCALE_REGION` and exchanges the dashboard key for short-lived project access tokens itself; every operation goes through the SQL client.
 
 ```csharp
 using System.Text.Json;
@@ -57,11 +58,11 @@ public static class Program
     public static async Task<int> Main()
     {
         string project = Required("TERRASCALE_PROJECT_ID");
-        string apiKey = Required("TERRASCALE_API_KEY");
         string databaseName = Required("TERRASCALE_DATABASE_NAME");
 
-        using var http = new HttpClient(TerraBaseHttp.CreateHandler());
-        var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = apiKey });
+        // FromEnvironment reads TERRASCALE_API_KEY (and the optional TERRASCALE_REGION) and exchanges the
+        // dashboard key for short-lived project access tokens itself; every operation goes through the SQL client.
+        var sql = TerraBaseSqlClient.FromEnvironment();
         TerraBaseSqlDatabase db = sql.Database(project, databaseName);
         var ids = new TerraScaleIdGenerator();
         string ada = ids.NewId();

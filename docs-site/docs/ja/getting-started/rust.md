@@ -61,9 +61,10 @@ async fn main() -> terrascale::v1::Result<()> {
     let database =
         std::env::var("TERRASCALE_DATABASE_NAME").unwrap_or_else(|_| "main".to_string());
 
-    // for_project_api_key exchanges the dashboard key for short-lived project
-    // access tokens; the client refreshes them automatically.
-    let client = Client::for_project_api_key(project, api_key).build()?;
+    // from_environment reads TERRASCALE_PROJECT_ID and TERRASCALE_API_KEY and
+    // exchanges the dashboard key for short-lived project access tokens; the
+    // client refreshes them automatically.
+    let client = Client::from_environment()?;
     let db = client.database(&database).sql();
 
     // One statement, one transaction. IF NOT EXISTS makes the quickstart safe to run twice.
@@ -157,7 +158,7 @@ Replica reads are eventually consistent; see [regions](/ja/concepts/regions).
 
 ## How it works
 
-- **The key never reaches TerraBase.** `Client::for_project_api_key` exchanges it with ts-auth for a short-lived project access token; the client refreshes it automatically. Keep the key on your server; see [authentication](/ja/guides/authentication).
+- **The key never reaches TerraBase.** `Client::from_environment` exchanges it with ts-auth for a short-lived project access token; the client refreshes it automatically. Keep the key on your server; see [authentication](/ja/guides/authentication).
 - **Every call is one request and one transaction.** `execute`, `query` and `batch` each post to `/sql/execute`; a batch commits all of its statements or none, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. See [SQL over HTTP](/ja/guides/sql-http).
 - **Arguments are parameters, not string interpolation.** Positional `?` values and named (`:name`) values are sent as typed JSON; blobs travel as base64. `query_as::<T>` maps rows by column name into your struct through serde.
 - **Refused statements are `Error::Sql`.** `Error::sql()` returns its `code`, `message`, zero-based `statement` and `sqlstate`, and `is_transient()` marks `serialization_conflict` and `tenant_busy`. A `serialization_conflict` is resent at most twice; nothing else is.
