@@ -39,7 +39,7 @@ internal static class RegionalForwarding
                 return;
             }
 
-            var address = new UriBuilder(Uri.UriSchemeHttp, owner.Address.ToString(), options.InternalPort).Uri;
+            var address = owner.InternalListener(options.InternalPort);
             if (Listeners.ArrivedOn(context) == TerraBaseListener.Client)
             {
                 await HomeForwarding.ForwardAsync(context, new HomeNode(options.Region, address)).ConfigureAwait(false);

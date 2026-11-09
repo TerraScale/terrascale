@@ -556,7 +556,7 @@ internal sealed partial class RegionalHandoff(
                 while (after is not null);
             }
 
-            var address = new UriBuilder(Uri.UriSchemeHttp, peer.Address.ToString(), options.InternalPort).Uri;
+            var address = peer.InternalListener(options.InternalPort);
             var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, promoting
                 ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null, transfer.Id), TerraBaseJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
@@ -603,7 +603,7 @@ internal sealed partial class RegionalHandoff(
             // region's edge. Do not stop its old address while an admitted peer still routes there.
             foreach (var observer in nodes.Where(node => node.Name != options.MachineId))
             {
-                var observedAt = new UriBuilder(Uri.UriSchemeHttp, observer.Address.ToString(), options.InternalPort).Uri;
+                var observedAt = observer.InternalListener(options.InternalPort);
                 while (true)
                 {
                     using var seen = await _http.GetAsync(new Uri(observedAt, "/v1/rollout/status?region=" + options.Region), cancellationToken).ConfigureAwait(false);

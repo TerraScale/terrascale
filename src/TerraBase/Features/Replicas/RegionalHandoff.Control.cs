@@ -218,7 +218,7 @@ internal sealed partial class RegionalHandoff
             {
                 return false;
             }
-            var address = new UriBuilder(Uri.UriSchemeHttp, peer.Address.ToString(), options.InternalPort).Uri;
+            var address = peer.InternalListener(options.InternalPort);
             using var response = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), attempt.Token).ConfigureAwait(false);
             return response.IsSuccessStatusCode
                 && await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, attempt.Token).ConfigureAwait(false)
@@ -333,7 +333,7 @@ internal sealed partial class RegionalHandoff
         {
             return null;
         }
-        var candidateAddress = new UriBuilder(Uri.UriSchemeHttp, candidate.Address.ToString(), options.InternalPort).Uri;
+        var candidateAddress = candidate.InternalListener(options.InternalPort);
         using var candidateResponse = await _http.GetAsync(new Uri(candidateAddress, "/v1/rollout/status"), token).ConfigureAwait(false);
         if (!candidateResponse.IsSuccessStatusCode
             || await candidateResponse.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, token).ConfigureAwait(false)
@@ -389,7 +389,7 @@ internal sealed partial class RegionalHandoff
         {
             return false;
         }
-        var address = new UriBuilder(Uri.UriSchemeHttp, source.Address.ToString(), options.InternalPort).Uri;
+        var address = source.InternalListener(options.InternalPort);
         using var response = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), token).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode || await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, token).ConfigureAwait(false)
             is not { Ready: true, Session.Length: > 0 } status || status.Node != transfer.Source

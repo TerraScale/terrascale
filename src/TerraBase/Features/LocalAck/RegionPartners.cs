@@ -1,5 +1,6 @@
 using TerraBase.Configuration;
 using TerraBase.Hosting;
+using TerraBase.Features.Replicas;
 
 namespace TerraBase.Features.LocalAck;
 
@@ -24,6 +25,6 @@ internal sealed class PeersFileRegionPartners(TerraBaseOptions options) : IRegio
 
         var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
         return [.. nodes.Where(node => node.Region == options.Region && node.Name != options.MachineId)
-            .Select(node => new RegionPartner(node.Name, new UriBuilder(Uri.UriSchemeHttp, node.Address.ToString(), options.InternalPort).Uri))];
+            .Select(node => new RegionPartner(node.Name, node.InternalListener(options.InternalPort)))];
     }
 }

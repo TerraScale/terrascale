@@ -1,5 +1,6 @@
 using TerraBase.Configuration;
 using TerraBase.Hosting;
+using TerraBase.Features.Replicas;
 
 namespace TerraBase.Features.Regions;
 
@@ -25,6 +26,6 @@ internal sealed class PeersFileRegionPeers(TerraBaseOptions options, Replicas.Re
         var nodes = owners is null ? await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)
             : await owners.NodesAsync(cancellationToken).ConfigureAwait(false);
         return [.. nodes.Where(node => node.Region != options.Region).DistinctBy(node => node.Region)
-            .Select(node => new RegionPeer(node.Region, new UriBuilder(Uri.UriSchemeHttp, node.Address.ToString(), options.InternalPort).Uri))];
+            .Select(node => new RegionPeer(node.Region, node.InternalListener(options.InternalPort)))];
     }
 }

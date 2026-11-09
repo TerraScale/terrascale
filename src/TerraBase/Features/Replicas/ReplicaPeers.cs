@@ -32,15 +32,22 @@ internal sealed class PeersFileReplicaPeers(TerraBaseOptions options, RegionalOw
         var nodes = owners is null ? await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)
             : await owners.NodesAsync(cancellationToken).ConfigureAwait(false);
         return [.. nodes.Where(node => node.Name != options.MachineId)
-            .Select(node => new ReplicaPeer(node.Region, node.Name, new UriBuilder(Uri.UriSchemeHttp, node.Address.ToString(), options.InternalPort).Uri))];
+            .Select(node => new ReplicaPeer(node.Region, node.Name, node.InternalListener(options.InternalPort)))];
+    }
+}
+
+internal static class ServingNodeExtensions
+{
+    extension(ServingNode node)
+    {
+        public Uri InternalListener(int port) => new UriBuilder(Uri.UriSchemeHttp, node.Address.ToString(), port).Uri;
     }
 }
 
 /// <summary>Requests to other nodes' internal listeners: HTTP/2 without TLS on the private mesh, with the peer credential.</summary>
 internal static class PeerHttp
 {
-    public static HttpClient Create(InternalCredential credential) =>
-        new(new PeerRequests(credential)
+    public static HttpClient Create(InternalCredential credential) =>        new(new PeerRequests(credential)
         {
             InnerHandler = new SocketsHttpHandler
             {
