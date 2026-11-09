@@ -67,29 +67,24 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
             }, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Writes to the management catalog after <see cref="ICatalogGuard"/> accepted its version (see <see cref="ReadAsync"/>).</summary>
-    public async ValueTask<T> WriteAsync<T>(
-        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
-        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
-        await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false) switch
-        {
-            Done => await WriteUncheckedAsync(async transaction =>
-                await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false) switch
-                {
-                    Done => await write(transaction).ConfigureAwait(false),
-                    Unavailable refused => unavailable(refused),
-                }, cancellationToken, file: file, line: line).ConfigureAwait(false),
-            Unavailable refused => unavailable(refused),
-        };
-
     /// <summary>Whether the management catalog may be used now, for work that checks once before a pass of its own.</summary>
     public ValueTask<CatalogCheck> CheckAsync(CancellationToken cancellationToken) =>
         ReadAsync<CatalogCheck>(static _ => ValueTask.FromResult<CatalogCheck>(new Done()), static error => error, cancellationToken);
 
-    /// <summary>Writes catalog state with a disk-synced commit before acknowledging a peer batch.</summary>
-    public async ValueTask<T> WriteDurableAsync<T>(
+    /// <summary>Writes to the management catalog after <see cref="ICatalogGuard"/> accepted its version (see <see cref="ReadAsync"/>).</summary>
+    public ValueTask<T> WriteAsync<T>(
         Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+        WriteAsync(write, unavailable, durable: false, file, line, cancellationToken);
+
+    /// <summary>Writes catalog state with a disk-synced commit before acknowledging a peer batch.</summary>
+    public ValueTask<T> WriteDurableAsync<T>(
+        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
+        [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+        WriteAsync(write, unavailable, durable: true, file, line, cancellationToken);
+
+    private async ValueTask<T> WriteAsync<T>(
+        Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, bool durable, string file, int line, CancellationToken cancellationToken) =>
         await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false) switch
         {
             Done => await WriteUncheckedAsync(async transaction =>
@@ -97,7 +92,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
                 {
                     Done => await write(transaction).ConfigureAwait(false),
                     Unavailable refused => unavailable(refused),
-                }, cancellationToken, durable: true, file, line).ConfigureAwait(false),
+                }, cancellationToken, durable, file, line).ConfigureAwait(false),
             Unavailable refused => unavailable(refused),
         };
 
