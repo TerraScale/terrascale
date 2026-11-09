@@ -21,7 +21,7 @@ These are the limits a request or a plan can hit. All SQL surfaces (HTTP, WebSoc
 | Rows changed per transaction | 1,024 | `too_large` (413) / 54000 |
 | Database file growth per transaction | 8 MiB | `too_large` (413) / 54000 |
 
-A query that stays inside result limits but scans or works past the plan's scan budget answers `query_canceled` (400) / 57014 with `query too expensive: it exceeds the work budget`; add indexes or a `LIMIT`, or narrow the query. A request whose statements together run past the 5 s request time limit answers `query_canceled` (400) / 57014 with `the request exceeded its 5 s time limit; split the batch or narrow the query`.
+A query that stays inside result limits but scans or works past the plan's scan budget answers `query_canceled` (400) / 57014. Add indexes or a `LIMIT`, or narrow the query.
 
 ## Transactions
 
@@ -55,13 +55,12 @@ A transaction left open past the limit rolls back and answers `transaction_rolle
 | Scan budget, bytes scanned | 16 MiB | 64 MiB | 128 MiB | 128 MiB | No limit |
 | Live databases | 1 | 5 | 25 | 100 | No limit |
 | Storage ceiling | 0.1 GB | 5 GB | 100 GB | 100 GB | No limit |
-| Point-in-time retention | 1 day | 3 days | 7 days | 14 days | 30 days |
 
-Beyond the request, burst or concurrency limit, HTTP answers `429 tenant_busy` (SQLSTATE `53300`) with a `Retry-After` header; the Postgres wire answers SQLSTATE `53300`. Past the storage ceiling a write answers `429 quota_exceeded` (53100); past the database allowance a create answers `409 database_limit`. A database's point-in-time restore window reaches back at most its plan's retention; see [backups and restore](/ja/guides/backups-and-restore).
+Beyond the request, burst or concurrency limit, HTTP answers `429 tenant_busy` (SQLSTATE `53300`) with a `Retry-After` header; the Postgres wire answers SQLSTATE `53300`. Past the storage ceiling a write answers `429 quota_exceeded` (53100); past the database allowance a create answers `409 database_limit`.
 
-## Monthly write units and SQL read fair use
+## Monthly operation units and SQL read fair use
 
-| Plan | Write units included | Write cap | SQL read fair use |
+| Plan | Operation units included | Write cap | SQL read fair use |
 | --- | --- | --- | --- |
 | Free | 50,000 | 50,000 | 500,000 |
 | Starter | 250,000 | 2,500,000 | 2,500,000 |

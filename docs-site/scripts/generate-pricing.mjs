@@ -16,7 +16,7 @@ const outputs = {
 
 Prices and limits come from the [published catalog](https://terrascale.tech/pricing.json).
 
-| Plan | Monthly price (USD) | Yearly price (USD) | Included write units | Write cap | SQL read fair use | Client egress | Storage |
+| Plan | Monthly price (USD) | Yearly price (USD) | Included operation units | Write cap | SQL read fair use | Client egress | Storage |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 ${plans.map((plan) => `| ${plan.name} | $${plan.priceMonthlyUsd} | ${yearly(plan)} | ${count(plan.limits.operationUnitsPerMonth)} | ${count(plan.limits.operationUnitCapPerMonth)} | ${count(plan.limits.sqlReadUnitsPerMonth)} | ${gb(plan.limits.egressGbPerMonth)}/month | ${plan.limits.storageGb} GB |`).join('\n')}
 
@@ -30,7 +30,7 @@ Starter, Pro and Team can be billed monthly or yearly; a year costs ten monthly 
 
 ${metering.allowances.definition}
 
-Overage rates on paid plans: $${rates.operationUnitsPerMillionUsd} per million write units and $${rates.storageGbRegionMonthUsd} per GB-month of storage.
+Overage rates on paid plans: $${rates.operationUnitsPerMillionUsd} per million operation units and $${rates.storageGbRegionMonthUsd} per GB-month of storage.
 
 When a plan's write cap or SQL read fair use is reached, the statement answers \`429 quota_exceeded\` (Postgres SQLSTATE \`53100\`) until the next UTC month or an upgrade.
 
@@ -104,9 +104,9 @@ A transaction left open past the limit rolls back and answers \`transaction_roll
 
 Beyond the request, burst or concurrency limit, HTTP answers \`429 tenant_busy\` (SQLSTATE \`53300\`) with a \`Retry-After\` header; the Postgres wire answers SQLSTATE \`53300\`. Past the storage ceiling a write answers \`429 quota_exceeded\` (53100); past the database allowance a create answers \`409 database_limit\`.
 
-## Monthly write units and SQL read fair use
+## Monthly operation units and SQL read fair use
 
-| Plan | Write units included | Write cap | SQL read fair use |
+| Plan | Operation units included | Write cap | SQL read fair use |
 | --- | --- | --- | --- |
 ${plans.map((plan) => `| ${plan.name} | ${count(plan.limits.operationUnitsPerMonth)} | ${count(plan.limits.operationUnitCapPerMonth)} | ${count(plan.limits.sqlReadUnitsPerMonth)} |`).join('\n')}
 

@@ -9,7 +9,7 @@
 
 Prices and limits come from the [published catalog](https://terrascale.tech/pricing.json).
 
-| Plan | Monthly price (USD) | Yearly price (USD) | Included write units | Write cap | SQL read fair use | Client egress | Storage |
+| Plan | Monthly price (USD) | Yearly price (USD) | Included operation units | Write cap | SQL read fair use | Client egress | Storage |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Free | $0 | $0 | 50,000 | 50,000 | 500,000 | 1 GB/month | 0.1 GB |
 | Starter | $3 | $30 | 250,000 | 2,500,000 | 2,500,000 | 5 GB/month | 1 GB |
@@ -27,7 +27,7 @@ Starter, Pro and Team can be billed monthly or yearly; a year costs ten monthly 
 
 Free includes small allowances without a card; new writes stop at its operation allowance and there are no overage charges. Paid plans include monthly allowances; operation units over the allowance are added to the next subscription invoice at the overage rate, up to the plan's hard cap (operationUnitCapPerMonth), where new writes stop until the next UTC month or an upgrade. SQL reads stop at the plan's fair use (sqlReadUnitsPerMonth); shape reads stay available. Storage over the allowance is added to the next invoice at the storage overage rate per GB-month of average stored bytes above it. Client egress over the allowance is not billed yet.
 
-Overage rates on paid plans: $5 per million write units and $0.5 per GB-month of storage.
+Overage rates on paid plans: $5 per million operation units and $0.5 per GB-month of storage.
 
 When a plan's write cap or SQL read fair use is reached, the statement answers `429 quota_exceeded` (Postgres SQLSTATE `53100`) until the next UTC month or an upgrade.
 
