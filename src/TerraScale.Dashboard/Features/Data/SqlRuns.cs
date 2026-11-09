@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Data
@@ -9,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Data
 
     // A run answers 303 to a GET of its stored receipt, so refresh and back never resend a statement. One receipt per user
     // and database lives in the user's SQL workspace (erased with it); a newer run replaces it and it expires after an hour.
-    public sealed class SqlRuns(IDashboardState state, TimeProvider time)
+    public sealed class SqlRuns(IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
     {
         public const int ResultBytes = 512 * 1024;
         private static readonly TimeSpan Lifetime = TimeSpan.FromHours(1);
@@ -36,27 +37,45 @@ namespace TerraScale.Dashboard.Features.Data
                 kept = result with { Rows = rows };
             }
             var receipt = new SqlRunReceipt(AccountService.NewId(), kept, result?.Rows.Count ?? 0, error, status, time.GetUtcNow());
-            // Bounds hold for any input: SQL past 16 KiB was refused before running and history is capped at 4 KiB.
-            var record = new SqlWorkspaceRecord(scope.OrganizationId, scope.ProjectId, databaseId, context.UserId,
-                Encoding.UTF8.GetByteCount(sql) <= SqlWorkspace.SqlBytes ? sql : "", history, Receipt: receipt);
-            var key = Key(context, databaseId);
-            var attempt = 0;
-            while (true)
+            var draft = Encoding.UTF8.GetByteCount(sql) <= SqlWorkspace.SqlBytes ? sql : "";
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            for (var attempt = 0; ; attempt++)
             {
-                var current = await state.GetAsync(SqlWorkspace.Table, key, cancellationToken);
+                db.ChangeTracker.Clear();
+                var row = await db.SqlWorkspaces.SingleOrDefaultAsync(workspace => workspace.OrganizationId == scope.OrganizationId && workspace.ProjectId == scope.ProjectId &&
+                    workspace.DatabaseId == databaseId && workspace.UserId == context.UserId, cancellationToken);
+                if (row is null)
+                {
+                    db.SqlWorkspaces.Add(new SqlWorkspaceRow
+                    {
+                        Id = AccountService.NewId(),
+                        OrganizationId = scope.OrganizationId,
+                        ProjectId = scope.ProjectId,
+                        DatabaseId = databaseId,
+                        UserId = context.UserId,
+                        Draft = draft,
+                        History = [.. history],
+                        HistoryEpoch = "",
+                        Receipt = receipt,
+                        Version = AccountService.NewId(),
+                    });
+                }
+                else
+                {
+                    row.Draft = draft;
+                    row.History = [.. history];
+                    row.HistoryEpoch = "";
+                    row.Receipt = receipt;
+                    row.Version = AccountService.NewId();
+                }
+
                 try
                 {
-                    await state.PutAsync(SqlWorkspace.Table, key, JsonSerializer.SerializeToElement(record),
-                        current is null ? StatePrecondition.Absent : StatePrecondition.Matches(current.Version), cancellationToken);
+                    await db.SaveChangesAsync(cancellationToken);
                     return receipt.Id;
                 }
-                catch (StateConflictException)
+                catch (DbUpdateException) when (attempt < 3)
                 {
-                    if (attempt >= 3)
-                    {
-                        throw;
-                    }
-                    attempt++;
                 }
             }
         }
@@ -76,31 +95,18 @@ namespace TerraScale.Dashboard.Features.Data
 
         public async Task<SqlWorkspaceRecord?> ReadWorkspaceAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
         {
-            StateRecord? row;
+            var scope = DatabaseService.Scope(context);
             try
             {
-                row = await state.GetAsync(SqlWorkspace.Table, Key(context, databaseId), cancellationToken);
+                await using var db = await storage.CreateDbContextAsync(cancellationToken);
+                var row = await db.SqlWorkspaces.AsNoTracking().SingleOrDefaultAsync(workspace => workspace.OrganizationId == scope.OrganizationId &&
+                    workspace.ProjectId == scope.ProjectId && workspace.DatabaseId == databaseId && workspace.UserId == context.UserId, cancellationToken);
+                return row is null ? null : new(row.OrganizationId, row.ProjectId, row.DatabaseId, row.UserId, row.Draft, row.History, row.HistoryEpoch, row.Receipt);
             }
             catch (Exception error) when (SqlWorkspace.Unavailable(error) && !cancellationToken.IsCancellationRequested)
             {
                 throw new SqlWorkspaceUnavailableException(error);
             }
-
-            if (row is not { } stored)
-            {
-                return null;
-            }
-
-            var record = AccountService.Read<SqlWorkspaceRecord>(stored);
-            var scope = DatabaseService.Scope(context);
-            return record.OrganizationId == scope.OrganizationId && record.ProjectId == scope.ProjectId && record.DatabaseId == databaseId && record.UserId == context.UserId
-                ? record : null;
-        }
-
-        private static string Key(AccountContext context, string databaseId)
-        {
-            var scope = DatabaseService.Scope(context);
-            return scope.OrganizationId + "/" + scope.ProjectId + "/" + databaseId + "/" + context.UserId;
         }
     }
 }

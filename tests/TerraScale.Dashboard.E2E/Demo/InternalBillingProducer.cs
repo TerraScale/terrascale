@@ -206,7 +206,7 @@ namespace TerraScale.Dashboard.E2E
 
         private static bool Allowed(string table)
         {
-            return table is "dashboard_billing" or "dashboard_internal_billing" or "dashboard_organizations" or "dashboard_accounts" or "sessions";
+            return table is "dashboard_billing" or "dashboard_internal_billing" or "dashboard_organizations" or "dashboard_accounts";
         }
 
         // Gives the signed-in account's active project one saved database, so reporting reads have something to report.

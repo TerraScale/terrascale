@@ -75,3 +75,6 @@ max_line_length = 140
 
 [src/TerraScale.Authentication/Storage/Migrations/*.cs]
 generated_code = true
+
+[src/TerraScale.Dashboard/Platform/Persistence/Migrations/*.cs]
+generated_code = true

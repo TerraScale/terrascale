@@ -206,22 +206,6 @@ namespace TerraScale.Dashboard.E2E
         }
 
         // One pass of the production reconciler (test hosts run it on demand, never on its timer).
-        public Task PauseRegistrationCompletion()
-        {
-            return protocol.PauseRegistrationCompletion();
-        }
-
-        public void ReleaseRegistrationCompletion()
-        {
-            protocol.ReleaseRegistrationCompletion();
-        }
-
-        public IDashboardState RegistrationState => first!.Services.GetRequiredService<IDashboardState>();
-        public McpRegistrationReclaimer RegistrationReclaimer()
-        {
-            return ActivatorUtilities.CreateInstance<McpRegistrationReclaimer>(first!.Services);
-        }
-
         public Task ReconcilePlansAsync()
         {
             return ActivatorUtilities.CreateInstance<PlanReconciler>(first!.Services).RunOnceAsync(default);
@@ -237,6 +221,11 @@ namespace TerraScale.Dashboard.E2E
         {
             return new(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!
             .Addresses.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
+        }
+
+        public Task<DashboardDbContext> StorageAsync()
+        {
+            return environment.StorageAsync();
         }
 
         public async ValueTask DisposeAsync()
@@ -342,11 +331,6 @@ namespace TerraScale.Dashboard.E2E
             private TaskCompletionSource? tableGate;
             private TaskCompletionSource? planGate;
             private TaskCompletionSource? rowGate;
-            private TaskCompletionSource? registrationGate;
-            private TaskCompletionSource registrationPaused = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            public Task PauseRegistrationCompletion()
-            { registrationGate = new(TaskCreationOptions.RunContinuationsAsynchronously); return registrationPaused.Task; }
-            public void ReleaseRegistrationCompletion() { registrationGate?.TrySetResult(); registrationGate = null; }
             private int pausedCreates;
             private int pausedWrites;
             private int schemaReads;
@@ -357,7 +341,7 @@ namespace TerraScale.Dashboard.E2E
             private int redirectTargetRequests;
             private string mode = "";
             public string Mode { get { lock (gate) { return mode; } } }
-            public void Release() { ReleaseRegistrationCompletion(); planGate?.TrySetResult(); tableGate?.TrySetResult(); rowGate?.TrySetResult(); engine.Dispose(); }
+            public void Release() { planGate?.TrySetResult(); tableGate?.TrySetResult(); rowGate?.TrySetResult(); engine.Dispose(); }
             public void Dispose() { Release(); }
 
             public async Task<IResult> DispatchAsync(HttpContext http)
@@ -472,23 +456,9 @@ namespace TerraScale.Dashboard.E2E
 
                 if (writes.Any(statement => Writes(statement, "dashboard_accounts")) && rowGate is { } accounts)
                 { Interlocked.Increment(ref pausedWrites); await accounts.Task.WaitAsync(http.RequestAborted); }
-                if (writes.Any(statement => Writes(statement, McpOAuth.ClientTable) && statement.Args.Any(arg => arg?.Contains("\"FirstSignInCompletedAt\":\"", StringComparison.Ordinal) == true))
-                    && registrationGate is { } pending)
-                { registrationPaused.TrySetResult(); await pending.Task.WaitAsync(http.RequestAborted); }
                 if (Mode == "sql-delete-unavailable" && writes.Any(statement => statement.Sql.StartsWith("DELETE FROM dashboard_sql_workspaces", StringComparison.Ordinal)))
                 {
                     return Error(503, "unavailable");
-                }
-
-                if (Mode == "complete-mcp-before-delete" && writes.FirstOrDefault(statement => statement.Sql.StartsWith("DELETE FROM " + McpOAuth.ClientTable, StringComparison.Ordinal)) is { } removal)
-                {
-                    var row = (await engine.ExecuteAsync([new("SELECT body FROM " + McpOAuth.ClientTable + " WHERE id = ?", [removal.Args[0]])], http.RequestAborted))[0].Rows;
-                    if (row.Count == 1 && JsonSerializer.Deserialize<McpRegistration>((string)row[0][0]!) is { } registration)
-                    {
-                        await engine.ExecuteAsync([new("UPDATE " + McpOAuth.ClientTable + " SET version = ?, body = ? WHERE id = ?", ["completed-race",
-                            JsonSerializer.Serialize(registration with { FirstSignInCompletedAt = registration.CreatedAt.AddHours(23), LastActivityAt = registration.CreatedAt.AddHours(23) }),
-                            removal.Args[0]])], http.RequestAborted);
-                    }
                 }
 
                 try

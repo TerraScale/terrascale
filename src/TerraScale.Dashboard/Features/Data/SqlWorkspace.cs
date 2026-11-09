@@ -1,21 +1,20 @@
+using System.Linq.Expressions;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Data
 {
     public sealed record SqlWorkspaceRecord(string OrganizationId, string ProjectId, string DatabaseId, string UserId,
         string Draft, IReadOnlyList<string> History, string HistoryEpoch = "", SqlRunReceipt? Receipt = null);
-    public sealed record SqlWorkspaceSnapshot(SqlWorkspaceRecord Record, string Version);
 
     public sealed class SqlWorkspaceUnavailableException : Exception
     {
         public SqlWorkspaceUnavailableException(Exception error) : base("The SQL workspace is unavailable.", error) { }
     }
 
-    // Ownership-only erasure; SqlRuns keeps each user's latest run receipt here.
     public sealed class SqlWorkspace
     {
-        public const string Table = "dashboard_sql_workspaces";
         public const int SqlBytes = 16 * 1024;
         public const int HistoryBytes = 128 * 1024;
         public const int HistoryCount = 20;
@@ -24,28 +23,10 @@ namespace TerraScale.Dashboard.Features.Data
             return error is IOException or HttpRequestException or JsonException or OperationCanceledException or TimeoutException || DatabaseResults.KnownFailure(error);
         }
 
-        // Project only identity: erasure never downloads SQL history or drafts.
-        public static async Task EraseAsync(IDashboardState state, IReadOnlyDictionary<string, string> scope, CancellationToken cancellationToken)
+        public static async Task EraseAsync(IDbContextFactory<DashboardDbContext> storage, Expression<Func<SqlWorkspaceRow, bool>> owned, CancellationToken cancellationToken)
         {
-            if (scope.Count == 0)
-            {
-                throw new IOException("SQL workspace erasure requires an owner scope.");
-            }
-
-            await foreach (var row in DashboardStatePages.ReadAsync(state, Table, scope,
-                ["OrganizationId", "ProjectId", "DatabaseId", "UserId"], cancellationToken))
-            {
-                var owner = AccountService.Read<WorkspaceOwner>(row);
-                var ids = new[] { owner.OrganizationId, owner.ProjectId, owner.DatabaseId, owner.UserId };
-                var key = string.Join("/", ids);
-                if (ids.Any(id => !TerraScaleIds.IsValid(id)) || row.Id != key)
-                {
-                    throw new IOException("SQL workspace deletion identity is invalid.");
-                }
-
-                await state.DeleteAsync(Table, row.Id, row.Version, cancellationToken);
-            }
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            await db.SqlWorkspaces.Where(owned).ExecuteDeleteAsync(cancellationToken);
         }
-        private sealed record WorkspaceOwner(string OrganizationId, string ProjectId, string DatabaseId, string UserId);
     }
 }

@@ -27,6 +27,8 @@ namespace TerraScale.Dashboard.Features.Profile
         // A completed operation leaves only its key (the hash of the browser's 256-bit cookie) and an expiry: no user id,
         // receipt or grant. Only the browser that started the deletion can find it, and it learns nothing but completion.
         private sealed record Envelope(string Key, string UserId, SealedSession? Payload, DateTimeOffset? DeletedUntil = null);
+
+        private sealed record SealedSession(string Nonce, string Ciphertext, string Tag);
         private static readonly TimeSpan CompletionKept = TimeSpan.FromDays(15);
 
         public static async Task<IResult> DeleteAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)

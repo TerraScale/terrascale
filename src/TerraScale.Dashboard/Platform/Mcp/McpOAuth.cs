@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
@@ -17,8 +18,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
     // ts-auth grant, so it is listed and revoked on Profile → Access tokens like any other.
     public static partial class McpOAuth
     {
-        public const string ClientTable = "dashboard_mcp_oauth_clients";
-        public const string CodeTable = "dashboard_mcp_oauth_codes";
         public const string McpHost = "mcp.terrascale.tech";
         private const int TokenDays = 90;
         private const int MaxRegistrationBytes = 16 * 1024;
@@ -90,7 +89,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         // Anyone may register: a client is only a name and its redirect URIs, and every authorization
         // still needs the user's consent on the dashboard and a sign-in on ts-auth.
-        internal static async Task<IResult> RegisterAsync(HttpContext context, IDashboardState state, TimeProvider time)
+        internal static async Task<IResult> RegisterAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
         {
             static IResult TooLarge()
             {
@@ -169,12 +168,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return OAuthError("invalid_client_metadata", "client_name uses at most 64 printable characters.");
             }
 
-            var id = AccountService.NewId();
-            var client = McpRegistrations.Create(id, name.Length == 0 ? "MCP client" : name, [.. uris.EnumerateArray().Select(uri => uri.GetString()!)], time.GetUtcNow());
-            await state.PutAsync(ClientTable, id, JsonSerializer.SerializeToElement(client), StatePrecondition.Absent, context.RequestAborted);
+            var client = await McpRegistrations.CreateAsync(storage, name.Length == 0 ? "MCP client" : name, [.. uris.EnumerateArray().Select(uri => uri.GetString()!)],
+                time.GetUtcNow(), context.RequestAborted);
             return Results.Json(new Dictionary<string, object>
             {
-                ["client_id"] = id,
+                ["client_id"] = client.ClientId,
                 ["client_id_issued_at"] = client.CreatedAt.ToUnixTimeSeconds(),
                 ["client_name"] = client.Name,
                 ["redirect_uris"] = client.RedirectUris,
@@ -184,9 +182,9 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }, statusCode: StatusCodes.Status201Created);
         }
 
-        internal static async Task<IResult> AuthorizeAsync(HttpContext context, IDashboardState state)
+        internal static async Task<IResult> AuthorizeAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage)
         {
-            var request = await ReadRequestAsync(context, state, context.Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString()));
+            var request = await ReadRequestAsync(context, storage, context.Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString()));
             if (request.Page is not null)
             {
                 return request.Page;
@@ -206,7 +204,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         public const string FormActionKey = "TerraScale.Dashboard/form-action";
 
-        internal static async Task<IResult> ConsentAsync(HttpContext context, IDashboardState state)
+        internal static async Task<IResult> ConsentAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage)
         {
             if (!context.Request.HasFormContentType)
             {
@@ -219,7 +217,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             }
 
-            var request = await ReadRequestAsync(context, state, form.ToDictionary(pair => pair.Key, pair => pair.Value.ToString()));
+            var request = await ReadRequestAsync(context, storage, form.ToDictionary(pair => pair.Key, pair => pair.Value.ToString()));
             if (request.Page is not null)
             {
                 return request.Page;
@@ -249,14 +247,14 @@ namespace TerraScale.Dashboard.Platform.Mcp
         public static async Task<IResult> GrantAsync(HttpContext context, McpAuthorization authorization, SessionRecord fresh, StepUpIntent? proof)
         {
             var sessions = context.RequestServices.GetRequiredService<DashboardSessions>();
-            var state = context.RequestServices.GetRequiredService<IDashboardState>();
+            var storage = context.RequestServices.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
             var time = context.RequestServices.GetRequiredService<TimeProvider>();
             var code = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
             var tokenExpiresAt = time.GetUtcNow().AddDays(TokenDays);
             string? credential = null;
             try
             {
-                var client = await McpRegistrations.ReadActiveAsync(state, time, authorization.ClientId, context.RequestAborted);
+                var client = await McpRegistrations.ReadActiveAsync(storage, time, authorization.ClientId, context.RequestAborted);
                 if (client is null || !client.RedirectUris.Any(uri => RedirectMatches(uri, authorization.RedirectUri)))
                 {
                     throw new AccountAccessException("This AI client registration expired or changed. Add the server again.", 400);
@@ -273,16 +271,29 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 var account = await AccountRequest.RequireAsync(context, sessions, context.RequestServices.GetRequiredService<AccountService>()) ?? throw StepUpFlow.Required();
                 StepUpFlow.Validate(context, account, proof, "create_pat");
                 await StepUpFlow.ConsumeAsync(context, account, proof);
-                client = await McpRegistrations.CompleteSignInAsync(state, time, authorization.ClientId, context.RequestAborted);
+                client = await McpRegistrations.CompleteSignInAsync(storage, time, authorization.ClientId, context.RequestAborted);
                 if (client is null || !client.RedirectUris.Any(uri => RedirectMatches(uri, authorization.RedirectUri)))
                 {
                     throw new AccountAccessException("This AI client registration expired or changed. Add the server again.", 400);
                 }
 
                 credential = await sessions.CreateCredentialAsync(fresh, tokenExpiresAt, context.RequestAborted);
-                var grant = new McpCode(authorization.ClientId, authorization.RedirectUri, authorization.CodeChallenge, authorization.Resource, fresh.UserId, credential,
-                    client.Name, time.GetUtcNow().AddMinutes(5), tokenExpiresAt);
-                await state.PutAsync(CodeTable, Hash(code), JsonSerializer.SerializeToElement(grant), StatePrecondition.Absent, context.RequestAborted);
+                await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
+                db.McpCodes.Add(new McpCodeRow
+                {
+                    Id = AccountService.NewId(),
+                    CodeHash = Hash(code),
+                    ClientId = authorization.ClientId,
+                    CredentialId = credential,
+                    UserId = fresh.UserId,
+                    RedirectUri = authorization.RedirectUri,
+                    CodeChallenge = authorization.CodeChallenge,
+                    Resource = authorization.Resource,
+                    ClientName = client.Name,
+                    ExpiresAt = time.GetUtcNow().AddMinutes(5).UtcDateTime,
+                    TokenExpiresAt = tokenExpiresAt.UtcDateTime,
+                });
+                await db.SaveChangesAsync(context.RequestAborted);
             }
             catch (Exception error)
             {
@@ -312,7 +323,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             { ["error"] = "access_denied", ["state"] = authorization.State, ["iss"] = authorization.Issuer }.Where(pair => pair.Value is not null)));
         }
 
-        internal static async Task<IResult> TokenAsync(HttpContext context, IDashboardState state, AccessTokens tokens, TimeProvider time)
+        internal static async Task<IResult> TokenAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage, AccessTokens tokens, TimeProvider time)
         {
             if (!context.Request.HasFormContentType)
             {
@@ -331,20 +342,24 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return OAuthError("invalid_grant", "The authorization code is invalid.");
             }
 
-            var row = await state.GetAsync(CodeTable, Hash(code), context.RequestAborted);
-            if (row is null || row.Id != Hash(code))
+            McpCodeRow? grant;
+            await using (var db = await storage.CreateDbContextAsync(context.RequestAborted))
             {
-                return OAuthError("invalid_grant", "The authorization code is invalid or was already used.");
+                var hash = Hash(code);
+                grant = await db.McpCodes.SingleOrDefaultAsync(row => row.CodeHash == hash, context.RequestAborted);
+                if (grant is null)
+                {
+                    return OAuthError("invalid_grant", "The authorization code is invalid or was already used.");
+                }
+
+                db.McpCodes.Remove(grant);
+                try { await db.SaveChangesAsync(context.RequestAborted); }
+                catch (DbUpdateConcurrencyException) { return OAuthError("invalid_grant", "The authorization code is invalid or was already used."); }
             }
-            // Deleting first makes the code single use across replicas: only one redemption wins the version.
-            try { await state.DeleteAsync(CodeTable, row.Id, row.Version, context.RequestAborted); }
-            catch (Exception error) when (error is StateConflictException or
-                                          HttpRequestException { StatusCode: System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound })
-            { return OAuthError("invalid_grant", "The authorization code is invalid or was already used."); }
-            var grant = row.Body.Deserialize<McpCode>() ?? throw new JsonException("Invalid authorization code.");
+
             var verifier = form["code_verifier"].ToString();
             var failure =
-                grant.ExpiresAt <= time.GetUtcNow() ? "The authorization code expired." :
+                grant.ExpiresAt <= time.GetUtcNow().UtcDateTime ? "The authorization code expired." :
                 form["client_id"] != grant.ClientId ? "The authorization code belongs to another client." :
                 form["redirect_uri"] != grant.RedirectUri ? "redirect_uri does not match the authorization request." :
                 !VerifierMatches(verifier, grant.CodeChallenge) ? "code_verifier does not match the code challenge." : null;
@@ -362,7 +377,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             {
                 if (failure is null && target is null)
                 {
-                    var client = await McpRegistrations.ReadActiveAsync(state, time, grant.ClientId, context.RequestAborted);
+                    var client = await McpRegistrations.ReadActiveAsync(storage, time, grant.ClientId, context.RequestAborted);
                     if (client is not { FirstSignInCompletedAt: not null } || !client.RedirectUris.Any(uri => RedirectMatches(uri, grant.RedirectUri)))
                     {
                         failure = "This AI client registration expired or changed. Add the server again.";
@@ -377,22 +392,22 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }
             try
             {
-                var created = await tokens.IssueGrantedAsync(grant.UserId, AccessTokenName(grant.ClientName), grant.TokenExpiresAt, grant.CredentialId, grant.ClientId, context.RequestAborted);
+                var created = await tokens.IssueGrantedAsync(grant.UserId, AccessTokenName(grant.ClientName), new DateTimeOffset(grant.TokenExpiresAt), grant.CredentialId, grant.ClientId, context.RequestAborted);
                 return Results.Json(new Dictionary<string, object>
                 {
                     ["access_token"] = created.Secret,
                     ["token_type"] = "Bearer",
-                    ["expires_in"] = (long)(grant.TokenExpiresAt - time.GetUtcNow()).TotalSeconds,
+                    ["expires_in"] = (long)(grant.TokenExpiresAt - time.GetUtcNow().UtcDateTime).TotalSeconds,
                     ["scope"] = Scope
                 });
             }
             catch (AccountAccessException error) { return OAuthError("invalid_grant", error.Message); }
         }
 
-        private static async Task<AuthorizationRequest> ReadRequestAsync(HttpContext context, IDashboardState state, Dictionary<string, string> parameters)
+        private static async Task<AuthorizationRequest> ReadRequestAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage, Dictionary<string, string> parameters)
         {
             var clientId = parameters.GetValueOrDefault("client_id", "");
-            var client = await McpRegistrations.ReadActiveAsync(state, context.RequestServices.GetRequiredService<TimeProvider>(), clientId, context.RequestAborted);
+            var client = await McpRegistrations.ReadActiveAsync(storage, context.RequestServices.GetRequiredService<TimeProvider>(), clientId, context.RequestAborted);
             if (client is null)
             {
                 return new(Page: ErrorPage(context, "This AI client is not registered with TerraScale. Add the server to your client again."));
@@ -535,8 +550,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
         [GeneratedRegex("^[a-z][a-z0-9+.-]*$")] private static partial Regex SchemePattern();
 
         private sealed record AuthorizationRequest(McpAuthorization? Authorization = null, IResult? Error = null, IResult? Page = null);
-        private sealed record McpCode(string ClientId, string RedirectUri, string CodeChallenge, string Resource, string UserId, string CredentialId, string ClientName,
-            DateTimeOffset ExpiresAt, DateTimeOffset TokenExpiresAt);
     }
 
     public sealed record McpAuthorization(string ClientId, string ClientName, string RedirectUri, string CodeChallenge, string? State, string Issuer, string Resource);

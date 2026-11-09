@@ -51,7 +51,7 @@ namespace TerraScale.Dashboard.E2E
         public static async Task<ReferencePersonas> InitializeReferenceAsync(this DemoEnvironment environment, string root)
         {
             await environment.InitializeAsync();
-            return await ReferenceFixtures.InitializeAsync(root, environment.State, environment.Workspace, environment.Auth.RegisterFixturePrincipal, environment.Databases.SeedFixtureDatabase, environment.Databases.SeedSqlAsync);
+            return await ReferenceFixtures.InitializeAsync(root, environment.State, environment.StorageAsync, environment.Workspace, environment.Auth.RegisterFixturePrincipal, environment.Databases.SeedFixtureDatabase, environment.Databases.SeedSqlAsync);
         }
     }
 }

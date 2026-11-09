@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts
 {
@@ -47,7 +48,11 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
 
             var before = await ObserveAsync(controls);
             await Assert.That(Rows(before, "dashboard_accounts")).IsEqualTo(1);
-            await Assert.That(Rows(before, "sessions")).IsEqualTo(2);
+            await using (var storage = await scenario.StorageAsync())
+            {
+                await Assert.That(await storage.Sessions.CountAsync(row => row.Kind == SessionRow.Browser)).IsEqualTo(2);
+            }
+
             await Assert.That(await scenario.RestartAsync()).IsTrue();
             using var cold = scenario.CreateReplacementClient(client);
             using var me = await cold.GetAsync("/api/v1/auth/me");

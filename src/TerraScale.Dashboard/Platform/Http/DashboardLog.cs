@@ -19,8 +19,6 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 5, Level = LogLevel.Information, Message = "Upstream timing {Upstream} {Host} {Method} {Operation} {Status}: start {StartMs} ms, duration {DurationMs} ms")]
         internal static partial void UpstreamTimingStartMsDurationMs(this ILogger logger, object? upstream, object? host, object? method, object? operation, object? status, object? startMs, object? durationMs);
 
-        [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Partial session cleanup failed ({ErrorType})")]
-        internal static partial void PartialSessionCleanupFailed(this ILogger logger, object? errorType);
 
         [LoggerMessage(EventId = 7, Level = LogLevel.Warning, Message = "Refresh of a stored ts-auth grant in {Table} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
         internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, object? table, object? errorType, object? status, object? errorCode);
@@ -28,8 +26,6 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 8, Level = LogLevel.Warning, Message = "Saving a refreshed ts-auth grant in {Table} failed ({ErrorType}); retrying")]
         internal static partial void SavingARefreshedTsAuthGrant(this ILogger logger, object? table, object? errorType);
 
-        [LoggerMessage(EventId = 9, Level = LogLevel.Warning, Message = "Revoked session index cleanup failed ({ErrorType})")]
-        internal static partial void RevokedSessionIndexCleanupFailed(this ILogger logger, object? errorType);
 
         [LoggerMessage(EventId = 10, Level = LogLevel.Warning, Message = "MCP tool {Tool} failed upstream with {Status} ({ErrorType}, code {ErrorCode})")]
         internal static partial void MCPToolFailedUpstreamWithCode(this ILogger logger, object? tool, object? status, object? errorType, object? errorCode);
@@ -40,14 +36,14 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 12, Level = LogLevel.Warning, Message = "MCP unfinished registration cleanup is unavailable ({ErrorType}); retrying on a later pass.")]
         internal static partial void MCPUnfinishedRegistrationCleanupIsUnavailable(this ILogger logger, object? errorType);
 
-        [LoggerMessage(EventId = 13, Level = LogLevel.Warning, Message = "Dashboard state is not initialized at startup ({ErrorType}: {Error}); starting not ready and retrying.")]
-        internal static partial void DashboardStateIsNotInitializedAt(this ILogger logger, object? errorType, object? error);
+        [LoggerMessage(EventId = 13, Level = LogLevel.Warning, Message = "Dashboard state is not initialized at startup ({ErrorType}); starting not ready and retrying.")]
+        internal static partial void DashboardStateIsNotInitializedAt(this ILogger logger, string errorType);
 
         [LoggerMessage(EventId = 14, Level = LogLevel.Information, Message = "Dashboard state initialized after {Attempts} attempts.")]
         internal static partial void DashboardStateInitializedAfterAttempts(this ILogger logger, int attempts);
 
-        [LoggerMessage(EventId = 15, Level = LogLevel.Warning, Message = "Dashboard state is not initialized after {Attempts} attempts ({ErrorType}: {Error}); retrying.")]
-        internal static partial void DashboardStateIsNotInitializedAfter(this ILogger logger, object? attempts, object? errorType, object? error);
+        [LoggerMessage(EventId = 15, Level = LogLevel.Warning, Message = "Dashboard state is not initialized after {Attempts} attempts ({ErrorType}); retrying.")]
+        internal static partial void DashboardStateIsNotInitializedAfter(this ILogger logger, int attempts, string errorType);
 
         [LoggerMessage(EventId = 16, Level = LogLevel.Warning, Message = "Readiness: ts-auth answered {StatusCode}")]
         internal static partial void ReadinessTsAuthAnswered(this ILogger logger, object? statusCode);
@@ -135,6 +131,9 @@ namespace TerraScale.Dashboard.Platform.Http
 
         [LoggerMessage(EventId = 44, Level = LogLevel.Error, Message = "Dashboard panel {Panel} failed on {Route}; the page rendered without it: {Failure}")]
         internal static partial void DashboardPanelFailed(this ILogger logger, object? panel, object? route, object? failure);
+
+        [LoggerMessage(EventId = 45, Level = LogLevel.Warning, Message = "Expired dashboard rows were not swept ({ErrorType}); retrying on the next pass.")]
+        internal static partial void ExpiredRowsWereNotSwept(this ILogger logger, string errorType);
 
         [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
         internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);

@@ -29,8 +29,8 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             using var firstLogin = await HttpJourney.LoginAsync(first);
             using var secondLogin = await HttpJourney.LoginAsync(second);
             var profile = await first.GetStringAsync("/profile?tab=sessions");
-            var id = System.Text.RegularExpressions.Regex.Match(profile, "/api/v1/dashboard/profile/sessions/([0-9a-f]{64})/revoke").Groups[1].Value;
-            await Assert.That(id.Length).IsEqualTo(64);
+            var id = System.Text.RegularExpressions.Regex.Match(profile, "/api/v1/dashboard/profile/sessions/([0-9A-HJKMNP-TV-Z]{26})/revoke").Groups[1].Value;
+            await Assert.That(id.Length).IsEqualTo(26);
 
             var csrf = await HttpJourney.CsrfAsync(first, "/profile");
             using (var revoked = await HttpJourney.PostFormAsync(first, $"/api/v1/dashboard/profile/sessions/{id}/revoke", new() { ["_csrf"] = csrf }))

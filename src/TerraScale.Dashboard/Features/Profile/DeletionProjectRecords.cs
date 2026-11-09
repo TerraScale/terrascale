@@ -1,6 +1,5 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Notifications;
@@ -10,7 +9,7 @@ using TerraScale.TerraBase.Contracts;
 namespace TerraScale.Dashboard.Features.Profile
 {
     // The permanent cleanup journal replays project records after conflicts or late writes.
-    public sealed class DeletionProjectRecords(IDashboardState state)
+    public sealed class DeletionProjectRecords(IDashboardState state, IDbContextFactory<DashboardDbContext> storage)
     {
         public async Task CleanAsync(string organizationId, string projectId, CancellationToken cancellationToken)
         {
@@ -21,11 +20,12 @@ namespace TerraScale.Dashboard.Features.Profile
 
             try
             {
-                await SqlWorkspace.EraseAsync(state, new Dictionary<string, string> { ["OrganizationId"] = organizationId, ["ProjectId"] = projectId }, cancellationToken);
-                await DatabaseWorkspaceCleanup.EraseMarkersAsync(state, organizationId, projectId, cancellationToken);
-                var queryKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(organizationId + "/" + projectId)));
-                await DropAsync<SavedQueryRecord>("dashboard_saved_queries", queryKey,
-                    record => record.OrganizationId == organizationId && record.ProjectId == projectId, cancellationToken);
+                await SqlWorkspace.EraseAsync(storage, row => row.OrganizationId == organizationId && row.ProjectId == projectId, cancellationToken);
+                await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+                {
+                    await db.SavedQueries.Where(row => row.OrganizationId == organizationId && row.ProjectId == projectId).ExecuteDeleteAsync(cancellationToken);
+                }
+
                 await DropAsync<AlertRuleSet>(AlertRules.Table, projectId,
                     record => record.OrganizationId == organizationId && record.ProjectId == projectId, cancellationToken);
                 await DropAsync<LogDrain>(LogDrains.Table, projectId,
