@@ -39,3 +39,28 @@ Decisions already made: comments removed (keep only external-constraint comments
 ## Worklog
 
 - [in progress] initial log
+
+## Worklog (final)
+
+- 0156d23f4 decision log written and pushed.
+- bbe83970f removed WritableDatabase/WritableProject route unions + identity switches in ManagementRoute helpers; ProjectBackupDestinations uses WritableProjectResult directly.
+- 92ef2a9f3 merged SystemCatalog.WriteAsync/WriteDurableAsync into one core with a durable flag.
+- 3cd7bb5cf replaced 14 fully qualified names (System.Diagnostics.UnreachableException, System.Text.Json.JsonSerializer, ConcurrentDictionary, TerraBase.Tenancy.PlanTier, JsonTypeInfo) with using directives across 12 files.
+- a402f534c removed all comments (979 lines: 651 XML doc + 227 line comments + tests) from the slice and its tests; none described anything outside the code.
+- cc25d166c PeerUsage returns IReadOnlyList/IReadOnlyDictionary; GetProjectUsage/ListUsageAllowances endpoints adjusted.
+- cc07552bd SystemCatalog.ListAllAsync returns IReadOnlyList<T>; call sites updated (2 in slice, 1 in Features/Functions/FunctionScheduler.cs outside slice).
+- 68ab85fdf five endpoint classes public -> internal (consistency with the other 48).
+- 609b885f1 split EngineManagedBackupService restore operations into EngineManagedBackupService.Restores.cs (750 + 589 lines).
+- 3feefde34/7d81a297d attempted plain-string ZLogError; reverted: ZLogger handler overloads require interpolated strings (CS9205). No net change.
+- Tests reviewed: all Management Fast/Slow tests drive the real server over HTTP with real assertions; nothing can't-fail, nothing tied to internals only. No test changes needed (comments removed only).
+
+## Remaining / not done
+
+- EngineManagementService.cs main partial is still 1239 lines but cohesive (org/project/database CRUD + add/delete pipeline); further splitting by entity had no clear win and higher merge risk. Left.
+- The exhaustive "error half" filter idiom (`x switch { Good => throw new UnreachableException(), ... }`) appears throughout; it is the price of exhaustive unions and stays.
+
+## Cross-slice notes (for coordinator)
+
+- Features/Functions (FunctionScheduler.cs, FunctionService.cs) calls Management-owned SystemCatalog.ListAllAsync directly; consider a typed seam when Functions is reworked.
+- Features/Replicas consumes Management-owned IHomeMoveCatalog/HomeMoveMarker (existing seam, fine).
+- Features/Functions/FunctionRoute.cs reuses ManagementRoute.DatabaseAsync (small public type, fine).
