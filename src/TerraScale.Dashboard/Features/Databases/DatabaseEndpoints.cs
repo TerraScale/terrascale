@@ -246,7 +246,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 var scope = DatabaseService.Scope(context);
                 var home = await databases.HomeAsync(context, database, http.RequestAborted);
                 var tables = await DatabaseTables.LoadAsync(backend, scope, home, database.Id, http.RequestAborted);
-                var shown = tables.Tables.FirstOrDefault(table => table.Name == selectedTable) ?? (selectedTable.Length == 0 ? tables.Tables.FirstOrDefault() : null);
+                var shown = tables.Tables.FirstOrDefault(table => table.Name == selectedTable) ?? (selectedTable.Length == 0 && tables.Tables.Count > 0 ? tables.Tables[0] : null);
                 return tab != "tables" || shown is null ? (tables, "", null) : (tables, shown.Name, await DatabaseTables.PreviewAsync(backend, scope, home, database.Id, shown.Name, http.RequestAborted));
             }
 

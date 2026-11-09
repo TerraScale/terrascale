@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         public async Task<TsAuthDeletionPage> ListDeletionsAsync(
             string clientId, string clientSecret, CancellationToken ct = default)
         {
-            var page = await client.SendAuthenticatedJsonAsync(HttpMethod.Get, client.ManagementRoute("/deletions"),
+            var page = await client.SendAuthenticatedJsonAsync(HttpMethod.Get, TsAuthClient.ManagementRoute("/deletions"),
                 null, TsAuthIntegrationJsonContext.Default.TsAuthAcknowledgeDeletion,
                 TsAuthIntegrationJsonContext.Default.TsAuthDeletionPage,
                 TsAuthCredentials.Basic(clientId, clientSecret), HttpStatusCode.OK, 16 * 1024, ct).ConfigureAwait(false);
@@ -28,7 +28,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 throw new ArgumentException("Deletion proofs require canonical ULIDs, a known scope and its exact organization binding.", nameof(proof));
             }
             return client.SendAuthenticatedForStatusAsync(HttpMethod.Post,
-                client.ManagementRoute("/deletions/" + proof.Id + "/acknowledge"),
+                TsAuthClient.ManagementRoute("/deletions/" + proof.Id + "/acknowledge"),
                 new TsAuthAcknowledgeDeletion(proof.Scope, proof.SubjectId, proof.OrganizationId),
                 TsAuthIntegrationJsonContext.Default.TsAuthAcknowledgeDeletion,
                 TsAuthCredentials.Basic(clientId, clientSecret), HttpStatusCode.NoContent, 16 * 1024, ct);

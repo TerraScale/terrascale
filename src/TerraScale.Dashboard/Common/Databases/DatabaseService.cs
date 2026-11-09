@@ -337,7 +337,7 @@ namespace TerraScale.Dashboard.Common.Databases
             return database;
         }
 
-        private static IReadOnlyList<string> ReplicaIds(IReadOnlyList<DatabaseRegion> catalog, DatabaseRegion home, IEnumerable<string> codes)
+        private static string[] ReplicaIds(IReadOnlyList<DatabaseRegion> catalog, DatabaseRegion home, IEnumerable<string> codes)
         {
             var ids = codes.Where(code => !string.IsNullOrWhiteSpace(code)).Select(code => ResolveRegion(catalog, code).Id)
                 .Where(regionId => regionId != home.Id).Distinct(StringComparer.Ordinal).ToArray();

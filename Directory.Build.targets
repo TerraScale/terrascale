@@ -83,4 +83,10 @@
          then tears down: about 13% of the suite's CPU. The reflection engine resolves the same graph. -->
     <RuntimeHostConfigurationOption Include="Microsoft.Extensions.DependencyInjection.DisableDynamicEngine" Value="true" />
   </ItemGroup>
+  <!-- DECISION: single-file analysis targets the self-contained service executables; the dashboard's
+       netstandard2.0 Roslyn analyzer assembly ships no executable, so NETSDK1211's multi-target advice
+       applies here and the property stays off for that framework only (issue #977). -->
+  <PropertyGroup Condition="'$(IsDashboardArea)' == 'true' and '$(TargetFramework)' == 'netstandard2.0'">
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+  </PropertyGroup>
 </Project>
