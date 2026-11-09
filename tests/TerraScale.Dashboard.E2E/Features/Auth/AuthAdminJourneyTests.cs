@@ -165,7 +165,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                     await Assert.That(await page.Locator("input[name=plan][value=pro]").IsCheckedAsync()).IsTrue();
                     await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=starter]") }).ClickAsync();
                     await Assert.That(await page.Locator("input[name=plan][value=starter]").IsCheckedAsync()).IsTrue();
-                    var checkout = await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue to checkout on Starter →");
+                    var checkout = await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue to checkout →");
                     await Assert.That(checkout.Status).IsEqualTo(303);
                     await Assert.That(Regex.IsMatch(checkout.Headers.GetValueOrDefault("location") ?? "", "/__test/checkout\\?id=cs_")).IsTrue()
                         .Because("official Stripe SDK uses test-only provider checkout");

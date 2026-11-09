@@ -1,12 +1,13 @@
 using TerraScale.TerraBase.Contracts;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using StripeException = Stripe.StripeException;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    public sealed class UsageOverageReporter(IDashboardState state, OrganizationStore organizations, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
+    public sealed class UsageOverageReporter(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend usage, StripeBilling billing, TimeProvider clock, ILogger<UsageOverageReporter> logger)
     {
         private const int ClosingDays = 3;
 
@@ -60,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return;
             }
 
-            var bindingRow = await state.GetAsync(StripeBilling.Table, organizationId, cancellationToken);
+            var bindingRow = await storage.BindingRowAsync(organizationId, cancellationToken);
             if (bindingRow is null)
             {
                 return;

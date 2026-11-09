@@ -142,9 +142,15 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("canceled");
             await Assert.That(scenario.Environment.BillingPlans.Mutations(binding.CustomerId).Count(path => path == "DELETE /v1/subscriptions/" + binding.SubscriptionId)).IsEqualTo(1);
             // The binding stays until DeletionReconciler fences it from the same auth proof.
-            await Assert.That(StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Table, personal, default))!, personal).Status).IsEqualTo("canceled");
+            await Assert.That((await BindingAsync(scenario, personal)).Status).IsEqualTo("canceled");
             await Assert.That((await scenario.Environment.Accounts.FindAsync(userId, default))!.Erased).IsTrue();
             await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
+        }
+
+        private static async Task<BillingBinding> BindingAsync(Scenario scenario, string organizationId)
+        {
+            await using var db = await scenario.Environment.StorageAsync();
+            return StripeBilling.ReadBinding(await db.Billing.AsNoTracking().SingleAsync(row => row.OrganizationId == organizationId), organizationId);
         }
 
         // Billing never runs before ts-auth admits the deletion, so a Stripe outage cannot fail the request.
@@ -163,7 +169,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(free.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             }
 
-            var binding = StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Table, personal, default))!, personal);
+            var binding = await BindingAsync(scenario, personal);
             await Assert.That(scenario.Environment.BillingPlans.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("active");
             scenario.Environment.BillingPlans.SetScenario(binding.CustomerId, stripeScenario);
             // Without a hosted step-up proof the request only starts confirmation: nothing is deleted or billed.

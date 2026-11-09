@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.E2E
         internal const string SandboxId = "06RCAG0WTSX0132AWJ5NEK4KR8";
         internal const string PrimaryId = "0Z793APJ2ECFW2F7P6J9F2RKVY";
 
-        public static async Task<ReferencePersonas> InitializeAsync(string root, TestState state, Func<Task<DashboardDbContext>> storage, TestWorkspace workspace,
+        public static async Task<ReferencePersonas> InitializeAsync(string root, Func<Task<DashboardDbContext>> storage, TestWorkspace workspace,
             Action<ReferencePrincipal> registerPrincipal, Action<ManagedDatabase> registerDatabase, Func<DatabaseScope, string, string, Task> runSql)
         {
             var accounts = new AccountStore(new TestStorageFactory(storage), TimeProvider.System);
@@ -59,22 +59,25 @@ namespace TerraScale.Dashboard.E2E
             ApplyCapturedInvitations(labs, seeded.Invitations[labs.Id]);
             await PersistOrganizationAsync(organizations, workspace, labs);
             await PersistAccountAsync(accounts, personas.Seeded, seeded.OrganizationIds, seeded.ActiveOrganizationId, seeded.ActiveProjectId, Notifications());
-            await state.PutAsync(StripeBilling.Table, LabsId, JsonSerializer.SerializeToElement(new BillingBinding
+            await using (var db = await storage())
             {
-                OrganizationId = LabsId,
-                CustomerId = ReferenceStripeTransport.CustomerId,
-                RequestId = Guid.NewGuid().ToString("N"),
-                Plan = "pro",
-                Interval = "monthly",
-                EffectivePlan = "pro",
-                EffectiveInterval = "monthly",
-                Status = "active",
-                PaymentValidated = true,
-                ReturnPath = "/organization?tab=billing",
-                StartedAt = At(2026, 1, 12, 9, 24)
-            }), StatePrecondition.Absent, default);
-            await state.PutAsync(StripeBilling.CustomersTable, ReferenceStripeTransport.CustomerId,
-                JsonSerializer.SerializeToElement(new CustomerBinding(LabsId)), StatePrecondition.Absent, default);
+                db.Billing.Add(new BillingBinding
+                {
+                    Version = AccountService.NewId(),
+                    OrganizationId = LabsId,
+                    CustomerId = ReferenceStripeTransport.CustomerId,
+                    RequestId = Guid.NewGuid().ToString("N"),
+                    Plan = "pro",
+                    Interval = "monthly",
+                    EffectivePlan = "pro",
+                    EffectiveInterval = "monthly",
+                    Status = "active",
+                    ReturnPath = "/organization?tab=billing",
+                    StartedAt = At(2026, 1, 12, 9, 24)
+                });
+                db.StripeCustomers.Add(new StripeCustomerRow { Id = AccountService.NewId(), CustomerId = ReferenceStripeTransport.CustomerId, OrganizationId = LabsId, CreatedAt = At(2026, 1, 12, 9, 24).UtcDateTime });
+                await db.SaveChangesAsync();
+            }
 
             foreach (var project in labs.Projects.Values)
             {

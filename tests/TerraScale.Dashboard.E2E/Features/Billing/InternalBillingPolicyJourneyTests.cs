@@ -124,26 +124,6 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 "The actual native owner spending form commits the organization cap");
         }
 
-        private static async Task PausedAsync(HttpClient producer, int count = 1, string counter = "pausedWrites", Task<HttpResponseMessage>? checkout = null)
-        {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            while (!deadline.IsCancellationRequested)
-            {
-                if ((await ObserveAsync(producer)).GetProperty("billing").GetProperty(counter).GetInt32() >= count)
-                {
-                    return;
-                }
-
-                if (checkout is { IsCompleted: true })
-                {
-                    using var response = await checkout;
-                    await CheckAsync(false, $"Checkout returned {(int)response.StatusCode} before reaching its persistence barrier: {await response.Content.ReadAsStringAsync()}");
-                }
-                await Task.Delay(20, deadline.Token);
-            }
-            await CheckAsync(false, "Actual app writes reach the external producer barrier before the race is released");
-        }
-
         private static async Task<(string Subject, string Email)> EnrollNomineeAsync(HttpClient browser, HttpClient producer)
         {
             const string email = "second-owner@example.com";

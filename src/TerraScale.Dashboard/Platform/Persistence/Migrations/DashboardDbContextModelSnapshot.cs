@@ -711,6 +711,357 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingBinding", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("CheckoutId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("checkout_id");
+
+                    b.Property<string>("CheckoutProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("checkout_project_id");
+
+                    b.Property<string>("CustomerId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("customer_id");
+
+                    b.Property<string>("EffectiveInterval")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("effective_interval");
+
+                    b.Property<string>("EffectivePlan")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("effective_plan");
+
+                    b.Property<string>("ErasureId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("erasure_id");
+
+                    b.Property<string>("InternalReservation")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("internal_reservation");
+
+                    b.Property<string>("Interval")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("interval");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Plan")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan");
+
+                    b.Property<DateTime?>("RenewalAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("renewal_at");
+
+                    b.Property<string>("RequestId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("ReturnPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("return_path");
+
+                    b.Property<long>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("started_at");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("state");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("SubscriptionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<bool>("TrialUsed")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("trial_used");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("OrganizationId");
+
+                    b.HasIndex("CustomerId")
+                        .IsUnique()
+                        .HasFilter("customer_id <> ''");
+
+                    b.ToTable("billing", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_billing_customer", "customer_id = '' OR customer_id LIKE 'cus\\_%' ESCAPE '\\'");
+
+                            t.HasCheckConstraint("ck_billing_erasure", "erasure_id IS NULL AND length(request_id) > 0 OR length(erasure_id) = 26 AND length(request_id) = 0");
+
+                            t.HasCheckConstraint("ck_billing_id", "length(organization_id) = 26 AND length(version) = 26");
+
+                            t.HasCheckConstraint("ck_billing_internal", "(kind = 'internal') = (internal_reservation IS NOT NULL) AND (kind = 'stripe' OR customer_id = '' AND checkout_id = '' AND subscription_id = '')");
+
+                            t.HasCheckConstraint("ck_billing_kind", "kind IN ('stripe', 'internal') AND state IN ('reserved', 'active', 'deleting')");
+
+                            t.HasCheckConstraint("ck_billing_revision", "revision >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingChangeReceipt", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("action");
+
+                    b.Property<string>("Interval")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("interval");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<DateTime>("PeriodEnd")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("period_end");
+
+                    b.Property<string>("Plan")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan");
+
+                    b.Property<string>("RequestId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("request_id");
+
+                    b.Property<long>("Revision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("SourceInterval")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_interval");
+
+                    b.Property<string>("SourcePlanKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_plan_key");
+
+                    b.Property<string>("SourcePriceId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_price_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("SubscriptionId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subscription_id");
+
+                    b.Property<string>("TargetPriceId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_price_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique();
+
+                    b.ToTable("billing_changes", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_billing_changes_action", "action IN ('change', 'undo') AND status IN ('reserved', 'applying', 'applied', 'abandoned')");
+
+                            t.HasCheckConstraint("ck_billing_changes_id", "length(id) = 26 AND length(version) = 26 AND length(organization_id) = 26");
+
+                            t.HasCheckConstraint("ck_billing_changes_request", "length(request_id) > 0 AND length(subscription_id) > 0 AND revision >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.InternalBillingRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("PlanId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan_id");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("scope");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("Scope")
+                        .IsUnique();
+
+                    b.ToTable("internal_billing", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_internal_billing_id", "length(id) = 26 AND length(organization_id) = 26 AND length(plan_id) = 26");
+
+                            t.HasCheckConstraint("ck_internal_billing_scope", "scope = 'organization'");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.StripeCheckoutRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CheckoutId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("checkout_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CustomerId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("customer_id");
+
+                    b.Property<string>("Interval")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("interval");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("Plan")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("RequestId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("request_id");
+
+                    b.Property<string>("ReturnPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("return_path");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CheckoutId")
+                        .IsUnique();
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("stripe_checkouts", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_stripe_checkouts_checkout", "checkout_id LIKE 'cs\\_%' ESCAPE '\\' AND length(request_id) > 0");
+
+                            t.HasCheckConstraint("ck_stripe_checkouts_id", "length(id) = 26 AND length(organization_id) = 26");
+
+                            t.HasCheckConstraint("ck_stripe_checkouts_project", "length(project_id) IN (0, 26)");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.StripeCustomerRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CustomerId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("customer_id");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique();
+
+                    b.ToTable("stripe_customers", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_stripe_customers_customer", "customer_id LIKE 'cus\\_%' ESCAPE '\\'");
+
+                            t.HasCheckConstraint("ck_stripe_customers_id", "length(id) = 26 AND length(organization_id) = 26");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Features.Data.SavedQueryRow", b =>
                 {
                     b.Property<string>("Id")
@@ -1471,6 +1822,58 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("McpClientId")
                         .OnDelete(DeleteBehavior.Cascade);
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingBinding", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Common.Accounts.OrganizationRow", null)
+                        .WithOne()
+                        .HasForeignKey("TerraScale.Dashboard.Features.Billing.BillingBinding", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingChangeReceipt", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.InternalBillingRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Common.Accounts.OrganizationRow", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.StripeCheckoutRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.StripeCustomerRow", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .HasPrincipalKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.StripeCustomerRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Billing.BillingBinding", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("TerraScale.Dashboard.Features.Logs.LogDrainCursorRow", b =>

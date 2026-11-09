@@ -1,12 +1,13 @@
-using TerraScale.TerraBase.Contracts;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
     // Converges TerraBase to every organization's entitled plan every 30 seconds, whatever was missed: a TerraBase wipe or
     // re-seed, an enrollment after the last billing change, a failed publish, or a paid checkout whose webhook never came.
-    public sealed class PlanReconciler(IDashboardState state, OrganizationStore organizations, StripeBilling billing, TerraBasePlanSync plans, TimeProvider clock, ILogger<PlanReconciler> logger) : BackgroundService
+    public sealed class PlanReconciler(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, StripeBilling billing, TerraBasePlanSync plans, TimeProvider clock, ILogger<PlanReconciler> logger) : BackgroundService
     {
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -24,15 +25,18 @@ namespace TerraScale.Dashboard.Features.Billing
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
-            // A pending checkout first: its refresh grants and publishes the plan the organization now pays for.
-            foreach (var row in await state.ListAsync(StripeBilling.Table, cancellationToken))
+            List<BillingBinding> pending;
+            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+            {
+                pending = await db.Billing.AsNoTracking().Where(row => row.ErasureId == null && row.Kind == "stripe" && row.CheckoutId != "" && row.SubscriptionId == "" && row.Status == "pending")
+                    .ToListAsync(cancellationToken);
+            }
+
+            foreach (var binding in pending)
             {
                 try
                 {
-                    if (row.Body.Deserialize<BillingBinding>() is { } binding)
-                    {
-                        await billing.ReconcilePendingCheckoutAsync(binding, cancellationToken);
-                    }
+                    await billing.ReconcilePendingCheckoutAsync(binding, cancellationToken);
                 }
                 catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or Stripe.StripeException)
                 {

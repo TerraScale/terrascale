@@ -1,4 +1,3 @@
-using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -22,8 +21,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 return null;
             }
 
-            var index = await state.GetAsync(CustomersTable, binding.CustomerId, cancellationToken);
-            if (index is null || index.Id != binding.CustomerId || AccountService.Read<CustomerBinding>(index).OrganizationId != context.Organization.Id)
+            var index = await CustomerAsync(binding.CustomerId, cancellationToken);
+            if (index is null || index.OrganizationId != context.Organization.Id)
             {
                 throw new IOException("Billing details customer ownership does not match.");
             }

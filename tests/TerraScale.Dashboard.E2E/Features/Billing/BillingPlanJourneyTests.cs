@@ -36,7 +36,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 var starter = page.Locator("input[name=plan][value=starter]");
                 await page.Locator("label").Filter(new() { Has = starter }).ClickAsync();
                 await Assert.That(await starter.IsCheckedAsync()).IsTrue();
-                await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue to checkout on Starter");
+                await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue to checkout");
                 await page.Locator("#projectName").FillAsync("Plan project " + suffix);
                 await page.Locator("#region").SelectOptionAsync("GRU");
                 await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard");
@@ -234,7 +234,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                     hosted.StartsWith("https://auth.terrascale.tech/ui/terrascale/step-up/", StringComparison.Ordinal))
                 {
                     var approved = await owner.APIRequest.GetAsync(origin + "/__test/step-up/" + new Uri(hosted).Segments.Last() + "?approve=yes", new() { MaxRedirects = 0 });
-                    response = await owner.APIRequest.GetAsync(origin + approved.Headers["location"], new() { MaxRedirects = 0 });
+                    response = await owner.APIRequest.GetAsync(new Uri(fixture.Origin, approved.Headers["location"]).ToString(), new() { MaxRedirects = 0 });
                 }
 
                 await Assert.That(response.Status).IsEqualTo(expected).Because(path + ": " + await response.TextAsync());

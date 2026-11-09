@@ -52,7 +52,7 @@
                 </fieldset>
                 <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling</p>
                 <p><a class="ts-btn ts-btn-secondary" href="https://terrascale.tech/contact" @(ExternalLink.Attributes)>Contact sales@(ExternalLink.Hint)</a></p>
-                <div class="ts-onboarding-footer"><span></span>@{ var freePlan = Model.Plan is "" or "free"; var checkoutPlanName = Model.Plans?.FirstOrDefault(plan => plan.Key == Model.Plan && plan.Key != "free")?.Name; }<button class="ts-btn @(freePlan ? "ts-btn-primary" : "ts-btn-secondary") ts-btn-lg ts-onboarding-submit" type="submit" data-plan="free">Continue on @PlanCatalog.For("free").Name <span aria-hidden="true">→</span></button><button class="ts-btn @(freePlan ? "ts-btn-secondary" : "ts-btn-primary") ts-btn-lg ts-onboarding-submit" type="submit" data-plan="paid">Continue to checkout@(checkoutPlanName is { Length: > 0 } ? " on " + checkoutPlanName : "") <span aria-hidden="true">→</span></button></div>
+                <div class="ts-onboarding-footer"><span></span>@{ var freePlan = Model.Plan is "" or "free"; }<button class="ts-btn @(freePlan ? "ts-btn-primary" : "ts-btn-secondary") ts-btn-lg ts-onboarding-submit" type="submit" data-plan="free">Continue on @PlanCatalog.For("free").Name <span aria-hidden="true">→</span></button><button class="ts-btn @(freePlan ? "ts-btn-secondary" : "ts-btn-primary") ts-btn-lg ts-onboarding-submit" type="submit" data-plan="paid">Continue to checkout <span aria-hidden="true">→</span></button></div>
             </form>
         }
         else

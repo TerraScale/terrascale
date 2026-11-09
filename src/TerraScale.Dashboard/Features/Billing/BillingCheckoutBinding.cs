@@ -1,20 +1,15 @@
-using TerraScale.Dashboard.Platform.Persistence;
-using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
     public sealed partial class StripeBilling
     {
-        public const string CheckoutsTable = "dashboard_stripe_checkouts";
-
         private static string CheckoutReturnUrl(string checkoutId)
         {
             return Origin + "/billing/checkout/return?session_id=" + Uri.EscapeDataString(checkoutId);
         }
 
-        // Checkout creation and its index have separate CAS writes. An interrupted
-        // index write is resumed from the original reservation, never current UI scope.
         private async Task IndexCheckoutAsync(BillingBinding binding, CancellationToken cancellationToken)
         {
             if (binding.CheckoutId.Length == 0 || binding.CustomerId.Length == 0 || !CheckoutReturnPath(binding))
@@ -23,18 +18,22 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             var value = CheckoutBinding.For(binding);
-            try
+            var row = new StripeCheckoutRow
             {
-                await state.PutAsync(CheckoutsTable, binding.CheckoutId, JsonSerializer.SerializeToElement(value),
-                    StatePrecondition.Absent, cancellationToken);
-            }
-            catch (StateConflictException)
+                Id = AccountService.NewId(),
+                CheckoutId = value.CheckoutId,
+                OrganizationId = value.OrganizationId,
+                CustomerId = value.CustomerId,
+                RequestId = value.RequestId,
+                ProjectId = value.ProjectId,
+                ReturnPath = value.ReturnPath,
+                Plan = value.Plan,
+                Interval = value.Interval,
+                CreatedAt = time.GetUtcNow().UtcDateTime,
+            };
+            if (!await storage.InsertAsync(row, cancellationToken) && (await CheckoutAsync(binding.CheckoutId, cancellationToken))?.Binding != value)
             {
-                var row = await state.GetAsync(CheckoutsTable, binding.CheckoutId, cancellationToken);
-                if (row is null || row.Id != binding.CheckoutId || AccountService.Read<CheckoutBinding>(row) != value)
-                {
-                    throw new IOException("Checkout ownership changed.");
-                }
+                throw new IOException("Checkout ownership changed.");
             }
         }
 
@@ -45,22 +44,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 throw new AccountAccessException("Checkout is unavailable.", 404);
             }
 
-            var row = await state.GetAsync(CheckoutsTable, checkoutId, cancellationToken)
-                ?? throw new AccountAccessException("Checkout is unavailable.", 404);
-            if (row.Id != checkoutId)
-            {
-                throw new IOException("Checkout row identity is invalid.");
-            }
-
-            var index = AccountService.Read<CheckoutBinding>(row);
-            if (index.CheckoutId != checkoutId || string.IsNullOrEmpty(index.OrganizationId) || string.IsNullOrEmpty(index.CustomerId) ||
-                string.IsNullOrEmpty(index.RequestId) || index.ProjectId is null || index.ReturnPath is null || index.Plan is null || index.Interval is null)
-            {
-                throw new IOException("Checkout scope is invalid.");
-            }
-
-            // A callback is bound to the original org even when the browser has
-            // selected another one. Provider membership is re-read before Stripe IO.
+            var index = (await CheckoutAsync(checkoutId, cancellationToken) ?? throw new AccountAccessException("Checkout is unavailable.", 404)).Binding;
             context = await OwnerAsync(context with { Organization = new OrganizationRecord { Id = index.OrganizationId }, Project = null }, cancellationToken);
             var binding = await ReadAsync(index.OrganizationId, cancellationToken);
             if (binding is null || CheckoutBinding.For(binding) != index || !CheckoutReturnPath(binding))
@@ -69,6 +53,12 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             return new(context, binding);
+        }
+
+        private async Task<StripeCheckoutRow?> CheckoutAsync(string checkoutId, CancellationToken cancellationToken)
+        {
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            return await db.StripeCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.CheckoutId == checkoutId, cancellationToken);
         }
 
         private async Task RestoreCheckoutScopeAsync(AccountContext context, BillingBinding binding, CancellationToken cancellationToken)

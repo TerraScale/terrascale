@@ -1,5 +1,4 @@
 using Stripe;
-using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -16,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
             var client = await ClientAsync(cancellationToken);
             var customers = new HashSet<string>(retainedCustomers, StringComparer.Ordinal);
-            if (await state.GetAsync(Table, organizationId, cancellationToken) is { } row && !AccountService.IsDeletionFence(row))
+            if (await storage.BindingRowAsync(organizationId, cancellationToken) is { ErasureId: null } row)
             {
                 var binding = ReadBinding(row, organizationId);
                 if (binding.CustomerId.Length > 0)
@@ -53,6 +52,44 @@ namespace TerraScale.Dashboard.Features.Billing
             foreach (var customer in customers)
             {
                 await EndCustomerAsync(client, organizationId, customer, cancellationToken);
+            }
+        }
+
+        internal async Task FenceAsync(string organizationId, string erasureId, Func<BillingBinding, bool> owns, CancellationToken cancellationToken)
+        {
+            if (!TerraScaleIds.IsValid(erasureId))
+            {
+                throw new IOException("Erasure identity is invalid.");
+            }
+
+            for (var attempt = 0; attempt < 4; attempt++)
+            {
+                var row = await storage.BindingRowAsync(organizationId, cancellationToken);
+                if (row is { ErasureId: not null })
+                {
+                    return;
+                }
+
+                if (row is not null && !owns(row))
+                {
+                    throw new IOException("Erasure ownership does not match.");
+                }
+
+                var fence = new BillingBinding { OrganizationId = organizationId, ErasureId = erasureId, Version = row?.Version ?? "" };
+                if (row is null ? await storage.InsertAsync(fence, cancellationToken) : await storage.ReplaceAsync(fence, cancellationToken))
+                {
+                    return;
+                }
+            }
+
+            throw new IOException("Billing changed concurrently.");
+        }
+
+        internal async Task VerifyFenceAsync(string organizationId, CancellationToken cancellationToken)
+        {
+            if (await storage.BindingRowAsync(organizationId, cancellationToken) is not { ErasureId: not null })
+            {
+                throw new IOException("Erasure fence is unavailable.");
             }
         }
 

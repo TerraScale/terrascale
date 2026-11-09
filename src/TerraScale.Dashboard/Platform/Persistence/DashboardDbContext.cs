@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Notifications;
@@ -49,6 +50,16 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
 
     public DbSet<InvitationReservationRow> InvitationReservations => Set<InvitationReservationRow>();
 
+    public DbSet<BillingBinding> Billing => Set<BillingBinding>();
+
+    public DbSet<StripeCustomerRow> StripeCustomers => Set<StripeCustomerRow>();
+
+    public DbSet<StripeCheckoutRow> StripeCheckouts => Set<StripeCheckoutRow>();
+
+    public DbSet<BillingChangeReceipt> BillingChanges => Set<BillingChangeReceipt>();
+
+    public DbSet<InternalBillingRow> InternalBilling => Set<InternalBillingRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfiguration(new AuthFlowRow.Configuration());
@@ -70,6 +81,11 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
         modelBuilder.ApplyConfiguration(new ProjectDatabaseRow.Configuration());
         modelBuilder.ApplyConfiguration(new AuditEventRow.Configuration());
         modelBuilder.ApplyConfiguration(new InvitationReservationRow.Configuration());
+        modelBuilder.ApplyConfiguration(new BillingBinding.Configuration());
+        modelBuilder.ApplyConfiguration(new StripeCustomerRow.Configuration());
+        modelBuilder.ApplyConfiguration(new StripeCheckoutRow.Configuration());
+        modelBuilder.ApplyConfiguration(new BillingChangeReceipt.Configuration());
+        modelBuilder.ApplyConfiguration(new InternalBillingRow.Configuration());
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
             foreach (var property in entity.GetProperties())

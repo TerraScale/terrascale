@@ -58,8 +58,8 @@ merely because the auth endpoint is missing.
 Organization cleanup removes projected projects, saved queries, alert rules with
 their pending events, log drains with their cursors, billing change receipts,
 allowance alerts and notifications scoped to that organization in surviving accounts.
-The `dashboard_internal_billing/organization` singleton is conditionally removed
-only while it still belongs to the proven organization. Retained replay cleans a
+The `internal_billing` row is removed only while it still belongs to the proven
+organization. Retained replay cleans a
 late rewrite and preserves a singleton allocated to a replacement organization.
 Project proofs conditionally remove only the named project's projection and owned
 records within its stated organization, including invitation reservations and

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -9,11 +10,9 @@ using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    public sealed class InternalBillingService(IDashboardState state, AccountStore accountStore, OrganizationStore organizations, AccountService accounts, IPlatformRoleGateway roles,
+    public sealed class InternalBillingService(IDbContextFactory<DashboardDbContext> storage, AccountStore accountStore, OrganizationStore organizations, AccountService accounts, IPlatformRoleGateway roles,
         IUsageMeasurements measurements, TimeProvider time, ITsAuthPlatform platform)
     {
-        public const string Table = "dashboard_internal_billing";
-        public const string SingletonId = "organization";
         private readonly TerraScaleIdGenerator ids = new();
         private const string MissingUsage = "Every project's monthly usage is required to compute the internal bill and evaluate its cap.";
         private const string InvalidAmount = "The internal bill exceeds the supported amount or has invalid reporting rates.";
@@ -115,7 +114,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 throw new AccountAccessException("Organization has no internal billing policy.", 422);
             }
 
-            await ValidateClaimsAsync(state, organization, cancellationToken);
+            await ValidateClaimsAsync(storage, organization, cancellationToken);
             var selection = new UsageSelection(context with { Organization = organization }, "7d", "", false);
             return (organization, Estimate(organization, await measurements.ReadAsync(selection, cancellationToken), time.GetUtcNow()));
         }
@@ -216,7 +215,7 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             for (var attempt = 0; attempt < 8; attempt++)
             {
-                var row = await state.GetAsync(StripeBilling.Table, organization.Id, cancellationToken);
+                var row = await storage.BindingRowAsync(organization.Id, cancellationToken);
                 var current = row is null ? null : StripeBilling.ReadBinding(row, organization.Id);
                 if (current is { Kind: not "internal" })
                 {
@@ -253,6 +252,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     PlanCatalog.Limits(config.BasePlanKey), PlanCatalog.ResourceLimits(config.BasePlanKey), config.WriteCentsPerMillion, config.StorageCentsPerGBMonth);
                 var next = new BillingBinding
                 {
+                    Version = row?.Version ?? "",
                     OrganizationId = organization.Id,
                     Kind = "internal",
                     State = "reserved",
@@ -264,13 +264,10 @@ namespace TerraScale.Dashboard.Features.Billing
                     Revision = current is null ? 0 : checked(current.Revision + 1),
                     InternalReservation = new(policy, config.SpendCapCents, organization.InternalBilling?.ConfigurationId ?? "")
                 };
-                try
+                if (row is null ? await storage.InsertAsync(next, cancellationToken) : await storage.ReplaceAsync(next, cancellationToken))
                 {
-                    await state.PutAsync(StripeBilling.Table, organization.Id, JsonSerializer.SerializeToElement(next),
-                        row is null ? StatePrecondition.Absent : StatePrecondition.Matches(row.Version), cancellationToken);
                     return next;
                 }
-                catch (StateConflictException) when (attempt < 7) { }
             }
             throw new IOException("Internal billing changed concurrently.");
         }
@@ -284,27 +281,22 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private async Task ClaimSingletonAsync(BillingBinding reservation, CancellationToken cancellationToken)
         {
-            var singleton = new InternalBillingSingleton(reservation.OrganizationId, reservation.InternalReservation!.Policy.PlanId);
-            var row = await state.GetAsync(Table, SingletonId, cancellationToken);
-            if (row is null)
+            var singleton = new InternalBillingRow
             {
-                try
+                Id = AccountService.NewId(),
+                Scope = InternalBillingRow.OrganizationScope,
+                OrganizationId = reservation.OrganizationId,
+                PlanId = reservation.InternalReservation!.Policy.PlanId,
+            };
+            var existing = await SingletonAsync(storage, cancellationToken);
+            if (existing is null)
+            {
+                if (await storage.InsertAsync(singleton, cancellationToken))
                 {
-                    await state.PutAsync(Table, SingletonId, JsonSerializer.SerializeToElement(singleton), StatePrecondition.Absent, cancellationToken);
                     return;
                 }
-                catch (StateConflictException) { row = await state.GetAsync(Table, SingletonId, cancellationToken); }
-            }
 
-            if (row is null || row.Id != SingletonId)
-            {
-                throw new IOException("Internal organization ownership is unavailable.");
-            }
-
-            var existing = AccountService.Read<InternalBillingSingleton>(row);
-            if (string.IsNullOrEmpty(existing.OrganizationId) || !TerraScaleIds.IsValid(existing.PlanId))
-            {
-                throw new IOException("Internal organization ownership is invalid.");
+                existing = await SingletonAsync(storage, cancellationToken) ?? throw new IOException("Internal organization ownership is unavailable.");
             }
 
             if (existing.OrganizationId != singleton.OrganizationId)
@@ -322,8 +314,8 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             for (var attempt = 0; attempt < 8; attempt++)
             {
-                var row = await state.GetAsync(StripeBilling.Table, reservation.OrganizationId, cancellationToken) ?? throw new IOException("Internal billing fence is unavailable.");
-                var current = StripeBilling.ReadBinding(row, reservation.OrganizationId);
+                var current = StripeBilling.ReadBinding(await storage.BindingRowAsync(reservation.OrganizationId, cancellationToken) ?? throw new IOException("Internal billing fence is unavailable."),
+                    reservation.OrganizationId);
                 if (current.Kind != "internal" || current.RequestId != reservation.RequestId)
                 {
                     throw new AccountAccessException("Internal billing changed concurrently.", 409);
@@ -336,8 +328,10 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 current.State = "active"; current.Status = "active"; current.EffectivePlan = "internal"; current.EffectiveInterval = "monthly";
                 current.Revision = checked(current.Revision + 1);
-                try { await state.PutAsync(StripeBilling.Table, current.OrganizationId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(row.Version), cancellationToken); return; }
-                catch (StateConflictException) when (attempt < 7) { }
+                if (await storage.ReplaceAsync(current, cancellationToken))
+                {
+                    return;
+                }
             }
             throw new IOException("Internal billing activation changed concurrently.");
         }
@@ -350,7 +344,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 return;
             }
 
-            var row = await state.GetAsync(StripeBilling.Table, reservation.OrganizationId, cancellationToken);
+            var row = await storage.BindingRowAsync(reservation.OrganizationId, cancellationToken);
             if (row is null)
             {
                 return;
@@ -359,8 +353,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var current = StripeBilling.ReadBinding(row, reservation.OrganizationId);
             if (current.Kind == "internal" && current.State == "reserved" && current.RequestId == reservation.RequestId)
             {
-                try { await state.DeleteAsync(StripeBilling.Table, reservation.OrganizationId, row.Version, cancellationToken); }
-                catch (StateConflictException) { }
+                await storage.RemoveAsync(current, cancellationToken);
             }
         }
 
@@ -493,11 +486,16 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private async Task<BillingBinding> FenceAsync(string id, CancellationToken cancellationToken)
         {
-            return StripeBilling.ReadBinding(
-            await state.GetAsync(StripeBilling.Table, id, cancellationToken) ?? throw new IOException("Internal billing fence is unavailable."), id);
+            return StripeBilling.ReadBinding(await storage.BindingRowAsync(id, cancellationToken) ?? throw new IOException("Internal billing fence is unavailable."), id);
         }
 
-        public static async Task ValidateClaimsAsync(IDashboardState state, OrganizationRecord organization, CancellationToken cancellationToken)
+        private static async Task<InternalBillingRow?> SingletonAsync(IDbContextFactory<DashboardDbContext> storage, CancellationToken cancellationToken)
+        {
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            return await db.InternalBilling.AsNoTracking().SingleOrDefaultAsync(row => row.Scope == InternalBillingRow.OrganizationScope, cancellationToken);
+        }
+
+        public static async Task ValidateClaimsAsync(IDbContextFactory<DashboardDbContext> storage, OrganizationRecord organization, CancellationToken cancellationToken)
         {
             if (organization.InternalBilling is not { } policy)
             {
@@ -505,20 +503,13 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             policy.Validate(organization);
-            var singletonRow = await state.GetAsync(Table, SingletonId, cancellationToken) ?? throw new IOException("Internal organization ownership is unavailable.");
-            if (singletonRow.Id != SingletonId)
-            {
-                throw new IOException("Internal organization ownership identity is invalid.");
-            }
-
-            var singleton = AccountService.Read<InternalBillingSingleton>(singletonRow);
+            var singleton = await SingletonAsync(storage, cancellationToken) ?? throw new IOException("Internal organization ownership is unavailable.");
             if (singleton.OrganizationId != organization.Id || singleton.PlanId != policy.PlanId)
             {
                 throw new IOException("Internal organization ownership changed.");
             }
 
-            var fenceRow = await state.GetAsync(StripeBilling.Table, organization.Id, cancellationToken) ?? throw new IOException("Internal billing fence is unavailable.");
-            var fence = StripeBilling.ReadBinding(fenceRow, organization.Id);
+            var fence = StripeBilling.ReadBinding(await storage.BindingRowAsync(organization.Id, cancellationToken) ?? throw new IOException("Internal billing fence is unavailable."), organization.Id);
             if (fence.Kind != "internal" || fence.InternalReservation!.Policy.PlanId != policy.PlanId ||
                 (fence.State == "active" ? fence.RequestId != policy.ConfigurationId :
                     fence.RequestId != policy.ConfigurationId && fence.InternalReservation.PreviousConfigurationId != policy.ConfigurationId))
