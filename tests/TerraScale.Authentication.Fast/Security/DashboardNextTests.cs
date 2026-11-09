@@ -15,32 +15,26 @@ public sealed partial class DashboardNextTests(TerraBaseFixture fixture)
     private static readonly string SecurityTab = Profile + "?tab=security";
 
     [Test]
-    public async Task A_password_reset_with_the_dashboard_security_tab_as_next_shows_a_back_to_account_link()
+    public async Task A_password_reset_and_a_factor_change_with_the_dashboard_as_next_show_a_back_to_account_link()
     {
         var clock = new ManualClock(DateTimeOffset.UtcNow);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
-        var user = await oidc.CreateUserAsync(oidc.UniqueEmail("reset"));
-        using (var reset = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset", new() { ["email"] = user.Email, ["next"] = SecurityTab }))
+        var resetUser = await oidc.CreateUserAsync(oidc.UniqueEmail("reset"));
+        using (var reset = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset", new() { ["email"] = resetUser.Email, ["next"] = SecurityTab }))
         {
             await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await reset.Content.ReadAsStringAsync()).Contains($"name=\"next\" value=\"{SecurityTab}\"");
         }
 
-        var code = await oidc.Email.NextCodeAsync(user.Email);
+        var code = await oidc.Email.NextCodeAsync(resetUser.Email);
         using var done = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset/complete",
-            new() { ["email"] = user.Email, ["code"] = code, ["password"] = "a fresh passphrase 32 chars", ["next"] = SecurityTab });
-        var finished = await done.Content.ReadAsStringAsync();
+            new() { ["email"] = resetUser.Email, ["code"] = code, ["password"] = "a fresh passphrase 32 chars", ["next"] = SecurityTab });
+        var resetFinished = await done.Content.ReadAsStringAsync();
         await Assert.That(done.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(finished).Contains("<h1>Password updated</h1>");
-        await Assert.That(finished).Contains($">Back to account</a>").And.Contains($"href=\"{SecurityTab}\"");
-        await Assert.That(finished).Contains("You were signed out of every session.");
-    }
+        await Assert.That(resetFinished).Contains("<h1>Password updated</h1>");
+        await Assert.That(resetFinished).Contains($">Back to account</a>").And.Contains($"href=\"{SecurityTab}\"");
+        await Assert.That(resetFinished).Contains("You were signed out of every session.");
 
-    [Test]
-    public async Task A_factor_change_with_the_dashboard_profile_as_next_shows_a_back_to_account_link()
-    {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         var user = await oidc.CreateUserAsync(oidc.UniqueEmail("factor"));
         var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
         var session = await sessions.CreateAsync(user);

@@ -37,16 +37,20 @@ public sealed class OidcPruneTests(TerraBaseFixture fixture)
         await tokenStore.PruneAsync(500);
         await authorizationStore.PruneAsync(500);
 
-        using var refused = await oidc.RefreshAsync(latest);
+        var refusedTask = oidc.RefreshAsync(latest);
+        var replayedAgainTask = oidc.RefreshAsync(consumed);
+        var rowsTask = RowsAsync(store, AuthStore.OidcTokenTable, user.Id);
+        await Task.WhenAll(refusedTask, replayedAgainTask, rowsTask);
+        using var refused = await refusedTask;
+        using var replayedAgain = await replayedAgainTask;
         var refusedBody = JsonSerializer.Deserialize<JsonElement>(await refused.Content.ReadAsStringAsync());
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(refusedBody.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
-        using var replayedAgain = await oidc.RefreshAsync(consumed);
         var replayedBody = JsonSerializer.Deserialize<JsonElement>(await replayedAgain.Content.ReadAsStringAsync());
         await Assert.That(replayedAgain.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(replayedBody.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
         await Assert.That(replayedBody.GetProperty("error_description").GetString()).IsEqualTo(CredentialLineage.ReplayNotice);
-        await Assert.That(await RowsAsync(store, AuthStore.OidcTokenTable, user.Id)).IsGreaterThan(0);
+        await Assert.That(await rowsTask).IsGreaterThan(0);
 
         clock.Advance(Sessions.Lifetime);
         await tokenStore.PruneAsync(500);

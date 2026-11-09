@@ -18,6 +18,7 @@ namespace TerraScale.Authentication.Fast.Oidc;
 public sealed class TokenContractTests(TerraBaseFixture fixture)
 {
     private const string Audience = "https://api.terrascale.tech";
+    private static readonly string[] ExpansionRefusals = ["openid email admin", "openid bogus"];
 
     [Test]
     public async Task User_access_tokens_are_at_jwt_for_the_terrabase_audience_with_verified_email_and_id_tokens_stay_jwt_for_the_client()
@@ -69,12 +70,13 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         using var redeemed = await oidc.RedeemCodeAsync(OidcHarness.Query(authorize.Headers.Location!)["code"]!, verifier);
         var original = JsonSerializer.Deserialize<JsonElement>(await redeemed.Content.ReadAsStringAsync());
         await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var keys = await KeysAsync(oidc);
+        var keysTask = KeysAsync(oidc);
         var refresh = original.GetProperty("refresh_token").GetString()!;
 
         using var omitted = await oidc.RefreshAsync(refresh);
         var full = JsonSerializer.Deserialize<JsonElement>(await omitted.Content.ReadAsStringAsync());
         await Assert.That(omitted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var keys = await keysTask;
         await AssertScopeAsync(full, "openid email profile offline_access");
         await Assert.That(Scopes(await ValidateAsync(full.GetProperty("access_token").GetString()!, keys, Audience)))
             .IsEquivalentTo(["openid", "email", "profile", "offline_access"]);
@@ -96,9 +98,9 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
             .IsEquivalentTo(["openid", "email", "profile", "offline_access"]);
         refresh = whole.GetProperty("refresh_token").GetString()!;
 
-        foreach (var refused in new[] { "openid email admin", "openid bogus" })
+        foreach (var scope in ExpansionRefusals)
         {
-            using var expansion = await oidc.TokenAsync(new() { ["grant_type"] = "refresh_token", ["refresh_token"] = refresh, ["scope"] = refused });
+            using var expansion = await oidc.TokenAsync(new() { ["grant_type"] = "refresh_token", ["refresh_token"] = refresh, ["scope"] = scope });
             var error = JsonSerializer.Deserialize<JsonElement>(await expansion.Content.ReadAsStringAsync());
             await Assert.That(expansion.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             await Assert.That(error.GetProperty("error").GetString()).IsEqualTo("invalid_scope");
@@ -112,8 +114,11 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
     public async Task Replaying_a_consumed_authorization_code_revokes_its_family_and_leaves_an_unrelated_sign_in_alive()
     {
         await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
-        var replayed = await oidc.CreateUserAsync(oidc.UniqueEmail("replay"));
-        var other = await oidc.CreateUserAsync(oidc.UniqueEmail("other"));
+        var replayUser = oidc.CreateUserAsync(oidc.UniqueEmail("replay"));
+        var otherUser = oidc.CreateUserAsync(oidc.UniqueEmail("other"));
+        var other = await otherUser;
+        var familyBTask = oidc.CreateSessionAndRedeemAsync(other);
+        var replayed = await replayUser;
         var first = (await oidc.Server.App.Services.GetRequiredService<Sessions>().CreateAsync(replayed)).Token;
         var (verifier, challenge) = OidcHarness.Pkce();
         var code = await oidc.CodeAsync(first, challenge);
@@ -125,20 +130,24 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         var current = await OidcHarness.JsonAsync(rotated);
         await Assert.That(rotated.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
-        var (_, familyB) = await oidc.CreateSessionAndRedeemAsync(other);
+        var (_, familyB) = await familyBTask;
 
         using var replay = await oidc.RedeemCodeAsync(code, verifier);
         await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(await OidcHarness.ErrorAsync(replay)).IsEqualTo("invalid_grant");
 
-        using var refusedRefresh = await oidc.RefreshAsync(current.GetProperty("refresh_token").GetString()!);
+        var refusedRefreshTask = oidc.RefreshAsync(current.GetProperty("refresh_token").GetString()!);
+        var userInfoTask = oidc.UserInfoAsync(familyA.GetProperty("access_token").GetString()!);
+        var unrelatedTask = oidc.RefreshAsync(familyB.GetProperty("refresh_token").GetString()!);
+        await Task.WhenAll(refusedRefreshTask, userInfoTask, unrelatedTask);
+        using var refusedRefresh = await refusedRefreshTask;
+        using var userInfo = await userInfoTask;
+        using var unrelated = await unrelatedTask;
         await Assert.That(refusedRefresh.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(await OidcHarness.ErrorAsync(refusedRefresh)).IsEqualTo("invalid_grant");
 
-        using var userInfo = await oidc.UserInfoAsync(familyA.GetProperty("access_token").GetString()!);
         await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
 
-        using var unrelated = await oidc.RefreshAsync(familyB.GetProperty("refresh_token").GetString()!);
         await Assert.That(unrelated.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
