@@ -37,6 +37,27 @@ Overview reads its three measurement sources concurrently. Native GET filters us
 navigation progress and an accessible loading status. Provider failures preserve
 the page and filters, with a retry message instead of fabricated measurements.
 
+## Platform data and optional panels
+
+Analytics, replication and listings from TerraBase and ts-auth are untrusted input. The dashboard
+validates every response before using it and turns any shape it cannot use into the same
+`JsonException` as a malformed body: a repeated counter name in a bucket's `requests` or
+`operations` object, a repeated database-region item, an unordered or out-of-window bucket. Never
+build a dictionary from platform data with `ToDictionary` or `Add`, and never pass platform values
+straight to BCL calls that throw `ArgumentException` (`Enum.Parse`, range-checked arithmetic, `Uri`
+and date constructors): check first with `TryAdd`, `TryParse` or an explicit range test, and
+reject the response. A repeated counter in the project analytics once made the whole Databases
+page answer 500 with only `ArgumentException` in the log (`DatabaseListJourneyTests`).
+
+The Databases page loads its optional parts through `OptionalPanel`
+(`src/TerraScale.Dashboard/Platform/Http/OptionalPanel.cs`): the list's TerraBase sync and
+metrics, and the database overview's activity and storage. An expected provider failure keeps the
+part's own retry message. Any other exception is a bug: the page still renders, the part shows its
+retry message (for the sync, "The database list could not be refreshed. Reload the page to retry.") and the failure is
+logged as EventId 44 with the panel, route template and code frames, in the format of
+[request log redaction](security/request-log-redaction.md). Required reads (session, account
+context, the database a detail page shows) are not panels and still fail the request.
+
 ## SDK integration gate
 
 Paths are relative to `src/TerraScale.Dashboard`. `IAnalyticsBackend`

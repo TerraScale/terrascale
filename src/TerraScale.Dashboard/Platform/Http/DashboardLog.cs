@@ -133,6 +133,9 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 43, Level = LogLevel.Warning, Message = "Stripe event {EventId} ({EventType}) was not applied ({ErrorType}: {Error}); answering 503 so Stripe redelivers it.")]
         internal static partial void StripeEventWasNotAppliedAnswering(this ILogger logger, object? eventId, object? eventType, object? errorType, object? error);
 
+        [LoggerMessage(EventId = 44, Level = LogLevel.Error, Message = "Dashboard panel {Panel} failed on {Route}; the page rendered without it: {Failure}")]
+        internal static partial void DashboardPanelFailed(this ILogger logger, object? panel, object? route, object? failure);
+
         [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
         internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);
     }

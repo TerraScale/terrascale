@@ -118,7 +118,16 @@ namespace TerraScale.Dashboard.Features.Analytics
 
         private static Dictionary<string, long> Counters(JsonElement value)
         {
-            return value.EnumerateObject().ToDictionary(property => property.Name, property => Count(property.Value), StringComparer.Ordinal);
+            var counters = new Dictionary<string, long>(StringComparer.Ordinal);
+            foreach (var property in value.EnumerateObject())
+            {
+                if (!counters.TryAdd(property.Name, Count(property.Value)))
+                {
+                    throw new JsonException("Analytics returned a counter more than once.");
+                }
+            }
+
+            return counters;
         }
 
         private static double? Observation(JsonElement row, string name)
