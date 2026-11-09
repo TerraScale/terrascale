@@ -201,7 +201,7 @@ cases += [(instructions, "modified", set()),
            terrabase | {"auth", "auth-client"})]
 # One change under every top-level folder and root file: the CI areas and every other workflow a main push starts.
 cases += [(path, "modified", ci, started) for path, ci, started in [
-    ("src/TerraBase/Program.cs", terrabase, set()),
+    ("src/TerraBase/Features/Sql/SqlErrors.cs", terrabase, {"docs-ci.yml"}),
     ("src/TerraScale.TerraBase.Contracts/Contract.cs", terrabase, {"images-ghcr.yml"}),
     ("src/TerraScale.TerraBase.Rpc/Service.cs", terrabase, set()),
     ("src/TerraScale.Authentication/Program.cs", {"auth", "auth-client"}, set()),
@@ -210,6 +210,9 @@ cases += [(path, "modified", ci, started) for path, ci, started in [
     ("src/TerraScale.Endpoints.Example/Program.cs", all_areas, set()),
     ("src/TerraScale.Logging/Log.cs", all_areas, set()),
     ("src/TerraScale.Dashboard/Program.cs", set(), {"images-ghcr.yml"}),
+    ("src/TerraScale.Dashboard/sdk-versions.json", set(), {"images-ghcr.yml", "docs-ci.yml"}),
+    ("src/TerraScale.Dashboard/Features/Home/SdkVersions.cs", set(), {"images-ghcr.yml", "docs-ci.yml"}),
+    ("sdk/go/README.md", set(), go | {"docs-ci.yml"}),
     ("tests/TerraBase.Fast/HealthTests.cs", {"terrabase"}, set()),
     ("tests/TerraScale.Authentication.Fast/Tests.cs", {"auth"}, set()),
     ("tests/TerraScale.Dashboard.E2E/Tests.cs", set(), {"images-ghcr.yml"}),
