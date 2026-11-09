@@ -27,6 +27,8 @@ namespace TerraScale.Dashboard.Features.Usage
         // Set when a plan without overage billing has used its monthly operation units: TerraBase refuses new writes.
         public string WritesPaused { get; init; } = "";
         public InternalBill? InternalBill { get; init; }
+        public BillingPlan? Plan { get; init; }
+        public bool SpendingAlert => InternalBill is not null || Plan is { PriceCents: > 0 };
         public long? ScopeLogicalBytes => Scope?.LogicalBytes;
         public bool ScopeStorageMeasured => ScopeLogicalBytes is not null;
         public int ActiveDatabases => Selection.Context.Project?.Databases.Count ?? 0;
@@ -138,6 +140,7 @@ namespace TerraScale.Dashboard.Features.Usage
                 result.Scope.State == UsageSourceState.Unavailable ? "Usage is temporarily unavailable. Try again in a moment." : "", monthError, organizationStorage is not null)
             {
                 WritesPaused = writesPaused,
+                Plan = plan,
                 InternalBill = selection.Context.Organization!.InternalBilling is not null
                 ? InternalBillingService.Estimate(selection.Context.Organization, result, time.GetUtcNow()) : null
             };
