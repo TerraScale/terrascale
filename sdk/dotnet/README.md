@@ -80,8 +80,9 @@ long balance = await session.TransactionAsync(async (tx, token) =>
 `BeginAsync`, `CommitAsync` and `RollbackAsync` are the explicit form. After a failed statement inside a transaction
 every call throws `transaction_aborted` until rollback; commit then rolls back and throws `transaction_rolled_back`.
 Session errors have a null `StatusCode`. A refused upgrade throws the usual `TerraBaseException` subclass (401, 404,
-421 `TerraBaseWrongRegionException`). The session connects with its own `ClientWebSocket`, not the caller's
-`HttpClient`, and is never resent. When the socket drops, calls in flight fail and the next call reconnects; a
+421 `TerraBaseWrongRegionException`). The upgrade goes through the caller's `HttpClient` and its handlers with
+the same credential as REST (a credential-free client reaches a private listener over HTTP/2 extended CONNECT), and is
+never resent. When the socket drops, calls in flight fail and the next call reconnects; a
 transaction open at the drop rolled back, so every call but `RollbackAsync` throws `transaction_rolled_back` until the
 caller rolls back.
 

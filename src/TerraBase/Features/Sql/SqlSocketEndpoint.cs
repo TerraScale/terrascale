@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Connections;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Qos;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -45,7 +46,7 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
             return ErrorResponse.From(invalid);
         }
 
-        if (HttpContext.Request.Headers.Authorization.Count == 0)
+        if (HttpContext.Request.Headers.Authorization.Count == 0 && !HttpContext.User.IsOperator())
         {
             return HttpContext.WebSockets.IsWebSocketRequest ? await ServeAsync(null, canWrite: false, cancellationToken) : Upgrade();
         }

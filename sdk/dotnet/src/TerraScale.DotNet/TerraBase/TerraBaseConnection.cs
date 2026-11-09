@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -363,11 +364,11 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    internal async Task<System.Net.WebSockets.ClientWebSocket> ConnectWebSocketAsync(string path, string subprotocol, CancellationToken cancellationToken)
+    internal async Task<ClientWebSocket> ConnectWebSocketAsync(string path, string subprotocol, CancellationToken cancellationToken)
     {
         using var expiry = new CancellationTokenSource(timeout, timeProvider);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
-        var socket = new System.Net.WebSockets.ClientWebSocket();
+        var socket = new ClientWebSocket();
         try
         {
             var origin = Origin(await endpointResolver.ResolveAsync(deadline.Token).ConfigureAwait(false));
@@ -375,6 +376,12 @@ internal sealed class TerraBaseConnection
                 throw new InvalidOperationException("A client without a credential reaches only a private plain-HTTP TerraBase listener.");
             socket.Options.CollectHttpResponseDetails = true;
             socket.Options.AddSubProtocol(subprotocol);
+            if (anonymous)
+            {
+                socket.Options.HttpVersion = HttpVersion.Version20;
+                socket.Options.HttpVersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            }
+
             var bearer = authorization?.Parameter;
             if (accessTokenProvider is not null)
             {
@@ -387,9 +394,9 @@ internal sealed class TerraBaseConnection
             var target = new UriBuilder(new Uri(origin, path)) { Scheme = origin.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" }.Uri;
             try
             {
-                await socket.ConnectAsync(target, deadline.Token).ConfigureAwait(false);
+                await socket.ConnectAsync(target, http, deadline.Token).ConfigureAwait(false);
             }
-            catch (System.Net.WebSockets.WebSocketException) when (socket.HttpStatusCode is not (0 or HttpStatusCode.SwitchingProtocols))
+            catch (WebSocketException) when (socket.HttpStatusCode is not (0 or HttpStatusCode.SwitchingProtocols))
             {
                 using var refused = new HttpResponseMessage(socket.HttpStatusCode) { Content = new ByteArrayContent([]) };
                 foreach (var (name, values) in socket.HttpResponseHeaders ?? new Dictionary<string, IEnumerable<string>>())
@@ -516,14 +523,16 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    internal static Uri Origin(Uri? baseAddress)
+    internal static Uri Origin(Uri? baseAddress) => Origin(baseAddress, nameof(baseAddress), "BaseAddress", "a TerraBase client listener");
+
+    internal static Uri Origin(Uri? baseAddress, string parameter, string label, string service)
     {
         if (baseAddress is not { IsAbsoluteUri: true } || !(baseAddress.Scheme == Uri.UriSchemeHttps || (baseAddress.Scheme == Uri.UriSchemeHttp && IsPrivate(baseAddress)))
             || baseAddress.UserInfo.Length != 0 || baseAddress.Query.Length != 0 || baseAddress.Fragment.Length != 0
             || baseAddress.AbsolutePath != "/")
         {
             throw new ArgumentException(
-                "BaseAddress must be the HTTPS origin of a TerraBase client listener (plain HTTP only for NetBird 100.64.0.0/10 addresses or loopback), without credentials, path, query or fragment.", nameof(baseAddress));
+                $"{label} must be the HTTPS origin of {service} (plain HTTP only for NetBird 100.64.0.0/10 addresses or loopback), without credentials, path, query or fragment.", parameter);
         }
 
         return baseAddress;
