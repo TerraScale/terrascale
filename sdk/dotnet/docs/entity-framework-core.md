@@ -118,6 +118,14 @@ back and retry the unit of work. Disposing the transaction without committing ro
 5 seconds for the rollback, and a synchronous `Dispose` (a `using var` declaration) closes the session at once, which
 rolls it back on the server, and never hides the exception that left the block.
 
+The execution strategy retries nothing else. Below it, the SDK's HTTP client resends a SQL request up to 2 more
+times, after `Retry-After` when TerraBase sends one, only when TerraBase answers `serialization_conflict` or a `503` it
+marks retry-safe (`remote_region_unavailable`, `confirmation_busy`, `catalog_stale`). SQL requests are POSTs, so a
+`502`, a `504` or a lost connection is not resent: the write may already have committed. A `421 wrong_region` is not
+retried at any level. A region that loses its connection to the database's writer answers it too, possibly after the
+request reached the writer, so a resent write could commit twice. Catch `TerraBaseWrongRegionException` and send the
+work to `HomeRegion`, or retry it yourself when it is safe to repeat.
+
 ## Writers and replicas
 
 - A database has one writer at a time. A save that fits one request holds it only while TerraBase runs that request.
