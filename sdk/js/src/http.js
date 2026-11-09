@@ -26,6 +26,13 @@ import { isValidId } from "./ids.js";
  * }} TsAuthRequest
  */
 const retryableStatuses = new Set([429, 502, 503, 504]);
+const stepUpRoutes = new Set([
+  "tsauth.platform.delete_organization",
+  "tsauth.platform.start_ownership_transfer",
+  "tsauth.projects.create_client",
+  "tsauth.projects.update_client",
+  "tsauth.projects.rotate_client_secret",
+]);
 const maximumResponseBytes = 4 * 1024 * 1024;
 
 /** Private transport for the named hosted identity and OIDC operations. */
@@ -94,10 +101,10 @@ export class TsAuthHttp {
             headers.set("X-TerraScale-Deletion-Receipt", options.deletionReceipt);
           }
           if (options.stepUpProof !== undefined) {
-            if ((options.routeName !== "tsauth.platform.delete_organization" && options.routeName !== "tsauth.platform.start_ownership_transfer") ||
+            if (!(stepUpRoutes.has(options.routeName)) ||
                 typeof options.stepUpProof !== "string" || options.stepUpProof.length < 1 || options.stepUpProof.length > 8192 ||
                 /[\s\p{Cc}]/u.test(options.stepUpProof))
-              throw new TypeError("Step-up proofs belong only to named proof-required organization operations.");
+              throw new TypeError("Step-up proofs belong only to named proof-required organization and project client operations.");
             headers.set("X-TerraScale-Step-Up-Proof", options.stepUpProof);
           }
           if (receiptRead && (options.deletionReceipt === undefined || this.#accessToken !== undefined ||

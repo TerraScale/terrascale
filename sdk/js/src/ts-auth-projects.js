@@ -143,6 +143,114 @@ import { requireId } from "./ids.js";
  * }} TsAuthProjectUserExportOptions
  */
 
+/**
+ * @typedef {{
+ *   readonly signal?: AbortSignal | undefined;
+ *   readonly stepUpProof: string;
+ * }} TsAuthProjectsProofOptions
+ */
+
+/**
+ * @typedef {{
+ *   readonly client_id: string;
+ *   readonly client_secret?: string | undefined;
+ *   readonly issuer?: string | undefined;
+ *   readonly team_id?: string | undefined;
+ *   readonly key_id?: string | undefined;
+ * }} TsAuthProjectProviderUpdate
+ */
+
+/**
+ * @typedef {{
+ *   readonly id: string;
+ *   readonly user_id: string;
+ *   readonly email: string;
+ *   readonly created_at: string;
+ *   readonly expires_at: string;
+ * }} TsAuthProjectSession
+ */
+
+/**
+ * @typedef {{
+ *   readonly items: readonly TsAuthProjectSession[];
+ *   readonly next: string | null;
+ * }} TsAuthProjectSessionPage
+ */
+
+/**
+ * @typedef {{
+ *   readonly userId?: string | undefined;
+ *   readonly limit?: number | undefined;
+ *   readonly after?: string | undefined;
+ * }} TsAuthProjectSessionListOptions
+ */
+
+/**
+ * @typedef {{
+ *   readonly client_id: string;
+ *   readonly name: string;
+ *   readonly type: string;
+ *   readonly redirect_uris: readonly string[];
+ *   readonly created_at: string;
+ *   readonly client_secret?: string | undefined;
+ * }} TsAuthProjectOAuthClient
+ */
+
+/**
+ * @typedef {{
+ *   readonly items: readonly TsAuthProjectOAuthClient[];
+ *   readonly next: string | null;
+ * }} TsAuthProjectClientPage
+ */
+
+/**
+ * @typedef {{
+ *   readonly name: string;
+ *   readonly type: string;
+ *   readonly redirect_uris: readonly string[];
+ * }} TsAuthProjectCreateClientRequest
+ */
+
+/**
+ * @typedef {{
+ *   readonly name: string;
+ *   readonly redirect_uris: readonly string[];
+ * }} TsAuthProjectUpdateClientRequest
+ */
+
+/**
+ * @typedef {{
+ *   readonly signal?: AbortSignal | undefined;
+ *   readonly stepUpProof: string;
+ *   readonly grace_seconds?: number | undefined;
+ * }} TsAuthProjectsRotateOptions
+ */
+
+/**
+ * @typedef {{
+ *   readonly client_id: string;
+ *   readonly client_secret: string;
+ *   readonly previous_secret_expires_at: string | null;
+ * }} TsAuthProjectClientSecret
+ */
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function requireProof(value) {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > 8192 ||
+    /[\s\p{Cc}]/u.test(value)
+  )
+    throw new TypeError(
+      "stepUpProof must be 1-8192 characters without whitespace or control characters.",
+    );
+  return value;
+}
+
 const signInTokenPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
 const maximumExportCursorLength = 8192;
 
@@ -373,6 +481,238 @@ export class TsAuthProjectsClient {
         ...(request.limit === undefined ? {} : { limit: request.limit }),
         ...(request.after === undefined ? {} : { after: request.after }),
       },
+    });
+  }
+
+  /**
+   * PUT v1/{project}/providers/{provider}; an omitted client_secret keeps the
+   * stored one. The answered settings list every provider.
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {"google" | "github" | "apple" | "oidc"} provider
+   * @param {TsAuthProjectProviderUpdate} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectSettings>>}
+   */
+  setProvider(signIn, projectId, provider, request, options = {}) {
+    members(options, ["signal"]);
+    if (
+      provider !== "google" &&
+      provider !== "github" &&
+      provider !== "apple" &&
+      provider !== "oidc"
+    )
+      throw new TypeError(
+        "provider must be google, github, apple or oidc.",
+      );
+    members(request, ["client_id", "client_secret", "issuer", "team_id", "key_id"]);
+    if (typeof request.client_id !== "string" || request.client_id.length === 0)
+      throw new TypeError("client_id must be a non-empty string.");
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "PUT",
+      path: `v1/${requireId(projectId, "projectId")}/providers/${provider}`,
+      routeName: "tsauth.projects.set_provider",
+      projectAccessToken: signInToken(signIn),
+      body: request,
+    });
+  }
+
+  /**
+   * DELETE v1/{project}/providers/{provider}; the answered settings no longer
+   * carry the provider.
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {"google" | "github" | "apple" | "oidc"} provider
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectSettings>>}
+   */
+  deleteProvider(signIn, projectId, provider, options = {}) {
+    members(options, ["signal"]);
+    if (
+      provider !== "google" &&
+      provider !== "github" &&
+      provider !== "apple" &&
+      provider !== "oidc"
+    )
+      throw new TypeError(
+        "provider must be google, github, apple or oidc.",
+      );
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "DELETE",
+      path: `v1/${requireId(projectId, "projectId")}/providers/${provider}`,
+      routeName: "tsauth.projects.delete_provider",
+      projectAccessToken: signInToken(signIn),
+    });
+  }
+
+  /**
+   * GET v1/{project}/sessions; live sessions, optionally of one user.
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {TsAuthProjectSessionListOptions} [request={}]
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectSessionPage>>}
+   */
+  listSessions(signIn, projectId, request = {}, options = {}) {
+    members(request, ["userId", "limit", "after"]);
+    members(options, ["signal"]);
+    requireLimit(request.limit);
+    requireCursor(request.after, maximumExportCursorLength);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "GET",
+      path: `v1/${requireId(projectId, "projectId")}/sessions`,
+      routeName: "tsauth.projects.list_sessions",
+      projectAccessToken: signInToken(signIn),
+      query: {
+        ...(request.userId === undefined
+          ? {}
+          : { user: requireId(request.userId, "userId") }),
+        ...(request.limit === undefined ? {} : { limit: request.limit }),
+        ...(request.after === undefined ? {} : { after: request.after }),
+      },
+    });
+  }
+
+  /**
+   * DELETE v1/{project}/sessions/{session}; signs the session out.
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} sessionId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  revokeSession(signIn, projectId, sessionId, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "DELETE",
+      path: `v1/${requireId(projectId, "projectId")}/sessions/${requireId(sessionId, "sessionId")}`,
+      routeName: "tsauth.projects.revoke_session",
+      projectAccessToken: signInToken(signIn),
+    });
+  }
+
+  /**
+   * GET v1/{project}/clients; every client of the tenant in one page, without
+   * secrets.
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthProjectClientPage>>}
+   */
+  listClients(signIn, projectId, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "GET",
+      path: `v1/${requireId(projectId, "projectId")}/clients`,
+      routeName: "tsauth.projects.list_clients",
+      projectAccessToken: signInToken(signIn),
+    });
+  }
+
+  /**
+   * POST v1/{project}/clients with a create_oauth_client step-up proof. A
+   * confidential client's client_secret is answered exactly once. The request
+   * is sent once; list before deciding to retry an interrupted response.
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {TsAuthProjectCreateClientRequest} request
+   * @param {TsAuthProjectsProofOptions} options
+   * @returns {Promise<TerraScaleResult<TsAuthProjectOAuthClient>>}
+   */
+  createClient(signIn, projectId, request, options) {
+    members(options, ["signal", "stepUpProof"]);
+    members(request, ["name", "type", "redirect_uris"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/clients`,
+      routeName: "tsauth.projects.create_client",
+      projectAccessToken: signInToken(signIn),
+      body: request,
+      stepUpProof: requireProof(options.stepUpProof),
+    });
+  }
+
+  /**
+   * PUT v1/{project}/clients/{client_id} with an update_oauth_client step-up
+   * proof; replaces the name and redirect URIs, and answers no secret.
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} clientId
+   * @param {TsAuthProjectUpdateClientRequest} request
+   * @param {TsAuthProjectsProofOptions} options
+   * @returns {Promise<TerraScaleResult<TsAuthProjectOAuthClient>>}
+   */
+  updateClient(signIn, projectId, clientId, request, options) {
+    members(options, ["signal", "stepUpProof"]);
+    members(request, ["name", "redirect_uris"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "PUT",
+      path: `v1/${requireId(projectId, "projectId")}/clients/${requireId(clientId, "clientId")}`,
+      routeName: "tsauth.projects.update_client",
+      projectAccessToken: signInToken(signIn),
+      body: request,
+      stepUpProof: requireProof(options.stepUpProof),
+    });
+  }
+
+  /**
+   * POST v1/{project}/clients/{client_id}/secret/rotate with a
+   * rotate_oauth_client step-up proof; the new secret is answered exactly once
+   * and the previous one keeps working for the grace (default 3600, 0 to 86400
+   * seconds).
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} clientId
+   * @param {TsAuthProjectsRotateOptions} options
+   * @returns {Promise<TerraScaleResult<TsAuthProjectClientSecret>>}
+   */
+  rotateClientSecret(signIn, projectId, clientId, options) {
+    members(options, ["grace_seconds", "signal", "stepUpProof"]);
+    if (
+        options.grace_seconds !== undefined &&
+        (!Number.isInteger(options.grace_seconds) ||
+          options.grace_seconds < 0 ||
+          options.grace_seconds > 86400)
+      )
+      throw new TypeError("grace_seconds must be 0 to 86400 seconds.");
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "POST",
+      path: `v1/${requireId(projectId, "projectId")}/clients/${requireId(clientId, "clientId")}/secret/rotate`,
+      routeName: "tsauth.projects.rotate_client_secret",
+      projectAccessToken: signInToken(signIn),
+      body: {
+        ...(options.grace_seconds === undefined
+          ? {}
+          : { grace_seconds: options.grace_seconds }),
+      },
+      stepUpProof: requireProof(options.stepUpProof),
+    });
+  }
+
+  /**
+   * DELETE v1/{project}/clients/{client_id}.
+   * @param {string} signIn
+   * @param {string} projectId
+   * @param {string} clientId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  deleteClient(signIn, projectId, clientId, options = {}) {
+    members(options, ["signal"]);
+    return this.#http.request({
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      method: "DELETE",
+      path: `v1/${requireId(projectId, "projectId")}/clients/${requireId(clientId, "clientId")}`,
+      routeName: "tsauth.projects.delete_client",
+      projectAccessToken: signInToken(signIn),
     });
   }
 
