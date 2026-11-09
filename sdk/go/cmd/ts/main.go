@@ -31,7 +31,7 @@ import (
 
 var version = "dev" // Set by release builds with -ldflags.
 
-const usage = `usage: ts [--json] [-project <name or id>] [-org <name or id>] [-yes] <command>
+const usage = `usage: ts [-json] [-project <name or id>] [-org <name or id>] [-yes] <command>
 
 Options go before or after the command and its operands; -- ends options.
 
@@ -68,7 +68,7 @@ Options go before or after the command and its operands; -- ends options.
                                           delete requires typing the database
                                           name; -yes before db delete consents
                                           explicitly for unattended use
-  db branch create <name> --from <db> [--ttl 7d]
+  db branch create <name> -from <db> [-ttl 7d]
   db branch list                         list database branches
   db branch delete <name>                 delete a branch (--yes for automation)
   db branch url <name>                    issue a connection URL for the Postgres
@@ -117,10 +117,10 @@ Options go before or after the command and its operands; -- ends options.
   functions delete <db> <name>            delete a function and its logs
   sql <db> <statement>                    run one SQL statement in its own
                                           transaction; rows print as JSON lines
-  schema pull                             write schema.sql from --database <db>
-  schema diff <schema.sql>                print DDL for --database <db>
-  schema apply <schema.sql>               apply atomically; --dry-run previews;
-                                          --allow-drop consents to DROP operations
+  schema pull <db>                        write schema.sql from <db>
+  schema diff <db> <schema.sql>           print DDL for <db>
+  schema apply <db> <schema.sql>          apply atomically; -dry-run previews;
+                                          -allow-drop consents to DROP operations
   migrate new <name>                      add the next migrations/NNNN_<name>.sql
   migrate up | status <db>                apply pending migrations in order, each
                                           in one transaction recorded in the
@@ -135,8 +135,7 @@ Options go before or after the command and its operands; -- ends options.
                                           default scope is read-write;
                                           set its lifetime and networks with
                                           -expires 30d|90d|365d|never (default
-                                          never) and -allow-cidr <cidr>,... (both
-                                          go before the command)
+                                          never) and -allow-cidr <cidr>,...
   keys rotate <id> <grace>                rotate once; required whole-second grace 0s..24h
   keys revoke <id>                        revoke an API key; requires typing
                                           the ID or explicit -yes
@@ -241,9 +240,9 @@ var commands = map[string][]int{
 	"functions invoke":   {2},
 	"functions logs":     {2},
 	"functions delete":   {2},
-	"schema pull":        {0},
-	"schema diff":        {1},
-	"schema apply":       {1},
+	"schema pull":        {1},
+	"schema diff":        {2},
+	"schema apply":       {2},
 	"migrate new":        {1},
 	"migrate up":         {1},
 	"migrate status":     {1},
@@ -306,7 +305,6 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
 	from := fs.String("from", "", "db branch create: source database")
 	ttl := fs.String("ttl", "", "db branch create: lifetime, default 7d")
-	schemaDB := fs.String("database", "", "schema: database name or ID; @ uses saved context")
 	lang := fs.String("lang", "", "init: js, go, python, dotnet or rust")
 	dryRun := fs.Bool("dry-run", false, "schema apply: print DDL without executing")
 	exportFile := fs.String("o", "", "db export: write the SQL dump to a file")
@@ -342,20 +340,14 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		}
 		return fmt.Errorf("expected %s: %w", helpSyntax(name), errUsage)
 	}
-	var schemaFlagsSet, schemaApplyFlagsSet bool
+	var schemaApplyFlagsSet bool
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "database" {
-			schemaFlagsSet = true
-		}
 		if f.Name == "dry-run" || f.Name == "allow-drop" {
 			schemaApplyFlagsSet = true
 		}
 	})
-	if schemaFlagsSet && !strings.HasPrefix(name, "schema ") || schemaApplyFlagsSet && name != "schema apply" {
-		return fmt.Errorf("schema options require their schema command: %w", errUsage)
-	}
-	if strings.HasPrefix(name, "schema ") && *schemaDB == "" {
-		*schemaDB = "@"
+	if schemaApplyFlagsSet && name != "schema apply" {
+		return fmt.Errorf("schema apply options require schema apply: %w", errUsage)
 	}
 	var rotationID string
 	var rotationGrace time.Duration
@@ -484,10 +476,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		}
 		if strings.HasPrefix(name, "schema ") {
 			path := ""
-			if len(operands) > 0 {
-				path = operands[0]
+			if name != "schema pull" {
+				path = operands[1]
 			}
-			return runSchema(ctx, s.tb.Database(s.project, *schemaDB), name, path, schemaOptions{dryRun: *dryRun, allowDrop: *allowDrop}, out)
+			return runSchema(ctx, s.tb.Database(s.project, operands[0]), name, path, schemaOptions{dryRun: *dryRun, allowDrop: *allowDrop}, out)
 		}
 		if expectedIDSet {
 			database := s.tb.Database(s.project, operands[0])
@@ -518,9 +510,6 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
 		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" || name == "init" {
 			return fmt.Errorf("%s needs ts auth login first: unset TERRASCALE_API_KEY and run ts auth login", name)
-		}
-		if strings.HasPrefix(name, "schema ") && *schemaDB == "@" {
-			return fmt.Errorf("API key schema commands need --database <name|id>: %w", errUsage)
 		}
 		if _, err := contextDatabase(operands, ""); err != nil {
 			return err
@@ -587,13 +576,6 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		*org, *project, database, err = contextDefaults(c, claims.Sub, *org, *project)
 		if err != nil {
 			return err
-		}
-		if strings.HasPrefix(name, "schema ") && *schemaDB == "@" {
-			selected, err := contextDatabase([]string{"@"}, database)
-			if err != nil {
-				return err
-			}
-			*schemaDB = selected[0]
 		}
 		if usesDatabaseOperand(name) {
 			operands, err = contextDatabase(operands, database)

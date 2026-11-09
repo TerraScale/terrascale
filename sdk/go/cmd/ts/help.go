@@ -18,7 +18,7 @@ var commandSyntax = map[string]string{
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",
 	"init":    "init [<database>]",
 	"db list": "db list", "db create": "db create <database>", "db delete": "db delete <database>",
-	"db branch create": "db branch create <name> --from <database> [--ttl 7d]",
+	"db branch create": "db branch create <name> -from <database> [-ttl 7d]",
 	"db branch list":   "db branch list", "db branch delete": "db branch delete <name>",
 	"db branch url": "db branch url <name>",
 	"db branch":     "db branch <source> <new-database>", "db info": "db info <database>",
@@ -39,9 +39,9 @@ var commandSyntax = map[string]string{
 	"functions deploy":   "functions deploy <database> <file.js|directory>", "functions list": "functions list <database>",
 	"functions invoke": "functions invoke <database> <name>", "functions logs": "functions logs <database> <name>",
 	"functions delete": "functions delete <database> <name>", "sql": "sql <database> <statement|->",
-	"schema pull":  "schema pull [--database <database>]",
-	"schema diff":  "schema diff <schema.sql> [--database <database>]",
-	"schema apply": "schema apply <schema.sql> [--database <database>] [--dry-run] [--allow-drop]",
+	"schema pull":  "schema pull <database>",
+	"schema diff":  "schema diff <database> <schema.sql>",
+	"schema apply": "schema apply <database> <schema.sql> [-dry-run] [-allow-drop]",
 	"migrate new":  "migrate new <name>",
 	"migrate up":   "migrate up <database>", "migrate status": "migrate status <database>",
 	"migrate diff": "migrate diff <database> [<base-database>]", "keys list": "keys list",
@@ -50,9 +50,9 @@ var commandSyntax = map[string]string{
 }
 
 var helpFlags = map[string]string{
-	"--json":             "typed JSON output; streams use NDJSON record/complete/error events",
-	"-project <name|id>": "select a project (before the command)",
-	"-org <name|id>":     "select an organization (before the command)",
+	"-json":              "typed JSON output; streams use NDJSON record/complete/error events",
+	"-project <name|id>": "select a project",
+	"-org <name|id>":     "select an organization",
 }
 
 func closestCommand(input string) string {
@@ -174,7 +174,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 	for _, name := range names {
 		entries = append(entries, "  "+name+"  "+options[name])
 	}
-	_, err := fmt.Fprintf(out, "%s\n\nGlobal options (before or after the command; -- ends options): -project <name|id>, -org <name|id>.\n--json selects typed output. Exit status: 0 success, 1 failure, 2 invalid arguments.\n", strings.Join(entries, "\n"))
+	_, err := fmt.Fprintf(out, "%s\n\nGlobal options (before or after the command; -- ends options): -project <name|id>, -org <name|id>.\nSingle (-x) and double (--x) dash forms are equivalent for every option. -json selects typed output. Exit status: 0 success, 1 failure, 2 invalid arguments.\n", strings.Join(entries, "\n"))
 	return true, err
 }
 
@@ -204,19 +204,18 @@ func helpOptions(name string) map[string]string {
 	}
 	switch {
 	case name == "db branch create":
-		options["--from <database>"] = "source database; snapshot and later writes are independent"
-		options["--ttl <duration>"] = "whole seconds from 60s to 365d; default 7d"
-		options["--expected-id <ULID>"] = "server-enforced source identity"
+		options["-from <database>"] = "source database; snapshot and later writes are independent"
+		options["-ttl <duration>"] = "whole seconds from 60s to 365d; default 7d"
+		options["-expected-id <ULID>"] = "server-enforced source identity"
 	case name == "db branch url":
-		options["--expected-id <ULID>"] = "require this branch identity before issuing a scoped key"
+		options["-expected-id <ULID>"] = "require this branch identity before issuing a scoped key"
 		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
 	case name == "db url":
 		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
 	case strings.HasPrefix(name, "schema "):
-		options["--database <name|id>"] = "target database; defaults to the saved context database"
 		if name == "schema apply" {
-			options["--dry-run"] = "print the plan without writes"
-			options["--allow-drop"] = "consent to DROP operations"
+			options["-dry-run"] = "print the plan without writes"
+			options["-allow-drop"] = "consent to DROP operations"
 		}
 	case name == "db branch":
 		options["-expected-id <ULID>"] = "require the inspected source ID; unsupported servers fail closed; no unguarded fallback"

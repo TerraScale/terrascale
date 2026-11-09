@@ -4,8 +4,10 @@ import (
 	"bytes"
 
 	"errors"
+	"flag"
 
 	"io"
+	"slices"
 
 	"strings"
 
@@ -59,5 +61,29 @@ func TestHelpOffline(t *testing.T) {
 		if err := run(t.Context(), tc.args, &out); err != nil || !strings.Contains(out.String(), tc.want) || strings.Contains(out.String(), "migrate up") {
 			t.Fatalf("scoped help(%q) = %q, %v", tc.args, out.String(), err)
 		}
+	}
+}
+
+func TestParseOptionsAcceptsOptionsAfterOperands(t *testing.T) {
+	fs := flag.NewFlagSet("ts", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	dryRun := fs.Bool("dry-run", false, "")
+	project := fs.String("project", "", "")
+	for _, tc := range []struct {
+		args     []string
+		want     []string
+		wantFlag bool
+	}{{[]string{"schema", "apply", "app", "schema.sql", "-dry-run"}, []string{"schema", "apply", "app", "schema.sql"}, true},
+		{[]string{"schema", "apply", "app", "schema.sql", "--dry-run"}, []string{"schema", "apply", "app", "schema.sql"}, true},
+		{[]string{"-project", "p", "schema", "diff", "app", "schema.sql", "-project", "q"}, []string{"schema", "diff", "app", "schema.sql"}, false}} {
+		fs.Init("ts", flag.ContinueOnError)
+		operands, err := parseOptions(fs, tc.args)
+		if err != nil || !slices.Equal(operands, tc.want) {
+			t.Fatalf("parseOptions(%q) = %q, %v", tc.args, operands, err)
+		}
+		if *dryRun != tc.wantFlag {
+			t.Fatalf("parseOptions(%q) dry-run = %v", tc.args, *dryRun)
+		}
+		*dryRun, *project = false, ""
 	}
 }

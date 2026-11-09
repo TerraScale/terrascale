@@ -205,7 +205,7 @@ func usesDatabaseOperand(name string) bool {
 	if name == "db create" || name == "db list" || name == "db branch create" || name == "db branch list" || name == "migrate new" || name == "backup destination" {
 		return false
 	}
-	for _, prefix := range []string{"db ", "databases ", "backup ", "migrate ", "functions "} {
+	for _, prefix := range []string{"db ", "databases ", "backup ", "migrate ", "functions ", "schema "} {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}
