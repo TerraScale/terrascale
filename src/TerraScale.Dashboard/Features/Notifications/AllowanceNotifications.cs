@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
@@ -21,7 +22,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 Type = Metric == "spend" ? "spend-cap" : "allowance-" + Metric,
                 Title = Metric == "spend" ? "Monthly spending alert reached" : $"{(Metric == "operations" ? "Operations" : "Storage")} allowance: {Threshold}% reached",
                 Body = Metric == "spend"
-                    ? string.Create(CultureInfo.InvariantCulture, $"Month-to-date paid usage {TerraScale.Dashboard.Common.Formatting.MoneyFormat.Money(Used)} reached the {TerraScale.Dashboard.Common.Formatting.MoneyFormat.Money(Allowance)} spending alert for {BillingMonth}. Report only; services remain active.")
+                    ? string.Create(CultureInfo.InvariantCulture, $"Month-to-date paid usage {MoneyFormat.Money(Used)} reached the {MoneyFormat.Money(Allowance)} spending alert for {BillingMonth}. Report only; services remain active.")
                     : string.Create(CultureInfo.InvariantCulture, $"{Used:N0} of {Allowance:N0} {(Metric == "operations" ? "operation units" : "bytes")} used for {BillingMonth}. Review usage and your plan."),
                 Severity = Threshold == 100 ? "danger" : "warning",
                 Status = "Unread",
