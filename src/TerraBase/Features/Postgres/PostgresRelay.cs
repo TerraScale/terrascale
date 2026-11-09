@@ -12,7 +12,8 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
 {
     internal const string Path = "/v1/internal/postgres";
     internal const string ClientHeader = "X-TerraBase-Postgres-Client";
-        private static ReadOnlySpan<byte> CleartextRequest => [(byte)'R', 0, 0, 0, 8, 0, 0, 0, 3];
+
+    private static ReadOnlySpan<byte> CleartextRequest => [(byte)'R', 0, 0, 0, 8, 0, 0, 0, 3];
 
     internal static byte[] Startup(Dictionary<string, string> parameters, string secret)
     {
