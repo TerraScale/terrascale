@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -86,14 +87,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
                     ? (await GetAsync(transaction, ProjectKeys(owner), keyId, TerraBaseJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false))?.Hash
                     : null)
                 ?? throw new InvalidOperationException("the API key has no secret lookup");
-            await transaction.DeleteAsync(Kind, keyId, cancellationToken).ConfigureAwait(false);
-            await transaction.DeleteAsync(Hashes, hash, cancellationToken).ConfigureAwait(false);
-            await transaction.DeleteAsync(Hashes, keyId, cancellationToken).ConfigureAwait(false);
-            if (key.ProjectId is { } project)
-            {
-                await transaction.DeleteAsync(ProjectKeys(project), keyId, cancellationToken).ConfigureAwait(false);
-            }
-
+            await RevokeCoreAsync(transaction, keyId, hash, key.ProjectId, cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
@@ -105,10 +99,19 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         {
             var entry = EntityPayload.Read(stored, TerraBaseJsonContext.Default.ProjectKeyEntry)
                 ?? throw new InvalidOperationException("a closing project's API key is invalid");
-            await transaction.DeleteAsync(Kind, stored.Id, token).ConfigureAwait(false);
-            await transaction.DeleteAsync(Hashes, entry.Hash, token).ConfigureAwait(false);
-            await transaction.DeleteAsync(Hashes, stored.Id, token).ConfigureAwait(false);
-            await transaction.DeleteAsync(ProjectKeys(project), stored.Id, token).ConfigureAwait(false);
+            await RevokeCoreAsync(transaction, stored.Id, entry.Hash, project, token).ConfigureAwait(false);
+        }
+    }
+
+    // One key's every catalog entry: its record, both hash lookups and its project's reverse lookup.
+    private static async ValueTask RevokeCoreAsync(IStorageTransaction transaction, string keyId, string hash, string? projectId, CancellationToken token)
+    {
+        await transaction.DeleteAsync(Kind, keyId, token).ConfigureAwait(false);
+        await transaction.DeleteAsync(Hashes, hash, token).ConfigureAwait(false);
+        await transaction.DeleteAsync(Hashes, keyId, token).ConfigureAwait(false);
+        if (projectId is { } project)
+        {
+            await transaction.DeleteAsync(ProjectKeys(project), keyId, token).ConfigureAwait(false);
         }
     }
 
@@ -130,11 +133,9 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         return key;
     }
 
-    private static string NewSecret() => SecretPrefix + Base64Url(RandomNumberGenerator.GetBytes(32));
+    private static string NewSecret() => SecretPrefix + Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(32));
 
     private static string Hash(string secret) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
-
-    private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }
 
 /// <summary>A project-scoped key's closure entry: the secret hash to delete with it.</summary>
