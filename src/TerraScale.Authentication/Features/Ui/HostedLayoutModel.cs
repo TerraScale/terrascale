@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using TerraScale.Authentication.Features.Email;
 
 namespace TerraScale.Authentication.Features.Ui;
 
@@ -30,15 +31,20 @@ public sealed partial record HostedLayoutModel
     /// </summary>
     public HostedLayoutModel(string title, string nonce, string? themeColor = null, string? logoUrl = null, string? name = null, int? titleSize = null,
         IReadOnlyList<(string Label, string Url)>? footer = null, string? defaultTheme = null, string? tenant = null,
-        string? backgroundColor = null, string? textColor = null)
+        string? backgroundColor = null, string? textColor = null, string? locale = null)
     {
         this.Title = title;
         this.Nonce = nonce;
+        this.Locale = locale == AuthEmails.Portuguese ? AuthEmails.Portuguese : AuthEmails.English;
         this.LogoUrl = HttpsUrl(logoUrl) ? logoUrl : null;
         this.Name = string.IsNullOrWhiteSpace(name) ? DefaultName : name;
         this.AccentColor = ValidColor(themeColor);
         this.TitleSize = titleSize is >= 20 and <= 40 ? titleSize : null;
-        this.Footer = footer is null ? DefaultFooter : [.. footer.Where(link => !string.IsNullOrWhiteSpace(link.Label) && HttpsUrl(link.Url)).Take(5)];
+        var copy = this.Copy;
+        string[] defaultLabels = [copy.FooterStatus, copy.FooterDocs, copy.FooterPrivacy, copy.FooterTerms];
+        this.Footer = footer is null
+            ? [.. DefaultFooter.Select((link, index) => (defaultLabels[index], link.Url))]
+            : [.. footer.Where(link => !string.IsNullOrWhiteSpace(link.Label) && HttpsUrl(link.Url)).Take(5)];
         this.DefaultTheme = defaultTheme is "light" or "dark" ? defaultTheme : "system";
         this.ThemeKey = "ts-auth-theme:" + (tenant ?? DefaultName);
         this.BackgroundColor = ValidColor(backgroundColor);
@@ -51,6 +57,10 @@ public sealed partial record HostedLayoutModel
 
     /// <summary>Per-response CSP nonce for inline styles and scripts.</summary>
     public string Nonce { get; }
+
+    public string Locale { get; }
+
+    public HostedPageCopy Copy => HostedCopies.For(this.Locale);
 
     /// <summary>Validated accent colour override, or <see langword="null"/> for the default.</summary>
     public string? AccentColor { get; }

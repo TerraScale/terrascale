@@ -1,6 +1,6 @@
 @inherits RazorLayoutSlice<HostedLayoutModel>
 <!doctype html>
-<html lang="en" data-theme="@Model.DefaultTheme" data-theme-key="@Model.ThemeKey" data-default-theme="@Model.DefaultTheme">
+<html lang="@Model.Locale" data-theme="@Model.DefaultTheme" data-theme-key="@Model.ThemeKey" data-default-theme="@Model.DefaultTheme">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -29,7 +29,7 @@
 </div>
 </main>
 <footer class="auth-foot">
-<nav class="foot-links" aria-label="Footer">
+<nav class="foot-links" aria-label="@Model.Copy.FooterNav">
 @foreach (var (label, url) in Model.Footer)
 {
 @if (Model.IsExternalFooterUrl(url))
@@ -43,13 +43,13 @@ else
 }
 </nav>
 <div class="foot-row">
-<select class="theme-picker" aria-label="Theme">
-<option value="system">System</option>
-<option value="light">Light</option>
-<option value="dark">Dark</option>
+<select class="theme-picker" aria-label="@Model.Copy.Theme">
+<option value="system">@Model.Copy.ThemeSystem</option>
+<option value="light">@Model.Copy.ThemeLight</option>
+<option value="dark">@Model.Copy.ThemeDark</option>
 </select>
 </div>
-<p class="auth-powered">Powered by <b>TerraScale</b></p>
+<p class="auth-powered">@Model.Copy.PoweredBy <b>TerraScale</b></p>
 </footer>
 <script nonce="@Model.Nonce">
 (function () {

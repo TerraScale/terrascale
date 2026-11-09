@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Features.Ui;
@@ -91,6 +92,12 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The response's CSP nonce, set by <see cref="Render"/>.</summary>
     public string Nonce { get; init; } = string.Empty;
 
+    public string Locale { get; init; } = AuthEmails.English;
+
+    public HostedPageCopy Copy => HostedCopies.For(this.Locale);
+
+    public string Sub(string format) => format.Replace("{email}", System.Net.WebUtility.HtmlEncode(this.Email ?? string.Empty));
+
     /// <summary>The correlation ID shared with the response's X-Request-ID header.</summary>
     public string RequestId { get; init; } = string.Empty;
 
@@ -167,17 +174,17 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The page (tab) title.</summary>
     public string Title => this.Step switch
     {
-        SignInStep.Password => "Enter your password",
-        SignInStep.Code => "Check your email",
+        SignInStep.Password => this.Copy.TitlePassword,
+        SignInStep.Code => this.Copy.TitleCode,
+        SignInStep.SignUp => this.Copy.TitleSignUp,
+        SignInStep.SignUpCode => this.Copy.TitleSignUpCode,
+        SignInStep.Reset => this.Copy.TitleReset,
+        SignInStep.ResetCode => this.Copy.TitleResetCode,
+        SignInStep.ResetDone => this.Copy.TitleResetDone,
         SignInStep.SignedOut => "Signed out",
         SignInStep.SignOutConfirm => "Sign out?",
         SignInStep.Rejected => "Request refused",
         SignInStep.Continue or SignInStep.SignedIn => "Signed in",
-        SignInStep.SignUp => "Create your account",
-        SignInStep.SignUpCode => "Verify your email",
-        SignInStep.Reset => "Reset your password",
-        SignInStep.ResetCode => "Choose a new password",
-        SignInStep.ResetDone => "Password updated",
         SignInStep.DeviceEnter => "Connect a device",
         SignInStep.DeviceConfirm => "Approve this device?",
         SignInStep.DeviceApproved => "Device connected",
@@ -189,7 +196,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.TotpSetup => "Set up your authenticator app",
         SignInStep.RecoveryCodes => "Save your recovery codes",
         SignInStep.Reauthenticate => "Sign in again to continue",
-        _ => "Sign in",
+        _ => this.Copy.TitleEmail,
     };
 
     /// <summary>The tenant's brand and sign-in methods.</summary>
@@ -208,7 +215,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         ArgumentNullException.ThrowIfNull(model);
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        var page = SignInPage.Create(model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin });
+        var page = SignInPage.Create(model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request.Headers.AcceptLanguage) });
         page.StatusCode = statusCode;
         return page;
     }
