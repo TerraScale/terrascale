@@ -36,13 +36,19 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
         PlatformDirectory.RequireRole(await platform.ProjectAccessAsync(userId, project.Value.OrganizationId, projectId, cancellationToken).ConfigureAwait(false), minimum);
     }
 
-    /// <summary>A page of the tenant's users whose email contains <paramref name="query"/> (any when null).</summary>
+    /// <summary>A page of the tenant's users whose email starts with <paramref name="query"/> (any when null).</summary>
     public Task<Page<UserRecord>> UsersAsync(string projectId, string? query, int limit, string? after, CancellationToken cancellationToken)
     {
-        var needle = string.IsNullOrWhiteSpace(query) ? null : query.Trim().ToLowerInvariant();
-        return this.ScanAsync(AuthStore.UserTable, projectId, [], limit, after, rowData => Task.FromResult(
-            rowData.Body.Deserialize(IdentityJson.Default.UserRecord) is { } user && user.InstanceId == projectId
-            && (needle is null || user.Email.Contains(needle, StringComparison.Ordinal)) ? user : null), cancellationToken);
+        List<JsonObject> conditions = [];
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            var needle = query.Trim().ToLowerInvariant();
+            conditions.Add(new() { ["gte"] = new JsonArray("/email", needle) });
+            conditions.Add(new() { ["lt"] = new JsonArray("/email", needle + "\uffff") });
+        }
+
+        return this.ScanAsync(AuthStore.UserTable, projectId, conditions, limit, after, rowData => Task.FromResult(
+            rowData.Body.Deserialize(IdentityJson.Default.UserRecord) is { } user && user.InstanceId == projectId ? user : null), cancellationToken);
     }
 
     /// <summary>The tenant's user, or 404.</summary>
