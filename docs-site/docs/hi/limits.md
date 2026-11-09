@@ -57,7 +57,7 @@ A transaction left open past the limit rolls back and answers `transaction_rolle
 | Storage ceiling | 0.1 GB | 5 GB | 100 GB | 100 GB | No limit |
 | Point-in-time retention | 1 day | 3 days | 7 days | 14 days | 30 days |
 
-Beyond the request, burst or concurrency limit, HTTP answers `429 tenant_busy` (SQLSTATE `53300`) with a `Retry-After` header; the Postgres wire answers SQLSTATE `53300`. Past the storage ceiling a write answers `429 quota_exceeded` (53100) with no `Retry-After` — its message names the used and allowed gigabytes and the next step; past the database allowance a create answers `409 database_limit`. A database's point-in-time restore window reaches back at most its plan's retention; see [backups and restore](/hi/guides/backups-and-restore).
+Beyond the request, burst or concurrency limit, HTTP answers `429 tenant_busy` (SQLSTATE `53300`) with a `Retry-After` header; the Postgres wire answers SQLSTATE `53300`. Past the storage ceiling a write answers `429 quota_exceeded` (53100) over SQL and `429 storage_quota` over file storage; neither sends `Retry-After`, and the file-storage message names the used and allowed gigabytes and the next step. Past the database allowance a create answers `409 database_limit`. A database's point-in-time restore window reaches back at most its plan's retention; see [backups and restore](/hi/guides/backups-and-restore).
 
 ## Monthly operation units and SQL read fair use
 
