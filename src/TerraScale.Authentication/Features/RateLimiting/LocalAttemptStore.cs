@@ -28,6 +28,18 @@ internal sealed class LocalAttemptStore(TimeProvider clock) : IRecordStore
             : null);
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<Versioned<T>?>> GetManyAsync<T>(string table, string instanceId, IReadOnlyList<string> keys, CancellationToken cancellationToken)
+    {
+        var rows = new Versioned<T>?[keys.Count];
+        for (var index = 0; index < keys.Count; index++)
+        {
+            rows[index] = await this.GetAsync<T>(table, instanceId, keys[index], cancellationToken).ConfigureAwait(false);
+        }
+
+        return rows;
+    }
+
+    /// <inheritdoc />
     public Task<bool> TryCreateAsync<T>(string table, string instanceId, string key, T rowData, CancellationToken cancellationToken)
     {
         if (this.buckets.Count >= Capacity)
