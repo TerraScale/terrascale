@@ -107,7 +107,7 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
         cancellationToken.ThrowIfCancellationRequested();
-        await reservation.EnqueueCodeAsync(tenant, address, PasscodePurpose.SignIn, AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
+        await reservation.EnqueueCodeAsync(tenant, address, PasscodePurpose.SignIn, AuthEmails.Locale(this.HttpContext.Request));
 
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(this.HttpContext), address, SignInFlow.SafeNext(this.HttpContext, form.Next)));
     }
@@ -155,7 +155,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
 
         if ((await hosted.LimitIpAsync(ip, mails: false, cancellationToken)
             ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, cancellationToken,
-                AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage))) is { } wait)
+                AuthEmails.Locale(this.HttpContext.Request))) is { } wait)
         {
             AuthMetrics.SignIn("hosted_code", "rate_limited");
             return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, next);
@@ -230,7 +230,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
         }
 
         var (user, wait) = await hosted.CheckPasswordAsync(address, form.Password, cancellationToken,
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
+            AuthEmails.Locale(this.HttpContext.Request));
         if (wait is { } retry)
         {
             AuthMetrics.SignIn("hosted_password", "rate_limited");
@@ -340,7 +340,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
         }
 
         var (pending, refusal) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext),
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken);
+            AuthEmails.Locale(this.HttpContext.Request), cancellationToken);
         return refusal is { } limited
             ? limited.BudgetExhausted
                 ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.SignUpCode, limited.Wait, address, next)
@@ -393,7 +393,7 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
         }
 
         await reservation.EnqueueSignUpResendAsync(SignInFlow.Tenant(this.HttpContext), address,
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
+            AuthEmails.Locale(this.HttpContext.Request));
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, SignInFlow.Tenant(this.HttpContext), address, next)
         {
             PendingToken = form.PendingToken,
@@ -439,7 +439,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         var code = form.Code ?? string.Empty;
         if ((await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
             ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, cancellationToken,
-                AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage))) is { } wait)
+                AuthEmails.Locale(this.HttpContext.Request))) is { } wait)
         {
             AuthMetrics.SignIn("hosted_sign_up", "rate_limited");
             return SignInFlow.Limited(this.HttpContext, SignInStep.SignUpCode, wait, address, next, form.PendingToken);
@@ -522,7 +522,7 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext),
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken) is { } refusal)
+            AuthEmails.Locale(this.HttpContext.Request), cancellationToken) is { } refusal)
         {
             return refusal.BudgetExhausted
                 ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.ResetCode, refusal.Wait, address, next)
@@ -560,7 +560,7 @@ public sealed class ResendResetEndpoint(HostedAuth hosted, AuthOptions options) 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext),
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken) is { } refusal)
+            AuthEmails.Locale(this.HttpContext.Request), cancellationToken) is { } refusal)
         {
             return refusal.BudgetExhausted
                 ? SignInFlow.BudgetExhausted(this.HttpContext, SignInStep.ResetCode, refusal.Wait, address, next)
@@ -615,7 +615,7 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         }
 
         var (reset, wait) = await hosted.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext),
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken);
+            AuthEmails.Locale(this.HttpContext.Request), cancellationToken);
         return wait is { } retry ? SignInFlow.Limited(this.HttpContext, SignInStep.ResetCode, retry, address, next)
             : reset ? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetDone, SignInFlow.Tenant(this.HttpContext), address, next))
             : SignInFlow.WrongCode(this.HttpContext, SignInStep.ResetCode, address, next);
@@ -671,7 +671,7 @@ internal static class SignInFlow
 
     public static string RetryWait(long seconds) => RetryWait(HostedCopies.English, seconds);
 
-    public static HostedPageCopy Copy(HttpContext context) => HostedCopies.For(AuthEmails.Locale(context.Request.Headers.AcceptLanguage));
+    public static HostedPageCopy Copy(HttpContext context) => HostedCopies.For(AuthEmails.Locale(context.Request));
 
     public static IResult WrongCode(HttpContext context, SignInStep step, string email, string? next, string? pendingToken = null)
     {
