@@ -709,12 +709,12 @@ Preview workflows: [CLI database branches](docs/cli-branches.md) covers create, 
 
 ### Declarative schema in the CLI
 
-`ts schema pull --database app` writes a new `schema.sql` from the public SQL catalog.
-Edit the CREATE statements, then run `ts schema diff schema.sql --database app` and
-`ts schema apply schema.sql --database app [--dry-run] [--allow-drop]`.
-Apply uses one REST transaction and refuses every DROP operation without `--allow-drop`.
+`ts schema pull app` writes a new `schema.sql` from the public SQL catalog.
+Edit the CREATE statements, then run `ts schema diff app schema.sql` and
+`ts schema apply app schema.sql [-dry-run] [-allow-drop]`.
+Apply uses one REST transaction and refuses every DROP operation without `-allow-drop`.
 `--json` returns `statements`, `destructive`, and `applied`; an unchanged schema has no statements.
-Signed-in callers can use the saved context database instead of `--database`.
+Signed-in callers can pass `@` as the database to use the saved context database.
 
 The planner validates schema-only DDL with an embedded, offline SQLite engine (no application data is stored locally).
 It supports ordinary tables, indexes, views, triggers and column additions/removals. Existing column definition,

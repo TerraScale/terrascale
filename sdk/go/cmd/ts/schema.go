@@ -84,7 +84,7 @@ func runSchema(ctx context.Context, db *v1.Database, command, path string, optio
 	}
 	if command == "schema apply" && !options.dryRun && len(plan.Statements) > 0 {
 		if plan.Destructive && !options.allowDrop {
-			return &cliError{code: "schema_drop_refused", message: "schema contains DROP operations; inspect ts schema diff and pass --allow-drop to consent"}
+			return &cliError{code: "schema_drop_refused", message: "schema contains DROP operations; inspect ts schema diff and pass -allow-drop to consent"}
 		}
 		batch := []v1.Statement{schemaGuard(live)}
 		for _, statement := range plan.Statements {

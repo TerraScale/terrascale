@@ -95,18 +95,18 @@ keeps lifecycle authority. Scoped keys and their secrets are never tool argument
 Use the `ts` CLI to keep a database's SQL schema in version control:
 
 ```sh
-ts schema pull --database agent-run
+ts schema pull agent-run
 # Edit the CREATE statements in schema.sql.
-ts schema diff schema.sql --database agent-run
-ts schema apply schema.sql --database agent-run --dry-run
-ts schema apply schema.sql --database agent-run
+ts schema diff agent-run schema.sql
+ts schema apply agent-run schema.sql -dry-run
+ts schema apply agent-run schema.sql
 ```
 
 `pull` writes `schema.sql` in the current directory and refuses to overwrite an existing file.
 The file contains the database's tables, indexes, views and triggers, without data or internal objects.
 Keep every object you want to retain in the file: omitting one plans its removal. An empty file plans removal of every SQL object.
 
-`diff` and `apply --dry-run` print the DDL needed to reach the desired schema without writing to the database.
+`diff` and `apply -dry-run` print the DDL needed to reach the desired schema without writing to the database.
 Whitespace and comments do not create changes. The planner supports creating and dropping
 objects, replacing indexes, views and triggers, and adding or dropping table columns. Changes to an existing
 column's type, default or constraints, table constraints, table options and column order require an explicit
@@ -114,10 +114,10 @@ column's type, default or constraints, table constraints, table options and colu
 
 `apply` submits the entire plan through the public SQL REST API in one transaction. A failed statement rolls it
 all back. A concurrent schema edit aborts the plan; pull or diff again before retrying.
-Any plan containing `DROP`, including column drops and index, view or trigger replacement, requires `--allow-drop`:
+Any plan containing `DROP`, including column drops and index, view or trigger replacement, requires `-allow-drop`:
 
 ```sh
-ts schema apply schema.sql --database agent-run --allow-drop
+ts schema apply agent-run schema.sql -allow-drop
 ```
 
 Dropped tables and columns lose their data. Renaming an object in the file is a drop and a creation; use a migration
@@ -127,16 +127,16 @@ column needs a non-null default. The server enforces constraints during apply.
 For agents and CI, provide `TERRASCALE_API_KEY` through your secret store and select the database explicitly:
 
 ```sh
-ts --json schema diff schema.sql --database agent-run
-ts --json schema apply schema.sql --database agent-run --dry-run
-ts --json schema apply schema.sql --database agent-run
+ts --json schema diff agent-run schema.sql
+ts --json schema apply agent-run schema.sql -dry-run
+ts --json schema apply agent-run schema.sql
 ```
 
 JSON plans contain `statements` (DDL strings), `destructive` and `applied`. A refused drop returns
 `schema_drop_refused` and exits with status `1`. An unchanged schema returns an empty `statements` array.
 Pull and diff need `sql:read`; applying DDL also needs `sql:write`. API-key commands use the key's
-project; organization keys also need `--project <id>`. Signed-in callers can omit `--database` after saving a
-database with `ts context set <org> <project> <database>`.
+project; organization keys also need `-project <id>`. Signed-in callers can pass `@` as the database
+to use the database saved with `ts context set <org> <project> <database>`.
 
 Schemas are limited to 1 MiB, each statement to 16 KiB, and each apply plan to 255 DDL statements.
 

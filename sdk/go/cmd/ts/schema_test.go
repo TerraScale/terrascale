@@ -150,7 +150,7 @@ func TestSchemaApplyRefusesDrop(t *testing.T) {
 	}
 	var out bytes.Buffer
 	err := runSchema(t.Context(), db, "schema apply", path, schemaOptions{}, &out)
-	if err == nil || !strings.Contains(err.Error(), "--allow-drop") || writes.Load() != 0 {
+	if err == nil || !strings.Contains(err.Error(), "-allow-drop") || writes.Load() != 0 {
 		t.Fatalf("drop refusal: %v; writes=%d", err, writes.Load())
 	}
 	var secret string
