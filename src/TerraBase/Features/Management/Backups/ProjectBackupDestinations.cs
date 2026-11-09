@@ -32,7 +32,7 @@ internal sealed class ProjectBackupDestinations(
         string userId, string organizationId, string projectId, ProjectBackupDestinationRequest request, CancellationToken cancellationToken)
     {
         var access = await catalog.ReadAsync(transaction => WritableAsync(transaction, userId, organizationId, projectId, cancellationToken),
-            static error => (WritableProject)error, cancellationToken).ConfigureAwait(false);
+            static error => (WritableProjectResult)error, cancellationToken).ConfigureAwait(false);
         if (access is not Project)
         {
             return access switch
@@ -150,7 +150,7 @@ internal sealed class ProjectBackupDestinations(
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    private static async ValueTask<WritableProject> WritableAsync(
+    private static async ValueTask<WritableProjectResult> WritableAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken)
     {
         if (await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not { } project)

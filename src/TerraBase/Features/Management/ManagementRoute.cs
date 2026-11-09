@@ -18,12 +18,6 @@ public sealed record PlanRequest(string? Plan);
 /// <param name="Organization">The ts-auth organization id the creating region enrolled the project under.</param>
 public sealed record EnrollmentRequest(string? Organization);
 
-/// <summary>A database the acting user may change, or why not.</summary>
-public readonly union WritableDatabase(TenantContext, NotFound, Forbidden, Unavailable);
-
-/// <summary>A project the acting user may change, or why not.</summary>
-public readonly union WritableProject(Project, NotFound, Forbidden, Unavailable);
-
 /// <summary>A page request.</summary>
 /// <param name="After">Exclusive cursor from the previous page's <c>next</c>.</param>
 /// <param name="Limit">Page size, 1 to 100.</param>
@@ -68,40 +62,17 @@ internal static class ManagementRoute
 
     public static string Value(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
 
-    /// <summary>The addressed project, or why it cannot be read.</summary>
-    public static async ValueTask<GetProjectResult> ProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        await management.GetProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken).ConfigureAwait(false) switch
-        {
-            Project project => project,
-            NotFound => new NotFound(),
-            Unavailable error => error,
-        };
+    public static ValueTask<GetProjectResult> ProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        management.GetProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);
 
-    public static async ValueTask<DatabaseTenantResult> DatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        await management.GetDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken).ConfigureAwait(false) switch
-        {
-            TenantContext database => database,
-            NotFound => new NotFound(),
-            Unavailable error => error,
-        };
+    public static ValueTask<DatabaseTenantResult> DatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        management.GetDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
 
-    public static async ValueTask<WritableDatabase> CheckWritableDatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        await management.GetWritableDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken).ConfigureAwait(false) switch
-        {
-            TenantContext database => database,
-            NotFound => new NotFound(),
-            Forbidden error => error,
-            Unavailable error => error,
-        };
+    public static ValueTask<WritableDatabaseTenantResult> CheckWritableDatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        management.GetWritableDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
 
-    public static async ValueTask<WritableProject> CheckWritableProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        await management.GetWritableProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken).ConfigureAwait(false) switch
-        {
-            Project project => project,
-            NotFound => new NotFound(),
-            Forbidden error => error,
-            Unavailable error => error,
-        };
+    public static ValueTask<WritableProjectResult> CheckWritableProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
+        management.GetWritableProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);
 
     public static IResult DatabaseNotFound(NotFound error) =>
         ErrorResponse.From(ProjectAccess.Current is not null ? new NotFound(Code: "unknown_route") : error);
