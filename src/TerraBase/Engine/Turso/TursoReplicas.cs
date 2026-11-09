@@ -1116,12 +1116,7 @@ internal sealed partial class TursoReplicas(
                         long size = 0;
                         for (var i = 0; i < columns.Count; i++)
                         {
-                            size += TursoBindings.GetValueType(prepared, i) switch
-                            {
-                                TursoValueType.Text or TursoValueType.Blob => Math.Max(0, TursoBindings.GetValueByteCount(prepared, i)),
-                                TursoValueType.Null or TursoValueType.Empty => 0,
-                                _ => 8,
-                            };
+                            size += TursoStorageTransaction.ValueSize(prepared, i);
                         }
 
                         if (rows.Count == maxRows || size > statement.MaxBytes - bytes)
@@ -1133,14 +1128,7 @@ internal sealed partial class TursoReplicas(
                         var row = new object?[columns.Count];
                         for (var i = 0; i < row.Length; i++)
                         {
-                            row[i] = TursoBindings.GetValue(prepared, i) switch
-                            {
-                                { ValueType: TursoValueType.Integer } value => value.IntValue,
-                                { ValueType: TursoValueType.Real } value => value.RealValue,
-                                { ValueType: TursoValueType.Text } value => value.StringValue,
-                                { ValueType: TursoValueType.Blob } value => value.BlobValue,
-                                _ => null,
-                            };
+                            row[i] = TursoStorageTransaction.Value(prepared, i);
                         }
 
                         rows.Add(row);
