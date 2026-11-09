@@ -1058,7 +1058,7 @@ namespace TerraScale.Dashboard.E2E.Demo
     {
         public Task<HomeMeasurement> ReadAsync(AccountContext context, string range, CancellationToken cancellationToken)
         {
-            return Task.FromResult(new HomeMeasurement { ActivityNote = "Reads and writes metered by TerraBase.", Regions = [new("GRU", "Operational", "12.00 ms", context.Project?.Databases.Count ?? 0)] });
+            return Task.FromResult(new HomeMeasurement { Regions = [new("GRU", "Operational", "12.00 ms", context.Project?.Databases.Count ?? 0)] });
         }
     }
     // Each database is a real SQL engine, so SQL editor and table pages run the statements they show.
