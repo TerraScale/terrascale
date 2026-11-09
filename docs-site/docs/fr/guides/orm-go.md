@@ -64,6 +64,8 @@ GORM takes the `*sql.DB` through the `gorm.io/driver/sqlite` dialector's `Conn` 
 go get gorm.io/gorm gorm.io/driver/sqlite
 ```
 
+`gorm.io/driver/sqlite` imports a cgo SQLite binding, but with `Conn` set it never opens it: every statement runs through the SDK, so no cgo or C compiler is needed and pure-Go builds (`CGO_ENABLED=0`) work. Only the dialector's own local-file mode needs cgo.
+
 ```go
 import (
 	"gorm.io/gorm"
