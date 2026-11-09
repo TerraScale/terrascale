@@ -22,7 +22,7 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
         Put(DatabaseRoute.Template);
         Name("legacyCreateDatabase");
         Summary("Creates a database");
-        Description("{project} is a project of the API key's organization. A key narrowed to one database cannot create others. A project the key does not reach answers 404. 409 database_limit when the organization's live databases reach its plan's allowance.");
+        Description("{project} is a project of the API key's organization. A key narrowed to one database cannot create others. A project the key does not reach answers 404. 409 database_limit when the organization's live databases reach its plan's allowance, counted at each database's home region, so a delete its home acknowledged with 204 has released its slot.");
         Tags("Databases");
         Produces<DatabaseBody>(StatusCodes.Status201Created);
         Produces<DatabaseBody>();

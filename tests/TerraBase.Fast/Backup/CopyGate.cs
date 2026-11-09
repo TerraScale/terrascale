@@ -30,6 +30,9 @@ internal sealed class CopyGate
             string userId, string organizationId, string projectId, string? name, CancellationToken cancellationToken) =>
             inner.PrecheckRestoreAsync(userId, organizationId, projectId, name, cancellationToken);
 
+        public ValueTask<HomeDatabaseCountResult> CountOrganizationDatabasesHomedAsync(string organizationId, CancellationToken cancellationToken) =>
+            inner.CountOrganizationDatabasesHomedAsync(organizationId, cancellationToken);
+
         public ValueTask<WritableDatabaseTenantResult> GetRecoveryDatabaseTenantAsync(
             string userId, string organizationId, string projectId, string databaseId, string? authorityToken, CancellationToken cancellationToken) =>
             inner.GetRecoveryDatabaseTenantAsync(userId, organizationId, projectId, databaseId, authorityToken, cancellationToken);
