@@ -216,7 +216,7 @@ internal sealed class HomeMoves(
 
     private async Task<HttpResponseMessage?> PostAsync(ReplicaPeer peer, HomeMoveMarker marker, string action, HttpContent? content, CancellationToken cancellationToken)
     {
-        var address = new Uri(peer.Internal, $"/v1/sync/organizations/{marker.OrganizationId}/projects/{marker.ProjectId}/databases/{marker.DatabaseId}/{action}");
+        var address = new Uri(peer.Internal, ReplicaRoutes.DatabasePath(marker.Database, action));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(PeerTimeout);
         try

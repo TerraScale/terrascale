@@ -635,7 +635,7 @@ internal sealed class RegionReplication(
     private async Task ResolveMissingAsync(ReplicaPeer home, TenantContext database, CancellationToken cancellationToken)
     {
         var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
-        var address = new Uri(home.Internal, $"/v1/sync/organizations/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}/placement");
+        var address = new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "placement"));
         using var response = await _http.GetAsync(address, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
@@ -705,8 +705,7 @@ internal sealed class RegionReplication(
             _owner = owner;
             Database = database;
             _home = home;
-            _source = new Uri(_home.Internal,
-                $"/v1/sync/organizations/{Database.OrganizationId}/projects/{Database.ProjectId}/databases/{Database.DatabaseId}");
+            _source = new Uri(_home.Internal, ReplicaRoutes.DatabasePath(Database));
             _started = owner.Time.GetUtcNow();
             _nextVerify = _started + TimeSpan.FromSeconds(Random.Shared.Next(5, 60));
         }

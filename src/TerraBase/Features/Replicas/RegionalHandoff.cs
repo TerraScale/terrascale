@@ -38,7 +38,7 @@ internal sealed partial class RegionalHandoff(
     private RegionalWriterLease? _writerLease;
     private readonly string _session = Guid.NewGuid().ToString("N");
 
-    internal async Task<RegionalStatus> StatusAsync(CancellationToken cancellationToken, string? region = null) => new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
+    internal async Task<RegionalStatus> StatusAsync(string? region, CancellationToken cancellationToken) => new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
         owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
         await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false), _session);
 

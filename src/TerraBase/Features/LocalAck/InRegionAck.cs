@@ -190,9 +190,8 @@ internal sealed class InRegionAck(
                 return true; // Shredded or unauthentic: it must never be replayed.
             }
             using var body = Json(JsonSerializer.SerializeToUtf8Bytes(transaction, TerraBaseJsonContext.Default.RegionTransaction));
-            using var response = await Http.PostAsync(
-                new Uri(home.Internal, $"v1/sync/organizations/{held.Organization}/projects/{held.Project}/databases/{held.Database}/apply"),
-                body, cancellationToken).ConfigureAwait(false);
+            using var response = await Http.PostAsync(new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "apply")[1..]), body, cancellationToken)
+                .ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
                 return true;

@@ -753,8 +753,7 @@ internal sealed class HomeLeases(
         timeout.CancelAfter(AskTimeout);
         try
         {
-            using var response = await _http.GetAsync(new Uri(peer.Internal,
-                $"/v1/sync/organizations/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}/held"), timeout.Token).ConfigureAwait(false);
+            using var response = await _http.GetAsync(new Uri(peer.Internal, ReplicaRoutes.DatabasePath(database, "held")), timeout.Token).ConfigureAwait(false);
             return response.StatusCode == HttpStatusCode.OK
                 ? await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.HeldRevisionAnswer, timeout.Token).ConfigureAwait(false)
                 : null;
