@@ -151,17 +151,9 @@ internal sealed class SqlExecuteEndpoint(
         List<SqlPlannedCommand> every = [.. commands.Where(command => command.Plan.Kind is SqlStatementKind.Read or SqlStatementKind.Write)];
         var writes = every.Count > statements.Count;
 
-        IReplicaReader? reader;
-        try
-        {
-            reader = writes && preference == WriteOverride.Home ? null : await replicas.BeginReadAsync(database, cancellationToken);
-        }
-        catch (Exception error) when (error is not OperationCanceledException)
-        {
-            reader = null;
-        }
+        var reader = await replicas.OpenAsync(database, writes, preference, cancellationToken);
         SqlRequestTiming.Mark(HttpContext, "replica_open");
-        if (reader is null || writes || preference == WriteOverride.Home)
+        if (reader.RunsAtHome(writes, preference))
         {
             WriteRoute? route = null;
             if (writes)

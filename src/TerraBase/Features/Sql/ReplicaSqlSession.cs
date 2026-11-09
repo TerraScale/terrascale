@@ -296,15 +296,7 @@ internal sealed class ReplicaSqlSession(
 
     internal async ValueTask<WriteRoute> RouteAsync(IReadOnlyList<string> statements, CancellationToken cancellationToken)
     {
-        IReplicaReader? reader;
-        try
-        {
-            reader = await replicas.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception error) when (error is not OperationCanceledException)
-        {
-            reader = null;
-        }
+        var reader = await replicas.OpenAsync(database, writes: false, _preference, cancellationToken);
 
         try
         {
