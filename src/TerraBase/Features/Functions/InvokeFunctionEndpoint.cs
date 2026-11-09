@@ -56,7 +56,7 @@ internal sealed class InvokeFunctionEndpoint(IManagementService management, IFun
 
         var eventJson = Event(buffer.WrittenMemory, HttpContext.Request.Query);
         return await FunctionRoute.RunAsync(HttpContext, management,
-            (tenant, name) => functions.InvokeAsync(tenant, name, "http", eventJson, cancellationToken), cancellationToken).ConfigureAwait(false);
+            (tenant, name) => functions.InvokeAsync(tenant, name, "http", eventJson, HttpContext.TraceIdentifier, cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 
     private static string Event(ReadOnlyMemory<byte> body, IQueryCollection query)

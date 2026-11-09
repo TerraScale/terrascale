@@ -24,7 +24,7 @@ Decide recovery from the typed status and code, and from whether an operation ma
 | `421` | Wrong region: the database is served in another region. See [Wrong region](#wrong-region). |
 | `429` / `503` | Respect `Retry-After` where supplied; repeat only safe operations within a deadline. Plan quotas (`quota_exceeded`, `storage_quota`, `operation_allowance`, `read_fair_use`) carry no `Retry-After`: the message names the used and allowed amounts and the next step, so free the quota or upgrade instead of retrying. |
 
-Every error body carries a `requestId` (`{"error":{"code":...,"requestId":"..."}}`) and every response, success or error, carries the same id in its `X-Request-ID` header. Quote it to support: server logs record it as `request_id` on every log line of that request. An `unknown_route` error (404) names the method and path and points to the API reference at `/scalar/`.
+Every error body carries a `requestId` (`{"error":{"code":...,"requestId":"..."}}`) and every response, success or error, carries the same id in its `X-Request-ID` header. Quote it to support: server logs record it as `request_id` on every log line of that request. An `unknown_route` error (404) names the method and path and points to the API reference at `/scalar/`. Error frames on the SQL WebSocket carry the same two fields: the `requestId` of the socket's upgrade request (one per socket) and the `docsUrl` of the error's `code`.
 
 ## Error codes
 
