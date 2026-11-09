@@ -121,6 +121,46 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<RotateDashboardCredentialEndpoint>(),
                 EndpointRegistration.Create<SetCredentialAllowedCidrsEndpoint>(),
                 EndpointRegistration.Create<SetProjectAllowedCidrsEndpoint>(),
+                EndpointRegistration.Create<OrganizationPageEndpoint>(),
+                EndpointRegistration.Create<DashboardContextEndpoint>(),
+                EndpointRegistration.Create<RenameOrganizationEndpoint>(),
+                EndpointRegistration.Create<CreateProjectEndpoint>(),
+                EndpointRegistration.Create<CreateOrganizationEndpoint>(),
+                EndpointRegistration.Create<RenameProjectEndpoint>(),
+                EndpointRegistration.Create<InviteMemberEndpoint>(),
+                EndpointRegistration.Create<MemberRoleEndpoint>(),
+                EndpointRegistration.Create<MemberRemoveEndpoint>(),
+                EndpointRegistration.Create<StartOwnershipTransferEndpoint>(),
+                EndpointRegistration.Create<ConfirmOwnershipTransferEndpoint>(),
+                EndpointRegistration.Create<CancelOwnershipTransferEndpoint>(),
+                EndpointRegistration.Create<RevokeInvitationEndpoint>(),
+                EndpointRegistration.Create<AccessInviteEndpoint>(),
+                EndpointRegistration.Create<AccessRevokeInvitationEndpoint>(),
+                EndpointRegistration.Create<AccessResendInvitationEndpoint>(),
+                EndpointRegistration.Create<MemberRoleByIdEndpoint>(),
+                EndpointRegistration.Create<MemberRemoveByIdEndpoint>(),
+                EndpointRegistration.Create<AccessMemberRoleEndpoint>(),
+                EndpointRegistration.Create<AccessMemberRemoveEndpoint>(),
+                EndpointRegistration.Create<SetMfaPolicyEndpoint>(),
+                EndpointRegistration.Create<LeaveOrganizationEndpoint>(),
+                EndpointRegistration.Create<DeleteOrganizationEndpoint>(),
+                EndpointRegistration.Create<DeleteProjectEndpoint>(),
+                EndpointRegistration.Create<AccountDeletedEndpoint>(),
+                EndpointRegistration.Create<ProfilePageEndpoint>(),
+                EndpointRegistration.Create<SaveProfileEndpoint>(),
+                EndpointRegistration.Create<SaveProfileLanguageEndpoint>(),
+                EndpointRegistration.Create<DeleteProfileEndpoint>(),
+                EndpointRegistration.Create<AccountDeletionProgressEndpoint>(),
+                EndpointRegistration.Create<ProfileDeletionStatusEndpoint>(),
+                EndpointRegistration.Create<ProfileDeletionContinueEndpoint>(),
+                EndpointRegistration.Create<UnlinkProviderEndpoint>(),
+                EndpointRegistration.Create<SendProviderCodeEndpoint>(),
+                EndpointRegistration.Create<EmailChangeEndpoint>(),
+                EndpointRegistration.Create<ConfirmEmailChangeEndpoint>(),
+                EndpointRegistration.Create<SignOutEverywhereEndpoint>(),
+                EndpointRegistration.Create<RevokeSessionEndpoint>(),
+                EndpointRegistration.Create<CreateProfileAccessTokenEndpoint>(),
+                EndpointRegistration.Create<RevokeProfileAccessTokenEndpoint>(),
             ]);
             builder.Services.AddTransient<ServerTiming.Handler>();
             builder.Services.AddTransient<RequestIdentity.Handler>();
@@ -304,8 +344,6 @@ namespace TerraScale.Dashboard
             app.MapUsage();
             app.MapSettings();
             app.MapFileStorage();
-            app.MapProfile();
-            app.MapProfileAccessTokens();
             app.MapSupport();
             app.MapNotifications();
             app.MapAlerts();
