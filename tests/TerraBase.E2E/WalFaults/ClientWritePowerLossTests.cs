@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Primitives;
 
@@ -22,7 +23,7 @@ public sealed class ClientWritePowerLossTests
 
         var delay = TimeSpan.FromMilliseconds(500);
         node.DelaySyncs(delay);
-        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var clock = Stopwatch.StartNew();
         await ExecuteAsync(node.Client, path, "INSERT INTO items (n) VALUES (3)", "INSERT INTO items (n) VALUES (4)");
         await Assert.That(clock.Elapsed).IsGreaterThanOrEqualTo(delay).Because("a write is answered after its commit's sync");
         node.ClearFaults();

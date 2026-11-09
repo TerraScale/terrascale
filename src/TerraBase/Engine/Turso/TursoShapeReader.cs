@@ -1,4 +1,6 @@
 using System.Buffers;
+using System.Collections;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -61,7 +63,7 @@ internal sealed partial class TursoShapeReader(
 
                 return filter;
             default:
-                throw new System.Diagnostics.UnreachableException();
+                throw new UnreachableException();
         }
     }
 
@@ -714,7 +716,7 @@ internal sealed partial class TursoShapeReader(
                 case (1, _, false) or (0, false, false) or (-1, false, _):
                     return false;
                 case (0, true, true) when output.Selected.All(index =>
-                    System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(before![index], after![index])):
+                    StructuralComparisons.StructuralEqualityComparer.Equals(before![index], after![index])):
                     return false;
                 case (0, false, true):
                     (type, move) = (1, "in");

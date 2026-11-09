@@ -1,8 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
+using Turso.Data.Sqlite;
 using Turso.Raw.Public;
 
-namespace Turso.Data.Sqlite.Tests;
+namespace TerraBase.Slow.Driver;
 
 public sealed class WalRevisionContractTests
 {
