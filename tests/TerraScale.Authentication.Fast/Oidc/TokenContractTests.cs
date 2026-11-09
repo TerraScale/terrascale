@@ -98,10 +98,9 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
             .IsEquivalentTo(["openid", "email", "profile", "offline_access"]);
         refresh = whole.GetProperty("refresh_token").GetString()!;
 
-        var expansions = await Task.WhenAll(ExpansionRefusals.Select(scope =>
-            oidc.TokenAsync(new() { ["grant_type"] = "refresh_token", ["refresh_token"] = refresh, ["scope"] = scope })).ToArray());
-        foreach (var expansion in expansions)
+        foreach (var scope in ExpansionRefusals)
         {
+            using var expansion = await oidc.TokenAsync(new() { ["grant_type"] = "refresh_token", ["refresh_token"] = refresh, ["scope"] = scope });
             var error = JsonSerializer.Deserialize<JsonElement>(await expansion.Content.ReadAsStringAsync());
             await Assert.That(expansion.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             await Assert.That(error.GetProperty("error").GetString()).IsEqualTo("invalid_scope");
