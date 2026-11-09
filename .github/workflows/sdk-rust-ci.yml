@@ -7,7 +7,6 @@ on:
       - 'sdk/rust/**'
       - '.github/workflows/sdk-rust-*.yml'
       - '.github/workflows/sdk-fast.yml'
-      - 'scripts/sdk/**'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
   pull_request:
@@ -16,13 +15,16 @@ on:
       - 'sdk/rust/**'
       - '.github/workflows/sdk-rust-*.yml'
       - '.github/workflows/sdk-fast.yml'
-      - 'scripts/sdk/**'
       - '!**/AGENTS.md'
       - '!**/CLAUDE.md'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: sdk-rust-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   fast:

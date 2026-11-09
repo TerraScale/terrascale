@@ -31,6 +31,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: dashboard-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-24.04
@@ -49,19 +53,6 @@ jobs:
         uses: ./.github/actions/turso-native-cache
       - name: Dashboard Fast
         run: make dashboard-test-fast
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version: '24.21.0'
-          cache: npm
-          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
-      - name: Install the web asset build
-        run: npm ci --prefix src/TerraScale.Dashboard/web
-      - name: Dashboard lint
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -n "$BASE_SHA" ]; then git fetch --no-tags --depth=1 origin "$BASE_SHA"; fi
-          make dashboard-lint
       # The image job wraps these exact bytes without another build.
       - name: Publish the tested application
         if: github.event_name != 'pull_request'
@@ -77,3 +68,30 @@ jobs:
           path: ${{ runner.temp }}/dashboard-publish
           if-no-files-found: error
           retention-days: 1
+
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+      - name: Restore the dashboard
+        run: dotnet restore scripts/dashboard/TerraScale.Dashboard.slnx --locked-mode
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
+      - name: Install the web asset build
+        run: npm ci --prefix src/TerraScale.Dashboard/web
+      - name: Dashboard lint
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then git fetch --no-tags --depth=1 origin "$BASE_SHA"; fi
+          make dashboard-lint
