@@ -178,17 +178,13 @@ internal sealed partial class RegionalHandoff
         attempt.CancelAfter(AttemptBudget);
         try
         {
-            var peers = await new PeersFile(options).ListAsync(attempt.Token).ConfigureAwait(false);
-            var peer = peers.FirstOrDefault(peer => peer.Name == node && peer.Region == options.Region);
+            var peer = await SelfRegionPeerAsync(node, attempt.Token).ConfigureAwait(false);
             if (peer is null)
             {
                 return false;
             }
-            var address = peer.InternalListener(options.InternalPort);
-            using var response = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), attempt.Token).ConfigureAwait(false);
-            return response.IsSuccessStatusCode
-                && await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, attempt.Token).ConfigureAwait(false)
-                    is { Ready: true, Node: var actual } && actual == node;
+            return await StatusAsync(new Uri(peer.InternalListener(options.InternalPort), "/v1/rollout/status"), attempt.Token).ConfigureAwait(false)
+                is { Ready: true, Node: var actual } && actual == node;
         }
         catch (Exception error) when (error is HttpRequestException || error is OperationCanceledException && !token.IsCancellationRequested)
         {
@@ -280,16 +276,9 @@ internal sealed partial class RegionalHandoff
 
     private async Task<NatsKVEntry<byte[]>?> BeginDrainAsync(INatsKVStore kv, string target, CancellationToken token)
     {
-        var peers = await new PeersFile(options).ListAsync(token).ConfigureAwait(false);
-        var candidate = peers.FirstOrDefault(peer => peer.Name == target && peer.Region == options.Region);
-        if (candidate is null)
-        {
-            return null;
-        }
-        var candidateAddress = candidate.InternalListener(options.InternalPort);
-        using var candidateResponse = await _http.GetAsync(new Uri(candidateAddress, "/v1/rollout/status"), token).ConfigureAwait(false);
-        if (!candidateResponse.IsSuccessStatusCode
-            || await candidateResponse.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, token).ConfigureAwait(false)
+        var candidate = await SelfRegionPeerAsync(target, token).ConfigureAwait(false);
+        if (candidate is null
+            || await StatusAsync(new Uri(candidate.InternalListener(options.InternalPort), "/v1/rollout/status"), token).ConfigureAwait(false)
                 is not { Ready: true, Session.Length: > 0, Node: var candidateNode } || candidateNode != target)
         {
             return null;
@@ -332,15 +321,13 @@ internal sealed partial class RegionalHandoff
 
     private async Task<bool> ReplacedSourceReadyAsync(RegionalTransfer transfer, RegionalOwner owner, CancellationToken token)
     {
-        var peers = await new PeersFile(options).ListAsync(token).ConfigureAwait(false);
-        var source = peers.FirstOrDefault(peer => peer.Name == transfer.Source && peer.Region == options.Region);
+        var source = await SelfRegionPeerAsync(transfer.Source, token).ConfigureAwait(false);
         if (source is null)
         {
             return false;
         }
         var address = source.InternalListener(options.InternalPort);
-        using var response = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), token).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode || await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, token).ConfigureAwait(false)
+        if (await StatusAsync(new Uri(address, "/v1/rollout/status"), token).ConfigureAwait(false)
             is not { Ready: true, Session.Length: > 0 } status || status.Node != transfer.Source
             || status.Session == transfer.SourceSession || status.Owner != owner.Node || status.Epoch < owner.Epoch)
         {

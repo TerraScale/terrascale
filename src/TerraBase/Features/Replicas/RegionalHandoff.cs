@@ -560,31 +560,14 @@ internal sealed partial class RegionalHandoff(
             using (var activation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
                 activation.CancelAfter(ActivationBudget);
-                while (true)
-                {
-                    using var ready = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), activation.Token).ConfigureAwait(false);
-                    if (ready.IsSuccessStatusCode && await ready.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, activation.Token).ConfigureAwait(false)
-                        is { Writer: true, Ready: true, Owner: var active } && active == target)
-                    {
-                        break;
-                    }
-                    await Task.Delay(TimeSpan.FromMilliseconds(25), activation.Token).ConfigureAwait(false);
-                }
+                await AwaitStatusAsync(new Uri(address, "/v1/rollout/status"),
+                    status => status is { Writer: true, Ready: true, Owner: var active } && active == target, activation.Token).ConfigureAwait(false);
             }
             foreach (var observer in nodes.Where(node => node.Name != options.MachineId))
             {
                 var observedAt = observer.InternalListener(options.InternalPort);
-                while (true)
-                {
-                    using var seen = await _http.GetAsync(new Uri(observedAt, "/v1/rollout/status?region=" + options.Region), cancellationToken).ConfigureAwait(false);
-                    if (seen.IsSuccessStatusCode && await seen.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, cancellationToken).ConfigureAwait(false)
-                        is { Node: var observedNode, Owner: var observedOwner, Epoch: var observedEpoch }
-                        && observedNode == observer.Name && observedOwner == target && observedEpoch >= next.Epoch)
-                    {
-                        break;
-                    }
-                    await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
-                }
+                await AwaitStatusAsync(new Uri(observedAt, "/v1/rollout/status?region=" + options.Region),
+                    status => status.Node == observer.Name && status.Owner == target && status.Epoch >= next.Epoch, cancellationToken).ConfigureAwait(false);
             }
             admission.Dispose();
             admission = null;
@@ -618,6 +601,28 @@ internal sealed partial class RegionalHandoff(
 
     private static RegionalOwner Decode(byte[] value) => JsonSerializer.Deserialize(value, TerraBaseJsonContext.Default.RegionalOwner)
         ?? throw new InvalidDataException("invalid regional owner");
+
+    private async Task<ServingNode?> SelfRegionPeerAsync(string node, CancellationToken cancellationToken)
+    {
+        var peers = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
+        return peers.FirstOrDefault(peer => peer.Name == node && peer.Region == options.Region);
+    }
+
+    private async Task<RegionalStatus?> StatusAsync(Uri address, CancellationToken cancellationToken)
+    {
+        using var response = await _http.GetAsync(address, cancellationToken).ConfigureAwait(false);
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, cancellationToken).ConfigureAwait(false)
+            : null;
+    }
+
+    private async Task AwaitStatusAsync(Uri address, Func<RegionalStatus, bool> settled, CancellationToken cancellationToken)
+    {
+        while (await StatusAsync(address, cancellationToken).ConfigureAwait(false) is not { } status || !settled(status))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
+        }
+    }
 
     private static async Task<NatsKVEntry<byte[]>?> ReadAsync(INatsKVStore kv, string region, CancellationToken cancellationToken)
     {
