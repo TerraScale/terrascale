@@ -15,10 +15,7 @@ for (const [locale, messages] of locales) {
     assert.ok(messages.homeFaq.items.some((item) => noSla[locale].test(item.a)));
   });
 
-  // The approved Contact design explicitly includes its section label and introduction, and the
-  // approved footer redesign carries the product tagline. Keep the Simple UI restriction
-  // everywhere else, with only these three exact exceptions.
-  test(`${locale}: secondary copy is limited to the approved Contact and footer exceptions`, () => {
+  test(`${locale}: secondary copy is limited to the approved Contact exceptions`, () => {
     const keys = [];
     const walk = (value, path) => {
       if (Array.isArray(value)) value.forEach((item, i) => walk(item, `${path}[${i}]`));
@@ -28,7 +25,7 @@ for (const [locale, messages] of locales) {
     };
     walk(messages, locale);
     assert.deepEqual(keys.filter((key) => /\.(?:\w*eyebrow|subtitle|tagline|ctaNote|perks|highlights)$/i.test(key)),
-      [`${locale}.footer.tagline`, `${locale}.contact.eyebrow`, `${locale}.contact.subtitle`]);
+      [`${locale}.contact.eyebrow`, `${locale}.contact.subtitle`]);
     assert.ok(messages.contact.eyebrow.trim() && messages.contact.subtitle.trim());
   });
 

@@ -30,7 +30,6 @@ export const es: Messages = {
 
   footer: {
     rightsReserved: 'Todos los derechos reservados.',
-    tagline: 'Base de datos multirregión',
     columns: {
       product: {
         title: 'Producto',
@@ -183,6 +182,7 @@ export const es: Messages = {
     copied: 'Copiado',
     copyAria: 'Copiar código',
     tablistLabel: 'Ejemplos de código',
+    sourcePending: '(fuente)',
   },
 
   cta: {

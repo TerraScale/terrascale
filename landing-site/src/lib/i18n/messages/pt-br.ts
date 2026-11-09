@@ -30,7 +30,6 @@ export const ptBr: Messages = {
 
   footer: {
     rightsReserved: 'Todos os direitos reservados.',
-    tagline: 'Banco de dados multirregião',
     columns: {
       product: {
         title: 'Produto',
@@ -183,6 +182,7 @@ export const ptBr: Messages = {
     copied: 'Copiado',
     copyAria: 'Copiar código',
     tablistLabel: 'Exemplos de código',
+    sourcePending: '(fonte)',
   },
 
   cta: {
