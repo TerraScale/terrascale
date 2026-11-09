@@ -51,15 +51,15 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: space-between;
+  justify-content: center;
   gap: var(--ts-s8);
 }
 
-/* Neutral dotted world map: masked dots, dashed static routes, muted markers, no animation. */
 .ts-auth-map {
   position: relative;
   width: 100%;
   aspect-ratio: 119 / 60;
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--ts-link) 14%, transparent), transparent);
 }
 
 .ts-auth-map::before {
@@ -67,7 +67,7 @@
   position: absolute;
   inset: 0;
   background: var(--ts-ink-3);
-  opacity: 0.4;
+  opacity: 0.28;
   -webkit-mask: url("/brand/world-map-dots.svg") center / contain no-repeat;
   mask: url("/brand/world-map-dots.svg") center / contain no-repeat;
 }
@@ -82,51 +82,87 @@
 
 .ts-auth-routes path {
   fill: none;
-  stroke: var(--ts-ink-3);
+  stroke: var(--ts-link);
   stroke-width: 1;
-  stroke-dasharray: 3 4;
-  opacity: 0.7;
+  stroke-dasharray: 2 2;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.55;
+  animation: ts-route-flow 3s linear infinite;
 }
 
-.ts-auth-point {
+@keyframes ts-route-flow {
+  to { stroke-dashoffset: -8; }
+}
+
+.ts-auth-pin {
   position: absolute;
-  width: 10px;
-  height: 10px;
-  margin: -5px;
-  border: 2px solid var(--ts-surface);
+  width: 0;
+  height: 0;
+}
+
+.ts-auth-point-sjc { left: 16.1%; top: 32.8%; }
+.ts-auth-point-gru { left: 37%; top: 75.7%; }
+.ts-auth-point-fra { left: 52.4%; top: 23.9%; }
+
+.ts-auth-pin-core,
+.ts-auth-pin-ring {
+  position: absolute;
+  inset: -4px auto auto -4px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--ts-ink-2);
 }
 
-.ts-auth-point-sjc { left: 16.1%; top: 32.8%; background: var(--ts-chart-4); }
-.ts-auth-point-gru { left: 37%; top: 75.7%; background: var(--ts-chart-2); }
-.ts-auth-point-fra { left: 52.4%; top: 23.9%; background: var(--ts-chart-3); }
-
-.ts-auth-regions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ts-s2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.ts-auth-pin-core {
+  background: var(--ts-link);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ts-link) 25%, transparent), 0 0 12px var(--ts-link);
 }
 
-.ts-auth-region {
+.ts-auth-pin-ring {
+  border: 1.5px solid var(--ts-link);
+  animation: ts-region-pulse 2.8s ease-out infinite;
+}
+
+@keyframes ts-region-pulse {
+  0% { opacity: 0.85; transform: scale(1); }
+  85%, 100% { opacity: 0; transform: scale(3.5); }
+}
+
+.ts-auth-point-gru .ts-auth-pin-ring { animation-delay: -0.8s; }
+.ts-auth-point-fra .ts-auth-pin-ring { animation-delay: -1.6s; }
+
+.ts-auth-pin-label {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
-  gap: var(--ts-s2);
-  height: 28px;
-  padding-inline: var(--ts-s2);
+  gap: var(--ts-s1);
+  padding: var(--ts-s1) var(--ts-s2);
   border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius);
+  border-radius: var(--ts-radius-sm);
+  background: color-mix(in oklab, var(--ts-canvas) 82%, transparent);
   color: var(--ts-ink-2);
   font-size: var(--ts-fs-xs);
+  white-space: nowrap;
 }
 
-.ts-auth-region img {
-  width: 16px;
-  height: 12px;
+.ts-auth-pin-label img {
+  width: 14px;
+  height: 11px;
   border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-auth-pin-ring {
+    display: none;
+    animation: none;
+  }
+
+  .ts-auth-routes path {
+    animation: none;
+  }
 }
 
 /* Centered form column: card, then the locale footer below it. */
