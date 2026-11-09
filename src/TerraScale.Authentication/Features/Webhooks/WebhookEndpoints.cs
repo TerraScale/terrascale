@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 
@@ -12,6 +13,8 @@ namespace TerraScale.Authentication.Features.Webhooks;
 
 public sealed record WebhookEndpointRecord(string InstanceId, string Id, string ProjectId, string Url, IReadOnlyList<string> EventTypes,
     string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default);
+
+internal sealed record WebhookEndpointCounter(string InstanceId, string ProjectId, int Count);
 
 public sealed record CreateWebhookEndpointRequest(string? Url, IReadOnlyList<string>? EventTypes);
 
@@ -27,6 +30,8 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
 {
     public const int MaxPerProject = 3;
 
+    private const string CounterKey = "count";
+
     public static readonly TimeSpan DualSecretWindow = TimeSpan.FromHours(24);
 
     public static readonly FrozenSet<string> LifecycleEvents = new[]
@@ -36,7 +41,8 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
 
     public async Task<(WebhookEndpointRecord Endpoint, string Secret)> CreateAsync(string projectId, string url, IReadOnlyList<string> eventTypes, CancellationToken cancellationToken)
     {
-        if (await store.CountAsync(AuthStore.WebhookEndpointTable, projectId, cancellationToken).ConfigureAwait(false) >= MaxPerProject)
+        var (count, counterVersion) = await this.CounterAsync(projectId, cancellationToken).ConfigureAwait(false);
+        if (count >= MaxPerProject)
         {
             throw new ApiException(409, "webhook_endpoint_limit", $"A project registers at most {MaxPerProject} webhook endpoints.");
         }
@@ -45,16 +51,38 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
         var secret = NewSecret();
         var endpoint = new WebhookEndpointRecord(projectId, id, projectId, url, eventTypes,
             SecretBox.Seal(options.MasterKey, Encoding.UTF8.GetBytes(secret), Context(projectId, id)), CreatedAt: clock.GetUtcNow());
-        await store.CreateAsync(AuthStore.WebhookEndpointTable, projectId, id, JsonSerializer.SerializeToElement(endpoint, WebhookStoreJson.Default.WebhookEndpointRecord), cancellationToken).ConfigureAwait(false);
+        List<StoreOperation> operations =
+        [
+            counterVersion is null
+                ? AuthStore.Create(AuthStore.WebhookEndpointTable, projectId, CounterKey, Counter(projectId, count + 1))
+                : AuthStore.Replace(AuthStore.WebhookEndpointTable, projectId, CounterKey, Counter(projectId, count + 1), counterVersion),
+            AuthStore.Create(AuthStore.WebhookEndpointTable, projectId, id,
+                JsonSerializer.SerializeToElement(endpoint, WebhookStoreJson.Default.WebhookEndpointRecord)),
+        ];
+        if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            throw new ApiException(409, "webhook_endpoint_limit", $"A project registers at most {MaxPerProject} webhook endpoints.");
+        }
+
         return (endpoint, secret);
     }
+
+    private async Task<(int Count, string? Version)> CounterAsync(string projectId, CancellationToken cancellationToken)
+    {
+        var row = await store.GetAsync(AuthStore.WebhookEndpointTable, projectId, CounterKey, cancellationToken).ConfigureAwait(false);
+        return row?.Body.Deserialize(WebhookStoreJson.Default.WebhookEndpointCounter) is { ProjectId: var owner } counter && owner == projectId
+            ? (counter.Count, row.Version) : (0, null);
+    }
+
+    private static JsonElement Counter(string projectId, int count) =>
+        JsonSerializer.SerializeToElement(new WebhookEndpointCounter(projectId, projectId, count), WebhookStoreJson.Default.WebhookEndpointCounter);
 
     public async Task<IReadOnlyList<WebhookEndpointRecord>> ListAsync(string projectId, CancellationToken cancellationToken)
     {
         List<WebhookEndpointRecord> endpoints = [];
         await foreach (var row in store.QueryAsync(AuthStore.WebhookEndpointTable, projectId, "/instanceId", projectId, cancellationToken).ConfigureAwait(false))
         {
-            if (row.Body.Deserialize(WebhookStoreJson.Default.WebhookEndpointRecord) is { InstanceId: var instanceId } endpoint && instanceId == projectId)
+            if (row.Body.TryGetProperty("eventTypes", out _) && row.Body.Deserialize(WebhookStoreJson.Default.WebhookEndpointRecord) is { InstanceId: var instanceId } endpoint && instanceId == projectId)
             {
                 endpoints.Add(endpoint);
             }
@@ -66,11 +94,25 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
     public async Task<bool> DeleteAsync(string projectId, string id, CancellationToken cancellationToken)
     {
         var row = await store.GetAsync(AuthStore.WebhookEndpointTable, projectId, id, cancellationToken).ConfigureAwait(false);
-        return row is not null && row.Body.Deserialize(WebhookStoreJson.Default.WebhookEndpointRecord) is { ProjectId: var owner } && owner == projectId
-            && await store.CompareAndDeleteAsync(AuthStore.WebhookEndpointTable, projectId, id, row.Version, cancellationToken).ConfigureAwait(false);
+        if (row is null || row.Body.Deserialize(WebhookStoreJson.Default.WebhookEndpointRecord) is not { ProjectId: var owner } endpoint || owner != projectId)
+        {
+            return false;
+        }
+
+        var (count, counterVersion) = await this.CounterAsync(projectId, cancellationToken).ConfigureAwait(false);
+        List<StoreOperation> operations = [AuthStore.Delete(AuthStore.WebhookEndpointTable, projectId, id, row.Version)];
+        if (counterVersion is not null && count > 0)
+        {
+            operations.Add(count == 1
+                ? AuthStore.Delete(AuthStore.WebhookEndpointTable, projectId, CounterKey, counterVersion)
+                : AuthStore.Replace(AuthStore.WebhookEndpointTable, projectId, CounterKey, Counter(projectId, count - 1), counterVersion));
+        }
+
+        return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null;
     }
 
-    public async Task<(WebhookEndpointRecord Endpoint, string Secret)> RotateAsync(string projectId, string id, CancellationToken cancellationToken)
+    public async Task<(WebhookEndpointRecord Endpoint, string Secret)> RotateAsync(string projectId, string id,
+        IReadOnlyList<StoreOperation> consumption, CancellationToken cancellationToken)
     {
         var row = await store.GetAsync(AuthStore.WebhookEndpointTable, projectId, id, cancellationToken).ConfigureAwait(false);
         if (row is null || row.Body.Deserialize(WebhookStoreJson.Default.WebhookEndpointRecord) is not { ProjectId: var owner } endpoint || owner != projectId)
@@ -85,10 +127,17 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
             PreviousSecretBox = endpoint.SecretBox,
             PreviousSecretExpiresAt = clock.GetUtcNow() + DualSecretWindow,
         };
-        if (!await store.CompareAndPutAsync(AuthStore.WebhookEndpointTable, projectId, id,
-            JsonSerializer.SerializeToElement(rotated, WebhookStoreJson.Default.WebhookEndpointRecord), row.Version, cancellationToken).ConfigureAwait(false))
+        List<StoreOperation> operations =
+        [
+            .. consumption,
+            AuthStore.Replace(AuthStore.WebhookEndpointTable, projectId, id,
+                JsonSerializer.SerializeToElement(rotated, WebhookStoreJson.Default.WebhookEndpointRecord), row.Version),
+        ];
+        if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is { } failed)
         {
-            throw ApiException.Unavailable();
+            throw failed < operations.Count - 1
+                ? StepUpProofs.Required()
+                : new ApiException(409, "version_conflict", "The webhook endpoint changed; read it again and retry.");
         }
 
         return (rotated, secret);
@@ -108,4 +157,5 @@ internal sealed partial class WebhooksJson : JsonSerializerContext;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(WebhookEndpointRecord))]
+[JsonSerializable(typeof(WebhookEndpointCounter))]
 internal sealed partial class WebhookStoreJson : JsonSerializerContext;

@@ -25,7 +25,8 @@ public sealed class WebhookEndpointTests(TerraBaseFixture fixture)
         var events = new[] { "user.signed_up", "user.disabled" };
 
         var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/webhook-endpoints", token,
-            new { url = "https://hooks.example.test/lifecycle", event_types = events }, HttpStatusCode.Created);
+            new { url = "  https://hooks.example.test/lifecycle  ", event_types = events }, HttpStatusCode.Created);
+        await Assert.That(created.GetProperty("url").GetString()).IsEqualTo("https://hooks.example.test/lifecycle");
         await Assert.That(created.GetProperty("event_types").EnumerateArray().Select(type => type.GetString()!).ToArray()).IsEquivalentTo(events);
         var id = created.GetProperty("id").GetString()!;
         var secret = created.GetProperty("secret").GetString()!;
@@ -36,7 +37,8 @@ public sealed class WebhookEndpointTests(TerraBaseFixture fixture)
         await Assert.That(listed[0].GetProperty("id").GetString()).IsEqualTo(id);
         await Assert.That(listed[0].TryGetProperty("secret", out _)).IsFalse();
         var stored = await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.WebhookEndpointTable, project, id);
-        await Assert.That(stored!.Body.GetRawText()).DoesNotContain(secret);
+        await Assert.That(stored!.Body.GetProperty("url").GetString()).IsEqualTo("https://hooks.example.test/lifecycle");
+        await Assert.That(stored.Body.GetRawText()).DoesNotContain(secret);
         await Assert.That(stored.Body.GetProperty("secretBox").GetString()!.StartsWith("v1:", StringComparison.Ordinal)).IsTrue();
 
         var rotated = await oidc.OkAsync(HttpMethod.Post, $"{root}/webhook-endpoints/{id}/rotate-secret", token);

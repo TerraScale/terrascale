@@ -10,14 +10,14 @@ public sealed class RotateWebhookSecretEndpoint(TenantDirectory tenants, Platfor
     public override void Configure()
     {
         Post(Root + "/webhook-endpoints/{id}/rotate-secret");
-        this.Describe("rotate_webhook_secret", "Rotate a webhook endpoint's secret", "Issues a new whsec_ signing secret and answers it exactly once. The previous secret keeps verifying for 24 hours, then is refused. Needs the admin project role and a rotate_webhook_secret step-up proof.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookSecretBody));
+        this.Describe("rotate_webhook_secret", "Rotate a webhook endpoint's secret", "Issues a new whsec_ signing secret and answers it exactly once. The previous secret keeps verifying for 24 hours, then is refused. A concurrent change to the endpoint answers 409 version_conflict. Needs the admin project role and a rotate_webhook_secret step-up proof.", "Project tenants", null, StatusCodes.Status200OK, typeof(WebhookSecretBody), conflict: true);
     }
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "rotate_webhook_secret", null, cancellationToken);
-        var (endpoint, secret) = await webhooks.RotateAsync(projectId, this.RouteId("id"), cancellationToken);
+        var prepared = await proofs.PrepareHeaderAsync(caller, this.HttpContext.Request, "rotate_webhook_secret", null, cancellationToken) ?? throw StepUpProofs.Required();
+        var (endpoint, secret) = await webhooks.RotateAsync(projectId, this.RouteId("id"), prepared.Operations, cancellationToken);
         return Results.Json(new WebhookSecretBody(endpoint.Id, secret, endpoint.PreviousSecretExpiresAt), WebhooksJson.Default.WebhookSecretBody);
     }
 }
