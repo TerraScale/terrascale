@@ -14,7 +14,7 @@ namespace TerraScale.Dashboard.Features.Profile
     {
         private readonly DeletionCleanupJournal journal = new(state);
         private readonly DeletionProjectRecords projectRecords = new(state);
-        private readonly DeletionRelatedRecords related = new(state, sessions);
+        private readonly DeletionRelatedRecords related = new(state);
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -82,7 +82,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     await AccountService.FenceDeletionAsync(state, proof.SubjectId, proof.Id, cancellationToken);
                     await tokens.ForgetAllAsync(proof.SubjectId, cancellationToken);
                     await sessions.RevokeUserAsync(proof.SubjectId, cancellationToken);
-                    await sessions.CleanEnrollmentsAsync(proof.SubjectId, cancellationToken);
+                    await sessions.ForgetUserAsync(proof.SubjectId, cancellationToken);
                     await related.CleanAccountAsync(proof.SubjectId, cancellationToken);
                     await AccountDeletion.CleanOperationsAsync(state, identity, proof.SubjectId, clock, cancellationToken);
                     var key = AccountService.AccountStorageKey(proof.SubjectId);
@@ -90,8 +90,6 @@ namespace TerraScale.Dashboard.Features.Profile
                     {
                         await VerifyFenceAsync(table, key, cancellationToken);
                     }
-
-                    await VerifyAbsentAsync(AccessTokens.Table, key, cancellationToken);
                     break;
                 case "organization":
                     var ended = await billing.EndSubscriptionAsync(proof.SubjectId, cancellationToken, completedDeletion: true);
@@ -284,14 +282,6 @@ namespace TerraScale.Dashboard.Features.Profile
             if (row is null || row.Id != key || !AccountService.IsDeletionFence(row))
             {
                 throw new IOException("Erasure fence is unavailable.");
-            }
-        }
-
-        private async Task VerifyAbsentAsync(string table, string key, CancellationToken cancellationToken)
-        {
-            if (await state.GetAsync(table, key, cancellationToken) is not null)
-            {
-                throw new IOException("Deletion cleanup is incomplete.");
             }
         }
 

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.TsAuth;
@@ -81,7 +82,12 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var key = AccountService.AccountStorageKey(UserId);
             await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsTable, key, default))!)).IsTrue();
             await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.IdentitiesTable, key, default))!)).IsTrue();
-            await Assert.That(await scenario.ExistsAsync(AccessTokens.Table, key)).IsFalse();
+            await using (var storage = await scenario.Environment.StorageAsync())
+            {
+                await Assert.That(await storage.AccessTokens.AnyAsync(row => row.UserId == UserId)).IsFalse();
+                await Assert.That(await storage.Sessions.AnyAsync(row => row.UserId == UserId)).IsFalse();
+            }
+
             await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.OrganizationsTable, personal, default))!)).IsTrue();
             await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsTable, shared)).IsTrue().Because("shared organizations keep their data");
             await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();

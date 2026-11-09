@@ -17,6 +17,79 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Auth.AccessTokenRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("CredentialId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("credential_id");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("LastFour")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_four");
+
+                    b.Property<string>("McpClientId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("mcp_client_id");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("SecretHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("secret_hash");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CredentialId")
+                        .IsUnique();
+
+                    b.HasIndex("McpClientId");
+
+                    b.HasIndex("SecretHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "ExpiresAt");
+
+                    b.ToTable("access_tokens", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_access_tokens_id", "length(id) = 26");
+
+                            t.HasCheckConstraint("ck_access_tokens_last_four", "length(last_four) = 4");
+
+                            t.HasCheckConstraint("ck_access_tokens_lifetime", "expires_at > created_at");
+
+                            t.HasCheckConstraint("ck_access_tokens_name", "length(name) BETWEEN 1 AND 256");
+
+                            t.HasCheckConstraint("ck_access_tokens_secret_hash", "length(secret_hash) = 64");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Features.Auth.AuthFlowRow", b =>
                 {
                     b.Property<string>("Id")
@@ -150,6 +223,172 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_sessions_version", "length(version) = 26");
                         });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Platform.Mcp.McpClientRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("ClosedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("closed_at");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime?>("FirstSignInCompletedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("first_sign_in_completed_at");
+
+                    b.Property<DateTime>("LastActivityAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_activity_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("RedirectUris")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("redirect_uris");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FirstSignInCompletedAt", "CreatedAt");
+
+                    b.ToTable("mcp_clients", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_mcp_clients_activity", "last_activity_at >= created_at");
+
+                            t.HasCheckConstraint("ck_mcp_clients_closed", "closed_at IS NULL OR closed_at >= last_activity_at");
+
+                            t.HasCheckConstraint("ck_mcp_clients_first_sign_in", "(first_sign_in_completed_at IS NULL AND last_activity_at = created_at) OR (first_sign_in_completed_at BETWEEN created_at AND last_activity_at)");
+
+                            t.HasCheckConstraint("ck_mcp_clients_id", "length(id) = 26 AND id = upper(id)");
+
+                            t.HasCheckConstraint("ck_mcp_clients_name", "length(name) BETWEEN 1 AND 256");
+
+                            t.HasCheckConstraint("ck_mcp_clients_redirect_uris", "json_array_length(redirect_uris) BETWEEN 1 AND 10");
+
+                            t.HasCheckConstraint("ck_mcp_clients_version", "length(version) = 26");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Platform.Mcp.McpCodeRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("client_id");
+
+                    b.Property<string>("ClientName")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("client_name");
+
+                    b.Property<string>("CodeChallenge")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("code_challenge");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("code_hash");
+
+                    b.Property<string>("CredentialId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("credential_id");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("RedirectUri")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("redirect_uri");
+
+                    b.Property<string>("Resource")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("resource");
+
+                    b.Property<DateTime>("TokenExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("token_expires_at");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClientId");
+
+                    b.HasIndex("CodeHash")
+                        .IsUnique();
+
+                    b.HasIndex("CredentialId");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.ToTable("mcp_codes", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_mcp_codes_code_challenge", "length(code_challenge) = 43");
+
+                            t.HasCheckConstraint("ck_mcp_codes_code_hash", "length(code_hash) = 64");
+
+                            t.HasCheckConstraint("ck_mcp_codes_id", "length(id) = 26");
+
+                            t.HasCheckConstraint("ck_mcp_codes_token_expiry", "token_expires_at > expires_at");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Auth.AccessTokenRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Platform.Identity.SessionRow", null)
+                        .WithMany()
+                        .HasForeignKey("CredentialId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Dashboard.Platform.Mcp.McpClientRow", null)
+                        .WithMany()
+                        .HasForeignKey("McpClientId")
+                        .OnDelete(DeleteBehavior.Cascade);
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Platform.Mcp.McpCodeRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Platform.Mcp.McpClientRow", null)
+                        .WithMany()
+                        .HasForeignKey("ClientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Dashboard.Platform.Identity.SessionRow", null)
+                        .WithMany()
+                        .HasForeignKey("CredentialId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

@@ -1,165 +1,132 @@
-using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 
-namespace TerraScale.Dashboard.Platform.Mcp
+namespace TerraScale.Dashboard.Platform.Mcp;
+
+public sealed record McpRegistration(string ClientId, string Name, string[] RedirectUris,
+    DateTimeOffset CreatedAt, DateTimeOffset LastActivityAt,
+    DateTimeOffset? FirstSignInCompletedAt = null, DateTimeOffset? ClosedAt = null);
+
+public static class McpRegistrations
 {
-    // A public registration has no account owner. ClosedAt is terminal protocol state.
-    public sealed record McpRegistration(string ClientId, string Name, string[] RedirectUris,
-        DateTimeOffset CreatedAt, DateTimeOffset LastActivityAt,
-        DateTimeOffset? FirstSignInCompletedAt = null, DateTimeOffset? ClosedAt = null);
+    public static readonly TimeSpan UnfinishedLifetime = TimeSpan.FromHours(24);
+    public static readonly TimeSpan IdleLifetime = TimeSpan.FromDays(30);
 
-    public static class McpRegistrations
+    public static async Task<McpRegistration> CreateAsync(IDbContextFactory<DashboardDbContext> storage, string name, string[] redirectUris, DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
-        public static McpRegistration Create(string clientId, string name, string[] redirectUris, DateTimeOffset now)
+        var at = now.UtcDateTime;
+        var row = new McpClientRow
         {
-            var registration = new McpRegistration(clientId, name, [.. redirectUris], now, now);
-            Validate(registration, clientId);
-            return registration;
+            Id = AccountService.NewId(),
+            Name = name,
+            RedirectUris = [.. redirectUris],
+            CreatedAt = at,
+            LastActivityAt = at,
+            Version = AccountService.NewId(),
+        };
+        await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        db.McpClients.Add(row);
+        await db.SaveChangesAsync(cancellationToken);
+        return Registration(row);
+    }
+
+    public static Task<McpRegistration?> ReadActiveAsync(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, string clientId, CancellationToken cancellationToken)
+    {
+        return ReadAsync(storage, time, clientId, Activity.None, cancellationToken);
+    }
+
+    public static Task<McpRegistration?> CompleteSignInAsync(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, string clientId, CancellationToken cancellationToken)
+    {
+        return ReadAsync(storage, time, clientId, Activity.SignIn, cancellationToken);
+    }
+
+    public static Task<McpRegistration?> TouchAsync(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, string clientId, CancellationToken cancellationToken)
+    {
+        return ReadAsync(storage, time, clientId, Activity.Authenticated, cancellationToken);
+    }
+
+    public static async Task ReclaimUnfinishedAsync(DashboardDbContext db, DateTime now, CancellationToken cancellationToken)
+    {
+        var cutoff = now - UnfinishedLifetime;
+        await db.McpClients.Where(row => row.FirstSignInCompletedAt == null && row.ClosedAt == null && row.CreatedAt <= cutoff).ExecuteDeleteAsync(cancellationToken);
+    }
+
+    private enum Activity { None, SignIn, Authenticated }
+
+    private static async Task<McpRegistration?> ReadAsync(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, string clientId, Activity activity,
+        CancellationToken cancellationToken)
+    {
+        if (!Canonical(clientId))
+        {
+            return null;
         }
 
-        // Consent/discovery do not record activity. An expired read only closes the row.
-        public static Task<McpRegistration?> ReadActiveAsync(IDashboardState state, TimeProvider time, string clientId, CancellationToken cancellationToken)
+        await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        for (var attempt = 0; attempt < 8; attempt++)
         {
-            return ReadAsync(state, time, clientId, Activity.None, cancellationToken);
-        }
-
-        // Call only after a successful fresh ts-auth callback, never on consent POST.
-        public static Task<McpRegistration?> CompleteSignInAsync(IDashboardState state, TimeProvider time, string clientId, CancellationToken cancellationToken)
-        {
-            return ReadAsync(state, time, clientId, Activity.SignIn, cancellationToken);
-        }
-
-        // Successful issuance or fully validated bound bearer; cannot complete sign-in.
-        public static Task<McpRegistration?> TouchAsync(IDashboardState state, TimeProvider time, string clientId, CancellationToken cancellationToken)
-        {
-            return ReadAsync(state, time, clientId, Activity.Authenticated, cancellationToken);
-        }
-
-        private enum Activity { None, SignIn, Authenticated }
-
-        private static async Task<McpRegistration?> ReadAsync(IDashboardState state, TimeProvider time, string clientId, Activity activity, CancellationToken cancellationToken)
-        {
-            if (!Canonical(clientId))
+            db.ChangeTracker.Clear();
+            var row = await db.McpClients.SingleOrDefaultAsync(client => client.Id == clientId, cancellationToken);
+            if (row is null || row.ClosedAt is not null)
             {
                 return null;
             }
 
-            for (var attempt = 0; attempt < 8; attempt++)
-            {
-                // Natural key goes to the provider exactly once; never hash it here.
-                var row = await state.GetAsync(McpOAuth.ClientTable, clientId, cancellationToken);
-                if (row is null)
-                {
-                    return null;
-                }
-
-                if (row.Id != clientId || string.IsNullOrWhiteSpace(row.Version))
-                {
-                    throw new IOException("MCP registration state identity is invalid.");
-                }
-
-                var current = row.Body.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
-                Validate(current, clientId);
-                if (current.ClosedAt is not null)
-                {
-                    return null;
-                }
-                // Sample after each fresh read, including every retry; never renew an expired row.
-                var now = time.GetUtcNow();
-                if (current.CreatedAt > now || current.LastActivityAt > now)
-                {
-                    throw new IOException("MCP registration activity is in the future.");
-                }
-
-                var expired = current.FirstSignInCompletedAt is null
-                    ? now - current.CreatedAt >= TimeSpan.FromHours(24)
-                    : now - current.LastActivityAt >= TimeSpan.FromDays(30);
-                if (!expired && activity == Activity.None)
-                {
-                    return current;
-                }
-
-                if (!expired && activity == Activity.Authenticated && current.FirstSignInCompletedAt is null)
-                {
-                    return null;
-                }
-
-                var latest = now > current.LastActivityAt ? now : current.LastActivityAt;
-                var next = expired ? current with { ClosedAt = latest } : current with
-                {
-                    FirstSignInCompletedAt = current.FirstSignInCompletedAt ?? latest,
-                    LastActivityAt = latest
-                };
-                try
-                {
-                    await state.PutAsync(McpOAuth.ClientTable, clientId, JsonSerializer.SerializeToElement(next),
-                        StatePrecondition.Matches(row.Version), cancellationToken);
-                    return expired ? null : next;
-                }
-                catch (StateConflictException) { }
-            }
-            throw new IOException("MCP registration changed concurrently.");
-        }
-
-        internal static async Task ReclaimUnfinishedAsync(IDashboardState state, TimeProvider time,
-            StateRecord listed, CancellationToken cancellationToken)
-        {
-            var candidate = listed.Body.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
-            if (!Canonical(candidate.ClientId))
-            {
-                return; // Legacy clients are outside this policy.
-            }
-
-            Validate(candidate, candidate.ClientId);
-            if (listed.Id != candidate.ClientId)
-            {
-                throw new IOException("MCP registration listing identity is invalid.");
-            }
-
-            var fresh = await state.GetAsync(McpOAuth.ClientTable, candidate.ClientId, cancellationToken);
-            if (fresh is null)
-            {
-                return;
-            }
-
-            if (fresh.Id != candidate.ClientId || string.IsNullOrWhiteSpace(fresh.Version))
-            {
-                throw new IOException("MCP registration state identity is invalid.");
-            }
-
-            var current = fresh.Body.Deserialize<McpRegistration>() ?? throw new JsonException("Invalid MCP registration.");
-            Validate(current, candidate.ClientId);
-            var now = time.GetUtcNow();
-            if (current.CreatedAt > now || current.LastActivityAt > now)
+            var now = time.GetUtcNow().UtcDateTime;
+            if (row.CreatedAt > now || row.LastActivityAt > now)
             {
                 throw new IOException("MCP registration activity is in the future.");
             }
 
-            if (current.FirstSignInCompletedAt is not null || now - current.CreatedAt < TimeSpan.FromHours(24))
+            var expired = row.FirstSignInCompletedAt is null
+                ? now - row.CreatedAt >= UnfinishedLifetime
+                : now - row.LastActivityAt >= IdleLifetime;
+            if (!expired && activity == Activity.None)
             {
-                return;
+                return Registration(row);
             }
 
-            try { await state.DeleteAsync(McpOAuth.ClientTable, current.ClientId, fresh.Version, cancellationToken); }
-            catch (StateConflictException) { } // A newer lifecycle transition must survive.
-        }
-
-        private static bool Canonical(string? clientId)
-        {
-            return clientId is { Length: 26 } && TerraScaleIds.IsValid(clientId) && !clientId.Any(char.IsLower);
-        }
-
-        private static void Validate(McpRegistration value, string clientId)
-        {
-            if (!Canonical(value.ClientId) || value.ClientId != clientId ||
-                string.IsNullOrWhiteSpace(value.Name) || value.Name.EnumerateRunes().Count() > 64 || value.Name.Any(char.IsControl) ||
-                value.RedirectUris is not { Length: > 0 and <= 10 } || value.RedirectUris.Any(string.IsNullOrWhiteSpace) ||
-                value.CreatedAt == default || value.LastActivityAt < value.CreatedAt ||
-                (value.FirstSignInCompletedAt is { } first ? first < value.CreatedAt || first > value.LastActivityAt : value.LastActivityAt != value.CreatedAt) ||
-                value.ClosedAt is { } closed && closed < value.LastActivityAt)
+            if (!expired && activity == Activity.Authenticated && row.FirstSignInCompletedAt is null)
             {
-                throw new IOException("MCP registration lifecycle is invalid.");
+                return null;
+            }
+
+            if (expired)
+            {
+                row.ClosedAt = now;
+            }
+            else
+            {
+                row.FirstSignInCompletedAt ??= now;
+                row.LastActivityAt = now;
+            }
+
+            row.Version = AccountService.NewId();
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                return expired ? null : Registration(row);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
             }
         }
+        throw new IOException("MCP registration changed concurrently.");
+    }
+
+    private static McpRegistration Registration(McpClientRow row)
+    {
+        return new(row.Id, row.Name, [.. row.RedirectUris], Utc(row.CreatedAt), Utc(row.LastActivityAt),
+            row.FirstSignInCompletedAt is { } first ? Utc(first) : null, row.ClosedAt is { } closed ? Utc(closed) : null);
+    }
+
+    private static DateTimeOffset Utc(DateTime value)
+    {
+        return new(DateTime.SpecifyKind(value, DateTimeKind.Utc));
+    }
+
+    private static bool Canonical(string? clientId)
+    {
+        return clientId is { Length: 26 } && TerraScaleIds.IsValid(clientId) && !clientId.Any(char.IsLower);
     }
 }

@@ -132,8 +132,8 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 44, Level = LogLevel.Error, Message = "Dashboard panel {Panel} failed on {Route}; the page rendered without it: {Failure}")]
         internal static partial void DashboardPanelFailed(this ILogger logger, object? panel, object? route, object? failure);
 
-        [LoggerMessage(EventId = 45, Level = LogLevel.Warning, Message = "Expired authentication flows were not swept ({ErrorType}); retrying on the next pass.")]
-        internal static partial void ExpiredAuthFlowsWereNotSwept(this ILogger logger, string errorType);
+        [LoggerMessage(EventId = 45, Level = LogLevel.Warning, Message = "Expired dashboard rows were not swept ({ErrorType}); retrying on the next pass.")]
+        internal static partial void ExpiredRowsWereNotSwept(this ILogger logger, string errorType);
 
         [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
         internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);

@@ -2,31 +2,15 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Features.Notifications;
-using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
-    public sealed class DeletionRelatedRecords(IDashboardState state, DashboardSessions sessions)
+    public sealed class DeletionRelatedRecords(IDashboardState state)
     {
         public async Task CleanAccountAsync(string subject, CancellationToken cancellationToken)
         {
             await Features.Data.SqlWorkspace.EraseAsync(state, new Dictionary<string, string> { ["UserId"] = subject }, cancellationToken);
-            foreach (var row in await state.ListAsync(McpOAuth.CodeTable, cancellationToken))
-            {
-                if (!row.Body.TryGetProperty("UserId", out var owner) || owner.GetString() != subject)
-                {
-                    continue;
-                }
-
-                if (!row.Body.TryGetProperty("CredentialId", out var credential) || credential.GetString() is not { } id)
-                {
-                    throw new IOException("Pending MCP credential reference is invalid.");
-                }
-
-                await sessions.DeleteCredentialAsync(id, subject, cancellationToken);
-                await state.DeleteAsync(McpOAuth.CodeTable, row.Id, row.Version, cancellationToken);
-            }
         }
 
         public async Task CleanOrganizationAsync(string organizationId, CancellationToken cancellationToken)

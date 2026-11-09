@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.E2E
             });
             scenario.app.MapPost("/__test/sql-user/{subject}", async (string subject, HttpContext http) =>
             {
-                await new DeletionRelatedRecords(scenario.State, scenario.app.Services.GetRequiredService<DashboardSessions>()).CleanAccountAsync(subject, http.RequestAborted);
+                await new DeletionRelatedRecords(scenario.State).CleanAccountAsync(subject, http.RequestAborted);
                 return Results.NoContent();
             });
             try

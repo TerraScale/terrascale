@@ -25,13 +25,8 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Test]
         public async Task ClientSignsInThroughDiscoveryRegistrationConsentAndPkce()
         {
-            IDashboardState state = null!;
             var clock = new RegistrationClock(DateTimeOffset.UtcNow);
-            await using var scenario = await ReferenceScenario.StartAsync(fixture.Root, builder =>
-            {
-                state = (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
-                builder.Services.AddSingleton<TimeProvider>(clock);
-            });
+            await using var scenario = await ReferenceScenario.StartAsync(fixture.Root, builder => builder.Services.AddSingleton<TimeProvider>(clock));
             using var browser = scenario.CreateClient();
             using var replica = scenario.CreateClient(replica: true);
             var persona = scenario.Personas.Seeded;
@@ -59,8 +54,8 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             var clientId = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("client_id").GetString()!;
             await Assert.That(TerraScaleIds.IsValid(clientId)).IsTrue();
 
-            var initial = (await state.GetAsync(McpOAuth.ClientTable, clientId, default))!.Body.Deserialize<McpRegistration>()!;
-            await Assert.That(initial.ClientId).IsEqualTo(clientId);
+            var initial = await ClientAsync(scenario, clientId);
+            await Assert.That(initial.Id).IsEqualTo(clientId);
             await Assert.That(initial.FirstSignInCompletedAt).IsNull();
 
             var verifier = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
@@ -112,7 +107,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 await Assert.That(denied.Headers.Location!.OriginalString).StartsWith(Callback + "?error=access_denied&state=tunit-state");
             }
 
-            await Assert.That((await state.GetAsync(McpOAuth.ClientTable, clientId, default))!.Body.GetRawText()).IsEqualTo(JsonSerializer.Serialize(initial));
+            await Assert.That((await ClientAsync(scenario, clientId)).Version).IsEqualTo(initial.Version);
             var allowed = await HttpJourney.PostConfirmedFormAsync(browser, "/oauth/authorize", new(form) { ["decision"] = "allow" });
             await Assert.That(allowed.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
             using var granted = await HttpJourney.HostedSignInAsync(browser, allowed, persona.Email, persona.Password);
@@ -123,8 +118,8 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             await Assert.That(answer["state"].ToString()).IsEqualTo("tunit-state");
             await Assert.That(answer["iss"].ToString()).IsEqualTo(origin);
             var code = answer["code"].ToString();
-            var callbackActivity = (await state.GetAsync(McpOAuth.ClientTable, clientId, default))!.Body.Deserialize<McpRegistration>()!;
-            await Assert.That(callbackActivity.FirstSignInCompletedAt).IsEqualTo(clock.GetUtcNow());
+            var callbackActivity = await ClientAsync(scenario, clientId);
+            await Assert.That(callbackActivity.FirstSignInCompletedAt).IsEqualTo(clock.GetUtcNow().UtcDateTime);
             clock.Now = clock.Now.AddSeconds(1);
 
             var exchange = new Dictionary<string, string>
@@ -140,38 +135,36 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 await Assert.That((await replay.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
             }
 
-            var tokenSet = (await state.GetAsync(AccessTokens.Table, AccountService.AccountId(persona.Subject), default))!.Body.Deserialize<AccessTokens.TokenSet>()!;
-            await Assert.That(tokenSet.Tokens.Single().McpClientId).IsEqualTo(clientId);
-            var registration = (await state.GetAsync(McpOAuth.ClientTable, clientId, default))!;
-            var completed = registration.Body.Deserialize<McpRegistration>()!;
-            await Assert.That(completed.FirstSignInCompletedAt is not null).IsTrue();
-            var idle = completed with { CreatedAt = clock.Now.AddDays(-32), FirstSignInCompletedAt = clock.Now.AddDays(-32), LastActivityAt = clock.Now.AddDays(-30).AddTicks(1) };
-            await state.PutAsync(McpOAuth.ClientTable, clientId, JsonSerializer.SerializeToElement(idle), StatePrecondition.Matches(registration.Version), default);
+            await using (var storage = await scenario.StorageAsync())
+            {
+                await Assert.That((await storage.AccessTokens.SingleAsync(row => row.UserId == persona.Subject)).McpClientId).IsEqualTo(clientId);
+            }
+
+            await Assert.That((await ClientAsync(scenario, clientId)).FirstSignInCompletedAt is not null).IsTrue();
+            var idle = await SetActivityAsync(scenario, clientId, clock.Now.AddDays(-32), clock.Now.AddDays(-30).AddTicks(1));
             using (var invalidRequest = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = JsonContent.Create(new { }) })
             {
                 invalidRequest.Headers.Authorization = new("Bearer", secret[..^1] + (secret[^1] == 'a' ? "b" : "a"));
                 using var invalid = await replica.SendAsync(invalidRequest);
                 await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             }
-            await Assert.That((await state.GetAsync(McpOAuth.ClientTable, clientId, default))!.Body.GetRawText()).IsEqualTo(JsonSerializer.Serialize(idle));
+            await Assert.That((await ClientAsync(scenario, clientId)).Version).IsEqualTo(idle.Version);
             var tools = await HttpJourney.McpAsync(replica, secret, "tools/list", new { });
             await Assert.That(tools.GetProperty("result").GetProperty("tools").EnumerateArray().Any(tool => tool.GetProperty("name").GetString() == "get_context")).IsTrue();
             var context = await HttpJourney.McpAsync(browser, secret, "tools/call", new { name = "get_context", arguments = new { } });
             await Assert.That(context.GetProperty("result").TryGetProperty("isError", out var isError) && isError.GetBoolean()).IsFalse();
 
-            registration = (await state.GetAsync(McpOAuth.ClientTable, clientId, default))!;
-            completed = registration.Body.Deserialize<McpRegistration>()!;
+            var completed = await ClientAsync(scenario, clientId);
             await Assert.That(completed.LastActivityAt > idle.LastActivityAt).IsTrue();
             await Assert.That(completed.FirstSignInCompletedAt).IsEqualTo(idle.FirstSignInCompletedAt);
-            var expired = completed with { CreatedAt = clock.Now.AddDays(-32), FirstSignInCompletedAt = clock.Now.AddDays(-32), LastActivityAt = clock.Now.AddDays(-30) };
-            await state.PutAsync(McpOAuth.ClientTable, clientId, JsonSerializer.SerializeToElement(expired), StatePrecondition.Matches(registration.Version), default);
+            await SetActivityAsync(scenario, clientId, clock.Now.AddDays(-32), clock.Now.AddDays(-30));
             using (var expiredRequest = new HttpRequestMessage(HttpMethod.Post, "/mcp") { Content = JsonContent.Create(new { }) })
             {
                 expiredRequest.Headers.Authorization = new("Bearer", secret);
                 using var rejected = await replica.SendAsync(expiredRequest);
                 await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             }
-            await Assert.That((await state.GetAsync(McpOAuth.ClientTable, clientId, default))!.Body.Deserialize<McpRegistration>()!.ClosedAt is not null).IsTrue();
+            await Assert.That((await ClientAsync(scenario, clientId)).ClosedAt is not null).IsTrue();
             using (var expiredConsent = await browser.GetAsync(consentPath))
             {
                 await Assert.That(expiredConsent.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
@@ -189,9 +182,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Arguments("unbound:https://attacker.example/mcp")]
         public async Task RedemptionNamingAnotherResourceBurnsTheCodeWithoutAToken(string? redeemed)
         {
-            IDashboardState state = null!;
-            await using var scenario = await ReferenceScenario.StartAsync(fixture.Root, builder =>
-                state = (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!);
+            await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
             using var browser = scenario.CreateClient();
             var persona = scenario.Personas.Seeded;
             var origin = browser.BaseAddress!.GetLeftPart(UriPartial.Authority);
@@ -218,15 +209,18 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             using var allowed = await HttpJourney.PostConfirmedFormAsync(browser, "/oauth/authorize", form);
             using var granted = await HttpJourney.HostedSignInAsync(browser, allowed, persona.Email, persona.Password);
             var code = QueryHelpers.ParseQuery(granted.Headers.Location!.Query)["code"].ToString();
-            var credential = (await state.ListAsync(McpOAuth.CodeTable, default)).Single().Body.GetProperty("CredentialId").GetString()!;
+            string credential;
+            await using (var storage = await scenario.StorageAsync())
+            {
+                credential = (await storage.McpCodes.SingleAsync()).CredentialId;
+            }
+
             await Assert.That(await CredentialExistsAsync(scenario, credential)).IsTrue();
             if (redeemed?.StartsWith("unbound:", StringComparison.Ordinal) == true)
             {
                 // A code stored without a resource must not match a resource that canonicalizes to nothing.
-                var stored = (await state.ListAsync(McpOAuth.CodeTable, default)).Single();
-                var unbound = System.Text.Json.Nodes.JsonNode.Parse(stored.Body.GetRawText())!.AsObject();
-                unbound.Remove("Resource");
-                await state.PutAsync(McpOAuth.CodeTable, stored.Id, JsonSerializer.SerializeToElement(unbound), StatePrecondition.Matches(stored.Version), default);
+                await using var storage = await scenario.StorageAsync();
+                await storage.McpCodes.ExecuteUpdateAsync(row => row.SetProperty(code => code.Resource, ""));
                 redeemed = redeemed["unbound:".Length..];
             }
             var exchange = new Dictionary<string, string>
@@ -249,10 +243,33 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                 await Assert.That((await retried.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).IsEqualTo("invalid_grant");
             }
 
-            var tokens = await state.GetAsync(AccessTokens.Table, AccountService.AccountId(persona.Subject), default);
-            await Assert.That(tokens is null || tokens.Body.Deserialize<AccessTokens.TokenSet>()!.Tokens.All(token => token.McpClientId != id)).IsTrue();
-            await Assert.That(await state.ListAsync(McpOAuth.CodeTable, default)).IsEmpty();
+            await using (var storage = await scenario.StorageAsync())
+            {
+                await Assert.That(await storage.AccessTokens.AnyAsync(row => row.McpClientId == id)).IsFalse();
+                await Assert.That(await storage.McpCodes.AnyAsync()).IsFalse();
+            }
+
             await Assert.That(await CredentialExistsAsync(scenario, credential)).IsFalse();
+        }
+
+        private static async Task<McpClientRow> ClientAsync(ReferenceScenario scenario, string id)
+        {
+            await using var storage = await scenario.StorageAsync();
+            return await storage.McpClients.AsNoTracking().SingleAsync(row => row.Id == id);
+        }
+
+        private static async Task<McpClientRow> SetActivityAsync(ReferenceScenario scenario, string id, DateTimeOffset since, DateTimeOffset lastActivity)
+        {
+            await using (var storage = await scenario.StorageAsync())
+            {
+                await storage.McpClients.Where(row => row.Id == id).ExecuteUpdateAsync(row => row
+                    .SetProperty(client => client.CreatedAt, since.UtcDateTime)
+                    .SetProperty(client => client.FirstSignInCompletedAt, since.UtcDateTime)
+                    .SetProperty(client => client.LastActivityAt, lastActivity.UtcDateTime)
+                    .SetProperty(client => client.Version, AccountService.NewId()));
+            }
+
+            return await ClientAsync(scenario, id);
         }
 
         private static async Task<bool> CredentialExistsAsync(ReferenceScenario scenario, string id)

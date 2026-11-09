@@ -12,7 +12,6 @@ namespace TerraScale.Dashboard.Features.Auth
         public static void AddAuth(this IServiceCollection services)
         {
             services.AddSingleton<AuthFlows>();
-            services.AddHostedService<AuthFlowSweeper>();
             services.AddSingleton<IAuthEmailChangeGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
             services.AddSingleton<IAuthStepUpGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
             services.AddSingleton<TsAuthGateway>();

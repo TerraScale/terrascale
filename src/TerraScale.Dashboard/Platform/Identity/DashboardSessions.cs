@@ -157,14 +157,10 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
         await db.Sessions.Where(row => row.Id == id && row.UserId == subject).ExecuteDeleteAsync(cancellationToken);
     }
 
-    public async Task CleanEnrollmentsAsync(string userId, CancellationToken cancellationToken)
+    public async Task ForgetUserAsync(string userId, CancellationToken cancellationToken)
     {
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
-        {
-            await db.Sessions.Where(row => row.UserId == userId).ExecuteDeleteAsync(cancellationToken);
-        }
-
-        await AccountEnrollment.CleanAsync(state, userId, cancellationToken);
+        await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        await db.Sessions.Where(row => row.UserId == userId).ExecuteDeleteAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<DashboardSessionInfo>> ListAsync(HttpContext context, SessionRecord session)

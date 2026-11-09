@@ -1,10 +1,10 @@
 using Microsoft.EntityFrameworkCore;
-using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Mcp;
 
-namespace TerraScale.Dashboard.Features.Auth;
+namespace TerraScale.Dashboard.Platform.Persistence;
 
-public sealed class AuthFlowSweeper(IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, TimeProvider time,
-    ILogger<AuthFlowSweeper> logger) : BackgroundService
+public sealed class StorageSweeper(IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, TimeProvider time,
+    ILogger<StorageSweeper> logger) : BackgroundService
 {
     public static readonly TimeSpan Interval = TimeSpan.FromMinutes(10);
 
@@ -22,10 +22,12 @@ public sealed class AuthFlowSweeper(IDbContextFactory<DashboardDbContext> storag
                     await using var db = await storage.CreateDbContextAsync(stoppingToken);
                     await db.AuthFlows.Where(flow => flow.ExpiresAt <= now).ExecuteDeleteAsync(stoppingToken);
                     await db.Sessions.Where(session => session.ExpiresAt <= now).ExecuteDeleteAsync(stoppingToken);
+                    await db.McpCodes.Where(code => code.ExpiresAt <= now).ExecuteDeleteAsync(stoppingToken);
+                    await McpRegistrations.ReclaimUnfinishedAsync(db, now, stoppingToken);
                 }
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
-                    logger.ExpiredAuthFlowsWereNotSwept(error.GetType().Name);
+                    logger.ExpiredRowsWereNotSwept(error.GetType().Name);
                 }
             } while (await timer.WaitForNextTickAsync(stoppingToken));
         }

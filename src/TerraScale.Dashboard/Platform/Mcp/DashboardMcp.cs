@@ -99,7 +99,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
         {
             services.AddHttpContextAccessor();
             services.AddSingleton<McpApiKeyTools>();
-            services.AddHostedService<McpRegistrationReclaimer>();
             services.AddMcpServer(options =>
             {
                 options.ServerInfo = new() { Name = "terrascale-dashboard", Title = "TerraScale Dashboard", Version = "1.0.0" };

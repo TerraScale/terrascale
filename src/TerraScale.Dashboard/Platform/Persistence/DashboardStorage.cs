@@ -16,6 +16,7 @@ public static class DashboardStorage
         services.AddSingleton<Transport>();
         services.AddSingleton(provider => new TerraBaseSqlClient(provider.GetRequiredService<Transport>().Client,
             new TerraBaseSqlClientOptions { BaseAddress = TerraBaseRpcClient.Origin(provider.GetRequiredService<IHostEnvironment>()) }).Database(ProjectId, Database));
+        services.AddHostedService<StorageSweeper>();
         services.AddPooledDbContextFactory<DashboardDbContext>((provider, options) => options.UseTerraBase(provider.GetRequiredService<TerraBaseSqlDatabase>()));
         return services;
     }

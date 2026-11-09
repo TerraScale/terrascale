@@ -90,14 +90,12 @@ namespace TerraScale.Dashboard.E2E
         public async Task AssertNoEffectsAsync()
         {
             await Assert.That(Effects()).IsEqualTo(effects);
-            foreach (var table in new[] { "account_deletions", "dashboard_access_tokens", McpOAuth.CodeTable })
-            {
-                await Assert.That((await Environment.State.ListAsync(table, default)).Count).IsEqualTo(0);
-            }
-
+            await Assert.That((await Environment.State.ListAsync("account_deletions", default)).Count).IsEqualTo(0);
             await using (var storage = await Environment.StorageAsync())
             {
                 await Assert.That(await storage.Sessions.CountAsync(row => row.Kind == SessionRow.Credential)).IsEqualTo(0);
+                await Assert.That(await storage.AccessTokens.CountAsync()).IsEqualTo(0);
+                await Assert.That(await storage.McpCodes.CountAsync()).IsEqualTo(0);
             }
 
             var accounts = await Environment.State.ListAsync(AccountService.AccountsTable, default);
