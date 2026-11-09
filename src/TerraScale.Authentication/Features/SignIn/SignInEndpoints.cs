@@ -50,7 +50,7 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
         var next = SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]);
         return await SignInFlow.ResumeAsync(this.HttpContext, next, cancellationToken)
             ?? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, SignInFlow.Tenant(this.HttpContext), Next: next,
-                Error: this.HttpContext.Request.Query["notice"] == "credential_changed" ? CredentialLineage.ConflictNotice : null));
+                Error: this.HttpContext.Request.Query["notice"] == "credential_changed" ? SignInFlow.Copy(this.HttpContext).NoticeCredentialChanged : null));
     }
 }
 
@@ -330,7 +330,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
         if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
-                PasswordPolicy.Message(problem))
+                SignInFlow.PasswordError(copy, problem))
             { ErrorTitle = copy.ErrorChoosePasswordTitle }, StatusCodes.Status400BadRequest);
         }
 
@@ -610,7 +610,7 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next,
-                PasswordPolicy.Message(problem))
+                SignInFlow.PasswordError(copy, problem))
             { ErrorTitle = copy.ErrorChoosePasswordTitle }, StatusCodes.Status400BadRequest);
         }
 
@@ -672,6 +672,12 @@ internal static class SignInFlow
     public static string RetryWait(long seconds) => RetryWait(HostedCopies.English, seconds);
 
     public static HostedPageCopy Copy(HttpContext context) => HostedCopies.For(AuthEmails.Locale(context.Request));
+
+    public static string PasswordError(HostedPageCopy copy, PasswordProblem problem) => problem switch
+    {
+        PasswordProblem.Length => copy.ErrorPasswordLength,
+        _ => copy.ErrorPasswordCommon,
+    };
 
     public static IResult WrongCode(HttpContext context, SignInStep step, string email, string? next, string? pendingToken = null)
     {
