@@ -8,13 +8,10 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
-/// <summary>ts-auth's project closure handoff (docs/terrabase/project-closure.md) on one machine.</summary>
 public sealed class ProjectClosureTests
 {
     private static readonly string[] ReadScope = ["sql:read"];
 
-    // Review R1: a receipt binds to its fence by closure id, not by comparing two machines' clocks. A fence recorded by a
-    // machine whose clock ran ahead is still accepted once every holder confirmed it.
     [Test]
     public async Task Account_erasure_revokes_existing_project_keys_and_the_current_backup_destination()
     {
@@ -62,8 +59,6 @@ public sealed class ProjectClosureTests
         await CloseAsync(api.Server.Client, database.Project, closure, database.Organization, HttpStatusCode.OK, 2);
     }
 
-    // Every pass converges every closure ever accepted. Written under SYSTEM's writer, settled ones held it ~30 times a second
-    // on every node (2026-10-27); now they are read, and one that has something to erase again is still written.
     private static async Task<JsonElement> CloseAsync(HttpClient client, string project, string closure, string organization, HttpStatusCode expected, int version = 1)
     {
         using var response = await PutAsync(client, project, closure, organization, version);

@@ -6,14 +6,11 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary><c>GET …/projects/{project}/usage</c>: sums the usage of every database of a project.</summary>
 internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage peers, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
-    /// <summary>The bounds of the project usage route.</summary>
     internal const string LimitsDescription =
         "Every database is listed before any is counted: more than 100 answer 400 \"query too expensive\" without a count. A request still running after 5 seconds starts no further catalog read or count and answers 503 capacity with Retry-After; retry it unchanged.";
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Project + "/usage");
@@ -29,7 +26,6 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         UsageWindow.Parse(HttpContext.Request.Query, time.GetUtcNow()) switch
         {
@@ -37,7 +33,6 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
             UsageWindow window => await ReadAsync(window, cancellationToken),
         };
 
-    // This node's share, plus every other region's when the client asked: each region meters only what it served.
     private async ValueTask<IResult> ReadAsync(UsageWindow window, CancellationToken cancellationToken)
     {
         var organization = ManagementRoute.OrganizationId(HttpContext);

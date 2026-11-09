@@ -74,8 +74,6 @@ internal sealed partial class EngineManagementService
                 {
                     continue;
                 }
-                // Only orphan paths write. Per-pass totals live in the catalog, so arbitrary sidecar ordering and
-                // bounded cache eviction cannot duplicate a warning or require an unbounded in-memory inventory.
                 var firstSeen = await WriteAsync<bool>(async transaction =>
                 {
                     if (await OwnedFileAsync(transaction, database, cancellationToken).ConfigureAwait(false))
@@ -93,11 +91,8 @@ internal sealed partial class EngineManagementService
                     var next = new OrphanDatabaseFile(database, seen?.FirstSeen ?? time.GetUtcNow(), pass,
                         (seen?.Seen == pass ? seen.Files : 0) + 1, (seen?.Seen == pass ? seen.Bytes : 0) + size);
                     await PutAsync(transaction, OrphanFiles, id, next, TerraBaseJsonContext.Default.OrphanDatabaseFile, cancellationToken).ConfigureAwait(false);
-                    // A sidecar listed before its main file may have created the record earlier in this pass.
                     return next.FirstSeen >= started;
                 }, _ => { complete = false; return false; }, cancellationToken).ConfigureAwait(false);
-                // The main file names the database on disk: an operator finds it by this path, once. Every pass after that
-                // reports the database in its summary below.
                 if (firstSeen && file.Path.EndsWith(".db", StringComparison.Ordinal))
                 {
                     logger.ZLogWarning($"Preserved database file without a catalog registration: {file.Path:@Path}");
@@ -186,9 +181,6 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    // An orphan unregistered for the whole grace period is deleted like an abandoned creation: a cleanup intent, recorded
-    // under the engine's lifecycle reservation only while the file is still unowned and unchanged since this pass, then
-    // the engine's close-then-delete path. A registration that arrives meanwhile keeps the files.
     private async ValueTask<bool> DeleteOrphanAsync(OrphanDatabaseFile record, CancellationToken cancellationToken)
     {
         var database = record.Database;
@@ -214,7 +206,6 @@ internal sealed partial class EngineManagementService
         }
         checkpoint("audit.delete", database);
         _ = await FinishDatabaseCleanupAsync(database, cancellationToken, abandonedCreation: true).ConfigureAwait(false);
-        // Deleted only when the intent cleared without a registration; anything else keeps the files for the next pass.
         return !await ReadAsync<bool>(transaction => OwnedFileAsync(transaction, database, cancellationToken), static _ => true, cancellationToken).ConfigureAwait(false);
     }
 

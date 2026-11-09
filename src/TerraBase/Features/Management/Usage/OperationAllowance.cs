@@ -6,26 +6,17 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>Accepted work, an exhausted monthly allowance or unavailable accounting.</summary>
 public readonly union OperationAllowanceCheck(Done, QuotaExceeded, Unavailable);
 
-/// <summary>What a monthly plan limit counts.</summary>
 public enum MeteredOperation
 {
-    /// <summary>Billed write units, stopped at the plan's hard cap.</summary>
     Write,
 
-    /// <summary>Unbilled SQL read units, stopped at the plan's fair use.</summary>
     SqlRead,
 }
 
-/// <summary>
-/// The monthly plan limits of https://terrascale.tech/pricing.json, summed over every project, region and node of an
-/// organization this UTC month: new writes stop at the write cap and SQL reads stop at the fair use.
-/// </summary>
 public interface IOperationAllowance
 {
-    /// <summary>Whether <paramref name="database"/>'s organization may start new <paramref name="operation"/> work.</summary>
     ValueTask<OperationAllowanceCheck> CheckAsync(TenantContext database, MeteredOperation operation, CancellationToken cancellationToken);
 }
 

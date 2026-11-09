@@ -6,16 +6,10 @@ using ZLogger;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>
-/// Sends the project→organization enrollment a first-database create just wrote here to every other region, over the
-/// internal listener behind the peer credential, as the plan fan-out does. A peer that misses it keeps answering through
-/// home forwarding; the enrollment is idempotent, so a later create or retry repairs the gap.
-/// </summary>
 internal sealed class EnrollmentFanout(IRegionPeers peers, IHttpClientFactory http, InternalCredential credential, ILogger<EnrollmentFanout> logger)
 {
     private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(5);
 
-    /// <summary>Every other region applies the binding now; failures are logged and never fail the create.</summary>
     public async Task EnrollAsync(string project, string organization, CancellationToken cancellationToken)
     {
         try

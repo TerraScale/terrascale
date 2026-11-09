@@ -10,14 +10,11 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
-    // Called only under a version-2 permanent closure fence. Every holder advances bounded work independently;
     private async ValueTask<bool> EraseProjectBatchAsync(IStorageTransaction transaction, ProjectClosureRecord closure, CancellationToken token)
     {
         var project = closure.ProjectId;
         if (!await ClosureOrganizationMatchesAsync(transaction, project, closure.AuthorityOrganizationId, token).ConfigureAwait(false))
         {
-            // Replicated fences cannot authorize erasure of another local organization. Keep this holder's
-            // receipt non-empty while the binding disagrees, without failing the convergence service.
             return false;
         }
 
@@ -38,7 +35,6 @@ internal sealed partial class EngineManagementService
             return false;
         }
 
-        // All database purges captured the destination before its credentials leave authorization state.
         if (await GetAsync(transaction, ProjectBackupDestinations.Kind(project), "current", TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, token).ConfigureAwait(false) is { } destination)
         {
             await BackupDestinationHistory.SaveAsync(transaction, project, destination, token).ConfigureAwait(false);
@@ -49,11 +45,8 @@ internal sealed partial class EngineManagementService
             && await IsProjectEmptyAsync(transaction, project, token).ConfigureAwait(false);
     }
 
-    // Both contracts wait for prior deletions: even a delayed v1 acceptance must certify active erasure.
     private async ValueTask<bool> VerifyProjectPurgesAsync(IStorageTransaction transaction, string project, CancellationToken token)
     {
-        // Include deletion authorities predating this handoff: their catalog rows may already be gone.
-        // Each holder scans its own history; another holder's progress cannot certify this one's coverage.
         var after = await GetAsync(transaction, ProjectClosure.Scans(project), options.MachineId, Id, token).ConfigureAwait(false);
         var scanned = after == "complete";
         if (!scanned)

@@ -5,17 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>
-/// <c>PUT /admin/projects/{project}/enrollment</c>: applies the project→organization binding another region wrote when a
-/// signed project token created the project's first database. Served only on the internal listener, behind the peer
-/// credential, as <c>PUT /admin/projects/{project}/plan</c> is.
-/// </summary>
 internal sealed class EnrollProjectEndpoint(IProjectCatalog catalog) : Endpoint<EnrollmentRequest, IResult>
 {
-    /// <summary>The actor a receiving region enrolls the project under; it appears in no user-facing audit.</summary>
     internal const string Actor = "terrabase-enrollment";
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Put("/admin/projects/{project}/enrollment");
@@ -33,7 +26,6 @@ internal sealed class EnrollProjectEndpoint(IProjectCatalog catalog) : Endpoint<
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(EnrollmentRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

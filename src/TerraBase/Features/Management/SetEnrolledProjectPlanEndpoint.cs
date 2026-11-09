@@ -8,7 +8,6 @@ namespace TerraBase.Features.Management;
 
 internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put("/admin/projects/{project}/plan");
@@ -23,7 +22,6 @@ internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog, Pl
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

@@ -10,10 +10,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary><c>GET …/databases/{database}/point-in-time</c>: the times a database can be restored to.</summary>
 internal sealed class GetRestoreWindowEndpoint(IManagementService management, IPointInTimeRestore restore) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Database + "/point-in-time");
@@ -41,7 +39,6 @@ internal sealed class GetRestoreWindowEndpoint(IManagementService management, IP
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var resolved = await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken);

@@ -3,32 +3,19 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>ts-auth's closure request for one of its projects (docs/terrabase/project-closure.md).</summary>
-/// <param name="Version">1 closes an empty project; 2 authorizes account erasure of its contents.</param>
-/// <param name="ClosureId">ts-auth's stable closure id: a retry presents the same one.</param>
-/// <param name="AuthorityOrganizationId">The ts-auth organization that owns the project.</param>
 public sealed record ProjectClosureRequest(int Version, string? ClosureId, string? AuthorityOrganizationId);
 
-/// <summary>Where a project closure stands.</summary>
-/// <param name="Status"><c>accepted</c> once every holder confirmed emptiness under the fence, otherwise <c>pending</c>.</param>
-/// <param name="ClosureId">The fence's closure id.</param>
-/// <param name="PendingHolders">Machines that have not confirmed the project empty under the fence.</param>
-/// <param name="EvidenceVersion">2 certifies that acceptance waits for active-copy purge evidence.</param>
 public sealed record ProjectClosureStatus(string Status, string ClosureId, int PendingHolders, int EvidenceVersion = 2);
 
-/// <summary>A closure's status, or why it was refused without writing anything.</summary>
 public readonly union CloseProjectResult(ProjectClosureStatus, Conflict, Unavailable);
 
-/// <summary>The permanent fence: no database of the project is registered and no enrollment happens after it.</summary>
 internal sealed record ProjectClosureRecord(
     string ProjectId, string ClosureId, string AuthorityOrganizationId, DateTimeOffset RequestedAt, string[] ExpectedHolders, int FormatVersion = 1);
 
-/// <summary>One machine's view of the project under the fence; only that machine writes it.</summary>
 internal sealed record ProjectClosureReceipt(string ProjectId, string ClosureId, string MachineId, bool Empty, DateTimeOffset VerifiedAt, int FormatVersion = 1, int EvidenceVersion = 0);
 
 internal static class ProjectClosure
 {
-    // Outside projects/<id>/, which a project deletion's prefix delete tombstones.
     public const string Kind = "project_closures";
 
     public const string Accepted = "accepted";
@@ -45,10 +32,6 @@ internal static class ProjectClosure
 
     public static string Scans(string projectId) => $"project_closure_scans/{projectId}";
 
-    /// <summary>
-    /// Whether the project is fenced; every write that would make it non-empty (a database, a project API key, a backup
-    /// destination) reads this in its committing transaction. Tombstones count, so it fails closed.
-    /// </summary>
     public static async ValueTask<bool> IsClosedAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
         await transaction.GetVersionAsync(Kind, projectId, cancellationToken).ConfigureAwait(false) is not null;
 }

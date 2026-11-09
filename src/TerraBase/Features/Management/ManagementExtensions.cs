@@ -7,7 +7,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Registers the Management slice.</summary>
 internal static class ManagementExtensions
 {
     public static IServiceCollection AddTerraBaseManagement(this IServiceCollection services)

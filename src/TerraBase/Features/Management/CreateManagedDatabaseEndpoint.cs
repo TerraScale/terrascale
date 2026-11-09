@@ -10,7 +10,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>POST …/projects/{project}/databases</c>: creates an empty database in a project.</summary>
 internal sealed class CreateManagedDatabaseEndpoint(
     IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply, EnrollmentFanout enrollment)
     : Endpoint<DatabaseRegionsRequest, IResult>
@@ -124,9 +123,6 @@ internal sealed class CreateManagedDatabaseEndpoint(
             };
         }
 
-        // A create that enrolls the project here must place the same binding in every other region's catalog at once:
-        // without it they answer unknown_database on project-resolved routes until their replicated catalog converges
-        // (TS-1394). The enrollment is idempotent, so a concurrent first create that races this one resends it safely.
         if (firstDatabase)
         {
             _ = enrollment.EnrollAsync(project, organization, CancellationToken.None);

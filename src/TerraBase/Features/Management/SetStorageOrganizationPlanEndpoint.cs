@@ -6,14 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>
-/// <c>PUT /admin/organizations/{organization}/plan</c>: sets the plan of the memberless storage organization whose id is the
-/// ts-auth organization id, before or after its first database enrolls. Served only on the internal administrative listener,
-/// as <c>PUT /admin/projects/{project}/plan</c> is.
-/// </summary>
 internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put("/admin/organizations/{organization}/plan");
@@ -28,7 +22,6 @@ internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

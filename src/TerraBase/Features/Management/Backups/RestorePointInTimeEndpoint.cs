@@ -7,11 +7,9 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary><c>POST …/databases/{database}/point-in-time/restore</c>: restores a database as of a time into a new database.</summary>
 internal sealed class RestorePointInTimeEndpoint(IManagementService management, IManagedBackupService backups)
     : Endpoint<PointInTimeRestoreRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ProjectApiRoute.Database + "/point-in-time/restore");
@@ -31,11 +29,9 @@ internal sealed class RestorePointInTimeEndpoint(IManagementService management, 
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(PointInTimeRestoreRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        // Access first: another tenant's database answers 404 whatever the body holds.
         return await ManagementRoute.CheckWritableDatabaseAsync(HttpContext, management, cancellationToken) switch
         {
             NotFound error => ErrorResponse.From(error),

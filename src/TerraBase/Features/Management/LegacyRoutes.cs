@@ -1,9 +1,7 @@
 namespace TerraBase.Features.Management;
 
-/// <summary>Keeps old management URLs as hidden aliases until production callers have migrated.</summary>
 public static class LegacyRoutes
 {
-    /// <summary>Rewrites hidden aliases before routing and retains their membership-based identity and database ids.</summary>
     public static WebApplication UseTerraBaseLegacyRoutes(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);

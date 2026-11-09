@@ -8,7 +8,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>DELETE …/databases/{database}</c>: deletes a database and its data.</summary>
 internal sealed class DeleteManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

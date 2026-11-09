@@ -21,14 +21,6 @@ using tsauth::TerraScale.Authentication.Features.Platform;
 
 namespace TerraBase.Slow.Management;
 
-/// <summary>
-/// The real ts-auth application, built from this monorepo and run in process as its own tests run it: its storage is a second
-/// in-process TerraBase from this commit, reached through the internal listener with the peer credential, its public origin
-/// <see cref="PublicOrigin"/> is served over TLS on a
-/// loopback port, and one service client gets client-credentials access tokens. Tokens, discovery and JWKS all come from
-/// ts-auth itself; the TerraBase under test reaches them through its production HTTP client, only connected to that port.
-/// ts-auth's GitHub OIDC client reaches <see cref="GitHub"/> instead of GitHub.
-/// </summary>
 internal sealed class RealAuthFixture : IAsyncDisposable
 {
     public const string Audience = GitHubActionsGrant.ApiAudience;
@@ -43,10 +35,8 @@ internal sealed class RealAuthFixture : IAsyncDisposable
 
     public string Subject { get; } = EntityIds.New().ToString();
 
-    /// <summary>GitHub Actions' OIDC issuer as ts-auth's own suite fakes it, for <see cref="GitHubActionsTokenAsync"/>.</summary>
     public FakeGitHubActions GitHub { get; } = new();
 
-    /// <summary>The <c>terrascale</c> tenant's issuer, which every platform access token names.</summary>
     public static string Issuer => PublicOrigin + "/terrascale";
 
     public static async Task<RealAuthFixture> StartAsync(CancellationToken token)
@@ -72,7 +62,6 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         }
     }
 
-    /// <summary>The settings that make a TerraBase server trust this ts-auth.</summary>
     public static void Configure(Dictionary<string, string> settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -80,10 +69,6 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         settings["auth-audience"] = Audience;
     }
 
-    /// <summary>
-    /// Points the production ts-auth HTTP client of a TerraBase server at this ts-auth's TLS port, trusting only its
-    /// certificate. The handler is the production one, configured, never replaced.
-    /// </summary>
     public void TrustIssuer(IServiceCollection services) =>
         services.AddHttpClient(TsAuthKeys.HttpClientName).ConfigurePrimaryHttpMessageHandler((handler, _) =>
         {
@@ -93,7 +78,6 @@ internal sealed class RealAuthFixture : IAsyncDisposable
                 presented is not null && presented.GetCertHash().AsSpan().SequenceEqual(_certificate.GetCertHash());
         });
 
-    /// <summary>An access token of the service client, from ts-auth's token endpoint (client credentials).</summary>
     public async Task<string> AccessTokenAsync(CancellationToken token)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/terrascale/oauth/token", UriKind.Relative))
@@ -104,13 +88,11 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         return await TokenAsync(request, token);
     }
 
-    /// <summary>A separate fixture-only project key used to seed real target data.</summary>
     public async Task<(string Organization, string Project, string Token)> SeedProjectAsync(CancellationToken token)
     {
         var services = _auth!.Services;
         var users = services.GetRequiredService<tsauth::TerraScale.Authentication.Features.Identity.Users>();
         var created = (await users.CreateAsync(PlatformDirectory.Instance, $"e2e-{EntityIds.New()}@example.test", token))!;
-        // A fixture seed issues its key as a freshly stepped-up sign-in would, bound to the account's current credentials.
         var current = (await users.GetAsync(PlatformDirectory.Instance, created.Id, token))!;
         var user = current with { StepUpBindings = current.AuthenticationBindings };
         var directory = services.GetRequiredService<PlatformDirectory>();
@@ -131,7 +113,6 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         return (organization.Id, project.Id, await TokenAsync(seedRequest, token));
     }
 
-    /// <summary>A real read-only workload token bound to the existing database <paramref name="database"/> (its ULID).</summary>
     public async Task<string> GitHubActionsTokenAsync(string organization, string project, string database, CancellationToken token)
     {
         var deadline = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds());
@@ -158,9 +139,6 @@ internal sealed class RealAuthFixture : IAsyncDisposable
 
     private async Task StartCoreAsync(CancellationToken token)
     {
-        // ts-auth's own storage, not the TerraBase under test: a project database on another TerraBase from this commit,
-        // reached through its internal listener as the platform operator. ts-auth creates its SQL tables itself; its first
-        // signing key comes from the operator provisioning below.
         _storage = await TerraBaseTestServer.StartAsync(cancellationToken: token);
         var management = new TerraBaseManagementClient(_storage.Client, new TerraBaseManagementClientOptions { BaseAddress = _storage.BaseAddress });
         var owner = EntityIds.New().ToString();
@@ -188,19 +166,14 @@ internal sealed class RealAuthFixture : IAsyncDisposable
             builder.Services.AddSingleton(_storage.Client);
             builder.Services.AddSingleton(storage);
             GitHub.Route(builder.Services);
-            // The public origin over TLS, after ts-auth's own listeners, for TerraBase's discovery and JWKS fetches.
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0, listen => listen.UseHttps(_certificate)));
         });
-        // As an operator does once per empty platform database (`ts-auth provision-signing-key`): ts-auth never creates the
-        // issuer's first signing key itself (docs/auth/signing-keys.md). The master key is this fixture's synthetic one.
         await tsauth::TerraScale.Authentication.Features.SigningKeys.SigningKeyProvisioning.ProvisionAsync(_auth.Services, token);
         await _auth.StartAsync(token);
-        // Bound in order: ts-auth's public listener, its metrics listener, then the TLS port.
         var addresses = _auth.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Select(address => new Uri(address)).ToArray();
         _tlsPort = addresses[2].Port;
         _tokens = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }) { BaseAddress = addresses[0], Timeout = TimeSpan.FromSeconds(30) };
 
-        // Ready once its signing ring exists in storage and its public signing metadata serves.
         await TerraBaseTestServer.EventuallyAsync(async deadline =>
         {
             using var ready = await _tokens.GetAsync(new Uri("/readyz", UriKind.Relative), deadline);
@@ -232,7 +205,6 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         request.CertificateExtensions.Add(names.Build());
         request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.1")], false));
         using var created = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
-        // Kestrel needs the private key in a persistable form on Linux.
         return X509CertificateLoader.LoadPkcs12(created.Export(X509ContentType.Pkcs12), password: null);
     }
 
@@ -243,8 +215,6 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         {
             if (_auth is not null)
             {
-                // Stopped before disposed: disposal alone cancels the workers outside the stop path, and the host reports each
-                // as a failed BackgroundService stopping the host, a teardown artifact that reads as a ts-auth crash.
                 try
                 {
                     await _auth.StopAsync(CancellationToken.None);

@@ -8,20 +8,14 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>Accounts for completed client requests and actual HTTP body I/O within their authorized database.</summary>
 public static class UsageRequestMetering
 {
-    /// <summary>
-    /// Attributes the request to an authorized database an endpoint resolved itself, without publishing it as the request's
-    /// tenant: its request count, latency and body bytes are metered, and no database operation is.
-    /// </summary>
     public static void Attribute(HttpContext context, TenantContext database)
     {
         ArgumentNullException.ThrowIfNull(context);
         context.Features.Set(new AttributedDatabase(database));
     }
 
-    /// <summary>Wraps body streams before authentication; records only requests that resolve an authorized database.</summary>
     public static WebApplication UseTerraBaseUsage(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -42,7 +36,6 @@ public static class UsageRequestMetering
             var previousOperations = RequestLogOperations.Current.Value;
             var operations = new RequestLogOperations();
             RequestLogOperations.Current.Value = operations;
-            // A request that cannot have a body receives none; the response keeps the server's own pipe (no stream copy).
             if (context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody != false)
             {
                 context.Request.Body = transfer.Received;
@@ -71,8 +64,6 @@ public static class UsageRequestMetering
         return app;
     }
 
-    // A request's body streams. Bytes are reported into the minute they were transferred in: when the request moves on to
-    // another minute, on each flush tick while it stays open (a subscription may idle for long), and when it ends.
     private sealed class Transfer : IDisposable
     {
         private readonly HttpContext _context;
@@ -123,7 +114,6 @@ public static class UsageRequestMetering
             Received.Dispose();
         }
 
-        // On the request's own I/O, where its features may be read.
         private void Moved(long received, long sent)
         {
             lock (_gate)
@@ -144,7 +134,6 @@ public static class UsageRequestMetering
             }
         }
 
-        // From the flush tick: uses only the database resolved on the request's own thread.
         private void Report()
         {
             lock (_gate)
@@ -162,7 +151,6 @@ public static class UsageRequestMetering
             }
         }
 
-        // The authorized database, once resolved.
         private void Resolve()
         {
             if (_resolved)
@@ -171,7 +159,6 @@ public static class UsageRequestMetering
             }
 
             var database = _context.Features.Get<TenantContext>() ?? _context.Features.Get<AttributedDatabase>()?.Database;
-            // databaseName is set only once the project catalog resolved the route's database to its ID.
             if (database is null && _context.Features.Get<ProjectAccess>() is { } access
                 && _context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
                 && _context.Request.RouteValues.ContainsKey("databaseName") && _context.Request.RouteValues["database"] is string id)
@@ -186,14 +173,11 @@ public static class UsageRequestMetering
         }
     }
 
-    // The server's response body, counting what is handed to it through its pipe, its stream or a file. Writers keep the
-    // server's own pipe: replacing Response.Body would put a copying StreamPipeWriter in front of every JSON response.
     private sealed class CountingResponseBody(IHttpResponseBodyFeature inner, Action<int> counted) : IHttpResponseBodyFeature
     {
         private CountingPipeWriter? _writer;
         private CountingStream? _stream;
 
-        // One instance each, so a middleware that swaps Response.Body and puts this stream back restores this feature.
         public PipeWriter Writer => _writer ??= new CountingPipeWriter(inner.Writer, counted);
 
         public Stream Stream => _stream ??= new CountingStream(inner.Stream, counted);
@@ -202,7 +186,6 @@ public static class UsageRequestMetering
 
         public Task StartAsync(CancellationToken cancellationToken = default) => inner.StartAsync(cancellationToken);
 
-        // As StreamResponseBodyFeature does: the file goes through the counted stream.
         public async Task SendFileAsync(string path, long offset, long? count, CancellationToken cancellationToken = default)
         {
             await inner.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -212,7 +195,6 @@ public static class UsageRequestMetering
         public Task CompleteAsync() => inner.CompleteAsync();
     }
 
-    // Counts bytes when they are committed to the server's pipe; owns no buffer.
     private sealed class CountingPipeWriter(PipeWriter inner, Action<int> counted) : PipeWriter
     {
         public override bool CanGetUnflushedBytes => inner.CanGetUnflushedBytes;
@@ -245,7 +227,6 @@ public static class UsageRequestMetering
         public override ValueTask CompleteAsync(Exception? exception = null) => inner.CompleteAsync(exception);
     }
 
-    // The wrapper owns no buffer and never closes the server's streams.
     private sealed class CountingStream(Stream inner, Action<int> counted) : Stream
     {
         public override bool CanRead => inner.CanRead;

@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary>GET a project's customer backup destination.</summary>
 internal sealed class GetBackupDestinationEndpoint(IManagementService management, IProjectBackupDestinations destinations) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(BackupDestinationRoute.Path);
@@ -26,7 +24,6 @@ internal sealed class GetBackupDestinationEndpoint(IManagementService management
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         BackupDestinationRoute.IsDatabaseScoped ? ErrorResponse.From(new NotFound())
             : await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) switch

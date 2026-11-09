@@ -40,7 +40,6 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
 
     internal static readonly Conflict MoveInProgress = new("another move of this database's home is running", "move_in_progress");
 
-    /// <summary>Whether this region holds an unfinished home move for the database: its marker is still recorded.</summary>
     internal static async ValueTask<bool> HomeMovePendingAsync(
         IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken) =>
         await GetAsync(transaction, HomeMoves, databaseId, TerraBaseJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is not null;

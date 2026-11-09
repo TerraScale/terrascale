@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>POST /v1/management/organizations</c>: creates an organization.</summary>
 internal sealed class CreateOrganizationEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ManagementRoute.Organizations);
@@ -24,7 +22,6 @@ internal sealed class CreateOrganizationEndpoint(IManagementService management) 
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken) =>
         ManagementRoute.CheckDisplayName(request) switch
         {

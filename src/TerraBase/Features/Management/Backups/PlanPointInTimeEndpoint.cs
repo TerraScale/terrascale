@@ -8,15 +8,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary>The body of <c>POST …/point-in-time/plan</c>.</summary>
-/// <param name="Destination">The backup bucket: platform (default) or customer.</param>
-/// <param name="PointInTime">The required restore time, between the window's earliest and latest times, inclusive.</param>
 public sealed record PointInTimePlanRequest(DateTimeOffset? PointInTime, string? Destination = null);
 
-/// <summary><c>POST …/databases/{database}/point-in-time/plan</c>: previews continuous backup metadata without restoring.</summary>
 internal sealed class PlanPointInTimeEndpoint(IManagementService management, IPointInTimeRestore restore) : Endpoint<PointInTimePlanRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ProjectApiRoute.Database + "/point-in-time/plan");
@@ -35,7 +30,6 @@ internal sealed class PlanPointInTimeEndpoint(IManagementService management, IPo
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(PointInTimePlanRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

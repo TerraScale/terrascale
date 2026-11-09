@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary><c>GET …/databases/{database}/backups</c>: lists the backups of a database.</summary>
 internal sealed class ListBackupsEndpoint(IManagementService management, IManagedBackupService backups) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Database + "/backups");
@@ -25,7 +23,6 @@ internal sealed class ListBackupsEndpoint(IManagementService management, IManage
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ManagementRoute.CheckPage(HttpContext) switch
         {

@@ -7,7 +7,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
-/// <summary>ts-auth access tokens authenticate Management API users (TS-519).</summary>
 public sealed class UserAuthTests
 {
     private const string Organizations = "/v1/management/organizations";
@@ -58,7 +57,6 @@ public sealed class UserAuthTests
             statuses.Add(await SendOnceAsync(api.WithToken(api.Issuer.Mint(user, edit))));
         }
 
-        // Clock tolerance applies only to nbf, never to exp.
         var skewed = await SendOnceAsync(api.WithToken(api.Issuer.Mint(user, token => token.NotBefore = DateTime.UtcNow.AddSeconds(10))));
 
         await Assert.That(statuses).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Unauthorized));
@@ -70,8 +68,6 @@ public sealed class UserAuthTests
     {
         await using var api = await ManagementApi.StartAsync();
         var user = EntityIds.New().ToString();
-        // An HMAC key published in the JWKS: anyone holding it could sign, so it must never be accepted. Two layers
-        // refuse it (the key filter and the algorithm list); this checks the outcome, not each layer on its own.
         var hmac = api.Issuer.AddKey(SecurityAlgorithms.HmacSha256);
         var valid = api.Issuer.Mint(user);
         string[] tokens =
@@ -100,7 +96,6 @@ public sealed class UserAuthTests
         var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
         var project = await api.CreateProjectAsync(organization, "Web");
         using var mallory = api.As(EntityIds.New().ToString());
-        // Headers that once named the acting user and organization: ignored, never trusted.
         mallory.DefaultRequestHeaders.Add("X-TerraBase-User-Id", api.User);
         mallory.DefaultRequestHeaders.Add("X-TerraBase-Organization-Id", organization);
 
@@ -128,7 +123,6 @@ public sealed class UserAuthTests
         return response.StatusCode;
     }
 
-    // Sends one request with a client made for it, then disposes the client.
     private static async Task<HttpStatusCode> SendOnceAsync(HttpClient client)
     {
         using (client)
@@ -137,7 +131,6 @@ public sealed class UserAuthTests
         }
     }
 
-    /// <summary>The system clock with timers that fire only through <see cref="FireAsync"/>.</summary>
     private sealed class ManualTimers : TimeProvider
     {
         private readonly Lock _gate = new();
@@ -161,7 +154,6 @@ public sealed class UserAuthTests
             return timer;
         }
 
-        /// <summary>Completes once a timer due after <paramref name="dueTime"/> exists (within 30 seconds).</summary>
         public Task ScheduledAsync(TimeSpan dueTime)
         {
             lock (_gate)
@@ -177,7 +169,6 @@ public sealed class UserAuthTests
             }
         }
 
-        /// <summary>Waits until a timer due after <paramref name="dueTime"/> exists, then fires each such timer once.</summary>
         public async Task FireAsync(TimeSpan dueTime)
         {
             await ScheduledAsync(dueTime);

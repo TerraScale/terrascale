@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>GET /v1/management/organizations</c>: lists organizations.</summary>
 internal sealed class ListOrganizationsEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ManagementRoute.Organizations);
@@ -23,7 +21,6 @@ internal sealed class ListOrganizationsEndpoint(IManagementService management) :
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ManagementRoute.CheckPage(HttpContext) switch
         {

@@ -10,43 +10,23 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Whether the management catalog may be used: <see cref="Unavailable"/> while it is at a version this build cannot use.</summary>
 internal readonly union CatalogCheck(Done, Unavailable);
 
-/// <summary>Initializes a fresh management catalog, or refuses an unsupported format (503).</summary>
 internal interface ICatalogGuard
 {
-    /// <summary>Initializes a fresh primary catalog; <see cref="Unavailable"/> for a catalog this build cannot use.</summary>
     ValueTask<CatalogCheck> EnsureCatalogAsync(CancellationToken cancellationToken);
 
-    /// <summary>Checks the supported catalog version inside the operation's own read or write transaction.</summary>
     ValueTask<CatalogCheck> CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// Typed JSON records in the system database (<see cref="IStorageEngine.OpenSystemDatabaseAsync"/>), where the management
-/// catalog lives.
-/// Every write runs in one transaction, which the engine serializes per database, so checks and writes are atomic.
-/// </summary>
-/// <remarks>
-/// State that belongs to one managed database lives in record kinds under <see cref="DatabaseState"/> and state
-/// that belongs to one project under <see cref="ProjectState"/>; deleting the database or project deletes it.
-/// </remarks>
 internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
 {
-    // Catalog records are small; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
 
-    /// <summary>Kind prefix for the state of one managed database.</summary>
     public static string DatabaseState(string databaseId) => $"databases/{databaseId}/";
 
-    /// <summary>Kind prefix for the state of one project.</summary>
     public static string ProjectState(string projectId) => $"projects/{projectId}/";
 
-    /// <summary>
-    /// Reads a snapshot of the management catalog after <see cref="ICatalogGuard"/> accepted its version; otherwise the
-    /// result is <paramref name="unavailable"/> of the refusal.
-    /// </summary>
     public async ValueTask<T> ReadAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, CancellationToken cancellationToken)
     {
         var accepted = await guard.EnsureCatalogAsync(cancellationToken).ConfigureAwait(false);
@@ -67,17 +47,14 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
             }, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Whether the management catalog may be used now, for work that checks once before a pass of its own.</summary>
     public ValueTask<CatalogCheck> CheckAsync(CancellationToken cancellationToken) =>
         ReadAsync<CatalogCheck>(static _ => ValueTask.FromResult<CatalogCheck>(new Done()), static error => error, cancellationToken);
 
-    /// <summary>Writes to the management catalog after <see cref="ICatalogGuard"/> accepted its version (see <see cref="ReadAsync"/>).</summary>
     public ValueTask<T> WriteAsync<T>(
         Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
         WriteAsync(write, unavailable, durable: false, file, line, cancellationToken);
 
-    /// <summary>Writes catalog state with a disk-synced commit before acknowledging a peer batch.</summary>
     public ValueTask<T> WriteDurableAsync<T>(
         Func<IStorageTransaction, ValueTask<T>> write, Func<Unavailable, T> unavailable, CancellationToken cancellationToken,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
@@ -96,10 +73,6 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
             Unavailable refused => unavailable(refused),
         };
 
-    /// <summary>
-    /// Reads without the catalog version check, for state that does not depend on the management catalog (operator API
-    /// keys, and authenticating any key), so the data plane keeps working while the catalog needs attention.
-    /// </summary>
     public async ValueTask<T> ReadUncheckedAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
     {
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
@@ -110,7 +83,6 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         }
     }
 
-    /// <summary>Writes without the catalog version check (see <see cref="ReadUncheckedAsync"/>); a failure result simply writes nothing.</summary>
     public async ValueTask<T> WriteUncheckedAsync<T>(
         Func<IStorageTransaction, ValueTask<T>> write, CancellationToken cancellationToken, bool durable = false,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
@@ -127,11 +99,6 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         }
     }
 
-    /// <summary>A bounded page of permanent purge authorities, including completed entries; null on catalog refusal.</summary>
-    /// <remarks>
-    /// An unreadable row (a replicated scalar or repeated key) is left out of the page, but the cursor moves past it so later
-    /// purges still progress. It is never reported complete: convergence counts it as a pending purge error.
-    /// </remarks>
     public ValueTask<ManagementPage<DatabasePurgeRecord>?> ListDatabasePurgesAsync(string? after, int limit, CancellationToken cancellationToken) =>
         ReadAsync<ManagementPage<DatabasePurgeRecord>?>(async transaction =>
         {
@@ -150,7 +117,6 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
                     }
                     catch (Exception error) when (error is JsonException or NotSupportedException or InvalidOperationException or ArgumentException)
                     {
-                        // Left pending; see remarks.
                     }
                 }
             }
@@ -158,19 +124,16 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
             return new ManagementPage<DatabasePurgeRecord>(items, page.HasMore && page.Records.Count > 0 ? page.Records[^1].Id : null);
         }, static _ => null, cancellationToken);
 
-    /// <summary>True only after every expected holder has published its own absence receipt.</summary>
     public ValueTask<bool> AreActiveCopiesAbsentAsync(TenantContext database, CancellationToken cancellationToken) =>
         ReadAsync<bool>(async transaction =>
             await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } record
             && DatabasePurge.SameDatabase(record.Database, database)
             && await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken).ConfigureAwait(false), static _ => false, cancellationToken);
 
-    /// <summary>Records verified backup absence without removing the permanent id fence or changing deadlines.</summary>
     public ValueTask<bool> MarkBackupVerifiedAsync(TenantContext database, DateTimeOffset verifiedAt, CancellationToken cancellationToken) =>
         WriteAsync<bool>(async transaction =>
         {
             var record = await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
-            // Authority and receipts are read under this writer; verifiedAt is the verifier's clock, never compared to another node's.
             if (record is null || !DatabasePurge.SameDatabase(record.Database, database)
                 || !await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken).ConfigureAwait(false))
             {
@@ -205,7 +168,6 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
     public static async ValueTask<bool> AnyAsync(IStorageTransaction transaction, string kind, CancellationToken cancellationToken) =>
         (await transaction.ListAsync(kind, afterId: null, limit: 1, MaxPageBytes, cancellationToken).ConfigureAwait(false)).Records.Count > 0;
 
-    /// <summary>One page in record id order; <paramref name="id"/> gives the cursor of the last item.</summary>
     public static async ValueTask<ManagementPage<T>> ListAsync<T>(
         IStorageTransaction transaction, string kind, string? after, int limit, JsonTypeInfo<T> type, Func<T, string> id, CancellationToken cancellationToken)
     {
@@ -214,7 +176,6 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         return new ManagementPage<T>(items, page.HasMore ? id(items[^1]) : null);
     }
 
-    /// <summary>Every record of a kind, for kinds small enough to read whole.</summary>
     public static async ValueTask<List<T>> ListAllAsync<T>(
         IStorageTransaction transaction, string kind, JsonTypeInfo<T> type, CancellationToken cancellationToken)
     {

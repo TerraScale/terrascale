@@ -9,29 +9,18 @@ namespace TerraBase.Features.Management.Usage;
 internal sealed class UsageService(IStorageEngine engine, IManagementService management, UsageMeter meter, TimeProvider time, SystemCatalog catalog, Features.FileStorage.IFileStorageUsage files)
     : IUsageService
 {
-    /// <summary>
-    /// What <see cref="AllowanceUsage.Operations"/> counts: write units, one per changed row and one per started 4 KiB the
-    /// write grew the database by, whichever is more, summed over every region and node. Reads are not billed.
-    /// </summary>
     internal const string OperationsContract = "write-units-4kib-global-v2";
 
     internal const string StorageContract = "stored-byte-hours-global-v1";
 
     internal const int AllowancePageSize = 25;
 
-    // One allowance page reads at most this long; a slower one answers 503 and the caller retries.
     private static readonly TimeSpan AllowanceScanBudget = TimeSpan.FromSeconds(30);
 
-    // Databases or projects one catalog read lists.
     private const int PageSize = 10;
 
-    /// <summary>Databases one project usage request reads at most; a larger one's usage is too expensive.</summary>
     internal const int MaxDatabases = 100;
 
-    /// <summary>
-    /// After this long (the deadline of one query) a project usage request starts no more counts. Each
-    /// database's count runs under its own query budget.
-    /// </summary>
     internal static readonly TimeSpan Deadline = TimeSpan.FromSeconds(5);
 
     private void ThrowPastDeadline(long started)
@@ -62,13 +51,10 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         }
     }
 
-    // Within a project request, each step (the size lookup, the count, waiting for a flush) can end past
-    // the deadline: then no further step starts, and the request answers too expensive.
     private async ValueTask<DatabaseUsageResult> DatabaseAsync(TenantContext database, UsageWindow window, Budget? budget, CancellationToken cancellationToken)
     {
         Action? proceed = budget is null ? null : () => ThrowPastDeadline(budget.Started);
 
-        // Membership was checked before; a database deleted since has no size or no storage to count.
         var bytes = await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false);
         proceed?.Invoke();
         if (bytes is not { } size)
@@ -94,8 +80,6 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
             lifetime.Reads, lifetime.Writes, Period(window, series), series);
     }
 
-    // The request is bounded as a whole: every database is listed (and the request refused past MaxDatabases) before any
-    // count, and after Deadline no further catalog read or count starts (one already running ends within its own budget).
     public async ValueTask<ProjectUsageResult> GetProjectUsageAsync(
         string userId, string organizationId, string projectId, UsageWindow window, CancellationToken cancellationToken)
     {
@@ -120,7 +104,6 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         }
     }
 
-    // Lists every database of a project, counting them toward MaxDatabases.
     private async ValueTask<ProjectDatabases> ListDatabasesAsync(
         string userId, string organizationId, string projectId, Budget budget, CancellationToken cancellationToken)
     {
@@ -130,7 +113,6 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         {
             ThrowPastDeadline(budget.Started);
             var listed = await management.ListDatabasesAsync(userId, organizationId, projectId, after, PageSize, cancellationToken).ConfigureAwait(false);
-            // Also after the call, whatever it found: a slow last page leaves no count to check it before.
             ThrowPastDeadline(budget.Started);
             if (listed is not ManagementPage<ManagedDatabase> page)
             {
@@ -164,8 +146,6 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         foreach (var database in databases)
         {
             ThrowPastDeadline(budget.Started);
-            // Each database's tenant comes from its own membership-checked read; one deleted meanwhile is left out. The
-            // read can itself outlast the deadline, so it is checked again before the count starts.
             var found = await management.GetDatabaseTenantAsync(userId, organizationId, projectId, database.Id, cancellationToken).ConfigureAwait(false);
             ThrowPastDeadline(budget.Started);
             if (found is Unavailable unavailable)
@@ -175,7 +155,6 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
             if (found is TenantContext tenant)
             {
-                // A database deleted meanwhile (NotFound) is left out.
                 var read = await DatabaseAsync(tenant, window, budget, cancellationToken).ConfigureAwait(false);
                 if (read is NotFound)
                 {
@@ -196,7 +175,6 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
             }
         }
 
-        // The last tenant lookup or usage read can itself end past the deadline.
         ThrowPastDeadline(budget.Started);
         var month = time.GetUtcNow().ToString("yyyy-MM", CultureInfo.InvariantCulture);
         if (await meter.GetMonthAsync(organizationId, projectId, cancellationToken).ConfigureAwait(false) is not UsageTotals project
@@ -289,7 +267,6 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
     private static UsagePeriod Period(UsageWindow window, IReadOnlyList<UsagePoint> series) =>
         new(window.From, window.To, window.Granularity.Name, series.Sum(point => point.Reads), series.Sum(point => point.Writes));
 
-    // What one project usage request has spent.
     private sealed class Budget(long started)
     {
         public long Started { get; } = started;
@@ -301,6 +278,5 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
     private readonly union OrganizationPage(OrganizationIds, Unavailable);
 
-    // Every database of a project, or why they cannot be listed.
     private readonly union ProjectDatabases(List<ManagedDatabase>, NotFound, Validation, Unavailable);
 }

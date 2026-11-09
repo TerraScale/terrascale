@@ -8,7 +8,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>PUT /v1/management/organizations/{organization}/plan</c>: sets an organization's plan.</summary>
 internal sealed class SetOrganizationPlanEndpoint(IManagementService management, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
 {
     public override void Configure()

@@ -78,7 +78,6 @@ public sealed class CompleteShreddingTests
             var persisted = JsonSerializer.Deserialize(record.Json.Span, TerraBaseJsonContext.Default.HeldTransaction)!;
             await Assert.That(await crypto.OpenAsync(tenant, persisted.Payload!, token)).IsEquivalentTo(packed);
         }
-        // A native replica's local page key must disappear before the peer acknowledges shredding.
         var nativeReplica = remote.Server.Services.GetRequiredService<IDatabaseReplicas>();
         using var peerHttp = PeerTls.CreateClient(api.Server.BaseAddress);
         await nativeReplica.OpenAsync(tenant, api.Server.PullAddress(tenant), peerHttp, token);
@@ -86,7 +85,6 @@ public sealed class CompleteShreddingTests
         var replicaFiles = Path.Combine(remote.Server.Services.GetRequiredService<TerraBaseOptions>().DataDirectory,
             ".replicas", tenant.OrganizationId, tenant.ProjectId!);
         await Assert.That(Directory.GetFiles(replicaFiles)).IsNotEmpty();
-        // Warm a separate server's cache. Deletion must revoke it over the actual authenticated peer RPC.
         var remoteCustody = remote.Server.Services.GetRequiredService<KeyCustody>();
         var observedStore = new ObservedStore(remoteCustody.Store);
         var keyTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
@@ -137,7 +135,6 @@ public sealed class CompleteShreddingTests
             Database = tenant.DatabaseId!,
         }, cancellationToken: token).ResponseAsync;
         await Assert.That(refused.Revoked).IsFalse();
-        // Production shipping retains a native WAL reader between passes. DELETE must drain it.
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(token);
         await Assert.That(api.Server.Services.GetRequiredService<IContinuousBackup>().Status.Files
             .Any(file => file.File == BackupLayout.File(tenant, "origin"))).IsTrue();
@@ -186,8 +183,6 @@ public sealed class CompleteShreddingTests
         using var deleted = await api.ProjectClient(database.Project).DeleteAsync(ManagementApi.Uri(database.Path), token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await api.Server.Services.GetRequiredService<SystemCatalog>().ListDatabasePurgesAsync(null, 16, token))!.Items.Single().BackupVerifiedAt).IsNull();
-        // Reproduce an interrupted legacy progress publication: physical-erasure certification
-        // exists but the local key certificate did not reach durable progress. Closure must recover.
         var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
         _ = await catalog.WriteDurableAsync(async transaction =>
         {
@@ -205,7 +200,6 @@ public sealed class CompleteShreddingTests
         await Assert.That(() => api.Server.Services.GetRequiredService<DataKeys>().CurrentAsync(scope, token)).Throws<DatabaseShreddedException>();
         await Assert.That(() => keys.CurrentAsync(snapshotScope, token)).Throws<DatabaseShreddedException>();
 
-        // A durable entry survives both an interrupted object delete and a refused Cloudflare request.
         var services = api.Server.Services;
         var custody = services.GetRequiredService<KeyCustody>();
         var objectKey = "v1/shapes/h1-0000000000000000/" + new string('a', 64);

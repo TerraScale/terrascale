@@ -8,26 +8,16 @@ namespace TerraBase.Features.Management;
 
 public sealed record DatabaseRegionsRequest(string? Name, string? HomeRegion, IReadOnlyList<string>? ReplicaRegions, bool? AllRegions = null, long? TtlSeconds = null);
 
-/// <summary>
-/// Per-database region placement (docs/cross-region.md): the checks of a requested placement, and the <c>421 wrong_region</c>
-/// a region outside a database's placement answers with, naming the regions that serve it.
-/// </summary>
 internal static class DatabaseRegions
 {
     internal const int MaxReplicas = 8;
 
     internal readonly union HomeRegionCheck(Done, Misdirected, NotFound, Unavailable);
 
-    /// <summary>Marks an endpoint that answers for databases placed elsewhere itself: reading, updating and deleting the record.</summary>
     internal sealed class PlacementAware;
 
-    /// <summary>Marks an endpoint that a replica region answers itself from its replica (docs/terrabase/region-replicas.md).</summary>
     internal sealed class ReplicaReads;
 
-    /// <summary>
-    /// The replica regions of a database homed in <paramref name="home"/>: distinct regions other than the home, at most
-    /// <see cref="MaxReplicas"/>. Replicas pull the home's pages and serve reads (docs/terrabase/region-replicas.md).
-    /// </summary>
     internal static Valid<IReadOnlyList<string>> Check(IReadOnlyList<string> replicas, string home) =>
         replicas.Count > MaxReplicas ? new Validation($"replicaRegions names at most {MaxReplicas} regions")
         : replicas.FirstOrDefault(region => !TerraBaseOptions.IsRegion(region)) is { } invalid ? new Validation($"replicaRegions names {invalid}, which is not a region")

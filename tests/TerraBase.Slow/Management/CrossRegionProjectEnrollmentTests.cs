@@ -7,7 +7,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
-/// <summary>A project enrolled by its first database create resolves in every region at once (TS-1394).</summary>
 public sealed class CrossRegionProjectEnrollmentTests
 {
     private const string Scopes = "databases:read databases:write";
@@ -15,8 +14,6 @@ public sealed class CrossRegionProjectEnrollmentTests
     [Test]
     public async Task A_first_database_create_enrolls_the_project_in_every_region()
     {
-        // A two-way mesh, as the peers file builds it: home enrolls the project (create); away receives the
-        // enrollment over the internal listener and must then resolve the project itself, not forward it home.
         using var issuer = new TestIssuer();
         var mesh = new Mesh();
         await using var home = await StartAsync("gru", mesh, issuer);
@@ -36,13 +33,9 @@ public sealed class CrossRegionProjectEnrollmentTests
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
         }
 
-        // Before the fix the away region answered 404 unknown_database here for minutes: the binding existed only in
-        // the creating region. locateDatabaseHome answers 200 only from away's own catalog, proving the enrollment
-        // arrived there. Poll, because the fan-out runs after the create commits.
         using var located = await PollAsync(away.Server.Client, ManagementApi.Uri($"/v1/internal/home?project={project}"));
         await Assert.That(located.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await located.Content.ReadAsStringAsync());
 
-        // And the project-resolved route away served 404 on now answers from away itself.
         using var awayListed = await away.WithToken(Token(issuer, organization, project)).GetAsync(ManagementApi.Uri(path));
         await Assert.That(awayListed.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await awayListed.Content.ReadAsStringAsync());
     }

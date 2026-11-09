@@ -6,24 +6,14 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>A body that carries only a name: create, rename and branch.</summary>
-/// <param name="Name">Organization or project display name, or database name.</param>
 public sealed record NameRequest(string? Name);
 
-/// <summary>The plan to set.</summary>
-/// <param name="Plan"><c>hobby</c>, <c>pro</c> or <c>enterprise</c>.</param>
 public sealed record PlanRequest(string? Plan);
 
-/// <summary>The organization a project's enrollment binds it to.</summary>
-/// <param name="Organization">The ts-auth organization id the creating region enrolled the project under.</param>
 public sealed record EnrollmentRequest(string? Organization);
 
-/// <summary>A page request.</summary>
-/// <param name="After">Exclusive cursor from the previous page's <c>next</c>.</param>
-/// <param name="Limit">Page size, 1 to 100.</param>
 internal sealed record PageQuery(string? After, int Limit);
 
-/// <summary>Routes, validation and error mapping shared by the management endpoints.</summary>
 internal static class ManagementRoute
 {
     internal readonly union RouteIdCheck(Done, Validation);
@@ -77,34 +67,25 @@ internal static class ManagementRoute
     public static IResult DatabaseNotFound(NotFound error) =>
         ErrorResponse.From(ProjectAccess.Current is not null ? new NotFound(Code: "unknown_route") : error);
 
-    /// <summary>The canonical path of a project, from route values: request paths may differ in case or end in a slash.</summary>
     public static string ProjectPath(HttpContext context, Project project) =>
         context.Features.Get<LegacyManagementRoute>() is not null
             ? $"{Organizations}/{OrganizationId(context)}/projects/{project.Id}"
             : $"/v1/projects/{project.Id}";
 
-    /// <summary>The canonical path of a database, from its tenant (see <see cref="ProjectPath"/>).</summary>
     public static string DatabasePath(HttpContext context, TenantContext database) =>
         context.Features.Get<LegacyManagementRoute>() is not null
             ? $"{Organizations}/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}"
             : $"/v1/projects/{database.ProjectId}/databases/{Value(context, "databaseName")}";
 
-    /// <summary>The path of a database just created or branched by a canonical route or its hidden legacy alias.</summary>
     public static string CreatedDatabasePath(HttpContext context, ManagedDatabase database) =>
         context.Features.Get<LegacyManagementRoute>() is not null
             ? $"{Organizations}/{OrganizationId(context)}/projects/{database.ProjectId}/databases/{database.Id}"
             : $"/v1/projects/{database.ProjectId}/databases/{database.Name}";
 
-    /// <summary>
-    /// The acting user: the <c>sub</c> of the caller's ts-auth access token, or the user named with the management service
-    /// credential on the administrative listener. A request header alone never names it.
-    /// </summary>
     public static string UserId(HttpContext context) => context.User.UserId();
 
-    /// <summary>The route's organization. Membership, checked by the service, decides whether the user reaches it.</summary>
     public static string OrganizationId(HttpContext context) => Value(context, "organization");
 
-    /// <summary>An organization, project or key name, trimmed, or the rule it breaks.</summary>
     public static Valid<string> CheckDisplayName(NameRequest request)
     {
         var name = request.Name?.Trim();
@@ -123,13 +104,11 @@ internal static class ManagementRoute
         _ => new Validation("plan must be hobby, starter, pro, team or enterprise"),
     };
 
-    /// <summary>A database name, or the rule it breaks.</summary>
     public static Valid<string> CheckDatabaseName(NameRequest request) =>
         Engine.DatabaseName.TryParse(request.Name, out var name)
             ? name.Value
             : new Validation("name must be a lowercase database name of at most 63 characters");
 
-    /// <summary>The <c>after</c> and <c>limit</c> query parameters, or the rule they break.</summary>
     public static Valid<PageQuery> CheckPage(HttpContext context)
     {
         var query = context.Request.Query;

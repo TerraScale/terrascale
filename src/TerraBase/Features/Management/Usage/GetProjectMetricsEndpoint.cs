@@ -9,14 +9,12 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>A project's analytics as a Prometheus scrape target, for customers' own Prometheus.</summary>
 public sealed class GetProjectMetricsEndpoint(IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     private const int Minutes = 5;
     private const string ContentType = "text/plain; version=0.0.4; charset=utf-8";
     private static readonly QueryCollection LastHour = new(new Dictionary<string, StringValues>(StringComparer.Ordinal) { ["range"] = "1h" });
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(AnalyticsRoute.Project + "/metrics");
@@ -35,7 +33,6 @@ public sealed class GetProjectMetricsEndpoint(IUsageAnalytics analytics, TimePro
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
@@ -58,8 +55,6 @@ public sealed class GetProjectMetricsEndpoint(IUsageAnalytics analytics, TimePro
         };
     }
 
-    // These labels name the caller's own databases in a response scoped to one project. They are never recorded on the
-    // TerraBase operator meter, so the bounded-label rule for the administrative /metrics scrape does not apply here.
     private static string Format(ProjectAnalytics analytics)
     {
         var requests = new StringBuilder();
@@ -70,7 +65,6 @@ public sealed class GetProjectMetricsEndpoint(IUsageAnalytics analytics, TimePro
         foreach (var item in analytics.Items)
         {
             var labels = $"database=\"{Escape(item.DatabaseName)}\",database_id=\"{Escape(item.DatabaseId)}\",region=\"{Escape(item.Region)}\"";
-            // The newest bucket is the current, partial minute.
             var complete = item.Series.Take(Math.Max(0, item.Series.Count - 1)).ToList();
             var recent = complete.TakeLast(Minutes).ToList();
             Line(requests, "requests_per_second", labels, recent.Sum(point => point.Requests.Values.Sum()) / (Minutes * 60.0));
@@ -114,7 +108,6 @@ public sealed class GetProjectMetricsEndpoint(IUsageAnalytics analytics, TimePro
         }
     }
 
-    // Label values escape backslash, double quote and newline (Prometheus text format 0.0.4).
     private static string Escape(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal)
         .Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
 }

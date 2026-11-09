@@ -6,14 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>
-/// <c>GET /v1/usage/allowances</c>: every organization's billed operation units this UTC month, for the dashboard's allowance
-/// notices. Served only on the internal listener, which requires the shared peer credential, as
-/// <c>PUT /admin/projects/{project}/plan</c> is.
-/// </summary>
 internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage peers, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/usage/allowances");
@@ -27,7 +21,6 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var after = HttpContext.Request.Query["after"].ToString();

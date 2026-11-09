@@ -35,8 +35,6 @@ internal sealed partial class UsageMeter
         }
     }
 
-    // The organization's units this month: this node's own plus the last answer of every other region. A region that
-    // cannot answer keeps its last answer, so the cap holds what it knew and catches up on the next tick.
     private async ValueTask<MonthUnitsCheck> RefreshAsync(string organizationId, CancellationToken cancellationToken, bool others = true)
     {
         if (others)
