@@ -71,6 +71,7 @@ internal sealed class WriteRouter(
     private readonly ILocalCommitPath? _path = paths.LastOrDefault();
     private const int MaxFingerprints = 65_536;
     private readonly ConcurrentDictionary<string, byte> _fingerprints = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<string> _remembered = new();
     private readonly Counter<long> _routes = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.sql.write_routes", "{transaction}",
         "Writes of replica regions by the router's decision (route, reason) and where they committed (commit).");
 
@@ -99,12 +100,15 @@ internal sealed class WriteRouter(
     public void Remember(TenantContext database, string sql)
     {
         ArgumentNullException.ThrowIfNull(database);
-        if (_fingerprints.Count >= MaxFingerprints)
+        var fingerprint = Fingerprint(database, sql);
+        if (_fingerprints.TryAdd(fingerprint, 0))
         {
-            _fingerprints.Clear();
+            _remembered.Enqueue(fingerprint);
+            while (_fingerprints.Count > MaxFingerprints && _remembered.TryDequeue(out var oldest))
+            {
+                _fingerprints.TryRemove(oldest, out _);
+            }
         }
-
-        _fingerprints[Fingerprint(database, sql)] = 0;
     }
 
     public bool Remembers(TenantContext database, string sql)
