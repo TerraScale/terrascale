@@ -20,7 +20,7 @@ Official SDKs for the TerraBase SQL API at `https://api.terrascale.tech`. Every 
 | Python | `terrascale` (source; PyPI pending) | `pip install "git+https://github.com/TerraScale/terrascale@main#subdirectory=sdk/python"` | [Python quickstart](/ja/getting-started/python) |
 | Rust | `terrascale` (source; crates.io pending) | `terrascale = { git = "https://github.com/TerraScale/terrascale.git" }` in `Cargo.toml` | [Rust quickstart](/ja/getting-started/rust) |
 
-Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `/v1/projects/{project}/databases/{database}/sql/execute`, one request and one transaction each, with positional or named arguments and typed rows. The .NET and Go SDKs also open a WebSocket session on `/sql/ws` for interactive transactions (`begin`, `commit`, `rollback`). Primary keys are ULIDs from each SDK's ID generator.
+Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `/v1/projects/{project}/databases/{database}/sql/execute`, one request and one transaction each, with positional or named arguments and typed rows. All five SDKs also open a WebSocket session on `/sql/ws` for interactive transactions (`begin`, `commit`, `rollback`): `database.connect()` in JavaScript, `SqlSession` in Python and Rust, the session clients in Go and .NET. Primary keys are ULIDs from each SDK's ID generator.
 
 ## Query from your application
 
@@ -29,7 +29,7 @@ Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `
 ## Which entry do I call?
 
 - **SQL** goes through the SDK's database handle against `https://api.terrascale.tech`, with a project access token.
-- **Key exchange** happens against `https://auth.terrascale.tech/terrascale/oauth/token` with the client credentials grant. Go, Python and Rust SDKs do it for you; the JavaScript and .NET SDKs expose the token call and a token-provider hook (each quickstart shows the exact code). See [authentication](/ja/guides/authentication).
+- **Key exchange** happens against `https://auth.terrascale.tech/terrascale/oauth/token` with the client credentials grant. All five SDKs do it for you when you pass the dashboard API key; they also expose a token-provider hook for callers that mint project tokens themselves. See [authentication](/ja/guides/authentication).
 - **SQL over plain HTTP** (any HTTP client) is documented in [SQL over HTTP](/ja/guides/sql-http); PostgreSQL-compatible clients work too ([PostgreSQL clients](/ja/guides/postgres-clients)).
 
 ## Versioning

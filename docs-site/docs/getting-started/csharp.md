@@ -17,7 +17,6 @@ Run a complete SQL workflow against your TerraScale database in about ten minute
 read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY   # keeps the key out of history
 export TERRASCALE_PROJECT_ID=YOUR_PROJECT_ULID
 export TERRASCALE_DATABASE_NAME=main                       # your database's name
-export TERRASCALE_REGION=gru                               # your database's home region
 ```
 
 ## Install the SDK
@@ -55,10 +54,9 @@ public static class Program
         string project = Required("TERRASCALE_PROJECT_ID");
         string apiKey = Required("TERRASCALE_API_KEY");
         string databaseName = Required("TERRASCALE_DATABASE_NAME");
-        string region = Required("TERRASCALE_REGION");
 
         using var http = new HttpClient(TerraBaseHttp.CreateHandler());
-        var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = apiKey, Region = region });
+        var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { ApiKey = apiKey });
         TerraBaseSqlDatabase db = sql.Database(project, databaseName);
         var ids = new TerraScaleIdGenerator();
         string ada = ids.NewId();
