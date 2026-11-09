@@ -74,7 +74,6 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         var record = await transaction.GetAsync("node_clocks", options.MachineId, cancellationToken).ConfigureAwait(false);
-        // A restart skips every timestamp that the previous process could have issued.
         _previous = _reserved = ReadState(record?.Json);
         Remember(_previous.PhysicalMilliseconds);
         _initialized = true;
@@ -102,12 +101,10 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
             _ = await transaction.PutAsync("node_clocks", options.MachineId,
                 JsonSerializer.SerializeToUtf8Bytes(new HlcState(1, reserved), TerraBaseJsonContext.Default.HlcState), cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            // Publish the reservation only after its durable commit succeeds.
             _reserved = reserved;
         }
 
         _previous = timestamp;
-        // Admission tracks issued/observed time, not this process's unused reservation.
         Remember(timestamp.PhysicalMilliseconds);
         return timestamp;
     }
