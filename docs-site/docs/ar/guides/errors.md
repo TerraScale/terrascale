@@ -22,7 +22,7 @@ Decide recovery from the typed status and code, and from whether an operation ma
 | `404` | The resource does not exist **or your credential cannot reach it**; both answer the same, so another project's resources stay invisible. For `unknown_database`, check the project ID and database name and the key's project and database restriction. |
 | `409` / `412` | Resolve the conflict or the stale version before writing again. |
 | `421` | Wrong region: the database is served in another region. See [Wrong region](#wrong-region). |
-| `429` / `503` | Respect `Retry-After` where supplied; repeat only safe operations within a deadline. Plan quotas (`storage_quota`, `operation_allowance`, `read_fair_use`) carry no `Retry-After`: the message names the used and allowed amounts and the next step, so free the quota or upgrade instead of retrying. |
+| `429` / `503` | Respect `Retry-After` where supplied; repeat only safe operations within a deadline. Plan quotas (`quota_exceeded`, `storage_quota`, `operation_allowance`, `read_fair_use`) carry no `Retry-After`: the message names the used and allowed amounts and the next step, so free the quota or upgrade instead of retrying. |
 
 ## Wrong region
 
