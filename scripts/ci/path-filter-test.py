@@ -231,7 +231,7 @@ cases += [(path, "modified", ci, started) for path, ci, started in [
     ("benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Program.cs", {"libs"}, set()),
     ("benchmark/dotnet/DatabaseEncryption/Program.cs", set(), set()),
     ("ops/runbook.sh", set(), set()),
-    ("scripts/sdk/build-release.py", set(), sdks | go),
+    ("scripts/sdk/build-release.py", set(), {"sdk-go-release.yml"}),
     ("docs-site/scripts/check-main.py", set(), {"docs-ci.yml"}),
     ("scripts/dashboard/ci/release-gate.py", set(), {"images-ghcr.yml"}),
     ("scripts/auth/check.sh", {"auth"}, set()),

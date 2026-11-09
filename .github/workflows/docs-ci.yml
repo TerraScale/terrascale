@@ -24,6 +24,10 @@ permissions:
   # docs-deploy.yml reads workflow runs for its manual green-main check.
   actions: read
 
+concurrency:
+  group: docs-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   fast:
     runs-on: ubuntu-latest
