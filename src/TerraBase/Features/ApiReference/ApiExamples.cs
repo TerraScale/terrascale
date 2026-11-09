@@ -4,7 +4,6 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.ApiReference;
 
-/// <summary>Runnable request shapes and representative response envelopes for the public operations.</summary>
 internal static class ApiExamples
 {
     private const string Database = """

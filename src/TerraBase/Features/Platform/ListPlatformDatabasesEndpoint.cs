@@ -6,11 +6,9 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Platform;
 
-/// <summary><c>GET /v1/platform/databases</c>: the platform databases, for platform admins.</summary>
 internal sealed class ListPlatformDatabasesEndpoint(IManagementService management, TerraBaseOptions options, ILogger<ListPlatformDatabasesEndpoint> logger)
     : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(PlatformExplore.Databases);
@@ -25,7 +23,6 @@ internal sealed class ListPlatformDatabasesEndpoint(IManagementService managemen
         Metadata(ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var items = new List<PlatformDatabaseBody>();
@@ -39,7 +36,6 @@ internal sealed class ListPlatformDatabasesEndpoint(IManagementService managemen
                 case Unavailable error:
                     return ErrorResponse.From(error);
                 case NotFound:
-                    // Not seeded yet: listed once it is.
                     break;
             }
         }

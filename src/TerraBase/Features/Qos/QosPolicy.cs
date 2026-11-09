@@ -2,23 +2,8 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Qos;
 
-/// <summary>Node-local resource limits applied to an organization's trusted plan.</summary>
-/// <param name="RequestsPerSecond">Token replenishment rate; zero disables the plan limit.</param>
-/// <param name="Burst">Maximum tokens; zero disables the plan limit.</param>
-/// <param name="Concurrency">Simultaneous requests; zero disables the plan limit.</param>
-/// <param name="Weight">Relative SQL scheduling weight.</param>
-/// <param name="MemoryShare">Maximum fraction of the process budget reserved by one organization.</param>
-/// <param name="CacheShare">Maximum fraction of the read cache held by one organization.</param>
-/// <param name="QueryTimeout">SQL execution time allowed, excluding queue and consumer waits.</param>
-/// <param name="QueryWork">Engine work limit, in units scaled like SQLite virtual machine instructions.</param>
-/// <param name="ScanRows">Maximum candidate rows scanned.</param>
-/// <param name="ScanBytes">Maximum candidate JSON bytes scanned.</param>
-/// <param name="StorageBytes">Maximum stored bytes per organization, in decimal GB as pricing.json entitlements.storageLimitGb publishes it.</param>
-/// <param name="Databases">Live databases per organization, across its projects, before new ones are refused (https://terrascale.tech/pricing.json).</param>
-/// <param name="MonthlyWriteCap">Write units per organization and UTC month after which new writes stop: the hard cap of pricing.json limits.operationUnitCapPerMonth.</param>
-/// <param name="MonthlySqlReads">SQL read units per organization and UTC month after which SQL reads stop: the fair use of pricing.json limits.sqlReadUnitsPerMonth. Shape reads are never counted.</param>
-/// <param name="EngineSeconds">SQL statement execution seconds replenished per second; zero disables the plan limit.</param>
-/// <param name="EngineBurst">Maximum SQL statement execution seconds an organization can spend at once.</param>
+// StorageBytes, Databases, MonthlyWriteCap and MonthlySqlReads mirror pricing.json entitlements
+// (storageLimitGb, databases, operationUnitCapPerMonth, sqlReadUnitsPerMonth).
 public sealed record QosPolicy(
     int RequestsPerSecond, int Burst, int Concurrency, int Weight, double MemoryShare, double CacheShare,
     TimeSpan QueryTimeout, long QueryWork, long ScanRows, long ScanBytes, long StorageBytes, long Databases,
@@ -34,7 +19,6 @@ public sealed record QosPolicy(
 
     private static long Reads(PlanTier plan) => PlanPricing.Ceiling(plan, "sqlReadUnitsPerMonth");
 
-    /// <summary>Limits for a validated plan; enterprise retains only process-wide safety bounds.</summary>
     public static QosPolicy For(PlanTier plan) => plan switch
     {
         PlanTier.Hobby => Hobby,

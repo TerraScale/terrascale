@@ -11,15 +11,12 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Qos;
 
-/// <summary>Registers organization resource controls and request admission.</summary>
 internal static class QosExtensions
 {
-    /// <summary>Registers bounded node-local request admission.</summary>
     public static IServiceCollection AddTerraBaseQos(this IServiceCollection services) => services
         .AddSingleton<IQosAdmission, QosAdmission>()
         .AddSingleton<IStorageQuota, StorageQuota>();
 
-    /// <summary>Admits process memory before authentication can materialize catalog credentials.</summary>
     public static WebApplication UseTerraBaseQosMemory(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -50,7 +47,6 @@ internal static class QosExtensions
         return app;
     }
 
-    /// <summary>Admits authorized requests before forwarding or reading their bodies.</summary>
     public static WebApplication UseTerraBaseQos(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);

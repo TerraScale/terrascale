@@ -134,7 +134,6 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
         return closed;
     }
 
-
     private static DatabaseKey Key(TenantContext database) => new(database.OrganizationId, database.ProjectId ?? "", database.DatabaseId ?? "");
     private DatabaseEntry Entry(TenantContext database)
     {

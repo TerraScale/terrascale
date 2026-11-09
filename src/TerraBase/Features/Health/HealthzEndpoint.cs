@@ -16,10 +16,6 @@ public sealed record StatusBody(
     [property: JsonPropertyName("machine"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null,
     [property: JsonPropertyName("bucket"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Bucket = null)
 {
-    /// <param name="context">The request, whose listener picks the fields to answer.</param>
-    /// <param name="status">The process status: ok, degraded, ready or unavailable.</param>
-    /// <param name="options">This node's settings.</param>
-    /// <param name="bucket">The missing backup bucket, while its catalog anchor cannot be read or written; internal listener only.</param>
     public static StatusBody For(HttpContext context, string status, TerraBaseOptions options, string? bucket = null) =>
         Listeners.ArrivedOn(context) == TerraBaseListener.Internal
             ? new(status, ServiceVersion.Value, options.Region, TursoStorageFormat.Id, ServiceVersion.Revision, options.MachineId, bucket)
@@ -27,7 +23,6 @@ public sealed record StatusBody(
 }
 public sealed class HealthzEndpoint(TerraBaseOptions options, ICatalogGate catalog) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/healthz");
@@ -41,7 +36,6 @@ public sealed class HealthzEndpoint(TerraBaseOptions options, ICatalogGate catal
         Metadata(ListenerMetadata.Probe);
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var status = catalog.Status;

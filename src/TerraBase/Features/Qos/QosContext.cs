@@ -3,23 +3,18 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Qos;
 
-/// <summary>The authenticated request's organization, independent of cached database store handles.</summary>
 public static class QosContext
 {
     private static readonly AsyncLocal<TenantContext?> Tenant = new();
     private static readonly AsyncLocal<ResultMemory?> Results = new();
     private static readonly AsyncLocal<IQosAdmission?> Admission = new();
 
-    /// <summary>The request's current plan; null for system and background work.</summary>
     public static TenantContext? Current => Tenant.Value;
 
-    /// <summary>Admits detached result buffers before allocation, retaining admission through HTTP serialization.</summary>
     public static void ReserveResult(long bytes) => ReserveResult(bytes, Current);
 
-    /// <summary>Admits against the explicit tenant, or only the process when null, retaining the current result owner.</summary>
     public static void ReserveResult(long bytes, TenantContext? tenant) => Results.Value?.Reserve(bytes, tenant);
 
-    /// <summary>Charges SQL statement execution time to the current organization's engine budget.</summary>
     public static void ChargeEngine(TimeSpan spent)
     {
         if (Tenant.Value is { } tenant && Admission.Value is { } admission)
@@ -53,7 +48,6 @@ public static class QosContext
         return new Scope(previous, previousResults, owned, previousAdmission);
     }
 
-    /// <summary>Uses independently owned admission for a shared read.</summary>
     public static IDisposable EnterFlight(TenantContext tenant, ResultMemory memory)
     {
         var scope = new Scope(Tenant.Value, Results.Value, null, Admission.Value);
@@ -62,7 +56,6 @@ public static class QosContext
         return scope;
     }
 
-    /// <summary>Retains shared read admission through this consumer's response serialization.</summary>
     public static void AttachResults(ResultMemory memory) => Results.Value?.Attach(memory);
 
     private sealed class Scope(TenantContext? previous, ResultMemory? previousResults, ResultMemory? owned, IQosAdmission? previousAdmission) : IDisposable
@@ -76,7 +69,6 @@ public static class QosContext
         }
     }
 
-    /// <summary>A shared read owns one reference until it finishes; each consumer retains another through serialization.</summary>
     public sealed class ResultMemory(IMemoryBudget budget) : IDisposable
     {
         private const int MaxResults = 16_384;
@@ -87,7 +79,6 @@ public static class QosContext
         private IMemoryReservation? _growing;
         private TenantContext? _growingTenant;
 
-        /// <summary>Reserves result buffers before allocating them.</summary>
         public void Reserve(long bytes, TenantContext? tenant)
         {
             lock (_gate)
@@ -114,7 +105,6 @@ public static class QosContext
             }
         }
 
-        /// <summary>Retains another result owner until this owner's final release.</summary>
         public void Attach(ResultMemory memory)
         {
             lock (_gate)
@@ -138,7 +128,6 @@ public static class QosContext
             }
         }
 
-        /// <summary>Releases this owner's reference once; consumers can continue retaining its buffers.</summary>
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _ownerReleased, 1) == 0)

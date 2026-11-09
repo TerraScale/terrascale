@@ -4,7 +4,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Memory;
 
-/// <summary>A process limit with organization admission bounded by each trusted plan.</summary>
 internal sealed class MemoryBudget : IMemoryBudget
 {
     private const int MaxTenants = 4096;
