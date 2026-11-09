@@ -7,5 +7,8 @@
   over the SQL HTTP API, running in autocommit — each statement is one request
   and a multi-row insert is one batched request. The API key is read from
   `TERRASCALE_API_KEY` or supplied as the URL password, never a query
-  parameter. Multi-statement transactions are not supported through the
-  dialect yet.
+  parameter. The dialect now defaults to real transactions over the SQL
+  WebSocket session (implicit begin, commit/rollback, `begin_nested()`
+  savepoints), limited to 5 seconds each by the server;
+  `isolation_level="AUTOCOMMIT"` keeps the previous one-request-per-statement
+  HTTP path.

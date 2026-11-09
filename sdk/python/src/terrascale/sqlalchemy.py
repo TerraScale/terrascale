@@ -10,7 +10,7 @@ from sqlalchemy.engine.url import URL
 class TerraScaleDialect(SQLiteDialect_pysqlite):
     name = "terrascale"
     driver = "terrascale"
-    default_isolation_level = "AUTOCOMMIT"
+    default_isolation_level = "SERIALIZABLE"
     supports_statement_cache = True
 
     @classmethod
@@ -25,6 +25,18 @@ class TerraScaleDialect(SQLiteDialect_pysqlite):
 
     def _get_server_version_info(self, connection: Any) -> Any:
         return cast("Any", self.dbapi).sqlite_version_info
+
+    def get_isolation_level_values(self, connection: Any) -> Any:
+        return ["SERIALIZABLE", "AUTOCOMMIT"]
+
+    def get_isolation_level(self, connection: Any) -> Any:
+        return connection.isolation_level
+
+    def set_isolation_level(self, connection: Any, level: Any) -> None:
+        connection.isolation_level = level
+
+    def detect_autocommit_setting(self, dbapi_connection: Any) -> bool:
+        return dbapi_connection.isolation_level == "AUTOCOMMIT"
 
     def on_connect(self) -> Any:
         return None
