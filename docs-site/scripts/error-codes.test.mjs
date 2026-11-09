@@ -78,11 +78,12 @@ export const errorCodes = () => {
     }
     for (const m of text.matchAll(writeRe)) codes.add(m[1]);
   }
+  const declRe = /(?:const string \w+ =|string Code =|=>) "([a-z_]+)"/g;
   for (const path of [
     'Errors/Errors.cs', 'Errors/ErrorResponse.cs', 'Features/Sql/SqlErrors.cs', 'Hosting/BadRequests.cs',
   ]) {
     const text = readFileSync(join(terrabase, path), 'utf8');
-    for (const m of text.matchAll(/"([a-z_]+)"/g)) codes.add(m[1]);
+    for (const m of text.matchAll(declRe)) codes.add(m[1]);
   }
   return codes;
 };
