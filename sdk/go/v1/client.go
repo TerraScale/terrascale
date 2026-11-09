@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -124,6 +125,18 @@ func New(cfg Config) (*Client, error) {
 		return nil, errors.New("terrabase: Token must be a tb_ API key or a ts-auth project access token")
 	}
 	return newClient(cfg)
+}
+
+func NewFromEnvironment() (*Client, error) {
+	key := os.Getenv("TERRASCALE_API_KEY")
+	if key == "" {
+		return nil, errors.New("terrabase: TERRASCALE_API_KEY is not set")
+	}
+	cfg := Config{APIKey: key}
+	if base := os.Getenv("TERRASCALE_BASE_URL"); base != "" {
+		cfg.BaseURL = base
+	}
+	return New(cfg)
 }
 
 func newClient(cfg Config) (*Client, error) {
