@@ -25,16 +25,7 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
     private long _count;
     private long _bytes;
 
-    internal long Count
-    {
-        get
-        {
-            lock (_totalsGate)
-            {
-                return _count;
-            }
-        }
-    }
+    internal long Count => Interlocked.Read(ref _count);
 
     public void Dispose() => _counting.Dispose();
 
