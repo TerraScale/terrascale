@@ -49,10 +49,13 @@ A project's sign-in and sign-up pages show "Continue with …" for each configur
    - GitHub: the account's primary email must be verified (`GET /user/emails`, scope `user:email`).
    - Apple: the client secret is a 5-minute ES256 JWT signed with the project's key (`iss` team id, `sub` client id,
      `kid` key id).
-3. The account with that email signs in; without one, an account is created when the project allows sign-up. Users are
-   linked by verified email, so an end user can switch between email and providers. A disabled user, a user with MFA,
-   an unverified email or any provider failure answers 401 with no session. Success sets the project's session cookie
-   and continues to `next` like the other hosted methods.
+3. Sign-in matches a previously linked provider identity (provider, issuer, client ID and subject); accounts are never linked by
+   verified email. A provider identity that is already linked signs that account in. A new identity whose email is new to the project
+   creates an account when the project allows sign-up. A new identity whose email already belongs to an email/password account is
+   refused with 401 and no session. Such a user keeps signing in with email and password; linking a social provider to an
+   existing project account is not available yet.
+   A user with MFA continues to the hosted second-factor step. A disabled user, an unverified email or any provider failure answers
+   401 with no session. Success sets the project's session cookie and continues to `next` like the other hosted methods.
 
 Both pages share the hosted per-IP budget. The outbound client times out after 10 seconds and connects only to
 public unicast addresses, so a configured OIDC issuer cannot reach loopback, private, link-local or mesh addresses.
