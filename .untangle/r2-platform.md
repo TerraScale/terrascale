@@ -75,3 +75,38 @@ systems (S3/Tigris, OIDC), which the repo rules allow. No test rewrites needed b
 classification, `_ts_conflicts` column list, `DatabaseRoute.CheckTenantAsync` boilerplate,
 copied `Value(name)` helpers, `QosRequestLease` dispose convention, `TerraBaseJsonContext`
 structure, `TerraBase.csproj` global usings.
+
+## Results
+
+- F1 done: 452 comment lines deleted across 69 files (src slice, analyzers, owned tests,
+  harness). The three standalone anchor comments in `TerraBase.Analyzers.BuildCheck` stay
+  (Makefile greps TB0001/RS0030 diagnostics at hard-coded line numbers they hold); the
+  trailing `// TB0001` / `// RS0030` markers were deleted — they shift nothing.
+- F2 done. F3/F4 reported as CROSS-SLICE (no code change).
+- Builds: `dotnet build src/TerraBase/TerraBase.csproj -c Debug` 0 warnings 0 errors;
+  Slow and E2E test projects build 0/0; `make terrabase-analyzer-check` passes;
+  `dotnet format whitespace --verify-no-changes` clean on server, Fast and Slow projects.
+- `make terrabase-test-fast` passes, slowest test ~4.1 s.
+
+## THIRD-PARTY constraints whose comments were deleted (code unchanged)
+
+- `src/TerraBase/Configuration/BackupSettings.cs` — Fly provides the Tigris variables for an
+  attached bucket; ts-orch delivers the master key via `TERRABASE_MASTER_KEY_FILE`.
+- `src/TerraBase/Hosting/TerraBaseLogging.cs` — ASP.NET Core logs every auth challenge at
+  Information verbosity.
+- `src/TerraBase/Hosting/RequestJson.cs` — System.Text.Json yields null for a null list element
+  even when the element type is non-nullable.
+- `src/TerraBase/Hosting/RequestBodies.cs` — `Accepts` would add a routing constraint whose 415
+  carries no listener metadata and becomes a 404 on the client listener.
+- `src/TerraBase/Hosting/ClientCors.cs` — CORS preflight has no endpoint metadata or bearer
+  token, so it must be restricted before the listener/auth gates.
+- `src/TerraBase/Features/Qos/QosBodyStream.cs` — Kestrel owns the underlying request stream.
+- `src/TerraBase/Features/ApiReference/RootRedirectEndpoint.cs` — Scalar serves its page at
+  `scalar/` and redirects `/scalar` there; Location stays relative for regional hosts/proxies.
+- `tests/TerraBase.TestHarness/FakeS3*.cs` — S3/Tigris protocol facts (unversioned "null"
+  objects name no version marker, lifecycle rules, retention, multipart, error codes).
+- `tests/TerraBase.TestHarness/PostgresWireClient.cs` — Postgres wire message types
+  (AuthenticationCleartextPassword).
+- `tests/TerraBase.TestHarness/FixtureHttpHandlers.cs` — HttpClientFactory handler lifetimes
+  root timers that outlive a disposed fixture's service provider.
+
