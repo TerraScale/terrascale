@@ -111,6 +111,7 @@ public static class App
         }).Database(StorageProject, StorageDatabase));
         builder.Services.AddSingleton(services => new AuthStore(services.GetRequiredService<TerraBaseSqlDatabase>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<Users>();
+        builder.Services.AddSingleton<WebhookOutbox>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
         builder.Services.AddSingleton<PasswordHasher>();

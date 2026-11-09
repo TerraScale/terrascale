@@ -1,13 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Identity;
 
 /// <summary>User accounts. Callers authorize the instance before using these operations.</summary>
-public sealed class Users(AuthStore store, TimeProvider clock)
+public sealed class Users(AuthStore store, WebhookOutbox outbox, TimeProvider clock)
 {
     private const string EmailKind = "email";
     private const string ProviderKind = "credential:social";
@@ -47,11 +48,17 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     /// A new account and the operations that create it: the email claim first (it fails when the address has an
     /// account), then the user record. Committed by a caller's own transaction (sign-up redemption).
     /// </summary>
-    internal (UserRecord User, StoreOperation[] Operations) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId)
+    internal (UserRecord User, StoreOperation[] Operations) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, StoreOperation? lifecycleEvent = null)
     {
         var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthStore.NewId() };
-        return (user, [AuthStore.Claim(instanceId, EmailKind, normalizedEmail, user.Id),
-            AuthStore.Create(AuthStore.UserTable, instanceId, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord))]);
+        List<StoreOperation> operations = [AuthStore.Claim(instanceId, EmailKind, normalizedEmail, user.Id),
+            AuthStore.Create(AuthStore.UserTable, instanceId, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord))];
+        if (lifecycleEvent is not null)
+        {
+            operations.Add(lifecycleEvent);
+        }
+
+        return (user, [.. operations]);
     }
 
     internal async Task<UserRecord?> CreateAccountAsync(string instanceId, string email, string? passwordHash, string userId, CancellationToken cancellationToken)
@@ -59,9 +66,16 @@ public sealed class Users(AuthStore store, TimeProvider clock)
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));
         var user = new UserRecord(userId, instanceId, normalized, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthStore.NewId() };
         var record = JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord);
-        return await store.CreateClaimedAsync(AuthStore.UserTable, instanceId, user.Id, record, EmailKind, normalized, cancellationToken).ConfigureAwait(false)
-            ? BindAuthenticationState(user)
-            : null;
+        List<StoreOperation> operations = [AuthStore.Claim(instanceId, EmailKind, normalized, user.Id),
+            AuthStore.Create(AuthStore.UserTable, instanceId, user.Id, record)];
+        var lifecycleEvent = await outbox.CreateAsync(instanceId, "user.signed_up", user.Id, normalized, null, cancellationToken).ConfigureAwait(false);
+        if (lifecycleEvent is not null)
+        {
+            operations.Add(lifecycleEvent);
+        }
+
+        var failed = await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false);
+        return failed is null ? BindAuthenticationState(user) : failed == 0 ? null : throw ApiException.Unavailable();
     }
 
     /// <summary>The account owning <paramref name="email"/> in the instance, or <see langword="null"/>.</summary>
@@ -123,11 +137,18 @@ public sealed class Users(AuthStore store, TimeProvider clock)
                 AuthStamp = AuthStore.NewId(),
                 LinkedProviders = [identity],
             };
-            if (await store.TransactAsync([
+            List<StoreOperation> operations = [
                 AuthStore.Claim(tenant, ProviderKind, key, user.Id),
                 AuthStore.Claim(tenant, EmailKind, normalized, user.Id),
                 AuthStore.Create(AuthStore.UserTable, tenant, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord)),
-            ], cancellationToken).ConfigureAwait(false) is null)
+            ];
+            var lifecycleEvent = await outbox.CreateAsync(tenant, "user.signed_up", user.Id, normalized, null, cancellationToken).ConfigureAwait(false);
+            if (lifecycleEvent is not null)
+            {
+                operations.Add(lifecycleEvent);
+            }
+
+            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
             {
                 return BindProvider(user, identity);
             }
@@ -162,10 +183,17 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             }
 
             var updated = current.User with { LinkedProviders = [.. current.User.LinkedProviders, identity] };
-            if (await store.TransactAsync([
+            List<StoreOperation> operations = [
                 AuthStore.Replace(AuthStore.UserTable, caller.InstanceId, caller.Id, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version),
                 AuthStore.Claim(caller.InstanceId, ProviderKind, key, caller.Id),
-            ], cancellationToken).ConfigureAwait(false) is null)
+            ];
+            var lifecycleEvent = await outbox.CreateAsync(caller.InstanceId, "user.provider_linked", caller.Id, updated.Email, identity.Provider, cancellationToken).ConfigureAwait(false);
+            if (lifecycleEvent is not null)
+            {
+                operations.Add(lifecycleEvent);
+            }
+
+            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
             {
                 return true;
             }
@@ -207,6 +235,12 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             }
 
             operations.Add(AuthStore.Release(caller.InstanceId, ProviderKind, ProviderKey(identity), claim.Version));
+        }
+
+        var unlinked = await outbox.CreateAsync(caller.InstanceId, "user.provider_unlinked", caller.Id, updated.Email, provider, cancellationToken).ConfigureAwait(false);
+        if (unlinked is not null)
+        {
+            operations.Add(unlinked);
         }
 
         return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null;
@@ -311,7 +345,15 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             }
 
             var updated = current.User with { Disabled = disabled, AuthEpoch = checked(current.User.AuthEpoch + 1), AuthStamp = AuthStore.NewId() };
-            if (await store.CompareAndPutAsync(AuthStore.UserTable, instanceId, userId, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version, cancellationToken).ConfigureAwait(false))
+            List<StoreOperation> operations = [AuthStore.Replace(AuthStore.UserTable, instanceId, userId,
+                JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version)];
+            var lifecycleEvent = await outbox.CreateAsync(instanceId, disabled ? "user.disabled" : "user.enabled", userId, updated.Email, null, cancellationToken).ConfigureAwait(false);
+            if (lifecycleEvent is not null)
+            {
+                operations.Add(lifecycleEvent);
+            }
+
+            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
             {
                 return BindAuthenticationState(updated);
             }
@@ -349,6 +391,12 @@ public sealed class Users(AuthStore store, TimeProvider clock)
             if (await store.GetAsync(AuthStore.PasscodeTable, instanceId, Passcodes.SignUpKey + current.User.Email, cancellationToken).ConfigureAwait(false) is { } pending)
             {
                 operations.Add(AuthStore.Delete(AuthStore.PasscodeTable, instanceId, Passcodes.SignUpKey + current.User.Email, pending.Version));
+            }
+
+            var deleted = await outbox.CreateAsync(instanceId, "user.deleted", userId, current.User.Email, null, cancellationToken).ConfigureAwait(false);
+            if (deleted is not null)
+            {
+                operations.Add(deleted);
             }
 
             if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)

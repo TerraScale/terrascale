@@ -4,6 +4,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 
@@ -23,7 +24,7 @@ public sealed record IssuedSession(string Token, SessionRecord Session)
 /// authentication epoch advances. Every check reads the regional TerraBase copy; revocation and losing branches take effect after replication.
 /// Callers authorize the instance before using these operations.
 /// </summary>
-public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp, TimeProvider clock)
+public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp, WebhookOutbox outbox, TimeProvider clock)
 {
     /// <summary>Absolute session lifetime from authentication.</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(14);
@@ -47,9 +48,15 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
     public async Task<IssuedSession> CreateAsync(UserRecord user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
-        var lifetime = await this.GetLifetimeAsync(user.InstanceId, cancellationToken).ConfigureAwait(false);
+        var project = Tenancy.IsProject(user.InstanceId)
+            ? await this.settings.GetAsync(user.InstanceId, cancellationToken).ConfigureAwait(false)
+            : null;
+        var lifetime = project is null ? Lifetime
+            : TimeSpan.FromSeconds(project.Configuration?.SessionLifetimeSeconds ?? ConfigurationBody.Default.SessionLifetimeSeconds);
         var createdAt = clock.GetUtcNow();
-        return await this.IssueAsync(user, createdAt, createdAt + lifetime, cancellationToken).ConfigureAwait(false)
+        var signedIn = project?.SubscribedWebhookEvents is null ? null
+            : await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, project.SubscribedWebhookEvents, cancellationToken).ConfigureAwait(false);
+        return await this.IssueAsync(user, createdAt, createdAt + lifetime, cancellationToken, signedIn).ConfigureAwait(false)
             ?? throw new ApiException(401, "invalid_credentials", "Authentication could not be completed.");
     }
 
@@ -207,7 +214,7 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         }
     }
 
-    private async Task<IssuedSession?> IssueAsync(UserRecord user, DateTimeOffset createdAt, DateTimeOffset expiresAt, CancellationToken cancellationToken)
+    private async Task<IssuedSession?> IssueAsync(UserRecord user, DateTimeOffset createdAt, DateTimeOffset expiresAt, CancellationToken cancellationToken, StoreOperation? extra = null)
     {
         if (!await store.AreCredentialsCurrentAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken).ConfigureAwait(false)
             || !user.MultiFactor && !await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false))
@@ -229,14 +236,20 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         };
         using var filter = JsonDocument.Parse(epoch.ToJsonString());
         // Activation, reset and global revocation must not race a primary-only session into storage.
-        return await store.TransactAsync(
+        List<StoreOperation> writes =
         [
             // A pending account closure temporarily blocks new sign-ins; cancellation restores them without changing credentials.
             AuthStore.Absent(AuthStore.ClosureJobTable, user.InstanceId, ClosureJob.Key("account", user.Id)),
             AuthStore.Require(AuthStore.UserTable, user.InstanceId, user.Id, filter.RootElement),
             AuthStore.Create(AuthStore.SessionTable, user.InstanceId, session.TokenHash,
                 JsonSerializer.SerializeToElement(session, IdentityJson.Default.SessionRecord)),
-        ], cancellationToken).ConfigureAwait(false) is null ? new IssuedSession(token, session) : null;
+        ];
+        if (extra is not null)
+        {
+            writes.Add(extra);
+        }
+
+        return await store.TransactAsync(writes, cancellationToken).ConfigureAwait(false) is null ? new IssuedSession(token, session) : null;
     }
 
     private async Task<(SessionRecord Session, string Version, UserRecord User)?> ReadLiveAsync(string instanceId, string? token, CancellationToken cancellationToken)

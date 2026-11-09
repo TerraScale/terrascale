@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 
@@ -26,7 +27,7 @@ public sealed record WebhookEndpointPageBody(IReadOnlyList<WebhookEndpointBody> 
 
 public sealed record WebhookSecretBody(string Id, string Secret, DateTimeOffset? PreviousSecretExpiresAt);
 
-public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeProvider clock)
+public sealed class WebhookEndpoints(AuthStore store, ProjectAuthSettings settings, AuthOptions options, TimeProvider clock)
 {
     public const int MaxPerProject = 3;
 
@@ -50,6 +51,8 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
         var secret = NewSecret();
         var endpoint = new WebhookEndpointRecord(projectId, id, projectId, url, eventTypes,
             SecretBox.Seal(options.MasterKey, Encoding.UTF8.GetBytes(secret), Context(projectId, id)), CreatedAt: clock.GetUtcNow());
+        var (current, settingsVersion) = await settings.ReadVersionedAsync(projectId, cancellationToken).ConfigureAwait(false);
+        HashSet<string> subscribed = [.. current.SubscribedWebhookEvents ?? (IEnumerable<string>)[], .. eventTypes];
         List<StoreOperation> operations =
         [
             counterVersion is null
@@ -57,6 +60,11 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
                 : AuthStore.Replace(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, counter!.Count + 1), counterVersion),
             AuthStore.Create(AuthStore.WebhookEndpointTable, projectId, id,
                 JsonSerializer.SerializeToElement(endpoint, WebhookStoreJson.Default.WebhookEndpointRecord)),
+            settingsVersion is null
+                ? AuthStore.Create(AuthStore.ProjectAuthSettingsTable, projectId, projectId,
+                    ProjectAuthSettings.Stored(current with { InstanceId = projectId, SubscribedWebhookEvents = [.. subscribed.Order()] }))
+                : AuthStore.Replace(AuthStore.ProjectAuthSettingsTable, projectId, projectId,
+                    ProjectAuthSettings.Stored(current with { InstanceId = projectId, SubscribedWebhookEvents = [.. subscribed.Order()] }), settingsVersion),
         ];
         if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is not null)
         {
@@ -99,16 +107,29 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
         }
 
         var (counter, counterVersion) = await this.CounterAsync(projectId, cancellationToken).ConfigureAwait(false);
-        var remaining = counterVersion is null
-            ? (await this.ListAsync(projectId, cancellationToken).ConfigureAwait(false)).Count - 1
-            : counter!.Count - 1;
+        var endpoints = await this.ListAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var remainingCount = counterVersion is null ? endpoints.Count - 1 : counter!.Count - 1;
         List<StoreOperation> operations =
         [
             AuthStore.Delete(AuthStore.WebhookEndpointTable, projectId, id, row.Version),
             counterVersion is null
-                ? AuthStore.Create(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, remaining))
-                : AuthStore.Replace(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, remaining), counterVersion),
+                ? AuthStore.Create(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, remainingCount))
+                : AuthStore.Replace(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, remainingCount), counterVersion),
         ];
+
+        var (current, settingsVersion) = await settings.ReadVersionedAsync(projectId, cancellationToken).ConfigureAwait(false);
+        HashSet<string> subscribed = [.. endpoints.Where(other => other.Id != id).SelectMany(other => other.EventTypes)];
+        if (!subscribed.SetEquals(current.SubscribedWebhookEvents ?? (IEnumerable<string>)[]))
+        {
+            var updated = current with
+            {
+                InstanceId = projectId,
+                SubscribedWebhookEvents = subscribed.Count == 0 ? null : [.. subscribed.Order()],
+            };
+            operations.Add(settingsVersion is null
+                ? AuthStore.Create(AuthStore.ProjectAuthSettingsTable, projectId, projectId, ProjectAuthSettings.Stored(updated))
+                : AuthStore.Replace(AuthStore.ProjectAuthSettingsTable, projectId, projectId, ProjectAuthSettings.Stored(updated), settingsVersion));
+        }
 
         return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null;
     }

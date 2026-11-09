@@ -9,7 +9,9 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
@@ -60,7 +62,11 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
 
     private static readonly JsonElement Record = TerraBaseFixture.Json($$"""{"instanceId":"{{Instance}}"}""");
 
-    private static Users UsersIn(TerraBaseSqlDatabase copy) => new(new AuthStore(copy, TimeProvider.System), TimeProvider.System);
+    private static Users UsersIn(TerraBaseSqlDatabase copy)
+    {
+        var store = new AuthStore(copy, TimeProvider.System);
+        return new Users(store, new WebhookOutbox(new ProjectAuthSettings(store), TimeProvider.System), TimeProvider.System);
+    }
 
     // A project of the issuer's instance in the copy: its tenant's discovery document is served while it exists.
     private static async Task<string> ProjectAsync(TerraBaseSqlDatabase copy)
