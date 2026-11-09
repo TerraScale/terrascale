@@ -12,7 +12,6 @@ using ZLogger;
 
 namespace TerraBase.Features.LocalAck;
 
-// The discovered regional quorum for local writes (docs/terrabase/in-region-ack.md).
 internal interface IInRegionAck
 {
     bool PartnerHealthy { get; }
@@ -188,7 +187,7 @@ internal sealed class InRegionAck(
             var plain = await crypto.OpenAsync(database, held.Payload!, cancellationToken).ConfigureAwait(false);
             if (plain is null || !TryDecode(plain, out var transaction))
             {
-                return true; // Shredded or unauthentic: it must never be replayed.
+                return true;
             }
             using var body = Json(JsonSerializer.SerializeToUtf8Bytes(transaction, TerraBaseJsonContext.Default.RegionTransaction));
             using var response = await Http.PostAsync(new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "apply")[1..]), body, cancellationToken)

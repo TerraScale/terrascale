@@ -41,9 +41,6 @@ internal interface ILocalTransaction : IAsyncDisposable
 
     ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
-    // Publishes the transaction to the durable push stream, holds it on a discovered regional partner and commits it.
-    // A discovered one-node region acknowledges on that node; a region with a partner requires both copies. With
-    // homeDurable, or when the required partner did not hold it, it answers after the home applied it.
     ValueTask<LocalCommit> CommitAsync(bool homeDurable, CancellationToken cancellationToken);
 }
 
@@ -110,7 +107,6 @@ internal sealed class HomePush(
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Every node rebuilds its overlay; only the fenced regional writer consumes and commits.
         if (options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
         {
             if (!Crypto.Seals)
@@ -514,7 +510,7 @@ internal sealed class HomePush(
         _forwarded.TryRemove(Key(database), out _);
         if (_js is not { } js)
         {
-            return; // Regional hold partners own no JetStream origin stream.
+            return;
         }
         _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
         {
@@ -566,8 +562,6 @@ internal sealed class HomePush(
                 }, cancellationToken).ConfigureAwait(false);
                 if (reset)
                 {
-                    // A region may have become home while it was offline. Revisit retained
-                    // messages even if this consumer previously skipped them as a non-home.
                     await consumer.ResetAsync(1, cancellationToken).ConfigureAwait(false);
                     reset = false;
                 }
@@ -655,8 +649,6 @@ internal sealed class HomePush(
             && await catalog.FindAsync(addressed, cancellationToken).ConfigureAwait(false) is var record
             && (record is NotFound || record is TenantDatabaseRecord { Placement: var placed } && placed.Home != options.Region))
         {
-            // Acknowledging consumption here never confirms the transaction to its origin.
-            // Retention is controlled by a home-confirmed replica pull, not consumer acks.
             await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -684,8 +676,6 @@ internal sealed class HomePush(
                 return;
             }
 
-            // Subjects contain the home observed when the remote transaction began. The
-            // lease/catalog decides where it applies now, including late old-epoch pushes.
             if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
                 && placement.Home != options.Region)
             {

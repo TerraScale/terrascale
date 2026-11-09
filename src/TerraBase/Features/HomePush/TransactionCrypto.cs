@@ -14,8 +14,6 @@ internal interface ITransactionCrypto
     Task<byte[]?> OpenAsync(TenantContext database, byte[] sealedBody, CancellationToken cancellationToken);
 }
 
-// TBP1: magic, 26-byte data-key ULID, 32-byte random salt, ciphertext, 16-byte GCM tag.
-// One envelope is reused by JetStream and the regional partner, including its system-database backups.
 internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
 {
     internal const int Overhead = 78;
