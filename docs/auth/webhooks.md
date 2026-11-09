@@ -11,7 +11,7 @@ the project's admin role.
 | Method and path | Role | Response |
 | --- | --- | --- |
 | `GET /webhook-endpoints` | admin | `{items: [WebhookEndpoint], next: null}`, never secrets |
-| `POST /webhook-endpoints` | admin | `201 WebhookEndpoint` with `secret` once; `create_webhook_endpoint` step-up proof required |
+| `POST /webhook-endpoints` | admin | `201 WebhookEndpoint` with `secret` once; `create_webhook_endpoint` step-up proof required; a concurrent create or delete winning the race answers `409 version_conflict` |
 | `DELETE /webhook-endpoints/{id}` | admin | `204` |
 | `POST /webhook-endpoints/{id}/rotate-secret` | admin | `WebhookSecret` with `secret` once; `rotate_webhook_secret` step-up proof required; a concurrent change to the endpoint answers `409 version_conflict` |
 
@@ -37,7 +37,8 @@ POST /v1/{project}/webhook-endpoints/{id}/rotate-secret
   `user.signed_in`, `user.disabled`, `user.enabled`, `user.deleted`,
   `user.provider_linked` and `user.provider_unlinked`.
 - A project registers at most 3 endpoints; a further registration answers
-  `409 webhook_endpoint_limit`.
+  `409 webhook_endpoint_limit`, and a concurrent create or delete that wins the
+  race answers `409 version_conflict`.
 
 ## Secrets
 
