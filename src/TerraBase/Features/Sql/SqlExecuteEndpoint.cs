@@ -142,7 +142,6 @@ internal sealed class SqlExecuteEndpoint(
         }
     }
 
-    // A replica region answers reads from its replica (docs/terrabase/region-replicas.md).
     private async ValueTask<IResult> ReplicaAsync(
         TenantContext database, DatabasePlacement placement, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
