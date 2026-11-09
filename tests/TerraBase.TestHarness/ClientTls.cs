@@ -35,7 +35,6 @@ public sealed class ClientTls : IDisposable
         return new() { AllowAutoRedirect = false, UseCookies = false };
     }
 
-    /// <inheritdoc />
     public void Dispose() => _disposed = true;
 }
 
