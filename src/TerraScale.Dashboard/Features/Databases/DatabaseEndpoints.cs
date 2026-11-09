@@ -28,143 +28,141 @@ namespace TerraScale.Dashboard.Features.Databases
         public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)
         {
             endpoints.MapWholeDatabaseRecovery();
-            endpoints.MapGet("/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases, TerraScale.Dashboard.Features.Backups.BackupService backups) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
-
-                context = await backups.SettleRestoresAsync(context, http.RequestAborted);
-                return await ListPageAsync(http, context, backend, databases);
-            });
-            endpoints.MapGet("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                try
-                {
-                    var (limit, after) = CursorPaging.Read(http.Request);
-                    context = await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Backups.BackupService>().SettleRestoresAsync(context, http.RequestAborted);
-                    await databases.SyncAsync(context, http.RequestAborted);
-                    var page = CursorPaging.Page(context.Project?.Databases.Values ?? Enumerable.Empty<DatabaseRecord>(),
-                        db => db.Id, CursorPaging.Scope(context, "databases"), limit, after);
-                    var restricted = context.Organization is { } organization && !organization.ContainsMember(context.UserId);
-                    return Results.Json(new CursorPage<object>([.. page.Items.Select(database => DatabaseOutput(database, restricted))], page.NextCursor, page.Limit));
-                }
-                catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
-            });
-            foreach (var tab in new[] { "overview", "tables", "grants", "replication", "conflicts", "backups", "branches", "danger" })
-            {
-                var section = tab;
-                endpoints.MapGet(tab == "overview" ? "/databases/{databaseId}" : "/databases/{databaseId}/" + tab,
-                    async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) =>
-                    {
-                        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-                        if (context is null)
-                        {
-                            return AccountEndpoints.LoginRedirect(http);
-                        }
-                        // The delete dialog moved to the danger tab; keep old overview links working.
-                        if (section == "overview" && http.Request.Query["delete"] == "1")
-                        {
-                            return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
-                        }
-                        // Refresh placement before routing the observations call to its home.
-                        if (section == "replication")
-                        {
-                            await databases.SyncAsync(context, http.RequestAborted);
-                        }
-
-                        return await DetailPageAsync(http, context, databaseId, section, backend, databases);
-                    });
-            }
-            endpoints.MapPost("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.BadRequest("Invalid form token.");
-                }
-
-                try
-                {
-                    var home = form.ContainsKey("homeRegion") ? form["homeRegion"].ToString().Trim() : context.Project?.Region ?? "";
-                    if (home.Length == 0)
-                    {
-                        throw new AccountAccessException("Choose a home region.", 422);
-                    }
-
-                    var database = await databases.CreateAsync(context, form["name"].ToString(), home, http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()),
-                        [.. form["replicaRegions"].OfType<string>()], form["allRegions"].ToString() is "on" or "true");
-                    return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
-                }
-                catch (Exception error) when (KnownFailure(error))
-                {
-                    return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null, ttlHours: form["ttlHours"].ToString()) : Failure(error);
-                }
-            });
-            foreach (var operation in new[] { "branch", "delete" })
-            {
-                var action = operation;
-                endpoints.MapPost("/api/v1/dashboard/databases/" + operation,
-                    async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend) =>
-                    {
-                        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                        if (context is null)
-                        {
-                            return Results.Unauthorized();
-                        }
-
-                        var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                        if (!Csrf.Validate(http, form))
-                        {
-                            return Results.BadRequest("Invalid form token.");
-                        }
-
-                        var id = form["databaseId"].ToString();
-                        try
-                        {
-                            if (action == "branch")
-                            {
-                                var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), form["pointInTime"].ToString());
-                                return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(DatabaseOutput(branch), statusCode: 201);
-                            }
-                            await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
-                            return WantsHtml(http) ? HttpRedirects.SeeOther("/databases") : Results.NoContent();
-                        }
-                        catch (Exception error) when (KnownFailure(error))
-                        {
-                            if (!WantsHtml(http) || Status(error) == 404)
-                            {
-                                return DatabaseResults.PageFailure(http, context, error);
-                            }
-
-                            return await DetailPageAsync(http, context, id, action == "branch" ? "branches" : "danger", backend, databases, Message(error), action == "delete", Status(error), branchName: action == "branch" ? form["name"].ToString() : null, ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString());
-                        }
-                    });
-            }
             endpoints.MapDatabaseSettings();
             endpoints.MapDatabaseGrants();
             endpoints.MapDatabasePlacement();
-            endpoints.MapDataFeatures();
             endpoints.MapDatabaseLogs();
             endpoints.MapDatabaseFunctions();
-            endpoints.MapBackupFeatures((http, context, databaseId, error, status) => DetailPageAsync(http, context, databaseId, "backups",
-                http.RequestServices.GetRequiredService<IDatabaseBackend>(), http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status));
             return endpoints;
         }
+
+        internal static async Task<IResult> ListAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases,
+            TerraScale.Dashboard.Features.Backups.BackupService backups)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return AccountRequest.LoginRedirect(http);
+            }
+
+            context = await backups.SettleRestoresAsync(context, http.RequestAborted);
+            return await ListPageAsync(http, context, backend, databases);
+        }
+
+        internal static async Task<IResult> ApiListAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var (limit, after) = CursorPaging.Read(http.Request);
+                context = await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Backups.BackupService>().SettleRestoresAsync(context, http.RequestAborted);
+                await databases.SyncAsync(context, http.RequestAborted);
+                var page = CursorPaging.Page(context.Project?.Databases.Values ?? Enumerable.Empty<DatabaseRecord>(),
+                    db => db.Id, CursorPaging.Scope(context, "databases"), limit, after);
+                var restricted = context.Organization is { } organization && !organization.ContainsMember(context.UserId);
+                return Results.Json(new CursorPage<object>([.. page.Items.Select(database => DatabaseOutput(database, restricted))], page.NextCursor, page.Limit));
+            }
+            catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
+        }
+
+        internal static async Task<IResult> TabAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases, string section)
+        {
+            var databaseId = http.Request.RouteValues["databaseId"]?.ToString() ?? "";
+            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return AccountEndpoints.LoginRedirect(http);
+            }
+            // The delete dialog moved to the danger tab; keep old overview links working.
+            if (section == "overview" && http.Request.Query["delete"] == "1")
+            {
+                return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
+            }
+            // Refresh placement before routing the observations call to its home.
+            if (section == "replication")
+            {
+                await databases.SyncAsync(context, http.RequestAborted);
+            }
+
+            return await DetailPageAsync(http, context, databaseId, section, backend, databases);
+        }
+
+        internal static async Task<IResult> CreateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.BadRequest("Invalid form token.");
+            }
+
+            try
+            {
+                var home = form.ContainsKey("homeRegion") ? form["homeRegion"].ToString().Trim() : context.Project?.Region ?? "";
+                if (home.Length == 0)
+                {
+                    throw new AccountAccessException("Choose a home region.", 422);
+                }
+
+                var database = await databases.CreateAsync(context, form["name"].ToString(), home, http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()),
+                    [.. form["replicaRegions"].OfType<string>()], form["allRegions"].ToString() is "on" or "true");
+                return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
+            }
+            catch (Exception error) when (KnownFailure(error))
+            {
+                return WantsHtml(http) ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), homeRegion: form.ContainsKey("homeRegion") ? form["homeRegion"].ToString() : null, ttlHours: form["ttlHours"].ToString()) : Failure(error);
+            }
+        }
+
+        internal static async Task<IResult> OperateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend, string action)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.BadRequest("Invalid form token.");
+            }
+
+            var id = form["databaseId"].ToString();
+            try
+            {
+                if (action == "branch")
+                {
+                    var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), form["pointInTime"].ToString());
+                    return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(DatabaseOutput(branch), statusCode: 201);
+                }
+                await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
+                return WantsHtml(http) ? HttpRedirects.SeeOther("/databases") : Results.NoContent();
+            }
+            catch (Exception error) when (KnownFailure(error))
+            {
+                if (!WantsHtml(http) || Status(error) == 404)
+                {
+                    return DatabaseResults.PageFailure(http, context, error);
+                }
+
+                return await DetailPageAsync(http, context, id, action == "branch" ? "branches" : "danger", backend, databases, Message(error), action == "delete", Status(error), branchName: action == "branch" ? form["name"].ToString() : null, ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString());
+            }
+        }
+
+        internal static Task<IResult> BackupDetailPageAsync(HttpContext http, AccountContext context, string databaseId, string error, int status) =>
+            DetailPageAsync(http, context, databaseId, "backups", http.RequestServices.GetRequiredService<IDatabaseBackend>(),
+                http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status);
 
         // Keep the storage revision private; database responses retain their existing fields.
         internal static object DatabaseOutput(DatabaseRecord database, bool restricted = false)

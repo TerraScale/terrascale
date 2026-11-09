@@ -7,113 +7,84 @@ namespace TerraScale.Dashboard.Features.Data
 {
     public static class DataEndpoints
     {
-        public static IEndpointRouteBuilder MapDataFeatures(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved, string action)
         {
-            endpoints.MapGet("/databases/{databaseId}/sql", async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
+            if (action != "saved-queries/delete" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sqlBodyLimit)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, databaseId, data, saved);
-            });
-            endpoints.MapGet("/api/v1/dashboard/data/saved-queries", async (HttpContext http, DashboardSessions sessions, AccountService accounts, SavedQueryService saved) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                try
-                {
-                    var (limit, after) = CursorPaging.Read(http.Request);
-                    return Results.Json(CursorPaging.Page((await saved.ListAsync(context, http.RequestAborted)).Select(PublicSavedQuery),
-                        query => query.Id, CursorPaging.Scope(context, "saved-queries"), limit, after));
-                }
-                catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
-            });
-            foreach (var operation in new[] { "sql", "sql/check", "sql/catalog", "saved-queries", "saved-queries/delete" })
-            {
-                var action = operation;
-                endpoints.MapPost("/api/v1/dashboard/data/" + operation, async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
-                {
-                    if (action != "saved-queries/delete" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sqlBodyLimit)
-                    {
-                        // URL encoding can expand each SQL/history byte to three bytes; validation limits decoded SQL.
-                        sqlBodyLimit.MaxRequestBodySize = 3 * (16 * 1024 + 4 * 1024) + 4096;
-                    }
-                    var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                    if (context is null)
-                    {
-                        return Results.Unauthorized();
-                    }
-
-                    var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                    if (!Csrf.Validate(http, form))
-                    {
-                        return Results.BadRequest("Invalid form token.");
-                    }
-
-                    var id = form["databaseId"].ToString();
-                    try
-                    {
-                        if (!action.StartsWith("saved-queries", StringComparison.Ordinal) || id.Length > 0)
-                        {
-                            DatabaseService.Database(context, id);
-                        }
-
-                        if (action == "sql/catalog")
-                        {
-                            return await PageAsync(http, context, id, data, saved, sql: form["sql"].ToString());
-                        }
-
-                        if (action == "sql/check")
-                        {
-                            var diagnostics = SqlValidation.Diagnostics(form["sql"].ToString());
-                            var invalid = diagnostics.Any(item => item.Severity == "error");
-                            // An empty editor shows no analysis, so a submitted check of it answers with the reason.
-                            return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, data, saved,
-                                formError: form["sql"].ToString().Trim().Length == 0 ? SqlValidation.Error("") : "",
-                                sql: form["sql"].ToString(), sqlChecked: !invalid, status: invalid ? 422 : 200) : Results.Json(diagnostics);
-                        }
-                        if (action is "sql" or "saved-queries")
-                        {
-                            var problem = SqlValidation.Diagnostics(form["sql"].ToString()).FirstOrDefault(item => item.Severity == "error");
-                            if (problem is not null)
-                            {
-                                throw new AccountAccessException(problem.Message, 422);
-                            }
-
-                            if (action == "sql")
-                            {
-                                if (DatabaseResults.WantsHtml(http))
-                                {
-                                    return await RunAsync(http, context, id, form, data, saved);
-                                }
-
-                                var result = await data.SqlAsync(context, id, form["sql"].ToString(), true, http.RequestAborted);
-                                return Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
-                            }
-                            var query = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
-                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?savedQueryId=" + Uri.EscapeDataString(query.Id)) : Results.Json(PublicSavedQuery(query), statusCode: 201);
-                        }
-                        if (action == "saved-queries/delete")
-                        {
-                            await saved.DeleteAsync(context, id, form["id"].ToString(), http.RequestAborted);
-                        }
-                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql")) : Results.NoContent();
-                    }
-                    catch (Exception error) when (DatabaseResults.KnownFailure(error))
-                    {
-                        if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404)
-                        {
-                            return DatabaseResults.PageFailure(http, context, error);
-                        }
-
-                        return await PageAsync(http, context, id, data, saved, DatabaseEndpoints.Message(error), action == "saved-queries" ? "save-query" : "",
-                            form["sql"].ToString(), queryName: form["name"].ToString(), status: DatabaseEndpoints.Status(error));
-                    }
-                });
+                // URL encoding can expand each SQL/history byte to three bytes; validation limits decoded SQL.
+                sqlBodyLimit.MaxRequestBodySize = 3 * (16 * 1024 + 4 * 1024) + 4096;
             }
-            return endpoints;
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.BadRequest("Invalid form token.");
+            }
+
+            var id = form["databaseId"].ToString();
+            try
+            {
+                if (!action.StartsWith("saved-queries", StringComparison.Ordinal) || id.Length > 0)
+                {
+                    DatabaseService.Database(context, id);
+                }
+
+                if (action == "sql/catalog")
+                {
+                    return await PageAsync(http, context, id, data, saved, sql: form["sql"].ToString());
+                }
+
+                if (action == "sql/check")
+                {
+                    var diagnostics = SqlValidation.Diagnostics(form["sql"].ToString());
+                    var invalid = diagnostics.Any(item => item.Severity == "error");
+                    // An empty editor shows no analysis, so a submitted check of it answers with the reason.
+                    return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, data, saved,
+                        formError: form["sql"].ToString().Trim().Length == 0 ? SqlValidation.Error("") : "",
+                        sql: form["sql"].ToString(), sqlChecked: !invalid, status: invalid ? 422 : 200) : Results.Json(diagnostics);
+                }
+                if (action is "sql" or "saved-queries")
+                {
+                    var problem = SqlValidation.Diagnostics(form["sql"].ToString()).FirstOrDefault(item => item.Severity == "error");
+                    if (problem is not null)
+                    {
+                        throw new AccountAccessException(problem.Message, 422);
+                    }
+
+                    if (action == "sql")
+                    {
+                        if (DatabaseResults.WantsHtml(http))
+                        {
+                            return await RunAsync(http, context, id, form, data, saved);
+                        }
+
+                        var result = await data.SqlAsync(context, id, form["sql"].ToString(), true, http.RequestAborted);
+                        return Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
+                    }
+                    var query = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
+                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?savedQueryId=" + Uri.EscapeDataString(query.Id)) : Results.Json(PublicSavedQuery(query), statusCode: 201);
+                }
+                if (action == "saved-queries/delete")
+                {
+                    await saved.DeleteAsync(context, id, form["id"].ToString(), http.RequestAborted);
+                }
+                return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql")) : Results.NoContent();
+            }
+            catch (Exception error) when (DatabaseResults.KnownFailure(error))
+            {
+                if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404)
+                {
+                    return DatabaseResults.PageFailure(http, context, error);
+                }
+
+                return await PageAsync(http, context, id, data, saved, DatabaseEndpoints.Message(error), action == "saved-queries" ? "save-query" : "",
+                    form["sql"].ToString(), queryName: form["name"].ToString(), status: DatabaseEndpoints.Status(error));
+            }
         }
 
         // A browser run answers 303 to a GET of its stored receipt, never a page rendered from the POST: refresh and back
@@ -239,7 +210,7 @@ namespace TerraScale.Dashboard.Features.Data
             return result;
         }
 
-        private static McpSavedQuery PublicSavedQuery(SavedQuery query)
+        internal static McpSavedQuery PublicSavedQuery(SavedQuery query)
         {
             return new(query.Id, query.Name, query.Sql, query.CreatedAt);
         }
