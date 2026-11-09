@@ -30,7 +30,8 @@ namespace TerraBase.Features.Postgres;
 
 internal sealed class PostgresConnectionHandler(IServiceProvider services) : ConnectionHandler
 {
-    private const int Protocol30 = 196608, CancelCode = 80877102, SslCode = 80877103, GssCode = 80877104;
+    private const int CancelCode = 80877102, SslCode = 80877103, GssCode = 80877104;
+    private const int CleartextPassword = 3;
     private const int MaxStartupBytes = 10_000, MaxMessageBytes = 1024 * 1024, MaxNamed = 256;
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
     private static readonly PgError Denied = new("28P01", "password authentication failed");
@@ -182,11 +183,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 parameters[name] = packet.CString();
             }
 
-            if (code != Protocol30)
+            if (code != PostgresStatements.ProtocolVersion)
             {
                 var unknown = parameters.Keys.Where(name => name.StartsWith("_pq_.", StringComparison.Ordinal)).ToList();
                 output.Begin('v');
-                output.Int32(Protocol30);
+                output.Int32(PostgresStatements.ProtocolVersion);
                 output.Int32(unknown.Count);
                 unknown.ForEach(output.CString);
                 output.End();
@@ -199,7 +200,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private async ValueTask<(Session? Session, Relay? Relay)> AuthenticateAsync(PipeReader input, PgWriter output, Dictionary<string, string> parameters, IPAddress? client, bool relayed, CancellationToken cancellationToken)
     {
         output.Begin('R');
-        output.Int32(3); // AuthenticationCleartextPassword: the password is an API key.
+        output.Int32(CleartextPassword);
         output.End();
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
         var (type, body, reservation) = await ReadMessageAsync(input, cancellationToken).ConfigureAwait(false);
@@ -669,7 +670,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                     output.Begin('t');
                     output.Int16(statement.Oids.Length);
-                    Array.ForEach(statement.Oids, oid => output.Int32(oid == 0 ? PostgresStatements.TextOid : oid));
+                    Array.ForEach(statement.Oids, oid => output.Int32(oid == 0 ? PgOid.Text : oid));
                     output.End();
                     Describe(output, columns, []);
                     return null;
@@ -982,7 +983,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             output.Int16(row.Count);
             for (var i = 0; i < row.Count; i++)
             {
-                var oid = columns is not null && i < columns.Length ? columns[i].Oid : PostgresStatements.TextOid;
+                var oid = columns is not null && i < columns.Length ? columns[i].Oid : PgOid.Text;
                 if (!PostgresStatements.TryEncode(row[i], oid, Format(formats, i) == 1 && PostgresStatements.Binary(oid), out var bytes))
                 {
                     return new PgError(row[i].Kind == SqlValueKind.Integer ? "22003" : "22P02", $"a value of column {i + 1} does not fit its type");

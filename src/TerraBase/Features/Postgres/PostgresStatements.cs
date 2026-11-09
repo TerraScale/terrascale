@@ -40,7 +40,7 @@ internal readonly union PgParse(PgStatement[], PgError);
 /// </summary>
 internal static partial class PostgresStatements
 {
-    public const int TextOid = 25, FirstTableOid = 16384;
+    public const int FirstTableOid = 16384, ProtocolVersion = 196608;
     public const string ServerVersion = "16.0";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
     private static readonly UTF8Encoding Utf8 = new(false, true);
@@ -313,7 +313,7 @@ internal static partial class PostgresStatements
         {
             return token is Word word
                 && named.SelectMany(table => table.Columns).Where(column => column.Name.Equals(word.Value, StringComparison.OrdinalIgnoreCase))
-                    .Select(column => Oid(column.DeclType) switch { 1700 => 701, 1082 or 1114 or 1184 => TextOid, var oid => oid }).Distinct().ToList() is [var only]
+                    .Select(column => Oid(column.DeclType) switch { PgOid.Numeric => PgOid.Float8, 1082 or 1114 or 1184 => PgOid.Text, var oid => oid }).Distinct().ToList() is [var only]
                 ? only
                 : 0;
         }
@@ -374,7 +374,7 @@ internal static partial class PostgresStatements
             name = name.Equals("transaction_isolation_level", StringComparison.OrdinalIgnoreCase) ? "transaction_isolation"
                 : name.Equals("time_zone", StringComparison.OrdinalIgnoreCase) ? "TimeZone" : name;
             return settings.TryGetValue(name, out var shown)
-                ? new[] { new PgResult([new(name, TextOid)], [[SqlValue.Of(shown)]], "SHOW") }
+                ? new[] { new PgResult([new(name, PgOid.Text)], [[SqlValue.Of(shown)]], "SHOW") }
                 : new PgError("42704", "unrecognized configuration parameter");
         }
 
@@ -435,10 +435,10 @@ internal static partial class PostgresStatements
             Oid(column.DeclType) is > 0 and var oid ? oid
             : result.Rows.Select(row => row[i].Kind).FirstOrDefault(value => value != SqlValueKind.Null) switch
             {
-                SqlValueKind.Integer => 20,
-                SqlValueKind.Real => 701,
-                SqlValueKind.Blob => 17,
-                _ => TextOid,
+                SqlValueKind.Integer => PgOid.Int8,
+                SqlValueKind.Real => PgOid.Float8,
+                SqlValueKind.Blob => PgOid.Bytea,
+                _ => PgOid.Text,
             }))];
         var verb = VerbPattern().Match(statement.Sql);
         var tag = verb.Groups[1].Value.ToUpperInvariant() switch
@@ -455,21 +455,21 @@ internal static partial class PostgresStatements
     /// <summary>The OID of a declared type as PostgreSQL names it, 0 when unknown.</summary>
     public static int Oid(string? declared) => (declared?.Split('(')[0].Trim().ToUpperInvariant() ?? "") switch
     {
-        "BIGINT" or "INT8" => 20,
-        "SMALLINT" or "INT2" => 21,
-        "INTEGER" or "INT" or "INT4" => 23,
-        "REAL" or "FLOAT" or "FLOAT4" or "FLOAT8" or "DOUBLE" or "DOUBLE PRECISION" => 701,
-        "NUMERIC" or "DECIMAL" => 1700,
-        "TEXT" => TextOid,
-        "VARCHAR" or "CHAR" or "CHARACTER" or "CHARACTER VARYING" => 1043,
-        "BOOLEAN" or "BOOL" => 16,
-        "JSON" => 114,
-        "JSONB" => 3802,
-        "BLOB" or "BYTEA" => 17,
-        "UUID" => 2950,
-        "DATE" => 1082,
-        "TIMESTAMP" or "TIMESTAMP WITHOUT TIME ZONE" => 1114,
-        "TIMESTAMPTZ" or "TIMESTAMP WITH TIME ZONE" => 1184,
+        "BIGINT" or "INT8" => PgOid.Int8,
+        "SMALLINT" or "INT2" => PgOid.Int2,
+        "INTEGER" or "INT" or "INT4" => PgOid.Int4,
+        "REAL" or "FLOAT" or "FLOAT4" or "FLOAT8" or "DOUBLE" or "DOUBLE PRECISION" => PgOid.Float8,
+        "NUMERIC" or "DECIMAL" => PgOid.Numeric,
+        "TEXT" => PgOid.Text,
+        "VARCHAR" or "CHAR" or "CHARACTER" or "CHARACTER VARYING" => PgOid.Varchar,
+        "BOOLEAN" or "BOOL" => PgOid.Bool,
+        "JSON" => PgOid.Json,
+        "JSONB" => PgOid.Jsonb,
+        "BLOB" or "BYTEA" => PgOid.Bytea,
+        "UUID" => PgOid.Uuid,
+        "DATE" => PgOid.Date,
+        "TIMESTAMP" or "TIMESTAMP WITHOUT TIME ZONE" => PgOid.Timestamp,
+        "TIMESTAMPTZ" or "TIMESTAMP WITH TIME ZONE" => PgOid.Timestamptz,
         _ => 0,
     };
 
@@ -479,8 +479,8 @@ internal static partial class PostgresStatements
     /// </summary>
     public static int DescribedOid(SqlColumn column) => Oid(column.DeclType) is > 0 and var declared ? declared
         : ExpressionPattern().Match(column.Name) is { Success: true } match
-            ? match.Groups[1].Success ? 20 : match.Groups[2].Success ? 701 : Oid(match.Groups[3].Value) is > 0 and var cast ? cast : TextOid
-            : TextOid;
+            ? match.Groups[1].Success ? 20 : match.Groups[2].Success ? 701 : Oid(match.Groups[3].Value) is > 0 and var cast ? cast : PgOid.Text
+            : PgOid.Text;
 
     [GeneratedRegex(@"\A(?:((?:count|length|instr|unicode|row_number|rank|dense_rank|ntile)\()|((?:avg|total)\()|CAST\(.+\bAS\s+(\w+)\)\z)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex ExpressionPattern();
@@ -490,7 +490,8 @@ internal static partial class PostgresStatements
     public static PgError Error(SqlError error) => new(error.Sqlstate, error.Message);
 
     /// <summary>Whether a column of the type is sent in binary when the client asks; others are always text.</summary>
-    public static bool Binary(int oid) => oid is 16 or 17 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 1082 or 1114 or 1184 or 2950 or 3802 or 1700;
+    public static bool Binary(int oid) => oid is PgOid.Bool or PgOid.Bytea or PgOid.Int8 or PgOid.Int2 or PgOid.Int4 or PgOid.Text or PgOid.Json or PgOid.Float8
+        or PgOid.Varchar or PgOid.Date or PgOid.Timestamp or PgOid.Timestamptz or PgOid.Uuid or PgOid.Jsonb or PgOid.Numeric;
 
     /// <summary>
     /// A value in the column's format; false when it does not fit the binary type (SQLite keeps 64-bit integers in an int4
@@ -506,16 +507,16 @@ internal static partial class PostgresStatements
 
         if (value.Kind == SqlValueKind.Blob)
         {
-            bytes = oid == 17 && binary ? value.Blob : Utf8.GetBytes("\\x" + Convert.ToHexStringLower(value.Blob!));
+            bytes = oid == PgOid.Bytea && binary ? value.Blob : Utf8.GetBytes("\\x" + Convert.ToHexStringLower(value.Blob!));
             return true;
         }
 
-        if (oid is 1082 or 1114 or 1184)
+        if (oid is PgOid.Date or PgOid.Timestamp or PgOid.Timestamptz)
         {
             return value.Kind == SqlValueKind.Text && PostgresTemporal.TryEncode(value.Text ?? "", oid, binary, out bytes);
         }
 
-        if (oid == 2950)
+        if (oid == PgOid.Uuid)
         {
             if (value.Kind != SqlValueKind.Text || !Guid.TryParseExact(value.Text, "D", out var uuid))
             {
@@ -526,7 +527,7 @@ internal static partial class PostgresStatements
             return true;
         }
 
-        if (oid == 1700)
+        if (oid == PgOid.Numeric)
         {
             string? s;
             switch (value.Kind)
@@ -568,24 +569,24 @@ internal static partial class PostgresStatements
 
         var text = value.Kind switch
         {
-            SqlValueKind.Integer when oid == 16 => value.Integer != 0 ? "t" : "f",
+            SqlValueKind.Integer when oid == PgOid.Bool => value.Integer != 0 ? "t" : "f",
             SqlValueKind.Integer => value.Integer.ToString(Invariant),
             SqlValueKind.Real => double.IsFinite(value.Real) ? value.Real.ToString("R", Invariant).Replace('E', 'e') : value.Real.ToString(Invariant),
             _ => value.Text ?? "",
         };
-        if (!binary || oid is TextOid or 114 or 1043)
+        if (!binary || oid is PgOid.Text or PgOid.Json or PgOid.Varchar)
         {
             bytes = Utf8.GetBytes(text);
             return true;
         }
 
-        if (oid == 3802)
+        if (oid == PgOid.Jsonb)
         {
             bytes = [1, .. Utf8.GetBytes(text)];
             return true;
         }
 
-        if (oid == 701)
+        if (oid == PgOid.Float8)
         {
             double real;
             switch (value.Kind)
@@ -624,18 +625,18 @@ internal static partial class PostgresStatements
 
         switch (oid)
         {
-            case 16:
+            case PgOid.Bool:
                 bytes = [integer != 0 ? (byte)1 : (byte)0];
                 return true;
-            case 21 when integer is >= short.MinValue and <= short.MaxValue:
+            case PgOid.Int2 when integer is >= short.MinValue and <= short.MaxValue:
                 bytes = new byte[2];
                 BinaryPrimitives.WriteInt16BigEndian(bytes, (short)integer);
                 return true;
-            case 23 when integer is >= int.MinValue and <= int.MaxValue:
+            case PgOid.Int4 when integer is >= int.MinValue and <= int.MaxValue:
                 bytes = new byte[4];
                 BinaryPrimitives.WriteInt32BigEndian(bytes, (int)integer);
                 return true;
-            case 20:
+            case PgOid.Int8:
                 bytes = new byte[8];
                 BinaryPrimitives.WriteInt64BigEndian(bytes, integer);
                 return true;
@@ -657,37 +658,37 @@ internal static partial class PostgresStatements
             return format == 1
                 ? (oid, value.Length) switch
                 {
-                    (16, 1) => SqlValue.Of(value[0] == 0 ? 0L : 1L),
-                    (21, 2) => SqlValue.Of(BinaryPrimitives.ReadInt16BigEndian(value)),
-                    (23, 4) => SqlValue.Of(BinaryPrimitives.ReadInt32BigEndian(value)),
-                    (20, 8) => SqlValue.Of(BinaryPrimitives.ReadInt64BigEndian(value)),
-                    (700, 4) => Real(BinaryPrimitives.ReadSingleBigEndian(value)),
-                    (701, 8) => Real(BinaryPrimitives.ReadDoubleBigEndian(value)),
-                    (1082 or 1114 or 1184, _) => PostgresTemporal.Decode(oid, value),
-                    (2950, 16) => Uuid(value),
-                    (1700, _) => PgNumeric.Decode(value) is { } n ? Numeric(n) : null,
-                    (3802, > 0) when value[0] == 1 => Text(Utf8.GetString(value.AsSpan(1))),
-                    (17, _) => SqlValue.Of(value),
-                    (0 or TextOid or 114 or 705 or 1042 or 1043, _) => Text(Utf8.GetString(value)),
+                    (PgOid.Bool, 1) => SqlValue.Of(value[0] == 0 ? 0L : 1L),
+                    (PgOid.Int2, 2) => SqlValue.Of(BinaryPrimitives.ReadInt16BigEndian(value)),
+                    (PgOid.Int4, 4) => SqlValue.Of(BinaryPrimitives.ReadInt32BigEndian(value)),
+                    (PgOid.Int8, 8) => SqlValue.Of(BinaryPrimitives.ReadInt64BigEndian(value)),
+                    (PgOid.Float4, 4) => Real(BinaryPrimitives.ReadSingleBigEndian(value)),
+                    (PgOid.Float8, 8) => Real(BinaryPrimitives.ReadDoubleBigEndian(value)),
+                    (PgOid.Date or PgOid.Timestamp or PgOid.Timestamptz, _) => PostgresTemporal.Decode(oid, value),
+                    (PgOid.Uuid, 16) => Uuid(value),
+                    (PgOid.Numeric, _) => PgNumeric.Decode(value) is { } n ? Numeric(n) : null,
+                    (PgOid.Jsonb, > 0) when value[0] == 1 => Text(Utf8.GetString(value.AsSpan(1))),
+                    (PgOid.Bytea, _) => SqlValue.Of(value),
+                    (0 or PgOid.Text or PgOid.Json or PgOid.Unknown or PgOid.Bpchar or PgOid.Varchar, _) => Text(Utf8.GetString(value)),
                     _ => null,
                 }
                 : (oid, Utf8.GetString(value)) switch
                 {
-                    (1082 or 1114 or 1184, var text) => PostgresTemporal.Parse(oid, text),
-                    (2950, var text) => Uuid(text),
-                    (17, var text) => Bytea(text),
-                    (16, var text) => Bool(text) is { } flag ? SqlValue.Of(flag ? 1L : 0L) : null,
-                    (20 or 21 or 23, var text) => long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var integer) ? SqlValue.Of(integer) : null,
-                    (700 or 701, var text) => double.TryParse(text, NumberStyles.Float, Invariant, out var real) ? Real(real) : null,
+                    (PgOid.Date or PgOid.Timestamp or PgOid.Timestamptz, var text) => PostgresTemporal.Parse(oid, text),
+                    (PgOid.Uuid, var text) => Uuid(text),
+                    (PgOid.Bytea, var text) => Bytea(text),
+                    (PgOid.Bool, var text) => Bool(text) is { } flag ? SqlValue.Of(flag ? 1L : 0L) : null,
+                    (PgOid.Int8 or PgOid.Int2 or PgOid.Int4, var text) => long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var integer) ? SqlValue.Of(integer) : null,
+                    (PgOid.Float4 or PgOid.Float8, var text) => double.TryParse(text, NumberStyles.Float, Invariant, out var real) ? Real(real) : null,
                     // Exact numerics stay exact: an integer, a double that round-trips, else the text.
-                    (1700, var text) => PgNumeric.Matches(text) ? Numeric(text)
+                    (PgOid.Numeric, var text) => PgNumeric.Matches(text) ? Numeric(text)
                         : long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var whole) ? SqlValue.Of(whole)
                         : decimal.TryParse(text, NumberStyles.Float, Invariant, out var exact) && (decimal)(double)exact == exact ? SqlValue.Of((double)exact)
                         : Text(text),
                     // Untyped (psql \bind, node-postgres): PostgreSQL types them from context; a canonical number binds as one,
                     // because the CTE columns of a SQL read carry no affinity to convert '2' for an integer column.
-                    (0 or 705, var text) when long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var untyped) && untyped.ToString(Invariant) == text => SqlValue.Of(untyped),
-                    (0 or 705, var text) when text.Contains('.', StringComparison.Ordinal) && double.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, Invariant, out var untypedReal)
+                    (0 or PgOid.Unknown, var text) when long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var untyped) && untyped.ToString(Invariant) == text => SqlValue.Of(untyped),
+                    (0 or PgOid.Unknown, var text) when text.Contains('.', StringComparison.Ordinal) && double.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, Invariant, out var untypedReal)
                         && untypedReal.ToString("R", Invariant) == text => SqlValue.Of(untypedReal),
                     (_, var text) => Text(text),
                 };
