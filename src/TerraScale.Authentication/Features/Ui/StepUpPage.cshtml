@@ -9,25 +9,25 @@
 <form method="post" action="/ui/terrascale/step-up/@Model.Id">
 @if (Model.Mfa)
 {
-<div class="field"><label for="code">Authenticator or recovery code</label><input id="code" name="code" autocomplete="one-time-code" maxlength="32" required autofocus></div>
-<button type="submit">Verify and continue</button>
+<div class="field"><label for="code">@Model.Copy.AuthOrRecoveryCode</label><input id="code" name="code" autocomplete="one-time-code" maxlength="32" required autofocus></div>
+<button type="submit">@Model.Copy.VerifyContinue</button>
 }
 else if (Model.Password)
 {
-<div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus></div>
-<button type="submit">Verify and continue</button>
+<div class="field"><label for="password">@Model.Copy.Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus></div>
+<button type="submit">@Model.Copy.VerifyContinue</button>
 }
 else if (Model.MailRequested)
 {
-<div class="field"><label for="code">Email verification code</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" required autofocus></div>
-<button type="submit">Verify and continue</button>
+<div class="field"><label for="code">@Model.Copy.EmailVerificationCode</label><input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" maxlength="6" required autofocus></div>
+<button type="submit">@Model.Copy.VerifyContinue</button>
 }
 else
 {
-<button type="submit" name="action" value="send">Email me a code</button>
+<button type="submit" name="action" value="send">@Model.Copy.EmailMeCode</button>
 }
 </form>
 @functions {
     /// <inheritdoc />
-    public HostedLayoutModel LayoutModel => new(Model.Operation, Model.Nonce);
+    public HostedLayoutModel LayoutModel => new(Model.Operation, Model.Nonce, locale: Model.ResolvedLocale);
 }

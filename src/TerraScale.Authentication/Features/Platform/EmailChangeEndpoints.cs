@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Endpoints;
@@ -100,8 +101,8 @@ public sealed class CancelEmailChangeEndpoint(EmailChanges changes, AuthOptions 
 
         var form = this.HttpContext.Request.Form;
         await changes.CancelAsync(form["user"].ToString(), form["token"].ToString(), cancellationToken);
-        return EmailChangeCancelHosted.Render(this.HttpContext, string.Empty, string.Empty,
-            "No email change is pending any more, and every session of the account is signed out. If you didn't ask for the change, reset your password now.");
+        var copy = HostedCopies.For(AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
+        return EmailChangeCancelHosted.Render(this.HttpContext, string.Empty, string.Empty, copy.DoneCancelEmailChange);
     }
 }
 
@@ -116,6 +117,6 @@ internal static class EmailChangeCancelHosted
 
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        return EmailChangeCancelPage.Create(new EmailChangeCancelPageModel(user, token, done, nonce));
+        return EmailChangeCancelPage.Create(new EmailChangeCancelPageModel(user, token, done, nonce, AuthEmails.Locale(context.Request.Headers.AcceptLanguage)));
     }
 }
