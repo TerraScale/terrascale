@@ -31,7 +31,6 @@
         <img src="/icon-blue.svg" alt="" width="835" height="942" decoding="async" loading="lazy" />
         <span class="site-footer__word">TerraScale</span>
       </RouteLink>
-      <p class="site-footer__tagline">{$dict.footer.tagline}</p>
       <ul class="site-footer__socials">
         {#each socials as { social, name } (social.key)}
           <li>
@@ -127,13 +126,6 @@
     line-height: 1;
     letter-spacing: -0.02em;
     white-space: nowrap;
-  }
-
-  .site-footer__tagline {
-    margin: 0;
-    color: var(--ts-ink-3);
-    font-size: var(--ts-fs-sm);
-    line-height: var(--ts-lh);
   }
 
   .site-footer__socials {

@@ -82,7 +82,7 @@
                 on:click={() => { lang = l.id; copied = false }}
               >
                 <img src={l.icon} alt="" width="16" height="16" aria-hidden="true" />
-                {l.label}
+                {l.label}{#if l.id === 'csharp' || l.id === 'rust'} {$dict.code.sourcePending}{/if}
               </button>
             {/each}
           </div>

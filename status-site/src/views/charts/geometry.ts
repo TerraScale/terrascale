@@ -1,7 +1,3 @@
-/* Chart geometry shared by the SVG charts, ported from the ts-dashboard
-   renderer (internal/ui/charts/charts.go). Coordinates are viewBox units
-   with one decimal, so charts need no inline style under the strict CSP. */
-
 import { project } from "./world-map.generated";
 
 export type Point = [number, number];
