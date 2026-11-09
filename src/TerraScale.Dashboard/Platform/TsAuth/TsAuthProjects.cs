@@ -123,6 +123,35 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             return DeleteAsync(accessToken, projectId, "/clients/" + Id(clientId), cancellationToken);
         }
 
+        public Task<TsAuthPlatformPage<TsAuthWebhookEndpoint>> ListWebhookEndpointsAsync(
+            string accessToken, string projectId, CancellationToken cancellationToken = default)
+        {
+            return SendAsync(HttpMethod.Get, accessToken, projectId, "/webhook-endpoints",
+                Json.TsAuthPlatformPageTsAuthWebhookEndpoint, HttpStatusCode.OK, cancellationToken);
+        }
+
+        public Task<TsAuthWebhookEndpoint> CreateWebhookEndpointAsync(
+            string accessToken, string projectId, TsAuthCreateWebhookEndpoint request, string stepUpProof, CancellationToken cancellationToken = default)
+        {
+            return client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/webhook-endpoints"),
+                request ?? throw new ArgumentNullException(nameof(request)), Json.TsAuthCreateWebhookEndpoint,
+                Json.TsAuthWebhookEndpoint, TsAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, MaxRequestBytes, cancellationToken, TsAuthPlatformClient.Proof(stepUpProof));
+        }
+
+        public Task<TsAuthWebhookSecret> RotateWebhookSecretAsync(
+            string accessToken, string projectId, string webhookEndpointId, string stepUpProof, CancellationToken cancellationToken = default)
+        {
+            return client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/webhook-endpoints/" + Id(webhookEndpointId) + "/rotate-secret"),
+                new TsAuthRotateWebhookSecret(), Json.TsAuthRotateWebhookSecret,
+                Json.TsAuthWebhookSecret, TsAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken, TsAuthPlatformClient.Proof(stepUpProof));
+        }
+
+        public Task DeleteWebhookEndpointAsync(
+            string accessToken, string projectId, string webhookEndpointId, CancellationToken cancellationToken = default)
+        {
+            return DeleteAsync(accessToken, projectId, "/webhook-endpoints/" + Id(webhookEndpointId), cancellationToken);
+        }
+
         private Task<TResponse> SendAsync<TResponse>(HttpMethod method, string accessToken, string projectId, string relative,
             JsonTypeInfo<TResponse> responseType, HttpStatusCode expectedStatus, CancellationToken cancellationToken)
         {

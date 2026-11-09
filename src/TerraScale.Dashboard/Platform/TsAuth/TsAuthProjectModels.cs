@@ -128,6 +128,36 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     public sealed record TsAuthProjectRotateClient(
         [property: JsonPropertyName("grace_seconds")] int? GraceSeconds = null);
 
+    public sealed record TsAuthWebhookEndpoint(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("url")] string Url,
+        [property: JsonPropertyName("event_types")] IReadOnlyList<string> EventTypes,
+        [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
+        [property: JsonPropertyName("secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Secret = null)
+    {
+        public override string ToString()
+        {
+            return "TsAuthWebhookEndpoint { sensitive fields redacted }";
+        }
+    }
+
+    public sealed record TsAuthCreateWebhookEndpoint(
+        [property: JsonPropertyName("url")] string? Url,
+        [property: JsonPropertyName("event_types")] IReadOnlyList<string>? EventTypes);
+
+    public sealed record TsAuthRotateWebhookSecret;
+
+    public sealed record TsAuthWebhookSecret(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("secret")] string Secret,
+        [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt)
+    {
+        public override string ToString()
+        {
+            return "TsAuthWebhookSecret { sensitive fields redacted }";
+        }
+    }
+
     public sealed record TsAuthProjectClientSecret(
         [property: JsonPropertyName("client_id")] string ClientId,
         [property: JsonPropertyName("client_secret")] string ClientSecret,
