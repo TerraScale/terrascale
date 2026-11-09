@@ -48,8 +48,26 @@ tests `tests/TerraBase.{Fast,Slow}/Backup`, `tests/TerraBase.Fast/Functions`.
 
 ## THIRD-PARTY (comment deleted, code kept)
 
-- To be filled per file during the comment pass (S3 protocol behaviors, IANA registries,
-  ts-auth key semantics, aws-chunked encoding, Tigris anchors).
+All line numbers are post-deletion anchors in the surviving code.
+
+- `Backup/ObjectStore.cs:139` signed payload hash instead of aws-chunked encoding — S3-compatible services do not all accept aws-chunked.
+- `Backup/ObjectStore.cs:47-48` 128 MiB × 10,000 part budget — S3's 5 GiB single-PUT cap and 10,000-part multipart limit.
+- `Backup/ObjectStore.cs:204` multipart ETag is S3's MD5-of-part-MD5s protocol; opaque ETags on some stores.
+- `Backup/ObjectStore.cs:202-212` S3-compatible services may answer a failed multipart completion with 200 plus an error body; completion is proven by length + upload-id metadata or the multipart ETag.
+- `Backup/ObjectStore.cs` (request pipeline) one permanently-subscribed response reader — the AWS SDK's client reads its response event twice per response, so per-request subscribe/remove raced (NullReferenceException in ProcessResponseHandlers).
+- `Backup/ObjectStore.cs` (deadline policy) each attempt is one request under RequestTimeout including the SDK's own internal retries.
+- `Backup/ObjectStore.cs:457` mutable security anchors must observe the latest write across Tigris regions (X-Tigris-Enable-Snapshot).
+- `Backup/ObjectStore.Purge.cs` version-list implementations that omit current objects (Tigris) must not be read as certifying absence.
+- `Backup/ObjectStore.cs` (listing) sixfold XML expansion of 1024-byte keys bounded within the customer 2 MiB response limit.
+- `Backup/ObjectStore.cs:471` S3 orders UTF-8 bytes; Unicode scalar comparison matches it without encoding.
+- `Backup/CustomerBackupNetwork.cs` IANA IPv4/IPv6 special-purpose registries define the blocked address ranges.
+- `tests/TerraBase.Slow/Backup/DatabaseBackupPurgeTests.cs` Tigris lists unversioned buckets as version "null" and truncates with only NextKeyMarker.
+- `UserAuth/TsAuthKeys.cs:141` (area) ts-auth JWKS: only asymmetric keys accepted; a symmetric "oct" key would let any holder sign tokens.
+- `UserAuth/UserAuthenticationHandler.cs:70` (area) ts-auth may rotate in a key after the last fetch; one rate-limited refresh, then one more attempt.
+- `UserAuth/KeyAuthority.cs:218` (area) an answer's refusal always holds; refreshes are background once aged (ts-auth key-status contract).
+- `Backup/BackupReader.cs:381` (area) the store may drop an object body mid-stream; reads restart from the beginning, bounded to three attempts.
+- `Backup/ObjectStore.cs` (customer deadline) customer endpoints are untrusted; one wall-clock deadline also bounds streamed bodies the SDK's header timeout does not.
+
 
 ## CROSS-SLICE (for the coordinator)
 
