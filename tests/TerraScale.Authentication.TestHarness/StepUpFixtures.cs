@@ -62,6 +62,8 @@ public static class StepUpFixtures
             : request.Method == HttpMethod.Post && path.EndsWith("/api-keys", StringComparison.Ordinal) ? "create_api_key"
             : request.Method == HttpMethod.Post && path.Contains("/api-keys/", StringComparison.Ordinal) && path.EndsWith("/rotate", StringComparison.Ordinal) ? "rotate_api_key"
             : request.Method == HttpMethod.Post && path.EndsWith("/clients", StringComparison.Ordinal) ? "create_oauth_client"
+            : request.Method == HttpMethod.Post && path.EndsWith("/webhook-endpoints", StringComparison.Ordinal) ? "create_webhook_endpoint"
+            : request.Method == HttpMethod.Post && path.Contains("/webhook-endpoints/", StringComparison.Ordinal) && path.EndsWith("/rotate-secret", StringComparison.Ordinal) ? "rotate_webhook_secret"
             : request.Method == HttpMethod.Delete && path.StartsWith("/v1/terrascale/organizations/", StringComparison.Ordinal) && path.Count(character => character == '/') == 4 ? "delete_organization"
             : request.Method == HttpMethod.Post && path.EndsWith("/ownership-transfer", StringComparison.Ordinal) ? "start_ownership_transfer"
             : request.Method == HttpMethod.Put && path.Contains("/clients/", StringComparison.Ordinal) ? "update_oauth_client"

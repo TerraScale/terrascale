@@ -19,6 +19,8 @@ public sealed record StepUpPageModel(string Id, string Email, string Purpose, bo
         "create_oauth_client" => this.Copy.OpCreateOauthClient,
         "update_oauth_client" => this.Copy.OpUpdateOauthClient,
         "rotate_oauth_client" => this.Copy.OpRotateOauthClient,
+        "create_webhook_endpoint" => this.Copy.OpCreateWebhookEndpoint,
+        "rotate_webhook_secret" => this.Copy.OpRotateWebhookSecret,
         "change_email" => this.Copy.OpChangeEmail,
         _ => this.Copy.OpVerifyAccount,
     };

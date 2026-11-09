@@ -89,6 +89,8 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
 
     public const string OrganizationSsoTable = "organization_sso";
 
+    public const string WebhookEndpointTable = "webhook_endpoints";
+
     public static IReadOnlyList<string> RequiredTables { get; } =
     [
         UniqueTable, ChallengeTable, HealthTable, UserTable, SessionTable, PasscodeTable,
@@ -98,6 +100,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         InvitationTable, AuditEventTable, MfaTable, PasskeyTable, DeletionJobTable, DashboardDeletionCursorTable, ClosureJobTable,
         ClosureCancellationTable, ClosureCommitTable, ProjectAuthSettingsTable, OrganizationSsoTable, AccountDeletionReceiptTable,
         StepUpProofTable, StepUpDeletionGrantTable, StepUpPasscodeTable, EmailChangeTable, MailOutboxTable,
+        WebhookEndpointTable,
     ];
 
     private static readonly TerraScaleIdGenerator Ids = new();
@@ -651,6 +654,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
             MembershipTable => [("organization", "organizationId"), ("account", "userId")],
             ProjectMemberTable => [("organization", "organizationId"), ("project", "projectId"), ("account", "userId")],
             ApiKeyTable or ApiKeyUsageTable or InvitationTable => [("organization", "organizationId"), ("project", "projectId")],
+            WebhookEndpointTable => [("project", "projectId")],
             AuditEventTable => [("organization", "organizationId"), ("account", "actor")],
             SessionTable or PasscodeTable or MfaTable or StepUpProofTable or StepUpDeletionGrantTable or StepUpPasscodeTable or EmailChangeTable => [("account", "userId")],
             OidcTokenTable or OidcAuthorizationTable => [("account", "subject")],
