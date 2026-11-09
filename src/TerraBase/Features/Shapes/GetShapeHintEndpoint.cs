@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
@@ -56,7 +58,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                     Validation error => ErrorResponse.From(error),
                     NotFound error => ErrorResponse.From(error),
                     Unavailable error => ErrorResponse.From(error),
-                    TenantContext => throw new System.Diagnostics.UnreachableException(),
+                    TenantContext => throw new UnreachableException(),
                 };
             }
         }
@@ -183,7 +185,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                             break;
                         }
 
-                        var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        var at = offset.ToString(CultureInfo.InvariantCulture);
                         if (body.Local is { } local && local != announced && body.NextOffset == at)
                         {
                             await SendAsync(socket, new ShapeHintFrame("provisional", shape.Lineage.Handle, at, at, Local: local), disconnected.Token).ConfigureAwait(false);

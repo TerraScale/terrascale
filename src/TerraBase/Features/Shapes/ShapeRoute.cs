@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Hosting;
 using System.Globalization;
 using TerraBase.Errors;
@@ -109,7 +110,7 @@ internal static class ShapeRoute
                     Unavailable error => error,
                 };
             default:
-                throw new System.Diagnostics.UnreachableException();
+                throw new UnreachableException();
         }
     }
 
@@ -120,7 +121,7 @@ internal static class ShapeRoute
         NotFound error => ErrorResponse.From(error),
         Unavailable error => ErrorResponse.From(error),
         QuotaExceeded error => ErrorResponse.From(error),
-        _ => throw new System.Diagnostics.UnreachableException(),
+        _ => throw new UnreachableException(),
     };
 
     internal static IResult Error(ShapeRead read, HttpContext context, ShapeLineage lineage) => read switch
@@ -129,7 +130,7 @@ internal static class ShapeRoute
         QuotaExceeded error => ErrorResponse.From(error),
         NotFound error => ErrorResponse.From(error),
         Unavailable error => ErrorResponse.From(error),
-        _ => throw new System.Diagnostics.UnreachableException(),
+        _ => throw new UnreachableException(),
     };
 
     internal static RefetchResult Refetch(HttpContext context, ShapeLineage lineage, string message)

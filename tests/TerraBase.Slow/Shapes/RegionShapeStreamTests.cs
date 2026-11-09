@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -165,12 +166,12 @@ public sealed class RegionShapeStreamTests
                     services.GetRequiredService<IShapeFlights<ShapeRead>>(), services.GetRequiredService<ShapeControls>(), overlay);
                 var shape = await tails.ResolveAsync(world.Database, "items", new ShapeQuery(null, null), token);
                 var resolved = shape is ResolvedShape found ? found : throw new InvalidOperationException("fra did not resolve the shape");
-                var offset = long.Parse(client.NextOffset, System.Globalization.CultureInfo.InvariantCulture);
+                var offset = long.Parse(client.NextOffset, CultureInfo.InvariantCulture);
                 await using var reader = (await replicas.BeginShapeReadAsync(world.Database, token))!;
                 while (await reader.ReadAsync(resolved.Scope, resolved.Lineage, offset, services.GetRequiredService<IMemoryBudget>(), token) is ShapeBody body)
                 {
                     body.Lease?.Dispose();
-                    offset = long.Parse(body.NextOffset, System.Globalization.CultureInfo.InvariantCulture);
+                    offset = long.Parse(body.NextOffset, CultureInfo.InvariantCulture);
                     if (body.UpToDate)
                     {
                         break;
@@ -201,7 +202,7 @@ public sealed class RegionShapeStreamTests
             using (body.Lease)
             {
                 var json = JsonElement.Parse(body.Json.Span);
-                _offset = long.Parse(json.GetProperty("next_offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
+                _offset = long.Parse(json.GetProperty("next_offset").GetString()!, CultureInfo.InvariantCulture);
                 Local = json.GetProperty("local").GetString()!;
                 return json;
             }

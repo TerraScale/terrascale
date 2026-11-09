@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Bogus;
@@ -139,7 +140,7 @@ public sealed class WriteRouterTests
         {
             await using var transaction = await connection.BeginTransactionAsync(token);
             await using var read = new NpgsqlCommand("SELECT n FROM counters WHERE id = 'c1'", connection);
-            var balance = Convert.ToInt64(await read.ExecuteScalarAsync(token), System.Globalization.CultureInfo.InvariantCulture);
+            var balance = Convert.ToInt64(await read.ExecuteScalarAsync(token), CultureInfo.InvariantCulture);
             await Assert.That(await PostgresSql.ExecuteAsync(connection, "UPDATE counters SET n = $1 WHERE id = 'c1'", balance - 3)).IsEqualTo(1);
             await transaction.CommitAsync(token);
         }

@@ -1,4 +1,5 @@
 using Microsoft.OpenApi;
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
@@ -89,7 +90,7 @@ internal sealed class GetShapeManifestEndpoint(
         {
             SnapshotOffset page => await snapshots.PageAsync(scope, lineage, page.Snapshot, page.Page, cancellationToken),
             DecimalOffset at => await chunks.ReadAsync(scope, lineage, at.Value, cancellationToken),
-            _ => throw new System.Diagnostics.UnreachableException(),
+            _ => throw new UnreachableException(),
         };
         if (read is not ShapeBody body)
         {

@@ -1,5 +1,6 @@
 using Bogus;
 using Npgsql;
+using System.Globalization;
 using TerraBase.Primitives;
 using static TerraBase.Testing.PostgresSql;
 
@@ -278,7 +279,7 @@ public sealed class PostgresWireTests
         var rows = new List<string[]>();
         while (await reader.ReadAsync())
         {
-            rows.Add([.. Enumerable.Range(0, reader.FieldCount).Select(i => Convert.ToString(reader.GetValue(i), System.Globalization.CultureInfo.InvariantCulture)!)]);
+            rows.Add([.. Enumerable.Range(0, reader.FieldCount).Select(i => Convert.ToString(reader.GetValue(i), CultureInfo.InvariantCulture)!)]);
         }
 
         return rows;

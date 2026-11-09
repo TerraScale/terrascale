@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
@@ -59,7 +61,7 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
 
     internal async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, string? local, CancellationToken cancellationToken)
     {
-        var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var at = offset.ToString(CultureInfo.InvariantCulture);
         var request = new ShapeFlightRequest(scope.Database, lineage.Handle, local is null ? at : at + "~" + local, true);
         return ShapeService.Join(await flights.ReadAsync(request, Read, cancellationToken).ConfigureAwait(false));
 
@@ -78,7 +80,7 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
         {
             using var admission = memory.TryReserve(MemoryLane.Foreground, 16 * 1024, scope.Database) ?? throw new QosMemoryException();
             var started = time.GetTimestamp();
-            var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var at = offset.ToString(CultureInfo.InvariantCulture);
             while (true)
             {
                 var changed = local is null ? null : overlay.Changed(scope.Database);
@@ -142,7 +144,7 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
         using (body.Lease)
         {
             var json = body.Json.Span;
-            var digest = System.Text.Encoding.ASCII.GetBytes(provisional.Digest);
+            var digest = Encoding.ASCII.GetBytes(provisional.Digest);
             var joined = new byte[json.Length - 1 + 16 + provisional.Json.Length + 11 + digest.Length + 2];
             var written = 0;
             Append(json[..^1]);

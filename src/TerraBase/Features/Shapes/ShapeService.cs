@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -268,7 +269,7 @@ internal sealed class ShapeService(
         NotFound missing => missing,
         Unavailable unavailable => unavailable,
         QuotaExceeded busy => busy,
-        ShapeBody => throw new System.Diagnostics.UnreachableException(),
+        ShapeBody => throw new UnreachableException(),
     };
 
     public async ValueTask<ShapeRead> PageAsync(ShapeScope scope, ShapeLineage lineage, long snapshot, int page, CancellationToken cancellationToken)

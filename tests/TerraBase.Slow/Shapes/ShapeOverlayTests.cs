@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Errors;
@@ -82,12 +83,12 @@ public sealed class ShapeOverlayTests
             services.GetRequiredService<IShapeFlights<ShapeRead>>(), services.GetRequiredService<ShapeControls>(), world.Overlay);
         var resolved = await tails.ResolveAsync(world.Database, "items", new ShapeQuery(null, null), cancellationToken);
         var shape = resolved is ResolvedShape found ? found : throw new InvalidOperationException("the sjc replica did not resolve the shape");
-        var offset = long.Parse(home.NextOffset, System.Globalization.CultureInfo.InvariantCulture);
+        var offset = long.Parse(home.NextOffset, CultureInfo.InvariantCulture);
         await using var reader = (await world.Replicas.BeginShapeReadAsync(world.Database, cancellationToken))!;
         while (await reader.ReadAsync(shape.Scope, shape.Lineage, offset, services.GetRequiredService<IMemoryBudget>(), cancellationToken) is ShapeBody body)
         {
             body.Lease?.Dispose();
-            offset = long.Parse(body.NextOffset, System.Globalization.CultureInfo.InvariantCulture);
+            offset = long.Parse(body.NextOffset, CultureInfo.InvariantCulture);
             if (body.UpToDate)
             {
                 break;
@@ -112,5 +113,5 @@ public sealed class ShapeOverlayTests
         }
     }
 
-    private static string Decimal(long value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private static string Decimal(long value) => value.ToString(CultureInfo.InvariantCulture);
 }

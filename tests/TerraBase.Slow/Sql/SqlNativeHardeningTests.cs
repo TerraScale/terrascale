@@ -1,3 +1,4 @@
+using System.Data;
 using System.Diagnostics;
 using System.Net;
 using Bogus;
@@ -232,7 +233,7 @@ public sealed class SqlNativeHardeningTests
         {
             for (var i = 0; i < 200; i++)
             {
-                if (racing.State != System.Data.ConnectionState.Open)
+                if (racing.State != ConnectionState.Open)
                 {
                     await racing.DisposeAsync();
                     try

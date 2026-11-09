@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net.Http;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -21,9 +22,9 @@ public sealed class CdcRetentionTests
         using var data = host.Api.DataClient(host.Api.ProjectToken(host.Database.Project, "sql:read sql:write databases:read databases:write"));
         var slow = new TableShapeClient(data, ManagementApi.Uri(host.Database.Data).ToString(), "people");
         var bootstrap = await slow.GetAsync(ManagementApi.Uri(slow.Path + "?offset=-1"));
-        await Assert.That(bootstrap.Status).IsEqualTo(System.Net.HttpStatusCode.TemporaryRedirect);
+        await Assert.That(bootstrap.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         var snapshot = await slow.GetAsync(bootstrap.Location!);
-        await Assert.That(snapshot.Status).IsEqualTo(System.Net.HttpStatusCode.OK);
+        await Assert.That(snapshot.Status).IsEqualTo(HttpStatusCode.OK);
         slow.Apply(snapshot);
         var slowOffset = long.Parse(slow.NextOffset, CultureInfo.InvariantCulture);
         using var grant = await data.PutAsJsonAsync(ManagementApi.Uri(host.Database.Data + "/tables/people/read-grant"), new { where = "text IS NOT NULL" }, token);

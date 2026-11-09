@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -1022,7 +1023,7 @@ internal sealed class ShapeObjectStore : IDisposable
     public async Task<ShapeObjectHead> PutAsync(string key, ShapeObjectHead head, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
         await IndexAsync(key, head.Owner, cancellationToken).ConfigureAwait(false);
-        if (!System.Runtime.InteropServices.MemoryMarshal.TryGetArray(bytes, out var segment))
+        if (!MemoryMarshal.TryGetArray(bytes, out var segment))
         {
             throw new ArgumentException("shape ciphertext must be array-backed", nameof(bytes));
         }
