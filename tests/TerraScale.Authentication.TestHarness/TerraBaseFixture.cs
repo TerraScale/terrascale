@@ -18,13 +18,14 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     // Separate databases avoid queueing every parallel management journey on one database writer.
     private readonly Lazy<Task<OidcHarness>>[] management;
     private int nextManagement = -1;
-    private readonly Lazy<Task<OidcHarness>> shared;
+    private readonly Lazy<Task<OidcHarness>>[] shared;
+    private int nextShared = -1;
     private readonly Lazy<Task> initialized;
 
     public TerraBaseFixture()
     {
         this.management = Enumerable.Range(0, 4).Select(_ => new Lazy<Task<OidcHarness>>(this.StartManagementAsync)).ToArray();
-        this.shared = new(this.StartSharedAsync);
+        this.shared = Enumerable.Range(0, 4).Select(_ => new Lazy<Task<OidcHarness>>(this.StartSharedAsync)).ToArray();
         this.initialized = new(this.InitializeCoreAsync);
     }
 
@@ -35,9 +36,10 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     internal Task InitializeManagementAsync() => Task.WhenAll(this.management.Select(host => host.Value));
 
-    internal Task InitializeSharedAsync() => this.shared.Value;
+    internal Task InitializeSharedAsync() => Task.WhenAll(this.shared.Select(host => host.Value));
 
-    public Task<OidcHarness> SharedAsync() => this.shared.Value;
+    public Task<OidcHarness> SharedAsync() =>
+        this.shared[(uint)Interlocked.Increment(ref this.nextShared) % (uint)this.shared.Length].Value;
 
     private Task<OidcHarness> StartSharedAsync()
     {
@@ -143,9 +145,9 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         {
             await Task.WhenAll(this.management.Where(host => host.IsValueCreated).Select(async host =>
                 await (await host.Value).DisposeAsync()));
-            if (this.shared.IsValueCreated)
+            if (this.shared.Any(host => host.IsValueCreated))
             {
-                await (await this.shared.Value).DisposeAsync();
+                await Task.WhenAll(this.shared.Where(host => host.IsValueCreated).Select(async host => await (await host.Value).DisposeAsync()));
             }
         }
         finally
