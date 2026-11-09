@@ -1,83 +1,80 @@
 using System.Diagnostics.Metrics;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Hosting;
-using TerraScale.DotNet.TerraBase;
+using TerraScale.Authentication.Storage;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.Email;
 
-/// <summary>Durable provider-account admission, shared by every sending instance on the GRU storage authority.</summary>
-public sealed class EmailAdmission(AuthStore store, TimeProvider clock)
+public sealed class EmailAdmission(AuthData data, TimeProvider clock)
 {
-    internal const string Table = "email_admission";
     private const string Key = "cloudflare";
     private static readonly Meter Meter = new(AuthMetrics.MeterName);
     private static readonly Counter<long> Decisions = Meter.CreateCounter<long>("ts_auth.email_admission");
     private static readonly Gauge<long> Remaining = Meter.CreateGauge<long>("ts_auth.email_remaining");
 
-    // Retain reservations beyond the 24-hour provider window, including the bounded provider request duration.
     internal static readonly TimeSpan Window = TimeSpan.FromHours(25);
 
     internal async Task<bool> AcquireAsync(EmailMessage message, CancellationToken cancellationToken, string? attemptId = null)
     {
         for (var attempt = 0; attempt < 16; attempt++)
         {
-            var rowData = await store.GetAsync(Table, OidcIssuer.InstanceId, Key, cancellationToken).ConfigureAwait(false);
-            var state = Read(rowData);
             var now = clock.GetUtcNow();
-            state.Reservations.RemoveAll(item => item.At <= now - Window);
+            var cutoff = now - Window;
             var purpose = message.Purpose;
+            var tenant = message.Tenant;
+            var state = await data.ReadAsync(async (db, token) =>
+            {
+                await db.EmailReservations.Where(item => item.At <= cutoff).ExecuteDeleteAsync(token).ConfigureAwait(false);
+                return await db.EmailBudgets.Where(budget => budget.Key == Key)
+                    .Select(budget => new
+                    {
+                        Budget = new Versioned<EmailBudgetRecord>(budget, EF.Property<string>(budget, AuthDbContext.VersionProperty)),
+                        Total = db.EmailReservations.Count(),
+                        Authentication = db.EmailReservations.Count(item => item.Purpose == EmailPurpose.Authentication),
+                        Purpose = db.EmailReservations.Count(item => item.Purpose == purpose),
+                        Tenant = db.EmailReservations.Count(item => item.Purpose != EmailPurpose.Authentication && item.Tenant == tenant),
+                        Attempt = attemptId != null && db.EmailReservations.Any(item => item.AttemptId == attemptId),
+                    }).SingleOrDefaultAsync(token).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
+            if (state is null)
+            {
+                await data.SaveAsync(Change.Insert(new EmailBudgetRecord(Key, DateTimeOffset.UnixEpoch)), cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            Observe(state.Total, state.Authentication);
             var critical = purpose == EmailPurpose.Authentication;
-            var noncritical = state.Reservations.Count(item => item.Purpose != EmailPurpose.Authentication);
-            var allowed = (attemptId is null || !state.Reservations.Any(item => item.AttemptId == attemptId)) && state.PausedUntil <= now && state.Reservations.Count < 1000 && (critical ||
-                noncritical < 500 && state.Reservations.Count(item => item.Purpose == purpose) < (purpose == EmailPurpose.Test ? 20 : 100) &&
-                state.Reservations.Count(item => item.Purpose != EmailPurpose.Authentication && item.Tenant == message.Tenant) < 50);
-            Observe(state);
+            var allowed = !state.Attempt && state.Budget.Value.PausedUntil <= now && state.Total < 1000 && (critical ||
+                state.Total - state.Authentication < 500 && state.Purpose < (purpose == EmailPurpose.Test ? 20 : 100) && state.Tenant < 50);
             if (!allowed)
             {
                 Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "refused"));
                 return false;
             }
-            state.Reservations.Add(new(now, purpose, message.Tenant, attemptId));
-            var record = JsonSerializer.SerializeToElement(state, EmailAdmissionJson.Default.EmailBudget);
-            if (rowData is null)
-            {
-                try
-                {
-                    _ = await store.CreateAsync(Table, OidcIssuer.InstanceId, Key, record, cancellationToken).ConfigureAwait(false);
-                }
-                catch (StorePreconditionFailedException) { continue; }
-            }
-            else if (!await store.CompareAndPutAsync(Table, OidcIssuer.InstanceId, Key, record, rowData.Version, cancellationToken).ConfigureAwait(false))
+
+            if (!await data.SaveAsync(
+                [
+                    Change.Update(state.Budget, state.Budget.Value),
+                    Change.Insert(new EmailReservationRecord(AuthIds.New(), now, purpose, tenant, attemptId)),
+                ], cancellationToken).ConfigureAwait(false))
             {
                 continue;
             }
-            Observe(state);
+
+            Observe(state.Total + 1, state.Authentication + (critical ? 1 : 0));
             Decisions.Add(1, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "admitted"));
             return true;
         }
+
         return false;
     }
 
-    private static EmailBudget Read(StoredRow? rowData)
+    private static void Observe(int total, int authentication)
     {
-        if (rowData is null)
-        {
-            return new(OidcIssuer.InstanceId, [], default);
-        }
-        var state = rowData.Body.Deserialize(EmailAdmissionJson.Default.EmailBudget);
-        return rowData.Id == AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Table, Key) &&
-            state is { InstanceId: OidcIssuer.InstanceId, Reservations.Count: <= 1000 } ? state
-            : throw new InvalidOperationException("Invalid mail admission record.");
-    }
-
-    private static void Observe(EmailBudget state)
-    {
-        Remaining.Record(Math.Max(0, 1000 - state.Reservations.Count), new KeyValuePair<string, object?>("pool", "total"));
-        Remaining.Record(Math.Max(0, 500 - state.Reservations.Count(item => item.Purpose == EmailPurpose.Authentication)), new KeyValuePair<string, object?>("pool", "auth_reserve"));
+        Remaining.Record(Math.Max(0, 1000 - total), new KeyValuePair<string, object?>("pool", "total"));
+        Remaining.Record(Math.Max(0, 500 - authentication), new KeyValuePair<string, object?>("pool", "auth_reserve"));
     }
 
     internal async Task PauseAsync(DateTimeOffset? reset, TimeSpan? delay, CancellationToken cancellationToken)
@@ -87,34 +84,27 @@ public sealed class EmailAdmission(AuthStore store, TimeProvider clock)
         until = until <= now ? now + TimeSpan.FromMinutes(1) : until > now + Window ? now + Window : until;
         for (var attempt = 0; attempt < 16; attempt++)
         {
-            var rowData = await store.GetAsync(Table, OidcIssuer.InstanceId, Key, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException("Missing mail admission record.");
-            var state = Read(rowData);
-            if (state.PausedUntil >= until || await store.CompareAndPutAsync(Table, OidcIssuer.InstanceId, Key,
-                JsonSerializer.SerializeToElement(state with { PausedUntil = until }, EmailAdmissionJson.Default.EmailBudget), rowData.Version, cancellationToken).ConfigureAwait(false))
+            var budget = await data.ReadAsync((db, token) => db.EmailBudgets.Where(budget => budget.Key == Key).WithVersion().SingleOrDefaultAsync(token), cancellationToken)
+                .ConfigureAwait(false) ?? throw new InvalidOperationException("Missing mail admission record.");
+            if (budget.Value.PausedUntil >= until || await data.SaveAsync(Change.Update(budget, budget.Value with { PausedUntil = until }), cancellationToken).ConfigureAwait(false))
             {
                 return;
             }
         }
+
         throw new InvalidOperationException("Mail provider pause could not be persisted.");
     }
 }
 
-internal sealed record EmailReservation(DateTimeOffset At, EmailPurpose Purpose, string Tenant, string? AttemptId = null);
-internal sealed record EmailBudget(string InstanceId, List<EmailReservation> Reservations, DateTimeOffset PausedUntil);
+public sealed record EmailBudgetRecord(string Key, DateTimeOffset PausedUntil);
 
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-[JsonSerializable(typeof(EmailBudget))]
-internal sealed partial class EmailAdmissionJson : JsonSerializerContext;
+public sealed record EmailReservationRecord(string Id, DateTimeOffset At, EmailPurpose Purpose, string Tenant, string? AttemptId = null);
 
-/// <summary>Reserves capacity before sending; failed or ambiguous sends keep their reservation and are never resent here.</summary>
 public sealed class AdmittedEmailSender(EmailAdmission admission, CloudflareEmailSender provider, ILogger<AdmittedEmailSender> logger) : IEmailSender
 {
-    /// <inheritdoc />
     public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
         _ = await this.DeliverAsync(recipient, message, cancellationToken).ConfigureAwait(false);
 
-    /// <inheritdoc />
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         var outcome = EmailDeliveryOutcome.Retryable;

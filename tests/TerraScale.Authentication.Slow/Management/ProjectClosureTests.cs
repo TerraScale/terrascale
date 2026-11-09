@@ -4,12 +4,13 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SignIn;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet;
@@ -53,11 +54,10 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     // TerraBase retains the project fence and refuses a different closure id.
     private async Task FencedAsync(string project, string organization)
     {
-        var refused = await Assert.That(async () => await fixture.Server.Management().CloseProjectAsync(project, organization, AuthStore.NewId())).Throws<TerraBaseConflictException>();
+        var refused = await Assert.That(async () => await fixture.Server.Management().CloseProjectAsync(project, organization, AuthIds.New())).Throws<TerraBaseConflictException>();
         await Assert.That(refused!.ErrorCode).IsEqualTo("closure_conflict");
     }
 
     private static async Task<ClosureJob?> JobAsync(OidcHarness oidc, string scope, string subject) =>
-        (await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ClosureJobTable, "terrascale", ClosureJob.Key(scope, subject)))
-            ?.Body.Deserialize(ClosureJson.Default.ClosureJob);
+        await oidc.Database.ReadAsync(db => db.ClosureJobs.SingleOrDefaultAsync(job => job.InstanceId == "terrascale" && job.Scope == scope && job.SubjectId == subject));
 }

@@ -3,11 +3,12 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 
@@ -24,7 +25,7 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var auth = await OidcHarness.StartAsync(fixture, clock: clock);
-        var store = auth.Server.App.Services.GetRequiredService<AuthStore>();
+        var store = auth.Server.App.Services.GetRequiredService<AuthData>();
         var cleanup = auth.Server.App.Services.GetRequiredService<DeletionCleanup>();
         await cleanup.StopAsync(CancellationToken.None);
         var (user, token) = await auth.SignInUserAsync("direct@example.test");
@@ -46,8 +47,8 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
         await Assert.That((await ListAsync(restarted.Client)).Single(item => item.SubjectId == user.Id)).IsEqualTo(proof);
         foreach (var wrong in new[]
         {
-            proof with { Id = AuthStore.NewId() }, proof with { SubjectId = AuthStore.NewId() },
-            proof with { OrganizationId = AuthStore.NewId() }, proof with { Scope = "organization" },
+            proof with { Id = AuthIds.New() }, proof with { SubjectId = AuthIds.New() },
+            proof with { OrganizationId = AuthIds.New() }, proof with { Scope = "organization" },
         })
         {
             using var refused = await SendAsync(restarted.Client, HttpMethod.Post, AckRoute(wrong), wrong);
@@ -55,12 +56,11 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
         }
 
         // Simulate completed history and an expired credential fence: dashboard acknowledgement still owns retention.
-        var restartedStore = restarted.App.Services.GetRequiredService<AuthStore>();
-        var rowData = (await restartedStore.GetAsync(AuthStore.DeletionJobTable, "terrascale", job.Id))!;
+        var restartedStore = restarted.App.Services.GetRequiredService<AuthData>();
+        var rowData = await restartedStore.ReadAsync((db, token) => db.DeletionJobs.Where(row => row.Id == job.Id).WithVersion().SingleAsync(token), CancellationToken.None);
         clock.UtcNow = job.RequestedAt.AddDays(16);
         var complete = job with { HistoryCompletedAt = clock.UtcNow, HistoryStatus = "retire", NextAttemptAt = clock.UtcNow };
-        await Assert.That(await restartedStore.CompareAndPutAsync(AuthStore.DeletionJobTable, "terrascale", job.Id,
-            JsonSerializer.SerializeToElement(complete, DeletionJson.Default.DeletionJob), rowData.Version)).IsTrue();
+        await Assert.That(await restartedStore.SaveAsync(Change.Update(rowData, complete), CancellationToken.None)).IsTrue();
         await restartedCleanup.RunHistoryOnceAsync();
         await Assert.That((await JobAsync(restartedStore, proof)).DashboardVerifiedAt).IsNull();
         await Assert.That((await ListAsync(restarted.Client)).Any(item => item.Id == proof.Id)).IsTrue();
@@ -74,11 +74,11 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
         await Assert.That((await JobAsync(restartedStore, proof)).DashboardVerifiedAt).IsEqualTo(clock.UtcNow);
         await Assert.That((await ListAsync(restarted.Client)).Any(item => item.Id == proof.Id)).IsFalse();
         await restartedCleanup.RunHistoryOnceAsync();
-        await Assert.That(await restartedStore.GetAsync(AuthStore.DeletionJobTable, "terrascale", job.Id)).IsNull();
+        await Assert.That(await restartedStore.ReadAsync((db, token) => db.DeletionJobs.AnyAsync(row => row.Id == job.Id, token), CancellationToken.None)).IsFalse();
     }
 
-    private static async Task<DeletionJob> JobAsync(AuthStore store, DashboardDeletionProof proof) =>
-        (await store.GetAsync(AuthStore.DeletionJobTable, "terrascale", DeletionJob.Key("terrascale", proof.Scope, proof.SubjectId)))!.Body.Deserialize(DeletionJson.Default.DeletionJob)!;
+    private static Task<DeletionJob> JobAsync(AuthData store, DashboardDeletionProof proof) =>
+        store.ReadAsync((db, token) => db.DeletionJobs.SingleAsync(row => row.Id == DeletionJob.Key("terrascale", proof.Scope, proof.SubjectId), token), CancellationToken.None);
 
     private static string AckRoute(DashboardDeletionProof proof) => $"{Route}/{proof.Id}/acknowledge";
 

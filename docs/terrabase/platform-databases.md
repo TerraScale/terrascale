@@ -14,7 +14,7 @@ TerraScale services store their state in TerraBase SQL databases. TerraBase seed
 
 Auth uses the .NET SDK's SQL endpoint; dashboard uses SQL RPC through the shared MagicOnion contracts. Every call requires the listener's credential and authorization boundary. Service credentials never belong in a customer browser, tool output or logs. Missing or incompatible issuer/audience metadata fails closed.
 
-- [Auth SQL storage](../auth/pivot/p1-sql-storage.md).
+- [Auth storage](../auth/storage.md).
 - [Dashboard SQL storage](../dashboard/state-storage.md).
 - [SQL catalog](sql-catalog.md).
 - [Management API](management-api.md).

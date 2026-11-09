@@ -2,9 +2,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Bogus;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Webhooks;
@@ -36,10 +36,10 @@ public sealed class WebhookEndpointTests(TerraBaseFixture fixture)
         await Assert.That(listed.GetArrayLength()).IsEqualTo(1);
         await Assert.That(listed[0].GetProperty("id").GetString()).IsEqualTo(id);
         await Assert.That(listed[0].TryGetProperty("secret", out _)).IsFalse();
-        var stored = await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.WebhookEndpointTable, project, id);
-        await Assert.That(stored!.Body.GetProperty("url").GetString()).IsEqualTo("https://hooks.example.test/lifecycle");
-        await Assert.That(stored.Body.GetRawText()).DoesNotContain(secret);
-        await Assert.That(stored.Body.GetProperty("secretBox").GetString()!.StartsWith("v1:", StringComparison.Ordinal)).IsTrue();
+        var stored = await oidc.Database.ReadAsync(db => db.WebhookEndpoints.SingleAsync(endpoint => endpoint.ProjectId == project && endpoint.Id == id));
+        await Assert.That(stored.Url).IsEqualTo("https://hooks.example.test/lifecycle");
+        await Assert.That(stored.SecretBox).DoesNotContain(secret);
+        await Assert.That(stored.SecretBox.StartsWith("v1:", StringComparison.Ordinal)).IsTrue();
 
         var rotated = await oidc.OkAsync(HttpMethod.Post, $"{root}/webhook-endpoints/{id}/rotate-secret", token);
         var next = rotated.GetProperty("secret").GetString()!;

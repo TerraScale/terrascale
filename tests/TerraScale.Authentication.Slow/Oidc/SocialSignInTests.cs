@@ -10,7 +10,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -85,9 +85,11 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
         await Assert.That(await SignInAsync(oidc, providers, project, provider, email)).IsNull();
     }
 
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
+
     private static async Task UnchangedAsync(Users users, UserRecord expected) =>
-        await Assert.That(JsonSerializer.Serialize((await users.GetAsync(expected.InstanceId, expected.Id))!, IdentityJson.Default.UserRecord))
-            .IsEqualTo(JsonSerializer.Serialize(expected, IdentityJson.Default.UserRecord));
+        await Assert.That(JsonSerializer.Serialize((await users.GetAsync(expected.InstanceId, expected.Id))!, Web))
+            .IsEqualTo(JsonSerializer.Serialize(expected, Web));
 
     private static object Configuration(string provider, FakeSocialProviders providers) => provider switch
     {

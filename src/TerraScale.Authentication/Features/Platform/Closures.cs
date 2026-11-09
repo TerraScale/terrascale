@@ -1,7 +1,7 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -14,7 +14,7 @@ namespace TerraScale.Authentication.Features.Platform;
 /// keeps the intent for the background pass, which retries with the same closure id.
 /// </summary>
 public sealed class Closures(
-    AuthStore store, PlatformDirectory directory, [FromKeyedServices(App.StorageAuthority)] TerraBaseManagementClient terraBase, TimeProvider clock, ILogger<Closures> logger)
+    AuthData data, PlatformDirectory directory, Users users, [FromKeyedServices(App.StorageAuthority)] TerraBaseManagementClient terraBase, TimeProvider clock, ILogger<Closures> logger)
 {
     // Each deferral is a remote-durable write; a fixed short retry rewrote every pending intent every pass, forever.
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(2);
@@ -44,6 +44,7 @@ public sealed class Closures(
     internal async Task<bool> AdvanceAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(job);
+        using var home = HomeReads.Begin();
         TerraBaseProjectClosure? answer;
         try
         {
@@ -150,10 +151,10 @@ public sealed class Closures(
             }
 
             var seen = current.Value with { FenceSeen = true };
-            if (await store.ReplaceAsync(AuthStore.ClosureJobTable, current.Value.InstanceId, ClosureJob.Key(current.Value.Scope, current.Value.SubjectId),
-                JsonSerializer.SerializeToElement(seen, ClosureJson.Default.ClosureJob), current.Version, cancellationToken).ConfigureAwait(false) is { } version)
+            var marked = Change.Update(current, seen);
+            if (await data.SaveAsync(marked, cancellationToken).ConfigureAwait(false))
             {
-                return new(seen, version);
+                return new(seen, marked.Version!);
             }
 
             if (await this.RereadAsync(job, cancellationToken).ConfigureAwait(false) is not { } reread)
@@ -213,17 +214,20 @@ public sealed class Closures(
         {
             var detached = current.Value with { AccountId = null, NextAttemptAt = clock.GetUtcNow() };
             // Only while the account has no closure intent: a newer account closure drives its own intents.
-            switch (await store.TransactAsync(
-            [
-                AuthStore.Replace(AuthStore.ClosureJobTable, current.Value.InstanceId, ClosureJob.Key(current.Value.Scope, current.Value.SubjectId),
-                    JsonSerializer.SerializeToElement(detached, ClosureJson.Default.ClosureJob), current.Version),
-                AuthStore.Absent(AuthStore.ClosureJobTable, current.Value.InstanceId, ClosureJob.Key("account", account)),
-            ], cancellationToken).ConfigureAwait(false))
+            if (await directory.ClosureAsync("account", account, cancellationToken).ConfigureAwait(false) is not null)
             {
-                case null:
-                    return await this.RereadAsync(job, cancellationToken).ConfigureAwait(false);
-                case 1:
-                    return null;
+                return null;
+            }
+
+            List<Change> changes = [Change.Update(current, detached)];
+            if (await users.GetAsync(PlatformDirectory.Instance, account, cancellationToken).ConfigureAwait(false) is { } owner)
+            {
+                changes.Add(Change.Assert(owner));
+            }
+
+            if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+            {
+                return await this.RereadAsync(job, cancellationToken).ConfigureAwait(false);
             }
 
             if (await this.RereadAsync(job, cancellationToken).ConfigureAwait(false) is not { } reread || reread.Value.AccountId != account)
@@ -240,15 +244,11 @@ public sealed class Closures(
     /// <summary>Due closure intents of every scope, oldest first; account-owned ones too, so none can be stranded.</summary>
     internal async Task<IReadOnlyList<ClosureJob>> DueAsync(int limit, CancellationToken cancellationToken)
     {
-        using var filter = JsonDocument.Parse(new JsonObject
-        {
-            ["lte"] = new JsonArray("/nextAttemptAt", JsonValue.Create(clock.GetUtcNow())),
-        }.ToJsonString());
-        return [.. (await store.QueryAsync(AuthStore.ClosureJobTable, filter.RootElement, limit, [new StoreSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false))
-            .Select(rowData => rowData.Body.Deserialize(ClosureJson.Default.ClosureJob)).OfType<ClosureJob>()];
+        var now = clock.GetUtcNow();
+        return await data.ReadAsync((db, token) => db.ClosureJobs.Where(job => job.NextAttemptAt <= now).OrderBy(job => job.NextAttemptAt).Take(limit).ToListAsync(token),
+            cancellationToken).ConfigureAwait(false);
     }
 
-    // 2 s, doubling per earlier attempt, at most a minute; from the deferral that reaches ParkAfter on, every 15 minutes.
     internal static TimeSpan Backoff(int attempts) => attempts + 1 >= ParkAfter ? ParkedRetry
         : attempts >= 5 ? MaxRetry : TimeSpan.FromTicks(Math.Min(Retry.Ticks << attempts, MaxRetry.Ticks));
 
@@ -263,8 +263,7 @@ public sealed class Closures(
             FailureCode = failure,
             FenceSeen = job.Value.FenceSeen || fenceSeen,
         };
-        if (!await store.CompareAndPutAsync(AuthStore.ClosureJobTable, job.Value.InstanceId, ClosureJob.Key(job.Value.Scope, job.Value.SubjectId),
-            JsonSerializer.SerializeToElement(next, ClosureJson.Default.ClosureJob), job.Version, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(Change.Update(job, next), cancellationToken).ConfigureAwait(false))
         {
             logger.ZLogInformation($"A closure intent changed while it was deferred; the next pass reads it again");
         }

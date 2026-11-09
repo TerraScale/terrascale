@@ -1,11 +1,10 @@
 using System.Net.Mail;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Store;
-using TerraScale.DotNet.TerraBase;
+using Microsoft.EntityFrameworkCore;
+using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Email;
 
@@ -141,19 +140,12 @@ public sealed record EmailConfig(
 /// configuration and its immutable history entry in one transaction, so concurrent saves have one winner and the
 /// history never holds a version that did not become current. Reads are never cached.
 /// </summary>
-public sealed class EmailSettings(AuthStore store, TimeProvider clock)
+public sealed class EmailSettings(AuthData data, TimeProvider clock)
 {
-    /// <summary>The current configuration, one per instance.</summary>
-    public const string Table = "email_configs";
-
-    /// <summary>Every saved version, addressed by instance and version number.</summary>
-    public const string VersionTable = "email_config_versions";
-
-    /// <summary>The current configuration, or the defaults when nothing was saved.</summary>
     public async Task<EmailConfig> GetAsync(string instanceId, CancellationToken cancellationToken = default) =>
-        (await this.ReadAsync(instanceId, cancellationToken).ConfigureAwait(false)).Config;
+        await data.ReadAsync((db, token) => db.EmailConfigs.Where(config => config.InstanceId == instanceId).OrderByDescending(config => config.Version).FirstOrDefaultAsync(token),
+            cancellationToken).ConfigureAwait(false) is { } stored ? Valid(stored, instanceId) : EmailConfig.Defaults(instanceId);
 
-    /// <summary>A saved version, version 0 (the defaults), or <see langword="null"/> when it does not exist.</summary>
     public async Task<EmailConfig?> GetVersionAsync(string instanceId, long version, CancellationToken cancellationToken = default)
     {
         if (version == 0)
@@ -161,26 +153,18 @@ public sealed class EmailSettings(AuthStore store, TimeProvider clock)
             return EmailConfig.Defaults(instanceId);
         }
 
-        var rowData = await store.GetAsync(VersionTable, instanceId, VersionKey(version), cancellationToken).ConfigureAwait(false);
-        return rowData is null ? null : Read(rowData.Body, instanceId);
+        return await data.ReadAsync((db, token) => db.EmailConfigs.SingleOrDefaultAsync(config => config.InstanceId == instanceId && config.Version == version, token),
+            cancellationToken).ConfigureAwait(false) is { } stored ? Valid(stored, instanceId) : null;
     }
 
-    /// <summary>The newest <paramref name="limit"/> saved versions, newest first.</summary>
-    public async Task<IReadOnlyList<EmailConfig>> ListVersionsAsync(string instanceId, int limit, CancellationToken cancellationToken = default)
-    {
-        var filter = JsonSerializer.SerializeToElement(new JsonObject { ["eq"] = new JsonArray("/instance_id", instanceId) });
-        var items = await store.QueryAsync(VersionTable, filter, limit, [new StoreSort("/version", "desc")], cancellationToken).ConfigureAwait(false);
-        return [.. items.Select(item => Read(item.Body, instanceId)).OrderByDescending(config => config.Version)];
-    }
+    public async Task<IReadOnlyList<EmailConfig>> ListVersionsAsync(string instanceId, int limit, CancellationToken cancellationToken = default) =>
+        [.. (await data.ReadAsync((db, token) => db.EmailConfigs.Where(config => config.InstanceId == instanceId).OrderByDescending(config => config.Version).Take(limit)
+            .ToListAsync(token), cancellationToken).ConfigureAwait(false)).Select(config => Valid(config, instanceId))];
 
-    /// <summary>
-    /// Saves <paramref name="update"/> of the current configuration as the next version, if the current version is still
-    /// <paramref name="expectedVersion"/>. Returns <see langword="null"/> when another save came first.
-    /// </summary>
     public async Task<EmailConfig?> SaveAsync(string instanceId, long expectedVersion, EmailActor actor, string change, Func<EmailConfig, EmailConfig> update, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(update);
-        var (current, etag) = await this.ReadAsync(instanceId, cancellationToken).ConfigureAwait(false);
+        var current = await this.GetAsync(instanceId, cancellationToken).ConfigureAwait(false);
         if (current.Version != expectedVersion)
         {
             return null;
@@ -194,28 +178,14 @@ public sealed class EmailSettings(AuthStore store, TimeProvider clock)
             Actor = actor,
             Change = change,
         };
-        var record = JsonSerializer.SerializeToElement(next, EmailJson.Default.EmailConfig);
-        return await store.CommitVersionAsync(Table, instanceId, instanceId, record, etag, VersionTable, VersionKey(next.Version), cancellationToken).ConfigureAwait(false)
-            ? next
-            : null;
+        return await data.SaveAsync(Change.Insert(next), cancellationToken).ConfigureAwait(false) ? next : null;
     }
 
-    private async Task<(EmailConfig Config, string? Etag)> ReadAsync(string instanceId, CancellationToken cancellationToken)
-    {
-        var rowData = await store.GetAsync(Table, instanceId, instanceId, cancellationToken).ConfigureAwait(false);
-        return rowData is null ? (EmailConfig.Defaults(instanceId), null) : (Read(rowData.Body, instanceId), rowData.Version);
-    }
-
-    /// <summary>
-    /// A stored configuration, held to the same rules as API input, so rendering never meets a value it cannot use. Anything
-    /// else is unavailable (503), and a code email then goes out with the defaults.
-    /// </summary>
-    private static EmailConfig Read(JsonElement rowData, string instanceId)
+    private static EmailConfig Valid(EmailConfig config, string instanceId)
     {
         try
         {
-            // The address already binds the instance; a mismatch means the record is not what it claims to be.
-            if (rowData.Deserialize(EmailJson.Default.EmailConfig) is { Branding: not null, Templates: not null } config && config.InstanceId == instanceId
+            if (config is { Branding: not null, Templates: not null } && config.InstanceId == instanceId
                 && config.Version > 0 && EmailValidation.Branding(config.Branding) == config.Branding
                 && config.Templates.All(entry => entry?.Fields is not null && AuthEmails.Kinds.TryGetValue(entry.Kind ?? string.Empty, out var kind)
                     && AuthEmails.Locales.Contains(entry.Locale) && EmailValidation.Fields(kind, entry.Fields) == entry.Fields)
@@ -224,21 +194,15 @@ public sealed class EmailSettings(AuthStore store, TimeProvider clock)
                 return config;
             }
         }
-        catch (Exception error) when (error is JsonException or ApiException { Status: StatusCodes.Status422UnprocessableEntity })
+        catch (ApiException error) when (error.Status == StatusCodes.Status422UnprocessableEntity)
         {
             throw ApiException.Unavailable(new InvalidDataException("A stored email configuration is malformed.", error));
         }
 
         throw ApiException.Unavailable(new InvalidDataException("A stored email configuration is malformed."));
     }
-
-    private static string VersionKey(long version) => version.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
 
-/// <summary>
-/// Checks branding and copy from the API. Failures are 422 <c>invalid_request</c> naming the field. Copy takes the
-/// kind's <c>{{ name }}</c> placeholders and nothing else, so a template has nothing to execute.
-/// </summary>
 public static partial class EmailValidation
 {
     /// <summary>Longest field values, in characters.</summary>
@@ -399,5 +363,7 @@ public static partial class EmailValidation
 }
 
 [JsonSourceGenerationOptions]
-[JsonSerializable(typeof(EmailConfig))]
+[JsonSerializable(typeof(EmailBranding))]
+[JsonSerializable(typeof(EmailActor))]
+[JsonSerializable(typeof(IReadOnlyList<EmailTemplateOverride>))]
 internal sealed partial class EmailJson : JsonSerializerContext;

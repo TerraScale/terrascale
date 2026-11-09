@@ -1,23 +1,15 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.Webhooks;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Identity;
 
-/// <summary>User accounts. Callers authorize the instance before using these operations.</summary>
-public sealed class Users(AuthStore store, WebhookOutbox outbox, TimeProvider clock)
+public sealed class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock)
 {
-    private const string EmailKind = "email";
-    private const string ProviderKind = "credential:social";
-
-    /// <summary>
-    /// The canonical (trimmed, lowercased) email, or <see langword="null"/> when it is not a plausible address: at most
-    /// 254 characters, no whitespace or control characters, one <c>@</c> after a non-empty local part, and a domain of
-    /// at least two non-empty dot-separated labels.
-    /// </summary>
     public static string? NormalizeEmail(string? email)
     {
         var trimmed = email?.Trim();
@@ -28,127 +20,83 @@ public sealed class Users(AuthStore store, WebhookOutbox outbox, TimeProvider cl
 
         var at = trimmed.IndexOf('@', StringComparison.Ordinal);
         return at > 0 && at == trimmed.LastIndexOf('@') && trimmed[(at + 1)..].Split('.') is { Length: > 1 } labels && labels.All(label => label.Length > 0)
-            ? AuthStore.NormalizeEmail(trimmed)
+            ? AuthIds.NormalizeEmail(trimmed)
             : null;
     }
 
-    /// <summary>
-    /// Creates an account without a password. Callers must prove email possession first: tokens and directory exports assert email_verified.
-    /// The email claim and the account are written in one transaction, so a
-    /// claim never outlives a failed creation. Returns <see langword="null"/> when the email already has an account.
-    /// </summary>
     public Task<UserRecord?> CreateAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
         this.CreateAsync(instanceId, email, null, cancellationToken);
 
-    /// <summary>Creates an account with an Argon2id <paramref name="passwordHash"/>, or none; see the overload.</summary>
     public async Task<UserRecord?> CreateAsync(string instanceId, string email, string? passwordHash, CancellationToken cancellationToken)
-        => await this.CreateAccountAsync(instanceId, email, passwordHash, AuthStore.NewId(), cancellationToken).ConfigureAwait(false);
+        => await this.CreateAccountAsync(instanceId, email, passwordHash, AuthIds.New(), cancellationToken).ConfigureAwait(false);
 
-    /// <summary>
-    /// A new account and the operations that create it: the email claim first (it fails when the address has an
-    /// account), then the user record. Committed by a caller's own transaction (sign-up redemption).
-    /// </summary>
-    internal (UserRecord User, StoreOperation[] Operations) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, StoreOperation? lifecycleEvent = null)
+    internal (UserRecord User, Change[] Changes) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, Change? lifecycleEvent = null)
     {
-        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthStore.NewId() };
-        List<StoreOperation> operations = [AuthStore.Claim(instanceId, EmailKind, normalizedEmail, user.Id),
-            AuthStore.Create(AuthStore.UserTable, instanceId, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord))];
-        if (lifecycleEvent is not null)
-        {
-            operations.Add(lifecycleEvent);
-        }
-
-        return (user, [.. operations]);
+        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New() };
+        return (user, lifecycleEvent is null ? [Change.Insert(user)] : [Change.Insert(user), lifecycleEvent]);
     }
 
     internal async Task<UserRecord?> CreateAccountAsync(string instanceId, string email, string? passwordHash, string userId, CancellationToken cancellationToken)
     {
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));
-        var user = new UserRecord(userId, instanceId, normalized, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthStore.NewId() };
-        var record = JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord);
-        List<StoreOperation> operations = [AuthStore.Claim(instanceId, EmailKind, normalized, user.Id),
-            AuthStore.Create(AuthStore.UserTable, instanceId, user.Id, record)];
-        var lifecycleEvent = await outbox.CreateAsync(instanceId, "user.signed_up", user.Id, normalized, null, cancellationToken).ConfigureAwait(false);
-        if (lifecycleEvent is not null)
+        var lifecycleEvent = await outbox.CreateAsync(instanceId, "user.signed_up", userId, normalized, null, cancellationToken).ConfigureAwait(false);
+        var (user, changes) = this.NewAccount(instanceId, normalized, passwordHash, userId, lifecycleEvent);
+        if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
         {
-            operations.Add(lifecycleEvent);
+            return BindAuthenticationState(user);
         }
 
-        var failed = await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false);
-        return failed is null ? BindAuthenticationState(user) : failed == 0 ? null : throw ApiException.Unavailable();
+        return await this.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is not null ? null : throw ApiException.Unavailable();
     }
 
-    /// <summary>The account owning <paramref name="email"/> in the instance, or <see langword="null"/>.</summary>
-    public async Task<UserRecord?> FindByEmailAsync(string instanceId, string email, CancellationToken cancellationToken = default)
-    {
-        if (NormalizeEmail(email) is not { } normalized
-            || await store.FindUniqueOwnerAsync(instanceId, EmailKind, normalized, cancellationToken).ConfigureAwait(false) is not { } owner)
-        {
-            return null;
-        }
+    public async Task<UserRecord?> FindByEmailAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
+        NormalizeEmail(email) is { } normalized
+            ? await this.ReadAsync(db => db.Users.Where(user => user.InstanceId == instanceId && user.Email == normalized), cancellationToken).ConfigureAwait(false)
+            : null;
 
-        var user = await this.GetAsync(instanceId, owner, cancellationToken).ConfigureAwait(false);
-        return user?.Email == normalized ? user : null;
-    }
+    public Task<UserRecord?> GetAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
+        TerraScaleIds.IsValid(userId)
+            ? this.ReadAsync(db => db.Users.Where(user => user.InstanceId == instanceId && user.Id == userId), cancellationToken)
+            : Task.FromResult<UserRecord?>(null);
 
-    /// <summary>The account with <paramref name="userId"/> in the instance, or <see langword="null"/>.</summary>
-    public async Task<UserRecord?> GetAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
-        (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.User;
-
-    /// <summary>Resolves only an already bound, tenant-local external subject; email is never an identity key.</summary>
     public async Task<UserRecord?> FindByProviderAsync(string tenant, LinkedProvider identity, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(identity);
-        if (await store.FindUniqueOwnerAsync(tenant, ProviderKind, ProviderKey(identity), cancellationToken).ConfigureAwait(false) is not { } owner)
-        {
-            return null;
-        }
-
-        var linked = await this.GetAsync(tenant, owner, cancellationToken).ConfigureAwait(false);
+        var linked = await this.ReadAsync(db => db.Users.Where(user => user.InstanceId == tenant && db.ProviderLinks.Any(link => link.UserId == user.Id && link.InstanceId == tenant
+            && link.Provider == identity.Provider && link.Issuer == identity.Issuer && link.ClientId == identity.ClientId && link.Subject == identity.Subject)),
+            cancellationToken).ConfigureAwait(false);
         return linked is { Disabled: false } && linked.LinkedProviders.Contains(identity) ? BindProvider(linked, identity) : null;
     }
 
-    /// <summary>Signs in a bound subject, or atomically creates its account, email claim and provider claim. Never links by email.</summary>
     public async Task<UserRecord?> FromProviderAsync(string tenant, LinkedProvider identity, string verifiedEmail, bool allowCreation, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(identity);
-        if (string.IsNullOrWhiteSpace(identity.Provider) || string.IsNullOrWhiteSpace(identity.Issuer)
-            || string.IsNullOrWhiteSpace(identity.ClientId) || string.IsNullOrWhiteSpace(identity.Subject))
+        if (!Complete(identity))
         {
             return null;
         }
 
-        var key = ProviderKey(identity);
         for (var round = 0; round < 3; round++)
         {
-            if (await store.FindUniqueOwnerAsync(tenant, ProviderKind, key, cancellationToken).ConfigureAwait(false) is not null)
+            if (await this.LinkOwnerAsync(tenant, identity, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return await this.FindByProviderAsync(tenant, identity, cancellationToken).ConfigureAwait(false);
             }
 
             if (!allowCreation || NormalizeEmail(verifiedEmail) is not { } normalized
-                || await store.FindUniqueOwnerAsync(tenant, EmailKind, normalized, cancellationToken).ConfigureAwait(false) is not null)
+                || await this.FindByEmailAsync(tenant, normalized, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return null;
             }
 
-            var user = new UserRecord(AuthStore.NewId(), tenant, normalized, 0, clock.GetUtcNow())
+            var user = new UserRecord(AuthIds.New(), tenant, normalized, 0, clock.GetUtcNow()) { AuthStamp = AuthIds.New(), LinkedProviders = [identity] };
+            List<Change> changes = [Change.Insert(user), Change.Insert(Link(user, identity))];
+            if (await outbox.CreateAsync(tenant, "user.signed_up", user.Id, normalized, null, cancellationToken).ConfigureAwait(false) is { } lifecycleEvent)
             {
-                AuthStamp = AuthStore.NewId(),
-                LinkedProviders = [identity],
-            };
-            List<StoreOperation> operations = [
-                AuthStore.Claim(tenant, ProviderKind, key, user.Id),
-                AuthStore.Claim(tenant, EmailKind, normalized, user.Id),
-                AuthStore.Create(AuthStore.UserTable, tenant, user.Id, JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord)),
-            ];
-            var lifecycleEvent = await outbox.CreateAsync(tenant, "user.signed_up", user.Id, normalized, null, cancellationToken).ConfigureAwait(false);
-            if (lifecycleEvent is not null)
-            {
-                operations.Add(lifecycleEvent);
+                changes.Add(lifecycleEvent);
             }
 
-            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
+            if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
             {
                 return BindProvider(user, identity);
             }
@@ -161,44 +109,37 @@ public sealed class Users(AuthStore store, WebhookOutbox outbox, TimeProvider cl
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(identity);
-        if (string.IsNullOrWhiteSpace(identity.Provider) || string.IsNullOrWhiteSpace(identity.Issuer)
-            || string.IsNullOrWhiteSpace(identity.ClientId) || string.IsNullOrWhiteSpace(identity.Subject))
+        if (!Complete(identity))
         {
             return null;
         }
 
-        var key = ProviderKey(identity);
         for (var round = 0; round < 3; round++)
         {
-            if (await this.GetVersionedAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
-                || current.User.AuthStamp != caller.AuthStamp || current.User.AuthEpoch != caller.AuthEpoch || current.User.Disabled
-                || !await store.AreCredentialsCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
+            if (await this.GetAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
+                || current.AuthStamp != caller.AuthStamp || current.AuthEpoch != caller.AuthEpoch || current.Disabled
+                || !await credentials.AreCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
             {
                 return null;
             }
 
-            if (current.User.LinkedProviders.Contains(identity))
+            if (current.LinkedProviders.Contains(identity))
             {
                 return true;
             }
 
-            var updated = current.User with { LinkedProviders = [.. current.User.LinkedProviders, identity] };
-            List<StoreOperation> operations = [
-                AuthStore.Replace(AuthStore.UserTable, caller.InstanceId, caller.Id, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version),
-                AuthStore.Claim(caller.InstanceId, ProviderKind, key, caller.Id),
-            ];
-            var lifecycleEvent = await outbox.CreateAsync(caller.InstanceId, "user.provider_linked", caller.Id, updated.Email, identity.Provider, cancellationToken).ConfigureAwait(false);
-            if (lifecycleEvent is not null)
+            List<Change> changes = [Change.Assert(current), Change.Insert(Link(current, identity))];
+            if (await outbox.CreateAsync(caller.InstanceId, "user.provider_linked", caller.Id, current.Email, identity.Provider, cancellationToken).ConfigureAwait(false) is { } lifecycleEvent)
             {
-                operations.Add(lifecycleEvent);
+                changes.Add(lifecycleEvent);
             }
 
-            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
+            if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
 
-            if (await store.FindUniqueOwnerAsync(caller.InstanceId, ProviderKind, key, cancellationToken).ConfigureAwait(false) is { } owner && owner != caller.Id)
+            if (await this.LinkOwnerAsync(caller.InstanceId, identity, cancellationToken).ConfigureAwait(false) is { } owner && owner != caller.Id)
             {
                 return false;
             }
@@ -207,73 +148,43 @@ public sealed class Users(AuthStore store, WebhookOutbox outbox, TimeProvider cl
         throw ApiException.Unavailable();
     }
 
-    /// <summary>Unlinks a provider at the reauthenticated account version and revokes all prior sessions.</summary>
     public async Task<bool> UnlinkProviderAsync(UserRecord caller, string provider, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        if (await this.GetVersionedAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
-            || current.User.AuthStamp != caller.AuthStamp || current.User.AuthEpoch != caller.AuthEpoch
-            || !await store.AreCredentialsCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
+        if (await this.GetAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
+            || current.AuthStamp != caller.AuthStamp || current.AuthEpoch != caller.AuthEpoch
+            || !await credentials.AreCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }
 
-        var identities = current.User.LinkedProviders.Where(item => item.Provider == provider).ToArray();
-        var updated = current.User with
+        var links = await data.ReadAsync((db, token) => db.ProviderLinks
+            .Where(link => link.InstanceId == caller.InstanceId && link.UserId == caller.Id && link.Provider == provider).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var updated = current with { AuthEpoch = checked(current.AuthEpoch + 1), AuthStamp = AuthIds.New() };
+        List<Change> changes = [Change.Update(updated), .. links.Select(link => Change.Delete(link))];
+        if (await outbox.CreateAsync(caller.InstanceId, "user.provider_unlinked", caller.Id, updated.Email, provider, cancellationToken).ConfigureAwait(false) is { } unlinked)
         {
-            LinkedProviders = [.. current.User.LinkedProviders.Where(item => item.Provider != provider)],
-            AuthEpoch = checked(current.User.AuthEpoch + 1),
-            AuthStamp = AuthStore.NewId(),
-        };
-        List<StoreOperation> operations = [AuthStore.Replace(AuthStore.UserTable, caller.InstanceId, caller.Id,
-            JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version)];
-        foreach (var identity in identities)
-        {
-            if (await store.FindUniqueAsync(caller.InstanceId, ProviderKind, ProviderKey(identity), cancellationToken).ConfigureAwait(false) is not { } claim || claim.OwnerId != caller.Id)
-            {
-                return false;
-            }
-
-            operations.Add(AuthStore.Release(caller.InstanceId, ProviderKind, ProviderKey(identity), claim.Version));
+            changes.Add(unlinked);
         }
 
-        var unlinked = await outbox.CreateAsync(caller.InstanceId, "user.provider_unlinked", caller.Id, updated.Email, provider, cancellationToken).ConfigureAwait(false);
-        if (unlinked is not null)
-        {
-            operations.Add(unlinked);
-        }
-
-        return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null;
+        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
     }
 
-    private static UserRecord BindProvider(UserRecord user, LinkedProvider identity) => BindAuthenticationState(user) with
-    {
-        AuthenticationBindings = [.. BindAuthenticationState(user).AuthenticationBindings, new CredentialBinding(ProviderKind, ProviderKey(identity), user.Id)],
-    };
-
-    private static string ProviderKey(LinkedProvider identity) => JsonSerializer.Serialize(identity, IdentityJson.Default.LinkedProvider);
-
-    /// <summary>
-    /// Sets the password of the account while its authentication state still matches <paramref name="caller"/>, and
-    /// advances the epoch, which signs the user out everywhere. False when the account is gone or its epoch moved on
-    /// (another reset or a sign-out everywhere won), so a code issued before that change never sets a password after it.
-    /// </summary>
     public async Task<bool> SetPasswordAsync(UserRecord caller, string passwordHash, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentException.ThrowIfNullOrEmpty(passwordHash);
-        // Every write to a user advances its epoch, so a lost write always ends the loop on the epoch check.
         for (var round = 0; round < 3; round++)
         {
-            if (await this.GetVersionedAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
-                || current.User.AuthEpoch != caller.AuthEpoch || current.User.AuthStamp != caller.AuthStamp
-                || !await store.AreCredentialsCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
+            if (await this.GetAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
+                || current.AuthEpoch != caller.AuthEpoch || current.AuthStamp != caller.AuthStamp
+                || !await credentials.AreCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
             {
                 return false;
             }
 
-            var updated = JsonSerializer.SerializeToElement(current.User with { PasswordHash = passwordHash, AuthEpoch = checked(caller.AuthEpoch + 1), AuthStamp = AuthStore.NewId() }, IdentityJson.Default.UserRecord);
-            if (await store.CompareAndPutAsync(AuthStore.UserTable, caller.InstanceId, caller.Id, updated, current.Version, cancellationToken).ConfigureAwait(false))
+            if (await data.SaveAsync(Change.Update(current with { PasswordHash = passwordHash, AuthEpoch = checked(caller.AuthEpoch + 1), AuthStamp = AuthIds.New() }),
+                cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
@@ -282,78 +193,58 @@ public sealed class Users(AuthStore store, WebhookOutbox outbox, TimeProvider cl
         throw ApiException.Unavailable();
     }
 
-    /// <summary>
-    /// Moves the account to <paramref name="newEmail"/> at the authentication state the change was requested in: releases
-    /// the old address, reserves the new one and advances the epoch (signing out everywhere) in one transaction together
-    /// with <paramref name="extra"/>. Null when the state moved on or the transaction lost; false when another account owns the address.
-    /// </summary>
     internal async Task<bool?> ChangeEmailAsync(string instanceId, string userId, long authEpoch, string? authStamp, string newEmail,
-        IReadOnlyList<StoreOperation> extra, CancellationToken cancellationToken)
+        IReadOnlyList<Change> extra, CancellationToken cancellationToken)
     {
-        if (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current
-            || current.User.AuthEpoch != authEpoch || current.User.AuthStamp != authStamp || current.User.Disabled
-            || await store.FindUniqueAsync(instanceId, EmailKind, current.User.Email, cancellationToken).ConfigureAwait(false) is not { } claim
-            || claim.OwnerId != userId)
+        if (await this.GetAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current
+            || current.AuthEpoch != authEpoch || current.AuthStamp != authStamp || current.Disabled)
         {
             return null;
         }
 
-        if (await store.FindUniqueOwnerAsync(instanceId, EmailKind, newEmail, cancellationToken).ConfigureAwait(false) is not null)
+        if (await this.FindByEmailAsync(instanceId, newEmail, cancellationToken).ConfigureAwait(false) is not null)
         {
             return false;
         }
 
-        var updated = current.User with { Email = newEmail, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthStore.NewId() };
-        List<StoreOperation> operations =
-        [
-            AuthStore.Replace(AuthStore.UserTable, instanceId, userId, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version),
-            AuthStore.Release(instanceId, EmailKind, current.User.Email, claim.Version),
-            AuthStore.Claim(instanceId, EmailKind, newEmail, userId),
-            .. extra,
-        ];
-
-        // The user's passcode row names the old address; it would refuse every later code for the new one.
-        if (await store.GetAsync(AuthStore.PasscodeTable, instanceId, userId, cancellationToken).ConfigureAwait(false) is { } passcode)
+        var passcode = await data.ReadAsync((db, token) => db.Passcodes.Where(row => row.InstanceId == instanceId && row.Key == userId).WithVersion()
+            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        List<Change> changes = [Change.Update(current with { Email = newEmail, AuthEpoch = checked(authEpoch + 1), AuthStamp = AuthIds.New() }), .. extra];
+        if (passcode is not null)
         {
-            operations.Add(AuthStore.Delete(AuthStore.PasscodeTable, instanceId, userId, passcode.Version));
+            changes.Add(Change.Delete(passcode));
         }
 
-        if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
+        if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
         {
             return true;
         }
 
-        return await store.FindUniqueOwnerAsync(instanceId, EmailKind, newEmail, cancellationToken).ConfigureAwait(false) is { } owner && owner != userId ? false : null;
+        return await this.FindByEmailAsync(instanceId, newEmail, cancellationToken).ConfigureAwait(false) is { } owner && owner.Id != userId ? false : null;
     }
 
-    /// <summary>
-    /// Disables or enables the account. Either change advances the epoch, so disabling ends every session and token at
-    /// once; <see cref="Sessions"/> refuses to open or resolve a session of a disabled account. Null when it is gone.
-    /// </summary>
     public async Task<UserRecord?> SetDisabledAsync(string instanceId, string userId, bool disabled, CancellationToken cancellationToken = default)
     {
         for (var round = 0; round < 3; round++)
         {
-            if (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current)
+            if (await this.GetAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current)
             {
                 return null;
             }
 
-            if (current.User.Disabled == disabled)
+            if (current.Disabled == disabled)
             {
-                return current.User;
+                return current;
             }
 
-            var updated = current.User with { Disabled = disabled, AuthEpoch = checked(current.User.AuthEpoch + 1), AuthStamp = AuthStore.NewId() };
-            List<StoreOperation> operations = [AuthStore.Replace(AuthStore.UserTable, instanceId, userId,
-                JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version)];
-            var lifecycleEvent = await outbox.CreateAsync(instanceId, disabled ? "user.disabled" : "user.enabled", userId, updated.Email, null, cancellationToken).ConfigureAwait(false);
-            if (lifecycleEvent is not null)
+            var updated = current with { Disabled = disabled, AuthEpoch = checked(current.AuthEpoch + 1), AuthStamp = AuthIds.New() };
+            List<Change> changes = [Change.Update(updated)];
+            if (await outbox.CreateAsync(instanceId, disabled ? "user.disabled" : "user.enabled", userId, updated.Email, null, cancellationToken).ConfigureAwait(false) is { } lifecycleEvent)
             {
-                operations.Add(lifecycleEvent);
+                changes.Add(lifecycleEvent);
             }
 
-            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
+            if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
             {
                 return BindAuthenticationState(updated);
             }
@@ -362,10 +253,6 @@ public sealed class Users(AuthStore store, WebhookOutbox outbox, TimeProvider cl
         throw ApiException.Unavailable();
     }
 
-    /// <summary>
-    /// Deletes the account and releases its email in one transaction, so the address can sign up again. Every check
-    /// reads the user, so its sessions and tokens stop working at once.
-    /// </summary>
     public Task DeleteAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
         this.DeleteAsync(instanceId, userId, null, cancellationToken);
 
@@ -373,33 +260,26 @@ public sealed class Users(AuthStore store, WebhookOutbox outbox, TimeProvider cl
     {
         for (var round = 0; round < 3; round++)
         {
-            if (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current)
+            if (await this.GetAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current)
             {
                 return;
             }
 
-            List<StoreOperation> operations =
+            var signUpKey = Passcodes.SignUpKey + current.Email;
+            var passcodes = await data.ReadAsync((db, token) => db.Passcodes
+                .Where(row => row.InstanceId == instanceId && (row.Key == signUpKey || row.UserId == userId)).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+            List<Change> changes =
             [
-                AuthStore.Delete(AuthStore.UserTable, instanceId, userId, current.Version),
+                Change.Delete(current),
                 DeletionJob.Enqueue(instanceId, "account", userId, clock, closureGeneration: closureGeneration),
+                .. passcodes.Select(passcode => Change.Delete(passcode)),
             ];
-            if (await store.FindUniqueAsync(instanceId, EmailKind, current.User.Email, cancellationToken).ConfigureAwait(false) is { } claim && claim.OwnerId == userId)
+            if (await outbox.CreateAsync(instanceId, "user.deleted", userId, current.Email, null, cancellationToken).ConfigureAwait(false) is { } deleted)
             {
-                operations.Add(AuthStore.Release(instanceId, EmailKind, current.User.Email, claim.Version));
+                changes.Add(deleted);
             }
 
-            if (await store.GetAsync(AuthStore.PasscodeTable, instanceId, Passcodes.SignUpKey + current.User.Email, cancellationToken).ConfigureAwait(false) is { } pending)
-            {
-                operations.Add(AuthStore.Delete(AuthStore.PasscodeTable, instanceId, Passcodes.SignUpKey + current.User.Email, pending.Version));
-            }
-
-            var deleted = await outbox.CreateAsync(instanceId, "user.deleted", userId, current.User.Email, null, cancellationToken).ConfigureAwait(false);
-            if (deleted is not null)
-            {
-                operations.Add(deleted);
-            }
-
-            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
+            if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
             {
                 return;
             }
@@ -408,30 +288,37 @@ public sealed class Users(AuthStore store, WebhookOutbox outbox, TimeProvider cl
         throw ApiException.Unavailable();
     }
 
-    internal async Task<(UserRecord User, string Version)?> GetVersionedAsync(string instanceId, string userId, CancellationToken cancellationToken)
-    {
-        if (!TerraScaleIds.IsValid(userId))
-        {
-            return null;
-        }
-
-        var rowData = await store.GetAsync(AuthStore.UserTable, instanceId, userId, cancellationToken).ConfigureAwait(false);
-        var user = rowData?.Body.Deserialize(IdentityJson.Default.UserRecord);
-        return user is not null && user.InstanceId == instanceId && user.Id == userId
-            && await store.FindUniqueOwnerAsync(instanceId, EmailKind, user.Email, cancellationToken).ConfigureAwait(false) == userId
-            ? (BindAuthenticationState(user), rowData!.Version) : null;
-    }
-
     internal static UserRecord BindAuthenticationState(UserRecord user) => user with
     {
-        AuthenticationBindings = user.AuthStamp is { } stamp ? [AuthStore.UserStateBinding(user.Id, stamp)] : [],
+        AuthenticationBindings = user.AuthStamp is { } stamp ? [Credentials.UserState(user.Id, stamp)] : [],
     };
+
+    private static UserRecord BindProvider(UserRecord user, LinkedProvider identity) => BindAuthenticationState(user) with
+    {
+        AuthenticationBindings = [.. BindAuthenticationState(user).AuthenticationBindings, new CredentialBinding(Credentials.SocialKind, Credentials.SocialKey(identity), user.Id)],
+    };
+
+    private static ProviderLinkRecord Link(UserRecord user, LinkedProvider identity) =>
+        new(user.InstanceId, user.Id, identity.Provider, identity.Issuer, identity.ClientId, identity.Subject);
+
+    private static bool Complete(LinkedProvider identity) =>
+        !string.IsNullOrWhiteSpace(identity.Provider) && !string.IsNullOrWhiteSpace(identity.Issuer)
+        && !string.IsNullOrWhiteSpace(identity.ClientId) && !string.IsNullOrWhiteSpace(identity.Subject);
+
+    private Task<string?> LinkOwnerAsync(string tenant, LinkedProvider identity, CancellationToken cancellationToken) =>
+        data.ReadAsync((db, token) => db.ProviderLinks.Where(link => link.InstanceId == tenant && link.Provider == identity.Provider && link.Issuer == identity.Issuer
+            && link.ClientId == identity.ClientId && link.Subject == identity.Subject).Select(link => link.UserId).SingleOrDefaultAsync(token), cancellationToken);
+
+    private async Task<UserRecord?> ReadAsync(Func<AuthDbContext, IQueryable<UserRecord>> users, CancellationToken cancellationToken)
+    {
+        var row = await data.ReadAsync((db, token) => users(db)
+            .Select(user => new { User = user, Links = db.ProviderLinks.Where(link => link.UserId == user.Id).OrderBy(link => link.Provider).ThenBy(link => link.Subject).ToList() })
+            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        return row is null ? null : BindAuthenticationState(row.User with { LinkedProviders = [.. row.Links.Select(link => link.Identity)] });
+    }
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
-[JsonSerializable(typeof(UserRecord))]
 [JsonSerializable(typeof(LinkedProvider))]
-[JsonSerializable(typeof(SessionRecord))]
-[JsonSerializable(typeof(PasscodeRecord))]
 [JsonSerializable(typeof(DateTimeOffset))]
 internal sealed partial class IdentityJson : JsonSerializerContext;

@@ -16,8 +16,8 @@ stolen session alone cannot add a factor that survives sign-out.
 
 ## Credential state
 
-`mfa_credentials` holds one record per instance and user, addressed through
-`AuthStore` and the pinned `ts-dotnet` SDK. Every operation checks the record's
+`mfa_credentials` holds one row per user (keyed by the user, cascading with it),
+written through `AuthDbContext` ([storage](storage.md)). Every operation checks the record's
 owner and the user's current authentication epoch. There is no cache or
 process-local coordination. Missing tables and storage failures fail
 closed; they never select an in-memory store.
@@ -120,9 +120,8 @@ issuing. Record the verified rollout cutoff and earliest deployment time.
 No authentication time is synthesized. Fast tests cover independent clocks
 at and beyond the allowance, as well as original-time continuity after refresh.
 
-Before deploying a release that requires `mfa_credentials`, explicitly
-provision that table in the existing auth database through the pinned
-SDK. `AuthStore.ProvisionAsync` includes it, and `/readyz` requires it. Never
+The table comes from the committed EF Core migrations that every replica
+applies at startup, and `/readyz` requires that no migration is pending. Never
 re-found a serving cell. No existing MFA data or legacy formats are carried
 forward. TS-754 and TS-755 own the shared ID and uniqueness cutover; include
 this table in their clean dataset bootstrap. MFA reuses the account ID

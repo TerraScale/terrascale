@@ -11,7 +11,8 @@ using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Hosting;
-using TerraScale.Authentication.Store;
+using Microsoft.EntityFrameworkCore;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
@@ -37,17 +38,16 @@ public sealed record EmailSupportRequest(string RequestId, string UserId, string
 public sealed record EmailSupportResponse(string Status,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AcknowledgementStatus = null);
 
-internal sealed record SupportEmailDelivery(string InstanceId, string RequestId, string UserId, string Status, string? AcknowledgementStatus = null);
+public sealed record SupportEmailDelivery(string InstanceId, string RequestId, string UserId, string Status, string? AcknowledgementStatus = null);
 
 /// <summary>Sends a dashboard support request to the support mailbox and acknowledges it to the requester.</summary>
-public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory directory, Users users, IEmailSender sender, AttemptLimiter limiter, AuthOptions options, TimeProvider clock)
+public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory directory, Users users, IEmailSender sender, AttemptLimiter limiter, AuthOptions options, TimeProvider clock)
     : EndpointWithoutRequest<IResult>
 {
     /// <summary>The monitored support mailbox.</summary>
     public const string SupportAddress = "support@terrascale.tech";
     /// <summary>Requests one user may send per hour.</summary>
     public const int PerUserPerHour = 5;
-    private const string Table = "email_support_deliveries";
 
     private static readonly Dictionary<string, string> Targets = new(StringComparer.Ordinal)
     {
@@ -107,17 +107,13 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
             throw new ApiException(StatusCodes.Status429TooManyRequests, "rate_limited", "Too many support requests; retry within the hour or email support@terrascale.tech.");
         }
         var delivery = new SupportEmailDelivery(OidcIssuer.InstanceId, request.RequestId, user.Id, "sending");
-        string version;
-        try
+        var reserved = Change.Insert(delivery);
+        if (!await data.SaveAsync(reserved, cancellationToken).ConfigureAwait(false))
         {
-            version = (await store.CreateAsync(Table, OidcIssuer.InstanceId, request.RequestId, JsonSerializer.SerializeToElement(
-                delivery, SupportEmailJson.Default.SupportEmailDelivery), cancellationToken).ConfigureAwait(false)).Version;
-        }
-        catch (StorePreconditionFailedException)
-        {
-            // A concurrent repeat claimed the id first; it owns the send.
             return Answer((await this.ReadAsync(request, cancellationToken).ConfigureAwait(false))?.Delivery ?? throw ApiException.Unavailable());
         }
+
+        var version = reserved.Version!;
 
         var reference = request.RequestId[^8..];
         var details = new EmailMessage($"[{request.Severity}] {subject} ({reference})", this.Details(request, user.Email, organizationName, projectName, subject, message))
@@ -132,7 +128,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
         if (outcome == EmailDeliveryOutcome.Retryable)
         {
             // Only an explicit refusal known not to have sent releases the id for another support attempt.
-            if (!await store.CompareAndDeleteAsync(Table, OidcIssuer.InstanceId, request.RequestId, version, cancellationToken).ConfigureAwait(false))
+            if (!await data.SaveAsync(Change.Delete(delivery, version), cancellationToken).ConfigureAwait(false))
             {
                 throw ApiException.Unavailable();
             }
@@ -140,9 +136,8 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
         }
 
         // Persist support acceptance and reserve its one acknowledgement before making another external call.
-        version = await store.ReplaceAsync(Table, OidcIssuer.InstanceId, request.RequestId,
-            JsonSerializer.SerializeToElement(delivery, SupportEmailJson.Default.SupportEmailDelivery), version, cancellationToken).ConfigureAwait(false)
-            ?? throw ApiException.Unavailable();
+        var accepted = Change.Update(delivery, version);
+        version = await data.SaveAsync(accepted, cancellationToken).ConfigureAwait(false) ? accepted.Version! : throw ApiException.Unavailable();
         if (outcome == EmailDeliveryOutcome.Accepted)
         {
             EmailDeliveryOutcome acknowledgement;
@@ -157,8 +152,7 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
                 acknowledgement = EmailDeliveryOutcome.Unknown;
             }
             delivery = delivery with { AcknowledgementStatus = Status(acknowledgement) };
-            if (!await store.CompareAndPutAsync(Table, OidcIssuer.InstanceId, request.RequestId,
-                JsonSerializer.SerializeToElement(delivery, SupportEmailJson.Default.SupportEmailDelivery), version, cancellationToken).ConfigureAwait(false))
+            if (!await data.SaveAsync(Change.Update(delivery, version), cancellationToken).ConfigureAwait(false))
             {
                 throw ApiException.Unavailable();
             }
@@ -203,26 +197,14 @@ public sealed class SupportEmailEndpoint(AuthStore store, PlatformDirectory dire
         $"Thanks for contacting TerraScale support. We received your request and will reply to this address.\n\nReference: {request.RequestId}\nSeverity: {request.Severity}\nSubject: {subject}\n\n{Targets[request.Plan]} Business hours are Monday to Friday, 09:00 to 18:00 CET.\n\nReply to this email to add details. Never send passwords, API keys or customer data. Service status: https://status.terrascale.tech\n\nYour message:\n{message}\n")
     { FromName = "TerraScale support", ReplyTo = SupportAddress };
 
-    private async Task<(SupportEmailDelivery Delivery, string Version)?> ReadAsync(EmailSupportRequest request, CancellationToken cancellationToken)
-    {
-        var rowData = await store.GetAsync(Table, OidcIssuer.InstanceId, request.RequestId, cancellationToken).ConfigureAwait(false);
-        if (rowData is null)
-        {
-            return null;
-        }
-        var delivery = rowData.Body.Deserialize(SupportEmailJson.Default.SupportEmailDelivery);
-        if (rowData.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Table, request.RequestId) ||
-            delivery is null || delivery.InstanceId != OidcIssuer.InstanceId || delivery.RequestId != request.RequestId)
-        {
-            throw ApiException.Unavailable();
-        }
-        // Another user's id is indistinguishable from an unknown one.
-        return delivery.UserId == request.UserId ? (delivery, rowData.Version) : throw PlatformDirectory.NotFound();
-    }
+    private async Task<(SupportEmailDelivery Delivery, string Version)?> ReadAsync(EmailSupportRequest request, CancellationToken cancellationToken) =>
+        await data.ReadAsync((db, token) => db.SupportDeliveries.Where(row => row.RequestId == request.RequestId).WithVersion().SingleOrDefaultAsync(token), cancellationToken)
+            .ConfigureAwait(false) is not { } stored ? null
+        : stored.Value.UserId == request.UserId ? (stored.Value, stored.Version)
+        : throw PlatformDirectory.NotFound();
 }
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(EmailSupportRequest))]
 [JsonSerializable(typeof(EmailSupportResponse))]
-[JsonSerializable(typeof(SupportEmailDelivery))]
 internal sealed partial class SupportEmailJson : JsonSerializerContext;

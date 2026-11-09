@@ -1,7 +1,7 @@
 # TerraScale identity bootstrap
 
-All ts-auth application records live in TerraBase's pre-created `ts-auth` database, through the ts-dotnet SDK and
-TerraBase's private listener. There is one table per entity type. TerraBase independently seeds its catalog before
+All ts-auth application records live in TerraBase's pre-created `ts-auth` database, in relational tables written
+through the TerraBase EF Core provider over TerraBase's private listener ([storage](storage.md)). TerraBase independently seeds its catalog before
 identity exists; ts-auth never creates its database or reads the dashboard's database.
 
 | Record | Fixed ULID | Name / owner |
@@ -16,8 +16,8 @@ The initial passwordless user is `mariogk@terrascale.tech`, owner of the organiz
 The account has no password or authentication bypass: email-code sign-in still proves control of its mailbox through
 Cloudflare Email Sending. `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_EMAIL_TOKEN` come from OCI Vault.
 
-Every startup creates missing tables, claims the owner's normalized email, and creates the organization, two
-projects, roles, unique project-name claims and audit event in one create-only transaction. Concurrent starts read the
+Every startup applies pending EF Core migrations, creates the owner unless its normalized email already has an account,
+and creates the organization, two projects, roles and audit event in one create-only request. Concurrent starts read the
 winner. Restarts preserve account credentials, role revocations and existing identity records. Conflicting IDs or an
 incomplete existing topology fail closed and are never overwritten. Restore inconsistent records from an approved
 recovery copy; startup is not a privilege-restoration operation.

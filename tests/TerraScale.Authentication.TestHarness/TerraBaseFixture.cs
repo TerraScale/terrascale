@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Authentication.Features.SigningKeys;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraScale.Authentication.Hosting;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 using TUnit.Core.Interfaces;
 
@@ -78,13 +78,13 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         // Each test still owns a separate project and database, without repeating
         // organization creation, plan changes and credential issuance in every journey.
         var shared = this.owner ?? throw new InvalidOperationException("TerraBase fixture has not initialized its owner.");
-        var project = await this.Server.Management().CreateProjectAsync(shared.UserId, shared.Organization.Id, AuthStore.NewId());
+        var project = await this.Server.Management().CreateProjectAsync(shared.UserId, shared.Organization.Id, AuthIds.New());
         var tenant = shared with { Project = project };
         await this.Server.Databases(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
         var database = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         if (provision)
         {
-            await new AuthStore(database, TimeProvider.System).ProvisionAsync();
+            await database.MigrateAsync();
         }
 
         return (tenant, database);
@@ -123,7 +123,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     {
         await this.Server.Databases(tenant.ApiKey).Database(tenant.Project.Id, name).CreateAsync();
         var copy = this.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, name);
-        await new AuthStore(copy, TimeProvider.System).ProvisionAsync();
+        await copy.MigrateAsync();
         return copy;
     }
 

@@ -17,7 +17,7 @@ Status: contract v1.1, 2026-10-06: v1 plus the TS-597 decisions (the
 `usage:read` and `billing:*` scopes, project suspension, platform
 administrators, the ts-cli device flow and ts-auth's own storage token).
 Nothing here is served until its slice lands;
-[SQL storage](pivot/p1-sql-storage.md) tracks each slice. The served `/openapi/v1.json`
+[SQL storage](storage.md) tracks each slice. The served `/openapi/v1.json`
 (Scalar at `/scalar`) stays the contract of what is actually served. Any change
 to this contract is announced on TS-597.
 
@@ -519,7 +519,7 @@ page (HA1, 2026-10-22), like every other TerraScale sign-in:
 ## 11. Slices
 
 Each slice is one pull request with its integration tests, and updates
-[SQL storage](pivot/p1-sql-storage.md) and the served OpenAPI.
+[SQL storage](storage.md) and the served OpenAPI.
 
 1. This contract and the ownership boundary in `AGENTS.md`.
 2. Management API authentication; organizations, members, projects and

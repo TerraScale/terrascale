@@ -7,7 +7,8 @@ using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Store;
+using Microsoft.EntityFrameworkCore;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
@@ -36,7 +37,7 @@ public sealed record DirectoryPageBody(
 internal sealed record DirectoryCursor(DateTimeOffset CreatedBefore, string Position);
 
 /// <summary><c>GET /v1/{project}/users/export</c>.</summary>
-public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, PlatformAuthentication authentication, AuthStore store, PlatformDirectory platform, TimeProvider clock)
+public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, PlatformAuthentication authentication, AuthData data, PlatformDirectory platform, TimeProvider clock)
     : ProjectTenantEndpoint(tenants, authentication)
 {
     /// <inheritdoc />
@@ -77,25 +78,25 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
             }
         }
 
-        StoredPage page;
-        try
-        {
-            page = await store.PageAsync(AuthStore.UserTable, projectId,
-                [new JsonObject { ["lt"] = new JsonArray("/createdAt", JsonValue.Create(cutoff)) }], [], limit, position, cancellationToken: cancellationToken);
-        }
-        catch (StoreCursorException)
+        if (position is not null && !PlatformDirectory.IsId(position))
         {
             throw Invalid("after must be a cursor from this project's export.");
         }
 
-        var items = page.Items.Select(rowData => rowData.Body.Deserialize(IdentityJson.Default.UserRecord))
-            .Where(user => user is not null && user.InstanceId == projectId)
-            .Select(user => new DirectoryUserBody(user!.Id, user.Email, true, user.CreatedAt, user.Disabled,
-                [.. user.LinkedProviders.Select(link => new DirectoryProviderBody(link.Provider, link.ClientId, link.Subject))])).ToArray();
-        var next = page.NextCursor is { } more ? WebEncoders.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new DirectoryCursor(cutoff, more), DirectoryExportJson.Default.DirectoryCursor)) : null;
+        var from = position ?? string.Empty;
+        var rows = await data.ReadAsync((db, token) => db.Users
+            .Where(user => user.InstanceId == projectId && user.CreatedAt < cutoff && string.Compare(user.Id, from) > 0)
+            .OrderBy(user => user.Id).Take(limit + 1)
+            .Select(user => new { User = user, Links = db.ProviderLinks.Where(link => link.UserId == user.Id).OrderBy(link => link.Provider).ThenBy(link => link.Subject).ToList() })
+            .ToListAsync(token), cancellationToken);
+        var items = rows.Take(limit).Select(row => new DirectoryUserBody(row.User.Id, row.User.Email, true, row.User.CreatedAt, row.User.Disabled,
+            [.. row.Links.Select(link => new DirectoryProviderBody(link.Provider, link.ClientId, link.Subject))])).ToArray();
+        var next = rows.Count > limit
+            ? WebEncoders.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new DirectoryCursor(cutoff, rows[limit - 1].User.Id), DirectoryExportJson.Default.DirectoryCursor))
+            : null;
         var project = await platform.ProjectAsync(projectId, cancellationToken) ?? throw PlatformDirectory.NotFound();
-        if (await store.TransactAsync([platform.Audit(project.Value.OrganizationId, caller.Id, "project.users_exported", projectId,
-            $"{(format == "csv" ? "csv" : "json")}/{items.Length.ToString(CultureInfo.InvariantCulture)}")], cancellationToken) is not null)
+        if (!await data.SaveAsync(platform.Audit(project.Value.OrganizationId, caller.Id, "project.users_exported", projectId,
+            $"{(format == "csv" ? "csv" : "json")}/{items.Length.ToString(CultureInfo.InvariantCulture)}"), cancellationToken))
         {
             throw ApiException.Unavailable();
         }

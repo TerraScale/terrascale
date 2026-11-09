@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Http;
@@ -18,7 +19,7 @@ using TerraScale.Authentication.Features.Ui;
 using Fido2NetLib;
 using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Hosting;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
 
@@ -109,7 +110,13 @@ public static class App
         {
             BaseAddress = TerraBaseOrigin(options),
         }).Database(StorageProject, StorageDatabase));
-        builder.Services.AddSingleton(services => new AuthStore(services.GetRequiredService<TerraBaseSqlDatabase>(), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddPooledDbContextFactory<AuthDbContext>((services, database) => database
+            .UseTerraBase(services.GetRequiredService<TerraBaseSqlDatabase>())
+            .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+        builder.Services.AddSingleton<AuthData>();
+        builder.Services.AddSingleton<AuthSchema>();
+        builder.Services.AddSingleton<Credentials>();
+        builder.Services.AddSingleton<Challenges>();
         builder.Services.AddSingleton<Users>();
         builder.Services.AddSingleton<WebhookOutbox>();
         builder.Services.AddSingleton<Sessions>();
@@ -183,15 +190,15 @@ public static class App
         builder.Services.AddWebhookDelivery();
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
-        builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseSqlDatabase>()));
+        builder.Services.AddSingleton<TerraBaseStorageHealth>();
         builder.Services.AddSingleton<IStorageHealth, SigningKeyReadiness>();
         builder.Services.AddSingleton<ReadinessProbe>();
         builder.Services.AddHostedService(services => services.GetRequiredService<ReadinessProbe>());
-        builder.Services.AddSingleton<IRecordStore, TerraBaseRecordStore>();
+        builder.Services.AddSingleton<IAttemptStore, TerraBaseAttemptStore>();
         builder.Services.AddSingleton<KeyRing>();
         builder.Services.AddSingleton<SigningKeyRotation>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<SigningKeyRotation>());
-        builder.Services.AddSingleton(services => new AttemptLimiter(services.GetRequiredService<IRecordStore>(), services.GetRequiredService<TimeProvider>(), options,
+        builder.Services.AddSingleton(services => new AttemptLimiter(services.GetRequiredService<IAttemptStore>(), services.GetRequiredService<TimeProvider>(), options,
             services.GetRequiredService<IConfiguration>()["TS_REGION"] ?? (options.Development ? "gru" : throw new AuthConfigurationException("TS_REGION is required outside Development")),
             services.GetRequiredService<ILogger<AttemptLimiter>>()));
         builder.Services.AddSingleton<EmailAdmission>();
@@ -208,6 +215,7 @@ public static class App
 
         builder.Services.AddSingleton<AuthEmails>();
         builder.Services.AddSingleton<EmailSettings>();
+        builder.Services.AddSingleton<OwnerDeliveries>();
         builder.Services.AddSingleton<SignInMail>();
         builder.Services.AddHostedService(services => services.GetRequiredService<SignInMail>());
         builder.Services.AddOidc(options);
@@ -269,7 +277,7 @@ public static class App
         }
 
         var app = builder.Build();
-        app.UseTerraScaleRequestIdentity(AuthStore.NewId, builder.Configuration[TerraBaseTransport.PeerSecretVariable]);
+        app.UseTerraScaleRequestIdentity(AuthIds.New, builder.Configuration[TerraBaseTransport.PeerSecretVariable]);
         // Resolved now, so a ts-auth without storage refuses to start (see TerraBaseOrigin); tests may register their own.
         app.Services.GetRequiredService<TerraBaseSqlDatabase>();
         // Hashes its timing equalizer now, so the first password check of an unknown account costs no more than any other.

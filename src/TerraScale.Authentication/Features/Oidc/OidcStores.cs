@@ -2,14 +2,15 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -20,10 +21,8 @@ namespace TerraScale.Authentication.Features.Oidc;
 /// OpenIddict clients on TerraBase, addressed by instance and client id. Every write is create-only or names the
 /// version it read. LINQ queries, counting and paging are not supported: no OpenIddict server flow uses them.
 /// </summary>
-public sealed class OidcApplicationStore(AuthStore store, IServiceProvider services, IHttpContextAccessor http) : IOpenIddictApplicationStore<OidcApplication>
+public sealed class OidcApplicationStore(AuthData data, Credentials credentials, IServiceProvider services, IHttpContextAccessor http) : IOpenIddictApplicationStore<OidcApplication>
 {
-    private const string Table = AuthStore.OidcApplicationTable;
-
     // The HttpContext.Items key of this request's copy of one client.
     private readonly record struct RequestCopy(string Tenant, string ClientId);
 
@@ -40,17 +39,15 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
         if (http.HttpContext?.Items[TenantDirectory.ClientIssuanceCaller] is UserRecord caller)
         {
             application.SecretBindings = caller.StepUpBindings;
-            if (await store.TransactAsync([.. StepUpProofs.Requirements(caller), AuthStore.Create(Table, this.Tenant, application.ClientId, Serialize(application))], cancellationToken).ConfigureAwait(false) is not null)
+            if (await services.GetRequiredService<StepUpProofs>().RequirementsAsync(caller, cancellationToken).ConfigureAwait(false) is not { } requirements
+                || !await data.SaveAsync([.. requirements, Change.Insert(application)], cancellationToken).ConfigureAwait(false))
             {
                 throw StepUpProofs.Required();
             }
-
-            application.Version = (await store.GetAsync(Table, this.Tenant, application.ClientId, cancellationToken).ConfigureAwait(false))?.Version
-                ?? throw StepUpProofs.Required();
         }
-        else
+        else if (!await data.SaveAsync(Change.Insert(application), cancellationToken).ConfigureAwait(false))
         {
-            application.Version = (await store.CreateAsync(Table, this.Tenant, application.ClientId, Serialize(application), cancellationToken).ConfigureAwait(false)).Version;
+            throw new OpenIddictExceptions.ConcurrencyException("The client already exists.");
         }
     }
 
@@ -59,8 +56,10 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
     {
         ArgumentNullException.ThrowIfNull(application);
         http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, application.Id!));
-        application.Version = await store.ReplaceAsync(Table, this.Tenant, application.Id!, Serialize(application), application.Version!, cancellationToken).ConfigureAwait(false)
-            ?? throw new OpenIddictExceptions.ConcurrencyException("The client was changed by another request.");
+        if (!await data.SaveAsync(Change.Update(application), cancellationToken).ConfigureAwait(false))
+        {
+            throw new OpenIddictExceptions.ConcurrencyException("The client was changed by another request.");
+        }
     }
 
     /// <inheritdoc />
@@ -68,7 +67,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
     {
         ArgumentNullException.ThrowIfNull(application);
         http.HttpContext?.Items.Remove(new RequestCopy(this.Tenant, application.Id!));
-        if (!await store.CompareAndDeleteAsync(Table, this.Tenant, application.Id!, application.Version!, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(Change.Delete(application), cancellationToken).ConfigureAwait(false))
         {
             throw new OpenIddictExceptions.ConcurrencyException("The client was changed by another request.");
         }
@@ -100,27 +99,27 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
 
     private async ValueTask<OidcApplication?> ReadAsync(string identifier, CancellationToken cancellationToken)
     {
-        var rowData = await store.GetAsync(Table, this.Tenant, identifier, cancellationToken).ConfigureAwait(false);
-        if (rowData is null)
+        var tenant = this.Tenant;
+        var application = await data.ReadAsync((db, token) => db.OidcApplications.SingleOrDefaultAsync(row => row.InstanceId == tenant && row.Id == identifier, token),
+            cancellationToken).ConfigureAwait(false);
+        if (application is null)
         {
             var keys = services.GetRequiredService<Platform.ApiKeys>();
             return await keys.FindAsync(identifier, cancellationToken).ConfigureAwait(false) is { } key ? Platform.ApiKeyClients.Describe(key, keys.Digests(key)) : null;
         }
 
-        var application = rowData.Body.Deserialize(OidcJson.Default.OidcApplication);
-        if (application is null || application.InstanceId != this.Tenant || application.ClientId != identifier || application.Id != identifier)
+        if (application.ClientId != identifier)
         {
             return null;
         }
 
         // As for API keys: a client secret issued before fresh-proof lineage existed has none to lose and keeps working.
-        if (application.ClientSecret is not null && Tenancy.IsProject(application.InstanceId)
-            && application.SecretBindings.Count > 0 && !await store.AreCredentialsCurrentAsync(PlatformDirectory.Instance, application.SecretBindings, cancellationToken).ConfigureAwait(false))
+        if (application.ClientSecret is not null && Tenancy.IsProject(tenant)
+            && application.SecretBindings.Count > 0 && !await credentials.AreCurrentAsync(PlatformDirectory.Instance, application.SecretBindings, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
 
-        application.Version = rowData!.Version;
         return application;
     }
 
@@ -247,17 +246,12 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
     private async IAsyncEnumerable<OidcApplication> AllAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var tenant = this.Tenant;
-        await foreach (var rowData in store.QueryAsync(Table, tenant, "/instanceId", tenant, cancellationToken).ConfigureAwait(false))
+        foreach (var application in await data.ReadAsync((db, token) => db.OidcApplications.Where(row => row.InstanceId == tenant).ToListAsync(token), cancellationToken)
+            .ConfigureAwait(false))
         {
-            if (rowData.Body.Deserialize(OidcJson.Default.OidcApplication) is { ClientId: { } clientId } application && application.InstanceId == tenant && application.Id == clientId)
-            {
-                application.Version = rowData.Version;
-                yield return application;
-            }
+            yield return application;
         }
     }
-
-    private static JsonElement Serialize(OidcApplication application) => JsonSerializer.SerializeToElement(application, OidcJson.Default.OidcApplication);
 
     internal static ValueTask Set(Action assign)
     {
@@ -272,10 +266,8 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
 /// OpenIddict authorizations on TerraBase, one per sign-in. Revoking one rejects every token issued under it, because
 /// OpenIddict checks the authorization whenever it validates such a token.
 /// </summary>
-public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor http, TimeProvider clock) : IOpenIddictAuthorizationStore<OidcAuthorization>
+public sealed class OidcAuthorizationStore(AuthData data, IHttpContextAccessor http, TimeProvider clock) : IOpenIddictAuthorizationStore<OidcAuthorization>
 {
-    private const string Table = AuthStore.OidcAuthorizationTable;
-
     // The tenant of the request being served (Tenancy); the platform's outside a tenant request.
     private string Tenant => Tenancy.Current(http.HttpContext);
 
@@ -283,23 +275,28 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
     public async ValueTask CreateAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authorization);
-        (authorization.Id, authorization.InstanceId) = (AuthStore.NewId(), this.Tenant);
-        authorization.Version = (await store.CreateAsync(Table, this.Tenant, authorization.Id, Serialize(authorization), cancellationToken).ConfigureAwait(false)).Version;
+        (authorization.Id, authorization.InstanceId) = (AuthIds.New(), this.Tenant);
+        if (!await data.SaveAsync(Change.Insert(authorization), cancellationToken).ConfigureAwait(false))
+        {
+            throw ApiException.Unavailable();
+        }
     }
 
     /// <inheritdoc />
     public async ValueTask UpdateAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authorization);
-        authorization.Version = await store.ReplaceAsync(Table, this.Tenant, authorization.Id!, Serialize(authorization), authorization.Version!, cancellationToken).ConfigureAwait(false)
-            ?? throw new OpenIddictExceptions.ConcurrencyException("The authorization was changed by another request.");
+        if (!await data.SaveAsync(Change.Update(authorization), cancellationToken).ConfigureAwait(false))
+        {
+            throw new OpenIddictExceptions.ConcurrencyException("The authorization was changed by another request.");
+        }
     }
 
     /// <inheritdoc />
     public async ValueTask DeleteAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(authorization);
-        if (!await store.CompareAndDeleteAsync(Table, this.Tenant, authorization.Id!, authorization.Version!, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(Change.Delete(authorization), cancellationToken).ConfigureAwait(false))
         {
             throw new OpenIddictExceptions.ConcurrencyException("The authorization was changed by another request.");
         }
@@ -313,22 +310,21 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
             return null;
         }
 
-        var rowData = await store.GetAsync(Table, this.Tenant, identifier, cancellationToken).ConfigureAwait(false);
-        return Read(rowData, this.Tenant) is { } authorization && authorization.Id == identifier ? authorization : null;
+        var tenant = this.Tenant;
+        return await data.ReadAsync((db, token) => db.OidcAuthorizations.SingleOrDefaultAsync(row => row.InstanceId == tenant && row.Id == identifier, token), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public IAsyncEnumerable<OidcAuthorization> FindAsync(string? subject, string? client, string? status, string? type, ImmutableArray<string>? scopes, CancellationToken cancellationToken) =>
-        (subject is not null ? this.FindAsync("/subject", subject, cancellationToken) : client is not null ? this.FindAsync("/applicationId", client, cancellationToken) : throw OidcApplicationStore.Unsupported())
-            .Where(authorization => (subject is null || authorization.Subject == subject) && (client is null || authorization.ApplicationId == client)
-                && (status is null || authorization.Status == status) && (type is null || authorization.Type == type)
-                && (scopes is null || scopes.Value.All(authorization.Scopes.Contains)));
+        (subject is null && client is null ? throw OidcApplicationStore.Unsupported() : this.FindAsync(subject, client, status, type, cancellationToken))
+            .Where(authorization => scopes is null || scopes.Value.All(authorization.Scopes.Contains));
 
     /// <inheritdoc />
-    public IAsyncEnumerable<OidcAuthorization> FindByApplicationIdAsync(string identifier, CancellationToken cancellationToken) => this.FindAsync("/applicationId", identifier, cancellationToken);
+    public IAsyncEnumerable<OidcAuthorization> FindByApplicationIdAsync(string identifier, CancellationToken cancellationToken) => this.FindAsync(null, identifier, null, null, cancellationToken);
 
     /// <inheritdoc />
-    public IAsyncEnumerable<OidcAuthorization> FindBySubjectAsync(string subject, CancellationToken cancellationToken) => this.FindAsync("/subject", subject, cancellationToken);
+    public IAsyncEnumerable<OidcAuthorization> FindBySubjectAsync(string subject, CancellationToken cancellationToken) => this.FindAsync(subject, null, null, null, cancellationToken);
 
     /// <inheritdoc />
     public ValueTask<long> RevokeAsync(string? subject, string? client, string? status, string? type, CancellationToken cancellationToken) =>
@@ -409,66 +405,21 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         var cutoff = clock.GetUtcNow() - TimeSpan.FromHours(1);
-        var candidates = new JsonObject
-        {
-            ["and"] = new JsonArray(
-                new JsonObject
-                {
-                    ["or"] = new JsonArray(
-                        new JsonObject { ["eq"] = new JsonArray("/status", Statuses.Revoked) },
-                        new JsonObject { ["eq"] = new JsonArray("/type", AuthorizationTypes.AdHoc) }),
-                },
-                new JsonObject { ["lte"] = new JsonArray("/creationDate", JsonValue.Create(cutoff)) }),
-        };
-        using var filter = JsonDocument.Parse(candidates.ToJsonString());
-        var total = 0;
-        string? cursor = null;
-        for (var page = 0; page < 20; page++)
-        {
-            var batch = await store.PageAsync(Table, filter.RootElement, batchSize, cursor, cancellationToken).ConfigureAwait(false);
-            foreach (var rowData in batch.Items)
-            {
-                var authorization = rowData.Body.Deserialize(OidcJson.Default.OidcAuthorization);
-                if (authorization?.Id is not { } id || authorization.InstanceId is not { } instanceId
-                    || await HasTokensAsync(authorization, cancellationToken).ConfigureAwait(false))
-                {
-                    continue;
-                }
-
-                if (await store.CompareAndDeleteAsync(Table, instanceId, id, rowData.Version, cancellationToken).ConfigureAwait(false))
-                {
-                    total++;
-                }
-            }
-
-            cursor = batch.NextCursor;
-            if (batch.Items.Count < batchSize || cursor is null)
-            {
-                return total;
-            }
-        }
-
-        return total;
+        return await data.ReadAsync((db, token) => db.OidcAuthorizations
+            .Where(authorization => (authorization.Status == Statuses.Revoked || authorization.Type == AuthorizationTypes.AdHoc) && authorization.CreationDate <= cutoff
+                && !db.OidcTokens.Any(entry => entry.AuthorizationId == authorization.Id))
+            .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask<bool> HasTokensAsync(OidcAuthorization authorization, CancellationToken cancellationToken)
+    private async IAsyncEnumerable<OidcAuthorization> FindAsync(string? subject, string? client, string? status, string? type, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        await foreach (var _ in store.QueryAsync(AuthStore.OidcTokenTable, authorization.InstanceId!, "/authorizationId", authorization.Id!, cancellationToken).ConfigureAwait(false))
+        var tenant = this.Tenant;
+        foreach (var authorization in await data.ReadAsync((db, token) => db.OidcAuthorizations
+            .Where(row => row.InstanceId == tenant && (subject == null || row.Subject == subject) && (client == null || row.ApplicationId == client)
+                && (status == null || row.Status == status) && (type == null || row.Type == type))
+            .ToListAsync(token), cancellationToken).ConfigureAwait(false))
         {
-            return true;
-        }
-
-        return false;
-    }
-
-    private async IAsyncEnumerable<OidcAuthorization> FindAsync(string field, string value, [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (var rowData in store.QueryAsync(Table, this.Tenant, field, value, cancellationToken).ConfigureAwait(false))
-        {
-            if (Read(rowData, this.Tenant) is { } authorization)
-            {
-                yield return authorization;
-            }
+            yield return authorization;
         }
     }
 
@@ -478,8 +429,7 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
         await foreach (var authorization in authorizations.ConfigureAwait(false))
         {
             // A lost write means another request changed the record; the next revocation sweep retries it.
-            if (authorization.Status != Statuses.Revoked && await store.CompareAndPutAsync(Table, this.Tenant, authorization.Id!,
-                    Serialize(Revoked(authorization)), authorization.Version!, cancellationToken).ConfigureAwait(false))
+            if (authorization.Status != Statuses.Revoked && await data.SaveAsync(Change.Update(Revoked(authorization)), cancellationToken).ConfigureAwait(false))
             {
                 revoked++;
             }
@@ -493,87 +443,54 @@ public sealed class OidcAuthorizationStore(AuthStore store, IHttpContextAccessor
             return authorization;
         }
     }
-
-    private static OidcAuthorization? Read(StoredRow? rowData, string tenant)
-    {
-        var authorization = rowData?.Body.Deserialize(OidcJson.Default.OidcAuthorization);
-        if (authorization is not { Id: not null } || authorization.InstanceId != tenant)
-        {
-            return null;
-        }
-
-        authorization.Version = rowData!.Version;
-        return authorization;
-    }
-
-    private static JsonElement Serialize(OidcAuthorization authorization) => JsonSerializer.SerializeToElement(authorization, OidcJson.Default.OidcAuthorization);
 }
 
-/// <summary>
-/// OpenIddict token entries on TerraBase. Every status change (redeem, revoke, reject) is a conditional write on the
-/// version this request read and throws <see cref="OpenIddictExceptions.ConcurrencyException"/> when another request
-/// wrote first, so concurrent redemptions of one code or refresh token have exactly one winner. A reference token's
-/// digest is reserved in <c>uniques</c> in the same transaction that stores it, which is how a handle is found.
-/// </summary>
-public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IHttpContextAccessor http, TimeProvider clock) : IOpenIddictTokenStore<OidcToken>
+public sealed class OidcTokenStore(AuthData data, Credentials credentials, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IHttpContextAccessor http, TimeProvider clock) : IOpenIddictTokenStore<OidcToken>
 {
-    private const string Table = AuthStore.OidcTokenTable;
-
     // The tenant of the request being served (Tenancy); the platform's outside a tenant request.
     private string Tenant => Tenancy.Current(http.HttpContext);
-    private const string ReferenceKind = "oidc_token_reference";
 
     /// <inheritdoc />
     public async ValueTask CreateAsync(OidcToken token, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(token);
-        (token.Id, token.InstanceId) = (AuthStore.NewId(), this.Tenant);
+        (token.Id, token.InstanceId) = (AuthIds.New(), this.Tenant);
         // Every entry is bound when it is created, in the same remote-durable write, before its credential is returned.
         if (CredentialLineage.Issued(http.HttpContext) is { Count: > 0 } bindings)
         {
             token.Bindings = bindings;
         }
 
-        if (token.ReferenceId is { } reference)
+        if (!await data.SaveAsync(Change.Insert(token), cancellationToken).ConfigureAwait(false))
         {
-            token.Version = await store.CreateClaimedAsync(Table, this.Tenant, token.Id, Serialize(token), ReferenceKind, reference, cancellationToken).ConfigureAwait(false)
-                ? (await store.GetAsync(Table, this.Tenant, token.Id, cancellationToken).ConfigureAwait(false))?.Version
-                : throw new InvalidOperationException("The token reference is already taken.");
-            token.StoredReferenceId = reference;
-            return;
+            throw new InvalidOperationException("The token reference is already taken.");
         }
 
-        token.Version = (await store.CreateAsync(Table, this.Tenant, token.Id, Serialize(token), cancellationToken).ConfigureAwait(false)).Version;
+        token.StoredReferenceId = token.ReferenceId;
     }
 
     /// <inheritdoc />
     public async ValueTask UpdateAsync(OidcToken token, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(token);
-        string? version;
-        if (token.ReferenceId is { } reference && reference != token.StoredReferenceId)
+        if (token.StoredReferenceId is not null && token.ReferenceId != token.StoredReferenceId)
         {
-            if (token.StoredReferenceId is not null)
-            {
-                throw new NotSupportedException("A token reference never changes.");
-            }
-
-            version = await store.ReplaceClaimedAsync(Table, this.Tenant, token.Id!, Serialize(token), token.Version!, ReferenceKind, reference, cancellationToken).ConfigureAwait(false);
-            token.StoredReferenceId = version is null ? null : reference;
-        }
-        else
-        {
-            version = await store.ReplaceAsync(Table, this.Tenant, token.Id!, Serialize(token), token.Version!, cancellationToken).ConfigureAwait(false);
+            throw new NotSupportedException("A token reference never changes.");
         }
 
-        token.Version = version ?? throw new OpenIddictExceptions.ConcurrencyException("The token was changed by another request.");
+        if (!await data.SaveAsync(Change.Update(token), cancellationToken).ConfigureAwait(false))
+        {
+            throw new OpenIddictExceptions.ConcurrencyException("The token was changed by another request.");
+        }
+
+        token.StoredReferenceId = token.ReferenceId;
     }
 
     /// <inheritdoc />
     public async ValueTask DeleteAsync(OidcToken token, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(token);
-        if (!await store.DeleteWithClaimsAsync(Table, this.Tenant, token.Id!, token.Version!, token.Id!, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(Change.Delete(token), cancellationToken).ConfigureAwait(false))
         {
             throw new OpenIddictExceptions.ConcurrencyException("The token was changed by another request.");
         }
@@ -587,13 +504,12 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
             return null;
         }
 
-        var rowData = await store.GetAsync(Table, this.Tenant, identifier, cancellationToken).ConfigureAwait(false);
-        if (Read(rowData, this.Tenant) is not { } token || token.Id != identifier)
+        if (await this.ReadAsync(identifier, cancellationToken).ConfigureAwait(false) is not { } token)
         {
             return null;
         }
 
-        if (!await store.AreCredentialsCurrentAsync(this.Tenant, token.Bindings, cancellationToken).ConfigureAwait(false))
+        if (!await credentials.AreCurrentAsync(this.Tenant, token.Bindings, cancellationToken).ConfigureAwait(false))
         {
             // Keep the payload resolvable so fresh OpenIddict lookups reach the explicit conflict notice.
             token.Status = Statuses.Revoked;
@@ -610,32 +526,29 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
             return false;
         }
 
-        var rowData = await store.GetAsync(Table, this.Tenant, identifier, cancellationToken).ConfigureAwait(false);
-        return Read(rowData, this.Tenant) is { Status: Statuses.Redeemed, Type: TokenTypeIdentifiers.RefreshToken } token
+        return await this.ReadAsync(identifier, cancellationToken).ConfigureAwait(false) is { Status: Statuses.Redeemed, Type: TokenTypeIdentifiers.RefreshToken } token
             && token.Id == identifier && token.AuthorizationId == authorizationId && token.ApplicationId == clientId;
     }
 
     /// <inheritdoc />
     public async ValueTask<OidcToken?> FindByReferenceIdAsync(string identifier, CancellationToken cancellationToken) =>
-        await store.FindUniqueOwnerAsync(this.Tenant, ReferenceKind, identifier, cancellationToken).ConfigureAwait(false) is { } owner
+        await this.OwnerAsync(identifier, cancellationToken).ConfigureAwait(false) is { } owner
             && await this.FindByIdAsync(owner, cancellationToken).ConfigureAwait(false) is { } token && token.ReferenceId == identifier
             ? token
             : null;
 
     /// <inheritdoc />
     public IAsyncEnumerable<OidcToken> FindAsync(string? subject, string? client, string? status, string? type, CancellationToken cancellationToken) =>
-        (subject is not null ? this.FindAsync("/subject", subject, cancellationToken) : client is not null ? this.FindAsync("/applicationId", client, cancellationToken) : throw OidcApplicationStore.Unsupported())
-            .Where(token => (subject is null || token.Subject == subject) && (client is null || token.ApplicationId == client)
-                && (status is null || token.Status == status) && (type is null || token.Type == type));
+        subject is null && client is null ? throw OidcApplicationStore.Unsupported() : this.FindAsync(subject, client, null, status, type, cancellationToken);
 
     /// <inheritdoc />
-    public IAsyncEnumerable<OidcToken> FindByApplicationIdAsync(string identifier, CancellationToken cancellationToken) => this.FindAsync("/applicationId", identifier, cancellationToken);
+    public IAsyncEnumerable<OidcToken> FindByApplicationIdAsync(string identifier, CancellationToken cancellationToken) => this.FindAsync(null, identifier, null, null, null, cancellationToken);
 
     /// <inheritdoc />
-    public IAsyncEnumerable<OidcToken> FindByAuthorizationIdAsync(string identifier, CancellationToken cancellationToken) => this.FindAsync("/authorizationId", identifier, cancellationToken);
+    public IAsyncEnumerable<OidcToken> FindByAuthorizationIdAsync(string identifier, CancellationToken cancellationToken) => this.FindAsync(null, null, identifier, null, null, cancellationToken);
 
     /// <inheritdoc />
-    public IAsyncEnumerable<OidcToken> FindBySubjectAsync(string subject, CancellationToken cancellationToken) => this.FindAsync("/subject", subject, cancellationToken);
+    public IAsyncEnumerable<OidcToken> FindBySubjectAsync(string subject, CancellationToken cancellationToken) => this.FindAsync(subject, null, null, null, null, cancellationToken);
 
     /// <inheritdoc />
     public ValueTask<long> RevokeAsync(string? subject, string? client, string? status, string? type, CancellationToken cancellationToken) =>
@@ -774,40 +687,38 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
 
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
-        var now = JsonSerializer.Serialize(clock.GetUtcNow(), OidcJson.Default.DateTimeOffset);
-        using var filter = JsonDocument.Parse($$"""{"lte":["/expirationDate",{{now}}]}""");
-        var total = 0;
-        while (true)
-        {
-            var batch = await store.QueryAsync(Table, filter.RootElement, batchSize, cancellationToken).ConfigureAwait(false);
-            var deleted = 0;
-            foreach (var rowData in batch)
-            {
-                if (rowData.Body.Deserialize(OidcJson.Default.OidcToken) is { Id: not null, InstanceId: not null } token
-                    && await store.DeleteWithClaimsAsync(Table, token.InstanceId, token.Id, rowData.Version, token.Id, cancellationToken).ConfigureAwait(false))
-                {
-                    deleted++;
-                }
-            }
+        var now = clock.GetUtcNow();
+        return await data.ReadAsync((db, token) => db.OidcTokens.Where(entry => entry.ExpirationDate <= now).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+    }
 
-            total += deleted;
-            if (batch.Count < batchSize || deleted == 0)
-            {
-                return total;
-            }
+    private async IAsyncEnumerable<OidcToken> FindAsync(string? subject, string? client, string? authorization, string? status, string? type,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var tenant = this.Tenant;
+        foreach (var token in await data.ReadAsync((db, probe) => db.OidcTokens
+            .Where(row => row.InstanceId == tenant && (subject == null || row.Subject == subject) && (client == null || row.ApplicationId == client)
+                && (authorization == null || row.AuthorizationId == authorization) && (status == null || row.Status == status) && (type == null || row.Type == type))
+            .ToListAsync(probe), cancellationToken).ConfigureAwait(false))
+        {
+            token.StoredReferenceId = token.ReferenceId;
+            yield return token;
         }
     }
 
-    // ponytail: TerraBase query scan, used only for revocation; add an index when token volume makes it slow.
-    private async IAsyncEnumerable<OidcToken> FindAsync(string field, string value, [EnumeratorCancellation] CancellationToken cancellationToken)
+    private async Task<OidcToken?> ReadAsync(string identifier, CancellationToken cancellationToken)
     {
-        await foreach (var rowData in store.QueryAsync(Table, this.Tenant, field, value, cancellationToken).ConfigureAwait(false))
-        {
-            if (Read(rowData, this.Tenant) is { } token)
-            {
-                yield return token;
-            }
-        }
+        var tenant = this.Tenant;
+        var token = await data.ReadAsync((db, probe) => db.OidcTokens.SingleOrDefaultAsync(row => row.InstanceId == tenant && row.Id == identifier, probe), cancellationToken)
+            .ConfigureAwait(false);
+        token?.StoredReferenceId = token.ReferenceId;
+        return token;
+    }
+
+    private Task<string?> OwnerAsync(string reference, CancellationToken cancellationToken)
+    {
+        var tenant = this.Tenant;
+        return data.ReadAsync((db, probe) => db.OidcTokens.Where(row => row.InstanceId == tenant && row.ReferenceId == reference).Select(row => row.Id).SingleOrDefaultAsync(probe),
+            cancellationToken);
     }
 
     private async ValueTask<long> RevokeAllAsync(IAsyncEnumerable<OidcToken> tokens, CancellationToken cancellationToken)
@@ -822,7 +733,7 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
 
             token.Status = Statuses.Revoked;
             // A lost write means another request changed the token; it is revoked again by the next sweep.
-            if (await store.CompareAndPutAsync(Table, this.Tenant, token.Id!, Serialize(token), token.Version!, cancellationToken).ConfigureAwait(false))
+            if (await data.SaveAsync(Change.Update(token), cancellationToken).ConfigureAwait(false))
             {
                 revoked++;
             }
@@ -830,26 +741,8 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
 
         return revoked;
     }
-
-    private static OidcToken? Read(StoredRow? rowData, string tenant)
-    {
-        var token = rowData?.Body.Deserialize(OidcJson.Default.OidcToken);
-        if (token is not { Id: not null } || token.InstanceId != tenant)
-        {
-            return null;
-        }
-
-        (token.Version, token.StoredReferenceId) = (rowData!.Version, token.ReferenceId);
-        return token;
-    }
-
-    private static JsonElement Serialize(OidcToken token) => JsonSerializer.SerializeToElement(token, OidcJson.Default.OidcToken);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
-[JsonSerializable(typeof(OidcApplication))]
-[JsonSerializable(typeof(OidcAuthorization))]
-[JsonSerializable(typeof(OidcToken))]
-[JsonSerializable(typeof(DateTimeOffset))]
 [JsonSerializable(typeof(OAuthErrorBody))]
 internal sealed partial class OidcJson : JsonSerializerContext;

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.SigningKeys;
@@ -21,7 +21,7 @@ public static class SigningKeyProvisioning
     public static async Task<bool> ProvisionAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(services);
-        await services.GetRequiredService<AuthStore>().ProvisionAsync(cancellationToken).ConfigureAwait(false);
+        await services.GetRequiredService<AuthSchema>().MigrateAsync(cancellationToken).ConfigureAwait(false);
         return await services.GetRequiredService<KeyRing>().ProvisionAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
     }
 

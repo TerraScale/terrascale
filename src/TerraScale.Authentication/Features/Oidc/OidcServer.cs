@@ -15,7 +15,7 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -402,7 +402,7 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
 /// redemptions one succeeds locally. Replicated winner claims reject unused losing descendants without ending the
 /// winning grant. Replaying a consumed refresh token ends that grant, including when its ancestry lost.
 /// </summary>
-public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, AuthStore store, TimeProvider clock) : IOpenIddictServerHandler<ProcessSignInContext>
+public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, AuthData data, Credentials credentials, TimeProvider clock) : IOpenIddictServerHandler<ProcessSignInContext>
 {
     internal const string DeviceAuthorizationClaim = "ts_auth_device_authorization";
 
@@ -438,12 +438,11 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         var tenant = context.Transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) ?? throw new InvalidOperationException("The request has no tenant.");
         var inherited = token.Bindings.Concat(CredentialLineage.Read(context.Principal!)).Distinct().ToArray();
         var addsBinding = context.EndpointType is not OpenIddictServerEndpointType.EndUserVerification;
-        var binding = AuthStore.NewCredentialBinding("oidc", identifier);
-        List<StoreOperation> operations =
+        var binding = Credentials.New("oidc", identifier);
+        List<Change> operations =
         [
-            AuthStore.CredentialClaim(tenant, binding),
-            AuthStore.Replace(AuthStore.OidcTokenTable, tenant, identifier,
-                Redeemed(token, clock.GetUtcNow()), token.Version),
+            Credentials.Claim(tenant, binding),
+            Change.Update(Redeemed(token, clock.GetUtcNow())),
         ];
         string? approvedAuthorizationId = null;
         if (!addsBinding)
@@ -456,10 +455,10 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
                 return;
             }
 
-            inherited = [.. inherited.Append(AuthStore.AuthorizationBinding(parentId)).Distinct()];
+            inherited = [.. inherited.Append(Credentials.Authorization(parentId)).Distinct()];
             var approval = new OidcAuthorization
             {
-                Id = AuthStore.NewId(),
+                Id = AuthIds.New(),
                 InstanceId = tenant,
                 ApplicationId = parent.ApplicationId,
                 CreationDate = clock.GetUtcNow(),
@@ -470,10 +469,8 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
                 Type = AuthorizationTypes.AdHoc,
             };
             approvedAuthorizationId = approval.Id;
-            using var valid = JsonDocument.Parse("""{"eq":["/status","valid"]}""");
-            operations.Add(AuthStore.Require(AuthStore.OidcAuthorizationTable, tenant, parentId, valid.RootElement.Clone()));
-            operations.Add(AuthStore.Create(AuthStore.OidcAuthorizationTable, tenant, approval.Id,
-                JsonSerializer.SerializeToElement(approval, OidcJson.Default.OidcAuthorization)));
+            operations.Add(Change.Assert(parent));
+            operations.Add(Change.Insert(approval));
         }
         else if (context.Request.IsDeviceCodeGrantType())
         {
@@ -488,14 +485,14 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             approvedAuthorizationId = approvalId;
         }
 
-        if (inherited.Length + (addsBinding ? 1 : 0) > AuthStore.MaxCredentialBindings)
+        if (inherited.Length + (addsBinding ? 1 : 0) > Credentials.MaxBindings)
         {
             context.Reject(Errors.InvalidGrant, "This sign-in reached its rotation limit. Sign in again to continue.");
             return;
         }
 
-        if (await store.AreCredentialsCurrentAsync(tenant, inherited, context.CancellationToken).ConfigureAwait(false)
-            && await store.TransactAsync(operations, context.CancellationToken).ConfigureAwait(false) is null)
+        if (await credentials.AreCurrentAsync(tenant, inherited, context.CancellationToken).ConfigureAwait(false)
+            && await data.SaveAsync(operations, context.CancellationToken).ConfigureAwait(false))
         {
             // Approval rewrites the existing device-code record; its conditional SQL update selects the approver.
             // Only redemption that creates distinct successor credentials needs the additional branch binding.
@@ -528,11 +525,11 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         context.Reject(Errors.InvalidGrant, replay ? CredentialLineage.ReplayNotice : CredentialLineage.ConflictNotice);
     }
 
-    private static JsonElement Redeemed(OidcToken token, DateTimeOffset now)
+    private static OidcToken Redeemed(OidcToken token, DateTimeOffset now)
     {
         token.Status = Statuses.Redeemed;
         token.RedemptionDate = now;
-        return JsonSerializer.SerializeToElement(token, OidcJson.Default.OidcToken);
+        return token;
     }
 }
 
@@ -676,7 +673,6 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
                 return;
             }
             catch (Exception error) when (error is OpenIddictExceptions.ConcurrencyException
-                || error is StorePreconditionFailedException
                 // OpenIddict's own duplicate-client check fires when another replica created the client in between;
                 // a descriptor that is invalid for any other reason fails again on the last attempt and propagates.
                 || error is OpenIddictExceptions.ValidationException && attempt < 2)

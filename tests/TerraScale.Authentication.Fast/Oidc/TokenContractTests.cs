@@ -1,7 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Identity;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;

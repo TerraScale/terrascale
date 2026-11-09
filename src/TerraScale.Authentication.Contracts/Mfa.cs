@@ -48,20 +48,9 @@ public sealed record IssuedRecoveryCodes(UserRecord User, IReadOnlyList<string> 
 public sealed record PasskeyCredentialEntry(string CredentialId, byte[] PublicKeyCose, uint SignCount, IReadOnlyList<string> Transports,
     string? Name, string Aaguid, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt)
 {
-    /// <summary>Formatting an entry never discloses its key material.</summary>
+    public string InstanceId { get; init; } = string.Empty;
+
+    public string UserId { get; init; } = string.Empty;
+
     public override string ToString() => nameof(PasskeyCredentialEntry);
-}
-
-/// <summary>The passkeys of one account in <c>passkey_credentials</c>.</summary>
-/// <param name="InstanceId">The owning instance.</param>
-/// <param name="UserId">The owning account.</param>
-/// <param name="AuthEpoch">The user's authentication epoch at the last credential change.</param>
-/// <param name="Entries">The account's enrolled passkeys.</param>
-public sealed record PasskeyCredentialRecord(string InstanceId, string UserId, long AuthEpoch, IReadOnlyList<PasskeyCredentialEntry> Entries)
-{
-    /// <summary>Identity of the last authentication-state change the record covers.</summary>
-    public string? AuthStamp { get; init; }
-
-    /// <summary>Formatting a record never discloses its credentials.</summary>
-    public override string ToString() => nameof(PasskeyCredentialRecord);
 }

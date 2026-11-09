@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -13,7 +14,7 @@ using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Hosting;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 
@@ -60,28 +61,26 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(45))).IsTrue();
     }
 
-    private static readonly JsonElement Record = TerraBaseFixture.Json($$"""{"instanceId":"{{Instance}}"}""");
-
     private static Users UsersIn(TerraBaseSqlDatabase copy)
     {
-        var store = new AuthStore(copy, TimeProvider.System);
-        return new Users(store, new WebhookOutbox(new ProjectAuthSettings(store), TimeProvider.System), TimeProvider.System);
+        var data = copy.Data();
+        return new Users(data, new Credentials(data), new WebhookOutbox(new ProjectAuthSettings(data), TimeProvider.System), TimeProvider.System);
     }
 
     // A project of the issuer's instance in the copy: its tenant's discovery document is served while it exists.
     private static async Task<string> ProjectAsync(TerraBaseSqlDatabase copy)
     {
-        var id = AuthStore.NewId();
-        await new AuthStore(copy, TimeProvider.System).CreateAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, id, Record);
+        var id = AuthIds.New();
+        await copy.Data().SeedProjectAsync(id);
         return id;
     }
 
     // Provisions a signing key in the copy, under the server's master key; returns its key id.
     private static async Task<string> KeyAsync(AuthTestServer auth, TerraBaseSqlDatabase copy)
     {
-        await new KeyRing(new AuthStore(copy, TimeProvider.System), auth.App.Services.GetRequiredService<AuthOptions>(), TimeProvider.System)
+        await new KeyRing(copy.Data(), auth.App.Services.GetRequiredService<AuthOptions>(), TimeProvider.System)
             .ProvisionAsync(OidcIssuer.InstanceId, CancellationToken.None);
-        return (await copy.RowsAsync(AuthStore.SigningKeyTable)).Single().Body.GetProperty("id").GetString()!;
+        return await copy.ReadAsync(db => db.SigningKeys.Select(key => key.Id).SingleAsync());
     }
 
     private static async Task<HttpStatusCode> DiscoveryAsync(AuthTestServer auth, string project)

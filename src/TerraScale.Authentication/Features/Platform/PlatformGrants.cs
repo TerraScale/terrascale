@@ -12,7 +12,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using ZLogger;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
@@ -25,7 +25,7 @@ namespace TerraScale.Authentication.Features.Platform;
 /// <c>database</c> and <c>scope</c>; no refresh or identity token comes with them, and no token entry is stored.
 /// </summary>
 public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, TotpCredentials mfa, AttemptLimiter limiter, AuthOptions options, TimeProvider clock,
-    AuthStore store, GitHubActionsKeys gitHubActions, ILogger<PlatformGrants> logger)
+    AuthData data, GitHubActionsKeys gitHubActions, ILogger<PlatformGrants> logger)
 {
     /// <summary>The organization a token acts in.</summary>
     public const string OrganizationClaim = "org_id";
@@ -296,7 +296,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         var runId = Claim(claims, "run_id")!;
         var tokenId = Claim(claims, "jti")!;
         // Single use on every replica: the claim is created only if absent.
-        if (!await store.ClaimUniqueAsync(PlatformDirectory.Instance, GitHubActionsGrant.TokenIdKind, tokenId, runId, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(Credentials.Claim(PlatformDirectory.Instance, GitHubActionsGrant.TokenIdKind, tokenId, runId), cancellationToken).ConfigureAwait(false))
         {
             logger.ZLogWarning($"GitHub Actions token refused: jti already used");
             return OidcResults.Forbid(Errors.InvalidGrant, "The GitHub Actions token was already used.");

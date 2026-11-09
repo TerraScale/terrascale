@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
@@ -11,7 +12,6 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 
@@ -51,10 +51,8 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
         await Assert.That(secondRedeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var second = await OidcHarness.JsonAsync(secondRedeemed);
         var endedAuthorizationId = refreshParent.GetProperty("authorizationId").GetString()!;
-        var secondParent = (await oidc.Database.RowsAsync(AuthStore.OidcTokenTable)).Single(rowData =>
-            rowData.Body.GetProperty("type").GetString() == TokenTypeIdentifiers.RefreshToken
-            && rowData.Body.GetProperty("status").GetString() == "valid"
-            && rowData.Body.GetProperty("authorizationId").GetString() != endedAuthorizationId).Body;
+        var secondParent = Json(await oidc.Database.ReadAsync(db => db.OidcTokens.SingleAsync(token =>
+            token.Type == TokenTypeIdentifiers.RefreshToken && token.Status == "valid" && token.AuthorizationId != endedAuthorizationId)));
         var refreshToken = second.GetProperty("refresh_token").GetString()!;
         var refreshRace = await Race(index => oidc.RefreshAsync(refreshToken, index % 2 == 0 ? oidc.Client : replica.Client));
         await Assert.That(Outcomes(refreshRace)).IsEqualTo(Expected);
@@ -119,9 +117,12 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
     }
 
     private static async Task<JsonElement> CurrentTokenAsync(OidcHarness oidc, string type, string? authorizationId = null) =>
-        (await oidc.Database.RowsAsync(AuthStore.OidcTokenTable)).Single(rowData =>
-            rowData.Body.GetProperty("type").GetString() == type && rowData.Body.GetProperty("status").GetString() == "valid"
-            && (authorizationId is null || rowData.Body.GetProperty("authorizationId").GetString() == authorizationId)).Body;
+        Json(await oidc.Database.ReadAsync(db => db.OidcTokens.SingleAsync(token =>
+            token.Type == type && token.Status == "valid" && (authorizationId == null || token.AuthorizationId == authorizationId))));
+
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
+
+    private static JsonElement Json(OidcToken token) => JsonSerializer.SerializeToElement(token, Web);
 
     private static async Task AssertLineageAsync(OidcHarness oidc, JsonElement parent, JsonElement child)
     {
@@ -133,8 +134,9 @@ public sealed class OidcTokenReplicaTests(TerraBaseFixture fixture)
         var added = bindings.Single(binding => !inherited.Contains(binding.GetRawText(), StringComparer.Ordinal));
         await Assert.That(added.GetProperty("kind").GetString()).IsEqualTo("credential:oidc");
         await Assert.That(added.GetProperty("key").GetString()).IsEqualTo(parent.GetProperty("id").GetString());
-        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
-        await Assert.That(await store.FindUniqueOwnerAsync(OidcIssuer.InstanceId, "credential:oidc", parent.GetProperty("id").GetString()!))
+        var parentId = parent.GetProperty("id").GetString()!;
+        await Assert.That(await oidc.Database.ReadAsync(db => db.CredentialClaims
+                .Where(claim => claim.InstanceId == OidcIssuer.InstanceId && claim.Kind == "credential:oidc" && claim.Key == parentId).Select(claim => claim.OwnerId).SingleOrDefaultAsync()))
             .IsEqualTo(added.GetProperty("ownerId").GetString());
     }
 

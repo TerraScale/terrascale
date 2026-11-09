@@ -1,10 +1,10 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -31,7 +31,6 @@ public sealed class OidcPruneTests(TerraBaseFixture fixture)
         await Assert.That(replayBody.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
 
         clock.Advance(OidcIssuer.TokenLifetime + TimeSpan.FromMinutes(1));
-        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var tokenStore = oidc.Server.App.Services.GetRequiredService<OidcTokenStore>();
         var authorizationStore = oidc.Server.App.Services.GetRequiredService<OidcAuthorizationStore>();
         await tokenStore.PruneAsync(500);
@@ -39,7 +38,7 @@ public sealed class OidcPruneTests(TerraBaseFixture fixture)
 
         var refusedTask = oidc.RefreshAsync(latest);
         var replayedAgainTask = oidc.RefreshAsync(consumed);
-        var rowsTask = RowsAsync(store, AuthStore.OidcTokenTable, user.Id);
+        var rowsTask = TokensAsync(oidc, user.Id);
         await Task.WhenAll(refusedTask, replayedAgainTask, rowsTask);
         using var refused = await refusedTask;
         using var replayedAgain = await replayedAgainTask;
@@ -56,14 +55,13 @@ public sealed class OidcPruneTests(TerraBaseFixture fixture)
         await tokenStore.PruneAsync(500);
         await authorizationStore.PruneAsync(500);
 
-        await Assert.That(await RowsAsync(store, AuthStore.OidcTokenTable, user.Id)).IsEqualTo(0);
-        await Assert.That(await RowsAsync(store, AuthStore.OidcAuthorizationTable, user.Id)).IsEqualTo(0);
+        await Assert.That(await TokensAsync(oidc, user.Id)).IsEqualTo(0);
+        await Assert.That(await AuthorizationsAsync(oidc, user.Id)).IsEqualTo(0);
     }
 
-    private static async Task<int> RowsAsync(AuthStore store, string table, string subject)
-    {
-        var filter = new JsonObject { ["eq"] = new JsonArray("/subject", subject) };
-        using var document = JsonDocument.Parse(filter.ToJsonString());
-        return (await store.QueryAsync(table, document.RootElement, 10, CancellationToken.None)).Count;
-    }
+    private static Task<int> TokensAsync(OidcHarness oidc, string subject) =>
+        oidc.Database.ReadAsync(db => db.OidcTokens.CountAsync(token => token.Subject == subject));
+
+    private static Task<int> AuthorizationsAsync(OidcHarness oidc, string subject) =>
+        oidc.Database.ReadAsync(db => db.OidcAuthorizations.CountAsync(authorization => authorization.Subject == subject));
 }

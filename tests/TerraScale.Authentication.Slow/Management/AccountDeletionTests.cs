@@ -1,10 +1,10 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SignIn;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using static TerraScale.Authentication.Tests.PlatformCalls;
 
@@ -21,7 +21,6 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
     {
         var clock = new ManualClock(DateTimeOffset.UtcNow);
         await using var oidc = await OidcHarness.StartAsync(fixture, runClosureWorker: false, clock: clock);
-        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var (alice, session, tokens) = await oidc.SignInAndRedeemAsync("alice@example.test");
         var aliceToken = tokens.GetProperty("access_token").GetString()!;
         var (bob, bobToken) = await oidc.SignInUserAsync("bob@example.test");
@@ -42,14 +41,15 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
         }
 
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<Sessions>().ResolveAsync("terrascale", session)).IsNull();
-        foreach (var (table, field) in new[] { (AuthStore.SessionTable, "/userId"), (AuthStore.MembershipTable, "/userId"), (AuthStore.ProjectMemberTable, "/userId"), (AuthStore.OidcTokenTable, "/subject"), (AuthStore.OidcAuthorizationTable, "/subject") })
-        {
-            await Assert.That(await store.QueryAsync(table, "terrascale", field, alice.Id).CountAsync()).IsEqualTo(0);
-        }
+        var left = await oidc.Database.ReadAsync(async db =>
+            await db.Sessions.CountAsync(row => row.UserId == alice.Id) + await db.Memberships.CountAsync(row => row.UserId == alice.Id)
+            + await db.ProjectMembers.CountAsync(row => row.UserId == alice.Id) + await db.OidcTokens.CountAsync(row => row.Subject == alice.Id)
+            + await db.OidcAuthorizations.CountAsync(row => row.Subject == alice.Id));
+        await Assert.That(left).IsEqualTo(0);
 
         // Its sole organization is gone with its project; the shared one stays, without it.
-        await Assert.That(await store.GetAsync(AuthStore.OrganizationTable, "terrascale", own)).IsNull();
-        await Assert.That(await store.GetAsync(AuthStore.ProjectTable, "terrascale", project)).IsNull();
+        await Assert.That(await oidc.Database.ReadAsync(db => db.Organizations.AnyAsync(row => row.Id == own))).IsFalse();
+        await Assert.That(await oidc.Database.ReadAsync(db => db.Projects.AnyAsync(row => row.Id == project))).IsFalse();
         var members = (await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{shared}/members", bobToken)).GetProperty("items");
         await Assert.That(members.EnumerateArray().Select(member => member.GetProperty("user_id").GetString()!).ToArray()).IsEquivalentTo([bob.Id]);
         await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{shared}/projects/{sharedProject}", bobToken);

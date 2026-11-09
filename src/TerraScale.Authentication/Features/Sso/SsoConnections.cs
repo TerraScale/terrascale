@@ -11,9 +11,9 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
-using TerraScale.DotNet.TerraBase;
-using Versioned = TerraScale.Authentication.Features.Platform.Versioned<TerraScale.Authentication.Features.Sso.SsoConnectionRecord>;
+using Microsoft.EntityFrameworkCore;
+using TerraScale.Authentication.Storage;
+using Versioned = TerraScale.Authentication.Storage.Versioned<TerraScale.Authentication.Features.Sso.SsoConnectionRecord>;
 
 namespace TerraScale.Authentication.Features.Sso;
 
@@ -44,7 +44,7 @@ public sealed record SsoConnectionRecord(
     string? IdpEntityId = null, string? SsoUrl = null, string? Certificate = null);
 
 /// <summary>Organizations' SSO connections: configuration, DNS domain verification, and the identity providers' discovery.</summary>
-public sealed partial class SsoConnections(AuthStore store, PlatformDirectory platform, AuthOptions options, IHttpClientFactory clients, TimeProvider clock)
+public sealed partial class SsoConnections(AuthData data, PlatformDirectory platform, AuthOptions options, IHttpClientFactory clients, TimeProvider clock)
 {
     /// <summary>The HTTP client that reaches identity providers and DNS over HTTPS; it connects to public addresses only.</summary>
     public const string HttpClientName = "org-sso";
@@ -67,7 +67,6 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
     /// <summary>The redirect URI identity providers return to, under the platform's hosted pages.</summary>
     public const string CallbackPath = $"/ui/{OidcIssuer.Slug}/sso/callback";
 
-    private const string Table = AuthStore.OrganizationSsoTable;
     private const string Instance = PlatformDirectory.Instance;
     private const int MaxDiscoveries = 1024;
     private readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> discoveries = new(StringComparer.Ordinal);
@@ -90,11 +89,9 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
     public static string? EmailDomain(string? email) => email?.LastIndexOf('@') is > 0 and var at ? Domain(email[(at + 1)..]) : null;
 
     /// <summary>The connection for <paramref name="domain"/>, whatever its organization.</summary>
-    public async Task<Versioned?> ForDomainAsync(string domain, CancellationToken cancellationToken) =>
-        await store.GetAsync(Table, Instance, domain, cancellationToken).ConfigureAwait(false) is { } rowData
-        && rowData.Body.Deserialize(SsoJson.Default.SsoConnectionRecord) is { } connection && connection.InstanceId == Instance && connection.Domain == domain
-            ? new(connection, rowData.Version)
-            : null;
+    public Task<Versioned?> ForDomainAsync(string domain, CancellationToken cancellationToken) =>
+        data.ReadAsync((db, token) => db.SsoConnections.Where(connection => connection.Domain == domain && connection.InstanceId == Instance).WithVersion().SingleOrDefaultAsync(token),
+            cancellationToken);
 
     /// <summary>The verified connection that governs sign-in for <paramref name="email"/>, when its organization still exists.</summary>
     public async Task<SsoConnectionRecord?> EnforcedAsync(string? email, CancellationToken cancellationToken) =>
@@ -104,19 +101,9 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
             : null;
 
     /// <summary>The organization's connection, or null.</summary>
-    public async Task<Versioned?> ForOrganizationAsync(string organizationId, CancellationToken cancellationToken)
-    {
-        await foreach (var rowData in store.QueryAsync(Table, Instance, "/organizationId", organizationId, cancellationToken).ConfigureAwait(false))
-        {
-            if (rowData.Body.Deserialize(SsoJson.Default.SsoConnectionRecord) is { } connection && connection.OrganizationId == organizationId
-                && await this.ForDomainAsync(connection.Domain, cancellationToken).ConfigureAwait(false) is { Value.OrganizationId: var owner } current && owner == organizationId)
-            {
-                return current;
-            }
-        }
-
-        return null;
-    }
+    public Task<Versioned?> ForOrganizationAsync(string organizationId, CancellationToken cancellationToken) =>
+        data.ReadAsync((db, token) => db.SsoConnections.Where(connection => connection.OrganizationId == organizationId && connection.InstanceId == Instance).WithVersion()
+            .SingleOrDefaultAsync(token), cancellationToken);
 
     /// <summary>
     /// Creates or changes the organization's connection with <paramref name="change"/>. 409 when the organization has a
@@ -142,12 +129,11 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
 
             var start = mine ? existing!.Value : new SsoConnectionRecord(Instance, domain, organizationId, Oidc, Roles.Member, Tokens.RandomToken(32), now, now);
             var updated = change(start) with { InstanceId = Instance, Domain = domain, OrganizationId = organizationId, UpdatedAt = now };
-            var record = JsonSerializer.SerializeToElement(updated, SsoJson.Default.SsoConnectionRecord);
-            if (await store.TransactAsync(
+            if (await data.SaveAsync(
                 [
-                    existing is null ? AuthStore.Create(Table, Instance, domain, record) : AuthStore.Replace(Table, Instance, domain, record, existing.Version),
+                    existing is null ? Change.Insert(updated) : Change.Update(existing, updated),
                     platform.Audit(organizationId, actor, "sso.updated", null, domain),
-                ], cancellationToken).ConfigureAwait(false) is null)
+                ], cancellationToken).ConfigureAwait(false))
             {
                 return updated;
             }
@@ -171,11 +157,11 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
         }
 
         var verified = found.Value with { VerifiedAt = clock.GetUtcNow(), UpdatedAt = clock.GetUtcNow() };
-        return await store.TransactAsync(
+        return await data.SaveAsync(
             [
-                AuthStore.Replace(Table, Instance, verified.Domain, JsonSerializer.SerializeToElement(verified, SsoJson.Default.SsoConnectionRecord), found.Version),
+                Change.Update(found, verified),
                 platform.Audit(organizationId, actor, "sso.verified", null, verified.Domain),
-            ], cancellationToken).ConfigureAwait(false) is null
+            ], cancellationToken).ConfigureAwait(false)
             ? verified
             : throw PlatformDirectory.Conflict("conflict", "The connection changed; retry.");
     }
@@ -184,11 +170,11 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
     public async Task DeleteAsync(string organizationId, string actor, CancellationToken cancellationToken)
     {
         var found = await this.ForOrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        if (await store.TransactAsync(
+        if (!await data.SaveAsync(
             [
-                AuthStore.Delete(Table, Instance, found.Value.Domain, found.Version),
+                Change.Delete(found),
                 platform.Audit(organizationId, actor, "sso.deleted", null, found.Value.Domain),
-            ], cancellationToken).ConfigureAwait(false) is not null)
+            ], cancellationToken).ConfigureAwait(false))
         {
             throw PlatformDirectory.Conflict("conflict", "The connection changed; retry.");
         }
@@ -258,7 +244,3 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
     [GeneratedRegex("^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$")]
     private static partial Regex DomainPattern();
 }
-
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
-[JsonSerializable(typeof(SsoConnectionRecord))]
-internal sealed partial class SsoJson : JsonSerializerContext;

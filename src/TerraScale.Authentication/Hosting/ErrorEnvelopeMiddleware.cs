@@ -2,7 +2,8 @@ using System.Globalization;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.SignIn;
-using TerraScale.Authentication.Store;
+using Microsoft.EntityFrameworkCore;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -36,10 +37,8 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
         }
-        catch (StorePreconditionFailedException conflict) when (!context.Response.HasStarted)
+        catch (DbUpdateException conflict) when (!context.Response.HasStarted && AuthData.IsConflict(conflict))
         {
-            // A conditional write lost to a concurrent change, or a retried write found its own earlier commit
-            // (QA round 4: the token endpoint answered 500 and the dashboard sign-in bounced to sign-in).
             var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
@@ -51,7 +50,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorE
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
         }
-        catch (TerraBaseSqlException busy) when (!context.Response.HasStarted && busy.Code is TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.TenantBusy or TerraBaseSqlErrorCodes.Unavailable)
+        catch (Exception busy) when (!context.Response.HasStarted && busy is not ApiException && AuthData.IsUnavailable(busy))
         {
             var error = ApiException.Unavailable(busy);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));

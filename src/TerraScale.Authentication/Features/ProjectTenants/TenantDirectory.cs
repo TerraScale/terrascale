@@ -1,129 +1,83 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
-using TerraScale.DotNet.TerraBase;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary>A live session of a project tenant.</summary>
-/// <param name="Id">Its TerraBase record id; never the token or its hash.</param>
-/// <param name="Session">The session.</param>
-/// <param name="Email">Its user's email.</param>
 public sealed record ProjectSession(string Id, SessionRecord Session, string Email);
 
-/// <summary>
-/// A project tenant's end users, sessions and OAuth clients, managed by the project's platform members. Every record
-/// lives in the project's own instance (its id), so no call reaches another tenant's data.
-/// </summary>
-public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessions, PlatformDirectory platform, TimeProvider clock)
+public sealed class TenantDirectory(AuthData data, Users users, Sessions sessions, PlatformDirectory platform, TimeProvider clock)
 {
     internal const string ClientIssuanceCaller = "ts-auth:client-issuance-caller";
-    // Bounds the pages a filtered list reads for one answer; a sparse match answers fewer items and a cursor.
-    private const int MaxRounds = 10;
 
-    /// <summary>Checks that <paramref name="userId"/> holds at least <paramref name="minimum"/> on the project: 404 when it holds none, 403 when lower.</summary>
     public async Task CheckAccessAsync(string userId, string projectId, string minimum, CancellationToken cancellationToken)
     {
         var project = await platform.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
         PlatformDirectory.RequireRole(await platform.ProjectAccessAsync(userId, project.Value.OrganizationId, projectId, cancellationToken).ConfigureAwait(false), minimum);
     }
 
-    /// <summary>A page of the tenant's users whose email starts with <paramref name="query"/> (any when null).</summary>
-    public Task<Page<UserRecord>> UsersAsync(string projectId, string? query, int limit, string? after, CancellationToken cancellationToken)
+    public async Task<Page<UserRecord>> UsersAsync(string projectId, string? query, int limit, string? after, CancellationToken cancellationToken)
     {
-        List<JsonObject> conditions = [];
-        if (!string.IsNullOrWhiteSpace(query))
-        {
-            var needle = query.Trim().ToLowerInvariant();
-            conditions.Add(new() { ["gte"] = new JsonArray("/email", needle) });
-            conditions.Add(new() { ["lt"] = new JsonArray("/email", needle + "\uffff") });
-        }
-
-        return this.ScanAsync(AuthStore.UserTable, projectId, conditions, limit, after, rowData => Task.FromResult(
-            rowData.Body.Deserialize(IdentityJson.Default.UserRecord) is { } user && user.InstanceId == projectId ? user : null), cancellationToken);
+        var from = PlatformDirectory.Cursor(after);
+        var needle = string.IsNullOrWhiteSpace(query) ? null : query.Trim().ToLowerInvariant();
+        var end = needle + "\uffff";
+        var rows = await data.ReadAsync((db, token) => db.Users
+            .Where(user => user.InstanceId == projectId && string.Compare(user.Id, from) > 0
+                && (needle == null || string.Compare(user.Email, needle) >= 0 && string.Compare(user.Email, end) < 0))
+            .OrderBy(user => user.Id).Take(limit + 1)
+            .Select(user => new { User = user, Links = db.ProviderLinks.Where(link => link.UserId == user.Id).OrderBy(link => link.Provider).ThenBy(link => link.Subject).ToList() })
+            .ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        return PlatformDirectory.Paged([.. rows.Select(row => row.User with { LinkedProviders = [.. row.Links.Select(link => link.Identity)] })], limit, user => user.Id);
     }
 
-    /// <summary>The tenant's user, or 404.</summary>
     public async Task<UserRecord> UserAsync(string projectId, string userId, CancellationToken cancellationToken) =>
         await users.GetAsync(projectId, userId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
 
-    /// <summary>Disables or enables the tenant's user, or 404.</summary>
     public async Task<UserRecord> SetDisabledAsync(string projectId, string userId, bool disabled, CancellationToken cancellationToken) =>
         await users.SetDisabledAsync(projectId, userId, disabled, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
 
-    /// <summary>A page of the tenant's live sessions (unrevoked, unexpired, of an enabled user at its current epoch), with each record id.</summary>
     public async Task<Page<ProjectSession>> SessionsAsync(string projectId, string? userId, int limit, string? after, CancellationToken cancellationToken)
     {
         var lifetime = await sessions.GetLifetimeAsync(projectId, cancellationToken).ConfigureAwait(false);
-        var now = JsonSerializer.SerializeToNode(clock.GetUtcNow(), IdentityJson.Default.DateTimeOffset);
-        List<JsonObject> conditions = [new() { ["eq"] = new JsonArray("/revoked", false) }, new() { ["gt"] = new JsonArray("/expiresAt", now) }];
-        if (userId is not null)
+        var now = clock.GetUtcNow();
+        var from = PlatformDirectory.Cursor(after);
+        var rows = await data.ReadAsync((db, token) => db.Sessions
+            .Where(session => session.InstanceId == projectId && !session.Revoked && session.ExpiresAt > now && (userId == null || session.UserId == userId)
+                && string.Compare(session.Id, from) > 0)
+            .OrderBy(session => session.Id).Take(limit + 1)
+            .Join(db.Users, session => session.UserId, user => user.Id, (session, user) => new { Session = session, User = user })
+            .ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var next = rows.Count > limit ? rows[limit - 1].Session.Id : null;
+        List<ProjectSession> items = [];
+        foreach (var row in rows.Take(limit))
         {
-            conditions.Add(PlatformDirectory.Equal("/userId", userId));
-        }
-
-        var owners = new Dictionary<string, UserRecord?>(StringComparer.Ordinal);
-        return await this.ScanAsync(AuthStore.SessionTable, projectId, conditions, limit, after, async rowData =>
-        {
-            if (rowData.Body.Deserialize(IdentityJson.Default.SessionRecord) is not { } session || session.InstanceId != projectId)
+            var policyExpiry = row.Session.CreatedAt + lifetime;
+            var session = row.Session with { ExpiresAt = policyExpiry < row.Session.ExpiresAt ? policyExpiry : row.Session.ExpiresAt };
+            if (session.ExpiresAt > clock.GetUtcNow() && row.User is { Disabled: false } user && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp)
             {
-                return null;
-            }
-
-            var policyExpiry = session.CreatedAt + lifetime;
-            session = session with { ExpiresAt = policyExpiry < session.ExpiresAt ? policyExpiry : session.ExpiresAt };
-            if (session.ExpiresAt <= clock.GetUtcNow())
-            {
-                return null;
-            }
-
-            if (!owners.TryGetValue(session.UserId, out var user))
-            {
-                owners[session.UserId] = user = await users.GetAsync(projectId, session.UserId, cancellationToken).ConfigureAwait(false);
-            }
-
-            return user is { Disabled: false } && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp
-                ? new ProjectSession(rowData.Id, session, user.Email) : null;
-        }, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>Revokes the tenant's session with record id <paramref name="id"/>; false when there is none.</summary>
-    public async Task<bool> RevokeSessionAsync(string projectId, string id, CancellationToken cancellationToken)
-    {
-        var filter = PlatformDirectory.Filter("and", new JsonArray(PlatformDirectory.Equal("/instanceId", projectId), PlatformDirectory.Equal("$id", id)));
-        return await store.QueryAsync(AuthStore.SessionTable, filter, 1, cancellationToken).ConfigureAwait(false) is [var rowData]
-            && rowData.Body.Deserialize(IdentityJson.Default.SessionRecord) is { } session && session.InstanceId == projectId
-            && await sessions.RevokeStoredAsync(projectId, session.TokenHash, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>The tenant's OAuth clients.</summary>
-    public async Task<IReadOnlyList<OidcApplication>> ClientsAsync(string projectId, CancellationToken cancellationToken)
-    {
-        List<OidcApplication> clients = [];
-        await foreach (var rowData in store.QueryAsync(AuthStore.OidcApplicationTable, projectId, "/instanceId", projectId, cancellationToken).ConfigureAwait(false))
-        {
-            if (rowData.Body.Deserialize(OidcJson.Default.OidcApplication) is { ClientId: { } clientId } client && client.InstanceId == projectId && client.Id == clientId)
-            {
-                clients.Add(client);
+                items.Add(new ProjectSession(session.Id, session, user.Email));
             }
         }
 
-        return clients;
+        return new(items, next);
     }
 
-    /// <summary>
-    /// Registers an authorization-code client with S256 PKCE, refresh tokens and logout through OpenIddict's application
-    /// manager, with the request's tenant set to the project so its store writes into the project's instance. A
-    /// confidential client's secret is returned once; OpenIddict keeps only its hash.
-    /// </summary>
+    public async Task<bool> RevokeSessionAsync(string projectId, string id, CancellationToken cancellationToken) =>
+        await data.ReadAsync((db, token) => db.Sessions.Where(session => session.InstanceId == projectId && session.Id == id).Select(session => session.TokenHash)
+            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) is { } tokenHash
+        && await sessions.RevokeStoredAsync(projectId, tokenHash, cancellationToken).ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<OidcApplication>> ClientsAsync(string projectId, CancellationToken cancellationToken) =>
+        await data.ReadAsync((db, token) => db.OidcApplications.Where(client => client.InstanceId == projectId).OrderBy(client => client.Id).ToListAsync(token), cancellationToken)
+            .ConfigureAwait(false);
+
     public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, UserRecord caller, string projectId, string name, string type, IReadOnlyList<Uri> redirectUris, IOpenIddictApplicationManager manager, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -136,7 +90,7 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
         var secret = type == ClientTypes.Confidential ? Tokens.RandomToken(48) : null;
         var descriptor = new OpenIddictApplicationDescriptor
         {
-            ClientId = AuthStore.NewId(),
+            ClientId = AuthIds.New(),
             ClientSecret = secret,
             ClientType = type,
             ApplicationType = ApplicationTypes.Web,
@@ -173,46 +127,11 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
     public async Task AuditClientRotationAsync(string userId, string projectId, string clientId, CancellationToken cancellationToken)
     {
         var project = await platform.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        await store.TransactAsync([platform.Audit(project.Value.OrganizationId, userId, "oauth_client.rotated", clientId)], cancellationToken).ConfigureAwait(false);
+        await data.SaveAsync(platform.Audit(project.Value.OrganizationId, userId, "oauth_client.rotated", clientId), cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Deletes the tenant's client; false when there is none.</summary>
     public async Task<bool> DeleteClientAsync(string projectId, string clientId, CancellationToken cancellationToken) =>
-        await store.GetAsync(AuthStore.OidcApplicationTable, projectId, clientId, cancellationToken).ConfigureAwait(false) is { } rowData
-        && rowData.Body.Deserialize(OidcJson.Default.OidcApplication) is { } client && client.InstanceId == projectId && client.ClientId == clientId
-        && await store.CompareAndDeleteAsync(AuthStore.OidcApplicationTable, projectId, clientId, rowData.Version, cancellationToken).ConfigureAwait(false);
-
-    // Reads pages of the instance's matching records in id order, each exactly as large as the items still missing,
-    // so the answered cursor never skips an unread record.
-    private async Task<Page<T>> ScanAsync<T>(string table, string projectId, IReadOnlyList<JsonObject> conditions, int limit, string? after, Func<StoredRow, Task<T?>> select, CancellationToken cancellationToken)
-        where T : class
-    {
-        List<T> items = [];
-        var cursor = after;
-        try
-        {
-            for (var round = 0; round < MaxRounds && items.Count < limit; round++)
-            {
-                var page = await store.PageAsync(table, projectId, conditions, [], limit - items.Count, cursor, cancellationToken: cancellationToken).ConfigureAwait(false);
-                foreach (var rowData in page.Items)
-                {
-                    if (await select(rowData).ConfigureAwait(false) is { } item)
-                    {
-                        items.Add(item);
-                    }
-                }
-
-                if ((cursor = page.NextCursor) is null)
-                {
-                    break;
-                }
-            }
-        }
-        catch (StoreCursorException)
-        {
-            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", "after is not a cursor of this list.");
-        }
-
-        return new(items, cursor);
-    }
+        await data.ReadAsync((db, token) => db.OidcApplications.SingleOrDefaultAsync(client => client.InstanceId == projectId && client.Id == clientId, token), cancellationToken)
+            .ConfigureAwait(false) is { } client
+        && await data.SaveAsync(Change.Delete(client), cancellationToken).ConfigureAwait(false);
 }
