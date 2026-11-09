@@ -28,7 +28,6 @@ export const en = {
 
   footer: {
     rightsReserved: 'All rights reserved.',
-    tagline: 'Multi-region database',
     columns: {
       product: {
         title: 'Product',
@@ -181,6 +180,7 @@ export const en = {
     copied: 'Copied',
     copyAria: 'Copy code',
     tablistLabel: 'Code examples',
+    sourcePending: '(source)',
   },
 
   cta: {

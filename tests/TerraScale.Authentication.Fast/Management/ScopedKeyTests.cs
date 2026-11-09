@@ -17,13 +17,14 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
     private static readonly string[] ReadOnly = ["sql:read"];
 
     [Test]
-    public async Task A_project_key_mints_a_read_only_key_for_one_database_whose_token_reaches_only_it()
+    public async Task A_project_key_mints_a_read_only_key_for_one_database_and_a_scoped_key_mints_nothing_cannot_widen_its_parent_and_dies_with_it()
     {
         await using var oidc = await StartAsync();
         var (_, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("alice"));
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Agents");
-        var parent = (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/projects/{project}/api-keys", token,
+        var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
+        var parent = (await oidc.OkAsync(HttpMethod.Post, keys, token,
             new { name = "orchestrator", scopes = Orchestrator }, HttpStatusCode.Created)).GetProperty("key").GetString()!;
         var database = await oidc.CreateDatabaseIdAsync(oidc.UniqueName("agent-1"));
 
@@ -38,36 +39,24 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
         await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
         await Assert.That(access.GetClaim("database").Value).IsEqualTo(database);
         await Assert.That(access.GetClaim("scope").Value).IsEqualTo("sql:read");
-    }
 
-    [Test]
-    public async Task A_scoped_key_mints_nothing_cannot_widen_its_parent_and_dies_with_it()
-    {
-        await using var oidc = await StartAsync();
-        var (_, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("bob"));
-        var organization = await oidc.CreateOrganizationAsync(token);
-        var project = await oidc.CreateProjectAsync(token, organization, "Agents");
-        var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
-        var database = await oidc.CreateDatabaseIdAsync(oidc.UniqueName("agent-2"));
         var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "reader", scopes = ReadOnly, database }, HttpStatusCode.Created);
-        var parent = created.GetProperty("key").GetString()!;
-
-        using var widened = await MintAsync(oidc.Client, parent, new { database, access = "read_write" });
-        using var elsewhere = await MintAsync(oidc.Client, parent, new { database = await oidc.CreateDatabaseIdAsync(oidc.UniqueName("other")), access = "read" });
-        using var minted = await MintAsync(oidc.Client, parent, new { database, access = "read" });
-        var child = (await minted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!;
-        using var grandchild = await MintAsync(oidc.Client, child, new { database, access = "read" });
-
+        var reader = created.GetProperty("key").GetString()!;
+        using var widened = await MintAsync(oidc.Client, reader, new { database, access = "read_write" });
+        using var elsewhere = await MintAsync(oidc.Client, reader, new { database = await oidc.CreateDatabaseIdAsync(oidc.UniqueName("other")), access = "read" });
+        using var child = await MintAsync(oidc.Client, reader, new { database, access = "read" });
+        var childKey = (await child.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!;
+        using var grandchild = await MintAsync(oidc.Client, childKey, new { database, access = "read" });
         await Assert.That(widened.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(elsewhere.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(grandchild.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        using (var live = await oidc.ApiKeyTokenAsync(child))
+        using (var live = await oidc.ApiKeyTokenAsync(childKey))
         {
             await Assert.That(live.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
         await oidc.OkAsync(HttpMethod.Delete, $"{keys}/{created.GetProperty("api_key").GetProperty("id").GetString()}", token, status: HttpStatusCode.NoContent);
-        using var revoked = await oidc.ApiKeyTokenAsync(child);
+        using var revoked = await oidc.ApiKeyTokenAsync(childKey);
         await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 

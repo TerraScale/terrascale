@@ -15,15 +15,13 @@ Use the [quickstart](/ru/getting-started/) to establish one working application 
 - [Authentication capabilities](/ru/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/ru/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
 - [Connect with psql and Postgres drivers](/ru/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
-- [Use Drizzle ORM](/ru/guides/orm-drizzle), [Use Prisma ORM](/ru/guides/orm-prisma) and [Use SQLAlchemy](/ru/guides/orm-sqlalchemy) (being updated for SQL).
 - [SQL over HTTP](/ru/guides/sql-http): run SQL statements with any HTTP client.
 - [Errors and safe retries](/ru/guides/errors): typed failures and uncertain write outcomes.
-- [Indexes](/ru/guides/indexes) (being updated for SQL).
-- [Full-text search](/ru/guides/full-text-search) and [Vector similarity search](/ru/guides/vector-search) (being updated for SQL).
+- [Indexes](/ru/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
 - [Functions](/ru/guides/functions) (being updated for SQL).
-- [Metrics, log drains and alerts](/ru/guides/monitoring) (being updated for SQL).
+- [Monitoring](/ru/guides/monitoring): usage counters, request analytics, Prometheus metrics, request logs and the status page.
 - [Backups and restore](/ru/guides/backups-and-restore) (being updated for SQL).
-- [Rename a database](/ru/guides/rename-database) (being updated for SQL).
+- [Rename a database](/ru/guides/rename-database): change a database's name from the dashboard, API, CLI or SDKs.
 - [File storage](/ru/guides/file-storage): project files in buckets with owner, role and public read and write rules.
 - [Schema migrations](/ru/guides/migrations): versioned SQL table migrations with `ts migrate`.
 - [Branches](/ru/guides/branches) (being updated for SQL).
@@ -31,7 +29,7 @@ Use the [quickstart](/ru/getting-started/) to establish one working application 
 - [Dashboard usage](/ru/guides/dashboard): customer account and database workflow.
 - [Connect an AI assistant with MCP](/ru/guides/mcp): sign in or use a personal access token to connect an assistant.
 - [Single sign-on](/ru/guides/single-sign-on): connect your identity provider over OIDC for a verified email domain (Team and Enterprise).
-- [Import an existing database](/ru/guides/import) and [Export from PostgreSQL](/ru/guides/import-postgresql) (being updated for SQL).
+- [Import data](/ru/guides/import): load rows into a database with batched SQL statements.
 
 The [zero-configuration contract](/ru/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 

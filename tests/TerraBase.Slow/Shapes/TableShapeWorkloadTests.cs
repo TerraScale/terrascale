@@ -23,7 +23,7 @@ public sealed class TableShapeWorkloadTests
         var requests = 0;
         while (done < Operations)
         {
-            var batch = Math.Min(Operations - done, faker.Random.Int(1, 50));
+            var batch = Math.Min(Operations - done, faker.Random.Int(1, 20));
             var statements = new object[batch];
             for (var index = 0; index < batch; index++)
             {

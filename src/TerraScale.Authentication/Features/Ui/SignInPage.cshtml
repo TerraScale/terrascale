@@ -20,7 +20,7 @@ else
 <p class="sub">@Model.Copy.SubRecoverySignsOut</p>
 break;
 case SignInStep.SignOutConfirm:
-<p class="sub">An application asked to sign you out of @Model.Brand.</p>
+<p class="sub">@WriteHtml(Model.SubBrand(Model.Copy.SubSignOutAsked))</p>
 break;
 case SignInStep.SignUpCode:
 @if (Model.CodeBudgetExhausted)
@@ -47,10 +47,10 @@ case SignInStep.ResetDone:
 <p class="sub">@Model.Copy.SubResetDone</p>
 break;
 case SignInStep.DeviceConfirm:
-<p class="sub">Approve only if you started this sign-in and the code matches your terminal.</p>
+<p class="sub">@Model.Copy.SubDeviceConfirm</p>
 break;
 case SignInStep.RecoveryCodes:
-<p class="sub">Each code signs you in once if you lose your authenticator. They are shown only now.</p>
+<p class="sub">@Model.Copy.SubRecoveryCodes</p>
 break;
 }
 </div>
@@ -65,7 +65,7 @@ break;
 }
 @if (Model.Error is not null || Model.Step is SignInStep.Rejected or SignInStep.NotFound)
 {
-<p class="hint">Request ID: @Model.RequestId</p>
+<p class="hint">@(Model.Copy.RequestIdLabel): @Model.RequestId</p>
 }
 @if (Model.Slug == TerraScale.Authentication.Features.Oidc.OidcIssuer.InstanceId && Model.Step is SignInStep.Email or SignInStep.SignUp && Model.Theme.Providers is { Count: > 0 } providers)
 {
@@ -172,14 +172,14 @@ case SignInStep.SignedIn:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@Model.Copy.SignedIn</p></div>
 break;
 case SignInStep.Sso:
-<div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">Change</a></div>
-<a class="btn" href="@Model.SsoUrl">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">@Model.Copy.Change</a></div>
+<a class="btn" href="@Model.SsoUrl">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignedOut:
-<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg><p>You are signed out.</p></div>
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg><p>@Model.Copy.SignedOut</p></div>
 @if (Model.ReturnTo is { } returnTo)
 {
-<a class="btn" href="@returnTo">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn" href="@returnTo">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 }
 break;
 case SignInStep.SignOutConfirm:
@@ -188,15 +188,15 @@ case SignInStep.SignOutConfirm:
 {
 <input type="hidden" name="@field.Key" value="@field.Value">
 }
-<button type="submit" name="confirm" value="1"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg>Sign out</button>
+<button type="submit" name="confirm" value="1"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg>@Model.Copy.SignOut</button>
 </form>
 break;
 case SignInStep.Rejected:
 @if (Model.Detail is { } detail)
 {
-<p class="hint">Error code: @detail</p>
+<p class="hint">@Model.Copy.ErrorCodeLabel @detail</p>
 }
-<a class="btn" href="@Model.Link("sign-in")">Back to sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn" href="@Model.Link("sign-in")">@Model.Copy.BackToSignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignUp:
 <form method="post" action="/ui/@Model.Slug/sign-up">
@@ -298,21 +298,21 @@ break;
 case SignInStep.DeviceEnter:
 <form method="get" action="/ui/@Model.Slug/device">
 <div class="field">
-<label for="device-code">Code from your terminal</label>
+<label for="device-code">@Model.Copy.DeviceCodeTerminal</label>
 <input id="device-code" class="code" name="user_code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" placeholder="0000-0000-0000" required autofocus value="@Model.UserCode">
 </div>
-<button type="submit">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></button>
+<button type="submit">@Model.Copy.Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></button>
 </form>
 @if (Model.Account is { } enterAccount)
 {
-<p class="alt">Signed in as <strong>@enterAccount</strong></p>
+<p class="alt">@Model.Copy.SignedInAs <strong>@enterAccount</strong></p>
 }
 break;
 case SignInStep.DeviceConfirm:
-<div class="device-code" aria-label="Device code">@Model.UserCode</div>
+<div class="device-code" aria-label="@Model.Copy.DeviceCodeAria">@Model.UserCode</div>
 <dl class="facts">
-<div><dt>Application</dt><dd>@Model.ClientName</dd></div>
-<div><dt>Account</dt><dd>@Model.Account</dd></div>
+<div><dt>@Model.Copy.Application</dt><dd>@Model.ClientName</dd></div>
+<div><dt>@Model.Copy.Account</dt><dd>@Model.Account</dd></div>
 </dl>
 @if (Model.Scopes is { Count: > 0 } scopes)
 {
@@ -321,13 +321,13 @@ case SignInStep.DeviceConfirm:
 <form method="post" action="/ui/@Model.Slug/device">
 <input type="hidden" name="user_code" value="@Model.UserCode">
 <div class="actions">
-<button type="submit" name="decision" value="approve"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-terminal"></use></svg>Approve</button>
-<button type="submit" name="decision" value="deny" class="secondary">Deny</button>
+<button type="submit" name="decision" value="approve"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-terminal"></use></svg>@Model.Copy.Approve</button>
+<button type="submit" name="decision" value="deny" class="secondary">@Model.Copy.Deny</button>
 </div>
 </form>
 break;
 case SignInStep.DeviceApproved:
-<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>Device approved. Return to your terminal.</p></div>
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@Model.Copy.DeviceApproved</p></div>
 break;
 case SignInStep.Mfa:
 <form method="post" action="/ui/@Model.Slug/sign-in/mfa">
@@ -335,58 +335,58 @@ case SignInStep.Mfa:
 <input type="hidden" name="email" value="@Model.Email">
 <input type="hidden" name="challenge" value="@Model.Challenge">
 <div class="field">
-<label for="mfa-code">Authenticator or recovery code</label>
+<label for="mfa-code">@Model.Copy.AuthOrRecoveryCode</label>
 <input id="mfa-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required autofocus>
 </div>
-<button type="submit">Verify and sign in</button>
+<button type="submit">@Model.Copy.VerifySignIn</button>
 </form>
-<div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Start over</a></div>
+<div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.StartOver</a></div>
 break;
 case SignInStep.Security:
 <dl class="facts">
-<div><dt>Account</dt><dd>@Model.Account</dd></div>
-<div><dt>Two-factor authentication</dt><dd>@(Model.MfaEnabled ? "On (authenticator app)" : "Off")</dd></div>
+<div><dt>@Model.Copy.Account</dt><dd>@Model.Account</dd></div>
+<div><dt>@Model.Copy.TitleMfa</dt><dd>@(Model.MfaEnabled ? Model.Copy.MfaOn : Model.Copy.MfaOff)</dd></div>
 @if (Model.MfaEnabled)
 {
-<div><dt>Recovery codes left</dt><dd>@Model.RecoveryRemaining</dd></div>
+<div><dt>@Model.Copy.RecoveryCodesLeft</dt><dd>@Model.RecoveryRemaining</dd></div>
 }
 </dl>
 @if (Model.AccountUrl is { } securityUrl)
 {
-<a class="btn secondary" href="@securityUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Back to account</a>
+<a class="btn secondary" href="@securityUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.BackToAccount</a>
 }
 @if (Model.MfaEnabled)
 {
 <form method="post" action="/ui/@Model.Slug/security/recovery/regenerate">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
-<label for="regenerate-code">Authenticator or recovery code</label>
+<label for="regenerate-code">@Model.Copy.AuthOrRecoveryCode</label>
 <input id="regenerate-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
 </div>
-<p class="hint">The old codes stop working; the new ones are shown once.</p>
-<button type="submit" class="secondary">Regenerate recovery codes</button>
+<p class="hint">@Model.Copy.HintRegenerate</p>
+<button type="submit" class="secondary">@Model.Copy.RegenerateRecovery</button>
 </form>
 <form method="post" action="/ui/@Model.Slug/security/totp/disable">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
-<label for="disable-code">Authenticator or recovery code</label>
+<label for="disable-code">@Model.Copy.AuthOrRecoveryCode</label>
 <input id="disable-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
 </div>
-<p class="hint">Turning it off signs out your other sessions.</p>
-<button type="submit" class="secondary">Turn off two-factor authentication</button>
+<p class="hint">@Model.Copy.HintDisableMfa</p>
+<button type="submit" class="secondary">@Model.Copy.TurnOffMfa</button>
 </form>
 }
 else
 {
 <form method="post" action="/ui/@Model.Slug/security/totp">
 <input type="hidden" name="next" value="@Model.Next">
-<button type="submit"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>Set up an authenticator app</button>
+<button type="submit"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@Model.Copy.SetUpAuthenticator</button>
 </form>
 }
-<dl class="facts" aria-label="Passkeys">
+<dl class="facts" aria-label="@Model.Copy.PasskeysAria">
 @if (Model.Passkeys.Count == 0)
 {
-<div><dt>Passkeys</dt><dd>None</dd></div>
+<div><dt>@Model.Copy.PasskeysAria</dt><dd>@Model.Copy.None</dd></div>
 }
 </dl>
 @foreach (var passkey in Model.Passkeys)
@@ -395,65 +395,65 @@ else
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="id" value="@passkey.CredentialId">
 <div class="field">
-<label for="passkey-name-@passkey.CredentialId">Passkey name</label>
+<label for="passkey-name-@passkey.CredentialId">@Model.Copy.PasskeyName</label>
 <input id="passkey-name-@passkey.CredentialId" name="name" maxlength="64" autocomplete="off" value="@passkey.Name">
 </div>
-<p class="hint">Added @passkey.CreatedAt.ToString("d", CultureInfo.InvariantCulture) · @(passkey.LastUsedAt is { } lastUsed ? "Last used " + lastUsed.ToString("d", CultureInfo.InvariantCulture) : "Never used")</p>
-<button type="submit" class="secondary">Rename</button>
+<p class="hint">@string.Format(CultureInfo.InvariantCulture, Model.Copy.PasskeyAdded, passkey.CreatedAt.ToString("d", CultureInfo.InvariantCulture)) · @(passkey.LastUsedAt is { } lastUsed ? string.Format(CultureInfo.InvariantCulture, Model.Copy.PasskeyLastUsed, lastUsed.ToString("d", CultureInfo.InvariantCulture)) : Model.Copy.PasskeyNeverUsed)</p>
+<button type="submit" class="secondary">@Model.Copy.Rename</button>
 </form>
 <form method="post" action="/ui/@Model.Slug/security/passkeys/delete">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="id" value="@passkey.CredentialId">
 <div class="field">
-<label for="passkey-code-@passkey.CredentialId">Authenticator or recovery code</label>
+<label for="passkey-code-@passkey.CredentialId">@Model.Copy.AuthOrRecoveryCode</label>
 <input id="passkey-code-@passkey.CredentialId" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
 </div>
-<button type="submit" class="secondary">Remove</button>
+<button type="submit" class="secondary">@Model.Copy.Remove</button>
 </form>
 }
 <form id="passkey-add" data-options="/ui/@Model.Slug/security/passkeys/options" data-verify="/ui/@Model.Slug/security/passkeys/verify">
 <div class="field">
-<label for="passkey-name">Passkey name</label>
+<label for="passkey-name">@Model.Copy.PasskeyName</label>
 <input id="passkey-name" name="name" maxlength="100" autocomplete="off" placeholder="YubiKey 5C">
 </div>
-<button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>Add passkey</button>
+<button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@Model.Copy.AddPasskey</button>
 </form>
 break;
 case SignInStep.TotpSetup:
-<img src="@Model.QrCode" alt="QR code to add @Model.Brand to your authenticator app" width="240" height="240">
-<dl class="facts"><div><dt>Setup key</dt><dd><code>@Model.Secret</code></dd></div></dl>
+<img src="@Model.QrCode" alt="@WriteHtml(Model.SubBrand(Model.Copy.QrAlt))" width="240" height="240">
+<dl class="facts"><div><dt>@Model.Copy.SetupKey</dt><dd><code>@Model.Secret</code></dd></div></dl>
 <form method="post" action="/ui/@Model.Slug/security/totp/confirm">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
-<label for="totp-code">Code from the app</label>
+<label for="totp-code">@Model.Copy.CodeFromApp</label>
 <input id="totp-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
 </div>
-<p class="hint">Turning it on signs out your other sessions.</p>
-<button type="submit">Turn on two-factor authentication</button>
+<p class="hint">@Model.Copy.HintEnableMfa</p>
+<button type="submit">@Model.Copy.TurnOnMfa</button>
 </form>
-<div class="row"><a href="/ui/@Model.Slug/security"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Cancel</a></div>
+<div class="row"><a href="/ui/@Model.Slug/security"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.Cancel</a></div>
 break;
 case SignInStep.RecoveryCodes:
-<ul class="facts" aria-label="Recovery codes">
+<ul class="facts" aria-label="@Model.Copy.RecoveryCodesAria">
 @foreach (var recovery in Model.RecoveryCodes)
 {
 <li><code>@recovery</code></li>
 }
 </ul>
-<a class="btn" href="/ui/@Model.Slug/security">I saved them<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn" href="/ui/@Model.Slug/security">@Model.Copy.ISavedThem<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 @if (Model.AccountUrl is { } savedUrl)
 {
-<a class="btn secondary" href="@savedUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Back to account</a>
+<a class="btn secondary" href="@savedUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>@Model.Copy.BackToAccount</a>
 }
 break;
 case SignInStep.Reauthenticate:
-<a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn" href="@Model.Link("sign-in")">@Model.Copy.SignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.DeviceDenied:
-<div class="alert" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-x"></use></svg><p>Device denied.</p></div>
+<div class="alert" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-x"></use></svg><p>@Model.Copy.DeviceDenied</p></div>
 break;
 case SignInStep.NotFound:
-<a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<a class="btn" href="@Model.Link("sign-in")">@Model.Copy.SignIn<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 }
 @functions {

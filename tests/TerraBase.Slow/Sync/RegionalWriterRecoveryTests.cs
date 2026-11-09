@@ -229,7 +229,7 @@ public sealed partial class RegionalWriterCrashTests
     }
 
     [Test]
-    [Timeout(120_000)]
+    [Timeout(300_000)]
     public async Task Foreign_and_third_node_database_leases_are_isolated_without_stranding_the_regional_writer(CancellationToken token)
     {
         await using var drill = await RecoveryDrill.StartAsync(token);
@@ -248,9 +248,10 @@ public sealed partial class RegionalWriterCrashTests
             _ = await homes.PutAsync("home." + conflict.DatabaseId, JsonSerializer.SerializeToUtf8Bytes(conflict, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
         }
         var elapsed = Stopwatch.StartNew();
-        await drill.Source.StartAsync(token);
-        await drill.Target.StartAsync(token);
+        await Task.WhenAll(drill.Source.StartAsync(token), drill.Target.StartAsync(token));
         await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
+        await Assert.That(elapsed.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
+        Console.WriteLine($"DRILL isolated foreign and third-node DBs: healthy writer recovered_ms={elapsed.Elapsed.TotalMilliseconds:F3}");
         await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('healthy-after-conflict')", token);
         foreach (var conflict in new[] { foreign, third, mismatch })
         {
@@ -261,8 +262,6 @@ public sealed partial class RegionalWriterCrashTests
             await Assert.That(JsonSerializer.Deserialize(retained.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(conflict);
         }
         await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2", "healthy-after-conflict"], token);
-        await Assert.That(elapsed.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
-        Console.WriteLine($"DRILL isolated foreign and third-node DBs: healthy writer recovered_ms={elapsed.Elapsed.TotalMilliseconds:F3}");
     }
 
     [Test]

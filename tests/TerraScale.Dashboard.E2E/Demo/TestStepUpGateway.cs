@@ -19,7 +19,7 @@ namespace TerraScale.Dashboard.E2E
         public bool OmitDeletionAuthorization { get; set; }
         public DateTimeOffset? ExpiresAt { get; set; }
 
-        public Task<StepUpChallenge> BeginAsync(SessionRecord session, string purpose, string audience, string returnUri, CancellationToken cancellationToken)
+        public Task<StepUpChallenge> BeginAsync(SessionRecord session, string purpose, string audience, string? organizationId, string returnUri, CancellationToken cancellationToken)
         {
             if (resolve(session.AccessToken)?.UserId != session.UserId)
             {

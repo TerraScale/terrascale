@@ -10,48 +10,43 @@ namespace TerraScale.Dashboard.Features.Organizations
 
     public static class ProjectSettingsEndpoints
     {
-        public static IEndpointRouteBuilder MapProjectSettings(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
         {
-            endpoints.MapGet("/project", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
+                return AccountRequest.LoginRedirect(http);
+            }
 
-                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
-                return Page(http, context, context.Project!.Name, renamed: http.Request.Query["renamed"] == "1");
-            });
-            endpoints.MapPost("/api/v1/dashboard/project/rename", async Task<IResult> (HttpContext http, DashboardSessions sessions,
-                AccountService accounts, OrganizationOperations operations) =>
+            context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
+            return Page(http, context, context.Project!.Name, renamed: http.Request.Query["renamed"] == "1");
+        }
+
+        internal static async Task<IResult> RenameAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationOperations operations)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
+                return Results.Unauthorized();
+            }
 
-                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                var name = form["name"].ToString();
-                if (!Csrf.Validate(http, form))
-                {
-                    return Page(http, context, name, "The form expired. Reload project settings and try again.", 400);
-                }
+            context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            var name = form["name"].ToString();
+            if (!Csrf.Validate(http, form))
+            {
+                return Page(http, context, name, "The form expired. Reload project settings and try again.", 400);
+            }
 
-                try
-                {
-                    await operations.UpdateProjectAsync(context, name, form["region"].ToString(), form["backupRegion"].ToString(),
-                        [.. form["regions"].Select(value => value ?? "")], http.RequestAborted);
-                    return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project?renamed=1", replace: true));
-                }
-                catch (AccountAccessException error) { return Page(http, context, name, error.Message, error.StatusCode); }
-                catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-                { return Page(http, context, name, "The rename could not be confirmed. Reload project settings to check its current name, then retry if needed.", 503); }
-            });
-            Projects.ProjectGrantEndpoints.MapProjectGrants(endpoints);
-            return endpoints;
+            try
+            {
+                await operations.UpdateProjectAsync(context, name, form["region"].ToString(), form["backupRegion"].ToString(),
+                    [.. form["regions"].Select(value => value ?? "")], http.RequestAborted);
+                return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project?renamed=1", replace: true));
+            }
+            catch (AccountAccessException error) { return Page(http, context, name, error.Message, error.StatusCode); }
+            catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+            { return Page(http, context, name, "The rename could not be confirmed. Reload project settings to check its current name, then retry if needed.", 503); }
         }
 
         private static RazorSlices.RazorSlice<ProjectSettingsPage> Page(HttpContext http, AccountContext context, string name, string error = "", int status = 200, bool renamed = false)

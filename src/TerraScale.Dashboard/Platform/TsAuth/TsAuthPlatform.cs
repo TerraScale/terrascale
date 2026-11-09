@@ -51,11 +51,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         public Task DeleteOrganizationAsync(
             string accessToken,
             string organizationId,
+            string stepUpProof,
             CancellationToken cancellationToken = default)
         {
             return client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, $"/v1/terrascale/organizations/{Id(organizationId)}",
                 null, TsAuthIntegrationJsonContext.Default.TsAuthPlatformName,
-                TsAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
+                TsAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken, Proof(stepUpProof));
         }
 
         public Task<TsAuthPlatformPage<TsAuthPlatformMember>> ListMembersAsync(
@@ -302,12 +303,13 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             string accessToken,
             string organizationId,
             TsAuthPlatformStartOwnershipTransfer request,
+            string stepUpProof,
             CancellationToken cancellationToken = default)
         {
             return client.SendAuthenticatedJsonAsync(HttpMethod.Post, $"/v1/terrascale/organizations/{Id(organizationId)}/ownership-transfer",
                 request ?? throw new ArgumentNullException(nameof(request)), TsAuthIntegrationJsonContext.Default.TsAuthPlatformStartOwnershipTransfer,
                 TsAuthIntegrationJsonContext.Default.TsAuthPlatformOwnershipTransfer,
-                TsAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
+                TsAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken, Proof(stepUpProof));
         }
 
         public Task<TsAuthPlatformOwnershipTransfer> GetOwnershipTransferAsync(

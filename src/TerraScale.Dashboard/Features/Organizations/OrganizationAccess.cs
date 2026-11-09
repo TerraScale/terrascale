@@ -13,7 +13,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         Task RevokeInvitationAsync(AccountContext context, string id, CancellationToken cancellationToken);
         Task ChangeRoleAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken);
         Task RemoveMemberAsync(AccountContext context, string userId, CancellationToken cancellationToken);
-        Task TransferAsync(AccountContext context, string operation, string? userId, CancellationToken cancellationToken);
+        Task TransferAsync(AccountContext context, string operation, string? userId, string? stepUpProof, CancellationToken cancellationToken);
     }
 
     // Members, invitations, ownership transfer and audit events are ts-auth's. ts-auth
@@ -82,7 +82,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         { Manage(context); ProtectOwner(context, userId); return platform.ChangeMemberRoleAsync(context.Session, Organization(context), userId, Role(role), cancellationToken); }
         public Task RemoveMemberAsync(AccountContext context, string userId, CancellationToken cancellationToken)
         { Manage(context); ProtectOwner(context, userId); return platform.RemoveMemberAsync(context.Session, Organization(context), userId, cancellationToken); }
-        public async Task TransferAsync(AccountContext context, string operation, string? userId, CancellationToken cancellationToken)
+        public async Task TransferAsync(AccountContext context, string operation, string? userId, string? stepUpProof, CancellationToken cancellationToken)
         {
             var org = Organization(context);
             switch (operation)
@@ -98,7 +98,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                         throw new AccountAccessException("Choose another active member as the new owner.", 422);
                     }
 
-                    await platform.StartOwnershipTransferAsync(context.Session, org, userId, cancellationToken); break;
+                    await platform.StartOwnershipTransferAsync(context.Session, org, userId, stepUpProof ?? throw new AccountAccessException("A fresh confirmation is required.", 403, "step_up_required"), cancellationToken); break;
                 case "confirm":
                     try { await platform.ConfirmOwnershipTransferAsync(context.Session, org, cancellationToken); }
                     catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status403Forbidden)

@@ -15,15 +15,13 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Authentication capabilities](/zh-cn/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/zh-cn/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
 - [Connect with psql and Postgres drivers](/zh-cn/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
-- [Use Drizzle ORM](/zh-cn/guides/orm-drizzle), [Use Prisma ORM](/zh-cn/guides/orm-prisma) and [Use SQLAlchemy](/zh-cn/guides/orm-sqlalchemy) (being updated for SQL).
 - [SQL over HTTP](/zh-cn/guides/sql-http): run SQL statements with any HTTP client.
 - [Errors and safe retries](/zh-cn/guides/errors): typed failures and uncertain write outcomes.
-- [Indexes](/zh-cn/guides/indexes) (being updated for SQL).
-- [Full-text search](/zh-cn/guides/full-text-search) and [Vector similarity search](/zh-cn/guides/vector-search) (being updated for SQL).
+- [Indexes](/zh-cn/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
 - [Functions](/zh-cn/guides/functions) (being updated for SQL).
-- [Metrics, log drains and alerts](/zh-cn/guides/monitoring) (being updated for SQL).
+- [Monitoring](/zh-cn/guides/monitoring): usage counters, request analytics, Prometheus metrics, request logs and the status page.
 - [Backups and restore](/zh-cn/guides/backups-and-restore) (being updated for SQL).
-- [Rename a database](/zh-cn/guides/rename-database) (being updated for SQL).
+- [Rename a database](/zh-cn/guides/rename-database): change a database's name from the dashboard, API, CLI or SDKs.
 - [File storage](/zh-cn/guides/file-storage): project files in buckets with owner, role and public read and write rules.
 - [Schema migrations](/zh-cn/guides/migrations): versioned SQL table migrations with `ts migrate`.
 - [Branches](/zh-cn/guides/branches) (being updated for SQL).
@@ -31,7 +29,7 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Dashboard usage](/zh-cn/guides/dashboard): customer account and database workflow.
 - [Connect an AI assistant with MCP](/zh-cn/guides/mcp): sign in or use a personal access token to connect an assistant.
 - [Single sign-on](/zh-cn/guides/single-sign-on): connect your identity provider over OIDC for a verified email domain (Team and Enterprise).
-- [Import an existing database](/zh-cn/guides/import) and [Export from PostgreSQL](/zh-cn/guides/import-postgresql) (being updated for SQL).
+- [Import data](/zh-cn/guides/import): load rows into a database with batched SQL statements.
 
 The [zero-configuration contract](/zh-cn/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 

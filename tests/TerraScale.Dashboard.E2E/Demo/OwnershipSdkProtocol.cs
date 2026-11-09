@@ -168,7 +168,9 @@ namespace TerraScale.Dashboard.E2E
                         return Error(400, "invalid_request");
                     }
 
-                    await workspace.StartOwnershipTransferAsync(session, organization, nominee, token);
+                    Require(http.Request.Headers.ContainsKey("X-TerraScale-Step-Up-Proof"), "Ownership transfer start carries a step-up proof.");
+                    await workspace.StartOwnershipTransferAsync(session, organization, nominee,
+                        http.Request.Headers["X-TerraScale-Step-Up-Proof"].ToString(), token);
                     Interlocked.Increment(ref transferStarts);
                     return Json((await workspace.GetOwnershipTransferAsync(session, organization, token))!, 201);
                 case (["ownership-transfer", "confirm"], "POST"):

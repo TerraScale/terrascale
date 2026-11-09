@@ -1,6 +1,6 @@
 @inherits RazorSlice<EmailChangeCancelPageModel>
 @implements IUsesLayout<HostedLayout, HostedLayoutModel>
-<div class="head"><h1>Cancel email change</h1></div>
+<div class="head"><h1>@Model.Copy.TitleCancelEmailChange</h1></div>
 @if (Model.Done is { } done)
 {
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@done</p></div>
@@ -10,10 +10,10 @@ else
 <form method="post" action="/ui/terrascale/email-change/cancel">
 <input type="hidden" name="user" value="@Model.User">
 <input type="hidden" name="token" value="@Model.Token">
-<button type="submit">Cancel the change and sign out everywhere</button>
+<button type="submit">@Model.Copy.CancelEmailChangeButton</button>
 </form>
 }
 @functions {
     /// <inheritdoc />
-    public HostedLayoutModel LayoutModel => new("Cancel email change", Model.Nonce);
+    public HostedLayoutModel LayoutModel => new(Model.Copy.TitleCancelEmailChange, Model.Nonce, locale: Model.ResolvedLocale);
 }

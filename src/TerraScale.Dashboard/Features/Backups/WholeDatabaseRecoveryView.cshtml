@@ -4,6 +4,7 @@
 @using TerraScale.Dashboard.Features.Databases
 <main class="ts-page">
 @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "backups")))
+@if(Model.Restore is not null){@(await RenderPartialAsync<TerraScale.Dashboard.Features.Backups.WholeDatabaseRestoreStatusView, TerraScale.Dashboard.Features.Backups.WholeDatabaseRecoveryPage>(Model))}
 <section class="ts-card" aria-labelledby="pitr-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="pitr-title">Restore database at UTC time</h2></div></header><div class="ts-card-body ts-stack-lg">
 @if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code></p></div>}
 <form method="get" class="ts-form" aria-label="Select PITR source bucket"><div class="ts-field"><label class="ts-label" for="pitr-destination">Backup source</label><select class="ts-select" id="pitr-destination" name="destination"><option value="platform" selected="@(Model.Destination == "platform" ? "selected" : null)">Platform</option><option value="customer" selected="@(Model.Destination == "customer" ? "selected" : null)">Customer</option></select></div><button class="ts-btn ts-btn-secondary" type="submit">Read retained window</button></form>

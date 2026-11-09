@@ -100,12 +100,25 @@ public sealed class PasskeySignInTests(TerraBaseFixture fixture)
         var t = new byte[32];
         Array.Copy(rawSignature, r, 32);
         Array.Copy(rawSignature, 32, t, 0, 32);
-        byte[] Der(byte[] v) => [0x02, (byte)v.Length, .. v];
-        var signature = new byte[2 + Der(r).Length + Der(t).Length];
+        static byte[] Der(byte[] v)
+        {
+            var start = 0;
+            while (start < v.Length - 1 && v[start] == 0)
+            {
+                start++;
+            }
+
+            var magnitude = v[start..];
+            var padded = magnitude[0] >= 0x80 ? [0x00, .. magnitude] : magnitude;
+            return [0x02, (byte)padded.Length, .. padded];
+        }
+        var derR = Der(r);
+        var derT = Der(t);
+        var signature = new byte[2 + derR.Length + derT.Length];
         signature[0] = 0x30;
-        signature[1] = (byte)(Der(r).Length + Der(t).Length);
-        Der(r).CopyTo(signature, 2);
-        Der(t).CopyTo(signature, 2 + Der(r).Length);
+        signature[1] = (byte)(derR.Length + derT.Length);
+        derR.CopyTo(signature, 2);
+        derT.CopyTo(signature, 2 + derR.Length);
         var id = PasskeyCredentials.Base64UrlEncode(credentialId);
         var request = new HttpRequestMessage(HttpMethod.Post, $"/ui/{Slug}/sign-in/passkey")
         {

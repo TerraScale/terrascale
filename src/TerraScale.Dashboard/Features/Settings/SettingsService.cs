@@ -107,16 +107,6 @@ namespace TerraScale.Dashboard.Features.Settings
             context = await FreshAsync(context, true, cancellationToken);
             await backups.SetPolicyAsync(context, databaseId, fullBackupCron, incrementalBackupCron, retentionDays, cancellationToken);
         }
-        public async Task RestoreBackupAsync(AccountContext context, string databaseId, string backupId, CancellationToken cancellationToken)
-        {
-            context = await FreshAsync(context, true, cancellationToken);
-            if (backupId.Length > 0 && !TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(backupId))
-            {
-                throw new AccountAccessException("That backup ID is not a verified provider restore point.", 400);
-            }
-
-            await backups.RestoreAsync(context, databaseId, backupId, "", cancellationToken);
-        }
         private async Task<AccountContext> FreshAsync(AccountContext context, bool manage, CancellationToken cancellationToken)
         {
             var fresh = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);

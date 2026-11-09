@@ -163,9 +163,9 @@ ts.set_database_placement(db.id, replica_regions=["sjc", "fra"])
 home-observed replica pull progress. `set_database_placement` takes exactly one of
 `replica_regions` or `all_regions`. `move_database_home` waits for the move with no read timeout and resends only on
 `503 move_unresolved` (at most 5 times, after `Retry-After` or 1 s). Tests cover the recorded fixtures in
-`sdk/dotnet/contracts/terrabase/placement/`; live producer qualification has not run.
-
-Automatic all-regions placement and moving the home region are coming on the server.
+`sdk/dotnet/contracts/terrabase/placement/`; live producer qualification has not run. All-regions placement
+(`all_regions`) keeps a replica in every serving region, including regions added later; `move_database_home` moves
+the home to a replica region (`ts db move-home`, `ts db placement ... -all-regions`).
 
 ## API
 
@@ -184,8 +184,9 @@ without `home_region` the called region is the home.
 A database has one home region for writes and can have encrypted read replicas in other serving regions.
 REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
-preserve read-your-writes; use the home for REST reads that must see a previous write. Automatic all-regions
-placement is coming; use an explicit replica-region list today.
+preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
+placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
+serving region; otherwise set an explicit replica-region list.
 
 The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
 storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data

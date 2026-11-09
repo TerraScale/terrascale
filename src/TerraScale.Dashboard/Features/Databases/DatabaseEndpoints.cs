@@ -28,11 +28,6 @@ namespace TerraScale.Dashboard.Features.Databases
         public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)
         {
             endpoints.MapWholeDatabaseRecovery();
-            endpoints.MapDatabaseSettings();
-            endpoints.MapDatabaseGrants();
-            endpoints.MapDatabasePlacement();
-            endpoints.MapDatabaseLogs();
-            endpoints.MapDatabaseFunctions();
             return endpoints;
         }
 

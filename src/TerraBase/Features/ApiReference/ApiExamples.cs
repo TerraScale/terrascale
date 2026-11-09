@@ -111,6 +111,7 @@ internal static class ApiExamples
         "readyz" => $$"""{"status":"{{(status == "503" ? "unavailable" : "ready")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "createDatabase" or "setDatabaseTtl" => Expiring,
         "getDatabase" or "updateDatabase" or "clearDatabaseTtl" or "moveDatabaseHome" => Database,
+        "getDatabaseRegions" => """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","homeRegion":"gru-1","observedAt":"2026-10-07T12:00:00Z","replicas":[{"region":"sjc-1","lagMs":120.5,"lastPulledAt":"2026-10-07T12:00:09Z","lastVerified":"2026-10-07T11:58:00Z","revision":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}]}""",
         "putReadGrant" or "getReadGrant" => ReadGrant,
         "listReadGrants" => "{\"grants\":[" + ReadGrant + "]}",
         "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"expiresAt":"2026-10-07T13:00:00Z"}""",

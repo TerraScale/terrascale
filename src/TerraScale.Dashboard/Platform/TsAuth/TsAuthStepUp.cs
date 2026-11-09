@@ -6,7 +6,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
     public sealed record TsAuthStepUpRequest(
         [property: JsonPropertyName("purpose")] string Purpose,
         [property: JsonPropertyName("audience")] string Audience,
-        [property: JsonPropertyName("return_uri")] string ReturnUri);
+        [property: JsonPropertyName("return_uri")] string ReturnUri,
+        [property: JsonPropertyName("organization_id")] string? OrganizationId = null);
 
     public sealed record TsAuthStepUp(
         [property: JsonPropertyName("proof")] string Proof,

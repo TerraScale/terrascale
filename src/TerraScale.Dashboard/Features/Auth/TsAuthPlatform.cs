@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Auth
         // Ends every ts-auth sign-in of the account on every device, this one included; API keys stay valid.
         Task SignOutEverywhereAsync(SessionRecord session, CancellationToken cancellationToken);
         // Owner only; ts-auth refuses with not_empty while the organization still has projects.
-        Task DeleteOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
+        Task DeleteOrganizationAsync(SessionRecord session, string organizationId, string stepUpProof, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task ChangeMemberRoleAsync(SessionRecord session, string organizationId, string userId, string role, CancellationToken cancellationToken);
         Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken);
@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.Features.Auth
         Task<TsAuthPlatformAcceptedInvitation> AcceptInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken);
         Task DeclineInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken);
         Task<TsAuthPlatformOwnershipTransfer?> GetOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
-        Task StartOwnershipTransferAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken);
+        Task StartOwnershipTransferAsync(SessionRecord session, string organizationId, string userId, string stepUpProof, CancellationToken cancellationToken);
         Task ConfirmOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task CancelOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
@@ -80,9 +80,9 @@ namespace TerraScale.Dashboard.Features.Auth
             return PlatformAsync(() => Client().Platform.SignOutEverywhereAsync(Bearer(session), cancellationToken));
         }
 
-        public Task DeleteOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+        public Task DeleteOrganizationAsync(SessionRecord session, string organizationId, string stepUpProof, CancellationToken cancellationToken)
         {
-            return PlatformAsync(() => Client().Platform.DeleteOrganizationAsync(Bearer(session), Id(organizationId), cancellationToken));
+            return PlatformAsync(() => Client().Platform.DeleteOrganizationAsync(Bearer(session), Id(organizationId), stepUpProof, cancellationToken));
         }
 
         public Task<IReadOnlyList<TsAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
@@ -200,9 +200,9 @@ namespace TerraScale.Dashboard.Features.Auth
             catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { return null; }
         }
 
-        public Task StartOwnershipTransferAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken)
+        public Task StartOwnershipTransferAsync(SessionRecord session, string organizationId, string userId, string stepUpProof, CancellationToken cancellationToken)
         {
-            return PlatformAsync(() => Client().Platform.StartOwnershipTransferAsync(Bearer(session), Id(organizationId), new(Id(userId)), cancellationToken));
+            return PlatformAsync(() => Client().Platform.StartOwnershipTransferAsync(Bearer(session), Id(organizationId), new(Id(userId)), stepUpProof, cancellationToken));
         }
 
         public Task ConfirmOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)

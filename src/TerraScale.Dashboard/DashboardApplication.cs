@@ -27,13 +27,17 @@ using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Features.Settings;
 using TerraScale.Dashboard.Features.FileStorage;
+using TerraScale.Dashboard.Features.Functions;
+using TerraScale.Dashboard.Features.Logs;
+using TerraScale.Dashboard.Features.Organizations.Sso;
+using TerraScale.Dashboard.Features.Organizations.Wizard;
+using TerraScale.Dashboard.Platform.Contracts;
 using TerraScale.Dashboard.Platform.Assets;
 using TerraScale.Dashboard.Platform.Development;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.Dashboard.Platform.Contracts;
 using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard
@@ -218,6 +222,57 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<SupportRequestEndpoint>(),
                 EndpointRegistration.Create<ProjectInvitationsPageEndpoint>(),
                 EndpointRegistration.Create<RevokeProjectInvitationEndpoint>(),
+                EndpointRegistration.Create<AnalyticsPageEndpoint>(),
+                EndpointRegistration.Create<DatabaseGrantsEndpoint>(),
+                EndpointRegistration.Create<DatabaseGrantsDeleteEndpoint>(),
+                EndpointRegistration.Create<DatabasePlacementEndpoint>(),
+                EndpointRegistration.Create<DatabaseMoveHomeEndpoint>(),
+                EndpointRegistration.Create<DatabaseSettingsPageEndpoint>(),
+                EndpointRegistration.Create<RenameDatabaseEndpoint>(),
+                EndpointRegistration.Create<FunctionsPageEndpoint>(),
+                EndpointRegistration.Create<DeleteFunctionEndpoint>(),
+                EndpointRegistration.Create<HomePageEndpoint>(),
+                EndpointRegistration.Create<HomeRegionsEndpoint>(),
+                EndpointRegistration.Create<DatabaseLogsPageEndpoint>(),
+                EndpointRegistration.Create<LogDrainEndpoint>(),
+                EndpointRegistration.Create<LogDrainDeleteEndpoint>(),
+                EndpointRegistration.Create<AlertsPageEndpoint>(),
+                EndpointRegistration.Create<CreateAlertEndpoint>(),
+                EndpointRegistration.Create<DeleteAlertEndpoint>(),
+                EndpointRegistration.Create<AlertThresholdEndpoint>(),
+                EndpointRegistration.Create<ProjectSettingsPageEndpoint>(),
+                EndpointRegistration.Create<ProjectRenameEndpoint>(),
+                EndpointRegistration.Create<ProjectMembersPageEndpoint>(),
+                EndpointRegistration.Create<ProjectGrantPostEndpoint>(),
+                EndpointRegistration.Create<OrganizationSsoSaveEndpoint>(),
+                EndpointRegistration.Create<OrganizationSsoVerifyEndpoint>(),
+                EndpointRegistration.Create<OrganizationSsoDeleteEndpoint>(),
+                EndpointRegistration.Create<NewOrganizationEndpoint>(),
+                EndpointRegistration.Create<StoragePageEndpoint>(),
+                EndpointRegistration.Create<StorageBucketEndpoint>(),
+                EndpointRegistration.Create<StorageRulesEndpoint>(),
+                EndpointRegistration.Create<StorageDeleteBucketEndpoint>(),
+                EndpointRegistration.Create<StorageUploadEndpoint>(),
+                EndpointRegistration.Create<StorageCompleteEndpoint>(),
+                EndpointRegistration.Create<StorageDeleteFileEndpoint>(),
+                EndpointRegistration.Create<StorageDownloadEndpoint>(),
+                EndpointRegistration.Create<ReferenceScriptEndpoint>(),
+                EndpointRegistration.Create<LoginEndpoint>(),
+                EndpointRegistration.Create<LoginCallbackEndpoint>(),
+                EndpointRegistration.Create<AuthStepUpCallbackEndpoint>(),
+                EndpointRegistration.Create<OrganizationChooseEndpoint>(),
+                EndpointRegistration.Create<AuthLogoutEndpoint>(),
+                EndpointRegistration.Create<RegisterEndpoint>(),
+                EndpointRegistration.Create<OnboardingPageEndpoint>(),
+                EndpointRegistration.Create<OnboardingStepEndpoint>(),
+                EndpointRegistration.Create<McpProtectedResourceEndpoint>(),
+                EndpointRegistration.Create<McpAuthorizationServerEndpoint>(),
+                EndpointRegistration.Create<McpRegisterEndpoint>(),
+                EndpointRegistration.Create<McpAuthorizeEndpoint>(),
+                EndpointRegistration.Create<McpConsentEndpoint>(),
+                EndpointRegistration.Create<McpTokenEndpoint>(),
+                EndpointRegistration.Create<McpUnsupportedMethodEndpoint>(),
+                EndpointRegistration.Create<McpRootUnsupportedMethodEndpoint>(),
             ]);
             builder.Services.AddTransient<ServerTiming.Handler>();
             builder.Services.AddTransient<RequestIdentity.Handler>();
@@ -391,18 +446,10 @@ namespace TerraScale.Dashboard
             app.Use((context, next) => stateInitializer is null or { Initialized: true } || context.Request.Path.StartsWithSegments("/healthz") ||
                 context.Request.Path.StartsWithSegments("/readyz") || context.Request.Path.StartsWithSegments("/health")
                 ? next(context) : throw new IOException("Dashboard state is initializing."));
-            app.MapAuth();
-            app.MapOnboarding();
             app.MapDatabaseFeatures();
-            app.MapHome();
-            app.MapAnalytics();
             app.MapSettings();
-            app.MapFileStorage();
-            app.MapAlerts();
-            app.MapOrganizations();
             app.MapBilling();
             app.MapBillingPlanChanges();
-            app.MapMcpOAuth();
             app.MapDashboardMcp();
             app.MapDevelopmentUpdates();
             app.MapDashboardContracts();

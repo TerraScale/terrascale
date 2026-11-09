@@ -6,6 +6,8 @@ title: Errors and safe retries
 
 Decide recovery from the typed status and code, and from whether an operation may have committed. A timeout does not prove a write failed.
 
+`query_canceled` (400, SQLSTATE 57014) has two messages: `query too expensive: it exceeds the work budget` when a query passes the plan's scan or work budget, and `the request exceeded its 5 s time limit; split the batch or narrow the query` when the request's shared 5 s time limit runs out. Narrow the query, add indexes or split the batch before retrying.
+
 ## Typed status codes
 
 | Response | Recovery |

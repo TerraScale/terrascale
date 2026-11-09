@@ -99,7 +99,7 @@ ts migrate up app
 ts migrate status app
 ```
 
-The branch is an independent copy, so a bad migration does not reach `app`. Branch-per-pull-request workflows are covered in [Branches](/es/guides/branches), which is being updated for SQL.
+The branch is an independent copy, so a bad migration does not reach `app`. See [Branches](/es/guides/branches) for branch-per-pull-request workflows.
 
 ## CI
 

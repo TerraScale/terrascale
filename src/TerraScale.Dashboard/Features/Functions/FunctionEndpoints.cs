@@ -14,79 +14,77 @@ namespace TerraScale.Dashboard.Features.Functions
             return services.AddSingleton<FunctionBackend>();
         }
 
-        public static IEndpointRouteBuilder MapDatabaseFunctions(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, FunctionBackend functions)
         {
-            endpoints.MapGet("/databases/{databaseId}/functions", async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, FunctionBackend functions) =>
+            var databaseId = http.Request.RouteValues["databaseId"]?.ToString() ?? "";
+            http.Response.Headers.CacheControl = "no-store";
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                http.Response.Headers.CacheControl = "no-store";
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
+                return AccountRequest.LoginRedirect(http);
+            }
+
+            DatabaseRecord database;
+            try { database = DatabaseService.Database(context, databaseId); }
+            catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }
+            var name = http.Request.Query["function"].ToString();
+            IReadOnlyList<FunctionRecord> items = [];
+            try
+            {
+                items = await functions.ListAsync(context, database, http.RequestAborted);
+                if (name.Length == 0)
                 {
-                    return AccountRequest.LoginRedirect(http);
+                    return View(http, context, database, items, null, []);
                 }
 
-                DatabaseRecord database;
-                try { database = DatabaseService.Database(context, databaseId); }
-                catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }
-                var name = http.Request.Query["function"].ToString();
+                var selected = await functions.ReadAsync(context, database, name, http.RequestAborted)
+                    ?? throw new AccountAccessException("This function does not exist.", 404);
+                var logs = await functions.LogsAsync(context, database, name, http.RequestAborted);
+                return View(http, context, database, items, selected, logs);
+            }
+            catch (Exception error) when (KnownFailure(error, http))
+            {
+                var missing = error is AccountAccessException { StatusCode: 404 };
+                return View(http, context, database, items, null, [], missing ? error.Message : Message(error), missing ? 404 : Status(error));
+            }
+        }
+
+        internal static async Task<IResult> DeleteAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, FunctionBackend functions)
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.BadRequest("Invalid form token.");
+            }
+
+            var id = form["databaseId"].ToString();
+            DatabaseRecord database;
+            try { database = DatabaseService.Database(context, id); }
+            catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }
+            try
+            {
+                await functions.DeleteAsync(context, database, form["name"].ToString(), http.RequestAborted);
+                return HttpRedirects.SeeOther(DatabaseService.Path(id, "functions"));
+            }
+            catch (Exception error) when (KnownFailure(error, http))
+            {
+                if (error is AccountAccessException { StatusCode: 403 })
+                {
+                    return Results.Problem(error.Message, statusCode: 403);
+                }
+
                 IReadOnlyList<FunctionRecord> items = [];
-                try
-                {
-                    items = await functions.ListAsync(context, database, http.RequestAborted);
-                    if (name.Length == 0)
-                    {
-                        return View(http, context, database, items, null, []);
-                    }
-
-                    var selected = await functions.ReadAsync(context, database, name, http.RequestAborted)
-                        ?? throw new AccountAccessException("This function does not exist.", 404);
-                    var logs = await functions.LogsAsync(context, database, name, http.RequestAborted);
-                    return View(http, context, database, items, selected, logs);
-                }
-                catch (Exception error) when (KnownFailure(error, http))
-                {
-                    var missing = error is AccountAccessException { StatusCode: 404 };
-                    return View(http, context, database, items, null, [], missing ? error.Message : Message(error), missing ? 404 : Status(error));
-                }
-            });
-            endpoints.MapPost("/api/v1/dashboard/functions/delete", async (HttpContext http, DashboardSessions sessions, AccountService accounts, FunctionBackend functions) =>
-            {
-                http.Response.Headers.CacheControl = "no-store";
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.BadRequest("Invalid form token.");
-                }
-
-                var id = form["databaseId"].ToString();
-                DatabaseRecord database;
-                try { database = DatabaseService.Database(context, id); }
-                catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }
-                try
-                {
-                    await functions.DeleteAsync(context, database, form["name"].ToString(), http.RequestAborted);
-                    return HttpRedirects.SeeOther(DatabaseService.Path(id, "functions"));
-                }
-                catch (Exception error) when (KnownFailure(error, http))
-                {
-                    if (error is AccountAccessException { StatusCode: 403 })
-                    {
-                        return Results.Problem(error.Message, statusCode: 403);
-                    }
-
-                    IReadOnlyList<FunctionRecord> items = [];
-                    try { items = await functions.ListAsync(context, database, http.RequestAborted); }
-                    catch (Exception again) when (KnownFailure(again, http)) { }
-                    return View(http, context, database, items, null, [], "The function was not deleted. " + Message(error), Status(error));
-                }
-            });
-            return endpoints;
+                try { items = await functions.ListAsync(context, database, http.RequestAborted); }
+                catch (Exception again) when (KnownFailure(again, http)) { }
+                return View(http, context, database, items, null, [], "The function was not deleted. " + Message(error), Status(error));
+            }
         }
 
         private static bool KnownFailure(Exception error, HttpContext http)

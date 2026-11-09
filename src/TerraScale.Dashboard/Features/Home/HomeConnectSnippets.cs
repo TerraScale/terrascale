@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.Features.Home
         public const string TokenExchange = """
         set +x
         set -o pipefail
-        read -rs TERRASCALE_API_KEY &&  # paste the key, then press Enter
+        read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY &&  # paste the key, then press Enter
         TERRASCALE_ACCESS_TOKEN="$(
           printf 'user = "%s:%s"\n' "${TERRASCALE_API_KEY%%_*}" "$TERRASCALE_API_KEY" |
             curl -sS --fail-with-body --config - -d grant_type=client_credentials \
@@ -23,11 +23,11 @@ namespace TerraScale.Dashboard.Features.Home
         """;
 
         // The Postgres wire protocol takes the dashboard API key as the password (ts-docs guides/postgres-clients).
-        public static string Postgres(string database)
+        public static string Postgres(string projectId, string database)
         {
             return $"""
         read -rs PGPASSWORD && export PGPASSWORD  # paste the API key, then press Enter
-        psql "postgresql://app@pg.terrascale.tech:5432/{Uri.EscapeDataString(database)}?sslmode=verify-full&sslrootcert=system"
+        psql "postgresql://app@pg.terrascale.tech:5432/{Uri.EscapeDataString(projectId)}/{Uri.EscapeDataString(database)}?sslmode=verify-full&sslrootcert=system"
         """;
         }
 
@@ -55,6 +55,7 @@ namespace TerraScale.Dashboard.Features.Home
                 "go" => $"go get terrascale.tech/sdk@{SdkVersions.Go}",
                 "python" => $"pip install \"terrascale @ git+https://github.com/TerraScale/terrascale@{SdkVersions.PythonRef}#subdirectory=sdk/python\"",
                 "rust" => "cargo add terrascale --git https://github.com/TerraScale/terrascale",
+                "dotnet" => "git clone --depth 1 https://github.com/TerraScale/terrascale.git\ncd terrascale/sdk/dotnet\ndotnet pack TerraScale.DotNet.slnx -c Release -o ~/.nuget/packages-terrascale\ncd ../../..\ndotnet add package TerraScale.DotNet --source ~/.nuget/packages-terrascale",
                 _ => ""
             };
         }

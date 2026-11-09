@@ -32,6 +32,6 @@ Account deletion spans independent products. Auth records only its verified resu
 
 ## Development
 
-Use `make auth-build`, `make auth-test-fast`, `make auth-test-slow` and `make auth-check` from the monorepo root. CI runs the Fast suite on every push to main. Fast uses the default full parallelism and isolated synthetic data; see Fast suite.
+Use `make auth-build`, `make auth-test-fast`, `make auth-test-slow` and `make auth-check` from the monorepo root. CI runs the Fast suite on every PR. Fast uses the default full parallelism and isolated synthetic data; see Fast suite.
 
 Deploy only green main. SDK publishing, legal terms and secret rotation for launch remain [deferred](../decisions/go-live.md).

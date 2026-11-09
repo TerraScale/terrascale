@@ -103,27 +103,6 @@ namespace TerraScale.Dashboard.Features.Backups
 
 
 
-        public async Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken)
-        {
-            var database = await NameAsync(scope, home, databaseId, cancellationToken);
-            var request = JsonSerializer.SerializeToElement(new BackupRestoreRequest(name), BackupBackendJson.Default.BackupRestoreRequest);
-            var restored = await CallAsync(scope, home, ["databases:read", "databases:write"], client => client.RestoreBackupAsync(scope.ProjectId, database, backupId, request).ResponseAsync,
-                BackupBackendJson.Default.ManagedDatabase, cancellationToken, "restore");
-            if (!TerraScaleIds.IsValid(restored.Id) || restored.ProjectId != scope.ProjectId ||
-                restored.Id == databaseId || restored.BranchedFrom != databaseId)
-            {
-                throw new HttpRequestException("Backup restoration returned an invalid database identity.");
-            }
-
-            var placed = await RestoreTargetAsync(scope, home, databaseId, restored.Name, cancellationToken);
-            if (placed.Id != restored.Id || placed.CreatedAt != restored.CreatedAt)
-            {
-                throw new HttpRequestException("Backup restoration could not be confirmed in its project.");
-            }
-
-            return placed;
-        }
-
         public async Task<ProducerRestoreOperation> StartRestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken)
         {
             var database = await NameAsync(scope, home, databaseId, cancellationToken);

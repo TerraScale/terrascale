@@ -5,6 +5,8 @@ using TerraScale.TerraBase.Contracts.Backups;
 using System.Globalization;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Backups
@@ -21,9 +23,12 @@ namespace TerraScale.Dashboard.Features.Backups
     public sealed record WholeDatabaseWindow(string Destination, TerraBaseRestoreWindow? Window, int DatabasesInUse, int DatabaseLimit);
     public sealed record WholeDatabaseRecoveryPage(ShellModel Shell, DatabaseRecord Database, string Destination = "platform", string Point = "",
         string Name = "", string ConfirmName = "", WholeDatabaseWindow? Available = null, TerraBasePointInTimePlan? Plan = null, string Error = "",
-        string ConfirmDatabase = "");
+        string ConfirmDatabase = "")
+    {
+        public RestoreProgress? Restore { get; init; }
+    }
 
-    public sealed class WholeDatabaseRecovery(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases, BackupService backups)
+    public sealed class WholeDatabaseRecovery(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases, IDashboardState state)
     {
         public async Task<(AccountContext Context, DatabaseRecord Database)> SourceAsync(AccountContext context, string id, CancellationToken ct)
         {
@@ -76,7 +81,7 @@ namespace TerraScale.Dashboard.Features.Backups
             return plan;
         }
 
-        public async Task<BackupRestoreResult> RestoreAsync(AccountContext context, string databaseId, string destination, string point, string name, string confirmName, CancellationToken ct)
+        public async Task<BackupRestoreStart> StartRestoreAsync(AccountContext context, string databaseId, string destination, string point, string name, string confirmName, CancellationToken ct)
         {
             (context, var source) = await SourceAsync(context, databaseId, ct);
             DatabaseService.DemandProvision(context.Organization!, context.UserId);
@@ -89,23 +94,19 @@ namespace TerraScale.Dashboard.Features.Backups
             }
 
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
-            var home = await databases.HomeAsync(context, source, ct);
-            var restoredJson = await SafeAsync(async () => await (await ClientAsync(context, source, ["databases:read", "databases:write"], ct)).RestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, destination)));
-            var restored = restoredJson.Deserialize(BackupBackendJson.Default.ManagedDatabase) ?? throw new JsonException("Invalid restored database.");
-            if (restored.Id == source.Id || restored.Name != name || restored.ProjectId != context.Project!.Id || restored.BranchedFrom != source.Id)
+            var operation = await SafeAsync(async () => (await (await ClientAsync(context, source, ["databases:read", "databases:write"], ct))
+                .StartRestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, destination)))
+                .Deserialize(BackupBackendJson.Default.ProducerRestoreOperation) ?? throw new JsonException("Invalid restore operation."));
+            if (!TerraScaleIds.IsValid(operation.OperationId) || operation.Status is not ("running" or "completed" or "failed") ||
+                operation.Status != "running" && operation.Database is null)
             {
                 throw new AccountAccessException("Restore could not be confirmed. Check the database list before submitting another restore.", 503);
             }
 
-            var readToken = await tokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, ["databases:read"], ct);
-            var placed = await SafeAsync(async () => await rpc.User<IManagementService>(readToken, home.Id).WithCancellationToken(ct).GetDatabaseAsync(context.Project.Id, name));
-            if (placed.Id != restored.Id || placed.CreatedAt != restored.CreatedAt || placed.ReplicaRegions is null)
-            {
-                throw new AccountAccessException("Restore readback could not be confirmed. Check the database list before submitting another restore.", 503);
-            }
-
-            return await backups.RecordRestoreAsync(context, source, home, new(placed.Id, placed.ProjectId, placed.Name, placed.CreatedAt,
-                placed.BranchedFrom, placed.HomeRegion, placed.ReplicaRegions, placed.AllRegions), name, ct);
+            await state.PutAsync(BackupService.PendingRestoresTable, operation.OperationId,
+                JsonSerializer.SerializeToElement(new PendingRestore(operation.OperationId, context.Organization!.Id, context.Project!.Id, source.Id), BackupBackendJson.Default.PendingRestore),
+                StatePrecondition.Absent, ct);
+            return new(operation.OperationId, operation.Status);
         }
 
         public async Task RewindAsync(AccountContext context, string databaseId, string destination, string point, string confirmDatabase, CancellationToken ct)
@@ -234,12 +235,33 @@ namespace TerraScale.Dashboard.Features.Backups
 
                         if (form?["operation"].ToString() == "restore")
                         {
-                            var restored = await recovery.RestoreAsync(context, databaseId, page.Destination, page.Point, page.Name, page.ConfirmName, http.RequestAborted);
-                            return HttpRedirects.SeeOther(DatabaseService.Path(restored.DatabaseId));
+                            var started = await recovery.StartRestoreAsync(context, databaseId, page.Destination, page.Point, page.Name, page.ConfirmName, http.RequestAborted);
+                            return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "point-in-time") + "?restore=" + started.OperationId);
                         }
                     }
                     catch (Exception error) when (BackupEndpoints.KnownFailure(error) && !http.RequestAborted.IsCancellationRequested)
                     { status = DatabaseResults.Status(error); page = page with { Error = DatabaseResults.Message(error) }; }
+                    var restoreOperation = http.Request.Query["restore"].ToString();
+                    if (restoreOperation.Length > 0)
+                    {
+                        try
+                        {
+                            page = page with
+                            {
+                                Restore = await http.RequestServices.GetRequiredService<BackupService>()
+                                .RestoreStatusAsync(context, databaseId, restoreOperation, http.RequestAborted)
+                            };
+                        }
+                        catch (Exception failure) when (BackupEndpoints.KnownFailure(failure) && !http.RequestAborted.IsCancellationRequested)
+                        { page = page with { Restore = new(restoreOperation, "failed", ErrorMessage: DatabaseResults.Message(failure)) }; }
+                    }
+
+                    if (http.Request.Headers["Datastar-Request"] == "true" && page.Restore is not null)
+                    {
+                        await DatastarEvents.PatchElementsAsync(http, WholeDatabaseRestoreStatusView.Create(page));
+                        return Results.Empty;
+                    }
+
                     var view = WholeDatabaseRecoveryView.Create(page); view.StatusCode = status; return view;
                 }
                 catch (Exception error) when (BackupEndpoints.KnownFailure(error)) { return DatabaseResults.PageFailure(http, context, error); }

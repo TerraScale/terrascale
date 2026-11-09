@@ -192,12 +192,14 @@ TERRASCALE_API_KEY=... ts db branch url preview
 ts -all-regions db create example
 ts db placement example -replica-regions gru,iad
 ts db move-home example iad
+ts db regions example
 ```
 
 `db create` places the home region automatically; `-home-region <region>`,
 `-replica-regions <a,b>` or `-all-regions` request specific placement.
-`db placement` changes a database's replica regions later, and
-`db move-home <db> <region>` moves the home to one of its replica regions.
+`db placement` changes a database's replica regions later,
+`db move-home <db> <region>` moves the home to one of its replica regions, and
+`db regions <db>` prints the home region and each replica's pull progress.
 
 Database deletion asks you to type the database name in a terminal before it
 deletes data. For an unattended script, explicitly consent

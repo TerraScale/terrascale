@@ -77,7 +77,7 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
 
         using var codeSlot = mail.Reserve();
         using var noticeSlot = mail.Reserve();
-        var verified = await proofs.ConsumeHeaderAsync(caller, request, "change_email", cancellationToken).ConfigureAwait(false);
+        var verified = await proofs.ConsumeHeaderAsync(caller, request, "change_email", null, cancellationToken).ConfigureAwait(false);
         var code = Tokens.RandomDigits(6)!;
         var cancel = Tokens.RandomToken(43);
         var record = new EmailChangeRecord(caller.InstanceId, caller.Id, caller.AuthEpoch, caller.AuthStamp, normalized,

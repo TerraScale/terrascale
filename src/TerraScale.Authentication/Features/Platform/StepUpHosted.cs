@@ -30,6 +30,8 @@ internal static class StepUpHosted
 
         var record = current.Record;
         var user = live.User;
+        var locale = AuthEmails.Locale(context.Request);
+        var copy = HostedCopies.For(locale);
         string? notice = null;
         if (post && !record.Approved)
         {
@@ -50,10 +52,10 @@ internal static class StepUpHosted
 
                 using (var reservation = services.GetRequiredService<SignInMail>().Reserve())
                 {
-                    await reservation.EnqueueStepUpAsync(user, id, AuthEmails.Locale(context.Request.Headers.AcceptLanguage));
+                    await reservation.EnqueueStepUpAsync(user, id, AuthEmails.Locale(context.Request));
                 }
 
-                notice = "One verification code was requested. Check your email; restart from the application if it expires.";
+                notice = copy.NoticeCodeRequested;
             }
             else
             {
@@ -90,7 +92,7 @@ internal static class StepUpHosted
 
                 if (primary is null || primary.Id != user.Id || primary.AuthEpoch != record.AuthEpoch || primary.AuthStamp != record.AuthStamp)
                 {
-                    notice = "Verification failed. Check your credentials or restart from the application.";
+                    notice = copy.NoticeVerifyFailed;
                     context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 }
                 else
@@ -116,7 +118,7 @@ internal static class StepUpHosted
 
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        var page = StepUpPage.Create(new StepUpPageModel(id, user.Email, record.Purpose, record.PrimaryVerified, user.PasswordHash is not null, record.MailRequested, notice, nonce));
+        var page = StepUpPage.Create(new StepUpPageModel(id, user.Email, record.Purpose, record.PrimaryVerified, user.PasswordHash is not null, record.MailRequested, notice, nonce, locale));
         page.StatusCode = context.Response.StatusCode;
         return page;
     }

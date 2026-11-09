@@ -33,9 +33,6 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         public static IEndpointRouteBuilder MapOrganizations(this IEndpointRouteBuilder endpoints)
         {
-            endpoints.MapOrganizationWizard();
-            endpoints.MapOrganizationSso();
-            endpoints.MapProjectSettings();
             return endpoints;
         }
 
@@ -101,7 +98,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!Csrf.Validate(http, form))
+            if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return Results.BadRequest("Invalid form token.");
             }
@@ -127,6 +124,23 @@ namespace TerraScale.Dashboard.Features.Organizations
                 else
                 {
                     var operations = http.RequestServices.GetRequiredService<OrganizationOperations>();
+                    string? proof = null;
+                    if (operation == "ownership")
+                    {
+                        if (context.Organization is null || context.Role != "owner")
+                        {
+                            throw new AccountAccessException("Organization ownership is required.");
+                        }
+
+                        var intent = StepUpFlow.Intent(http, context, "start_ownership_transfer");
+                        if (intent is null)
+                        {
+                            return await StepUpFlow.StartAsync(http, context, "start_ownership_transfer", "ts-auth");
+                        }
+
+                        proof = intent.Challenge.Proof;
+                    }
+
                     await operations.MutateMemberAsync(context, operation switch
                     {
                         "role" => "role",
@@ -134,7 +148,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                         "ownership" => "start",
                         "ownership/confirm" => "confirm",
                         _ => "cancel"
-                    }, id ?? form["userID"].ToString(), form["role"].ToString(), http.RequestAborted);
+                    }, id ?? form["userID"].ToString(), form["role"].ToString(), http.RequestAborted, proof);
                 }
                 return HttpRedirects.SeeOther(operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger" : "/organization?tab=members");
             }
@@ -150,7 +164,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!Csrf.Validate(http, form))
+            if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return Results.StatusCode(403);
             }
@@ -167,7 +181,18 @@ namespace TerraScale.Dashboard.Features.Organizations
                 }
                 else
                 {
-                    await lifecycle.DeleteAsync(context, form["confirmation"].ToString(), http.RequestAborted);
+                    if (context.Organization is null || context.Organization.Kind == "personal" || context.Role != "owner")
+                    {
+                        throw new AccountAccessException("Only the owner can delete a business organization.");
+                    }
+
+                    var intent = StepUpFlow.Intent(http, context, "delete_organization");
+                    if (intent is null)
+                    {
+                        return await StepUpFlow.StartAsync(http, context, "delete_organization", "ts-auth");
+                    }
+
+                    await lifecycle.DeleteAsync(context, form["confirmation"].ToString(), http.RequestAborted, intent.Challenge.Proof);
                 }
                 // Leaving or deleting moves the account to another organization.
                 if (operation is "leave" or "delete" || operation == "delete-project" && context.Project?.Id == projectId)

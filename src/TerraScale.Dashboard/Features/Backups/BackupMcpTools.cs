@@ -59,10 +59,11 @@ namespace TerraScale.Dashboard.Features.Backups
             return recovery.PlanAsync(Scope(organizationId, projectId), databaseId, destination, pointInTime, Cancellation);
         }
 
-        [McpServerTool(Name = "restore_database_point_in_time", Title = "Restore PITR as a new database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Restore retained UTC history into a NEW named database in the same project, leaving the source unchanged. Obtain explicit user consent for the new name, time and source bucket; confirmName must equal name. Consumes one database slot and normal storage quota. Requires management and provisioning access. If interrupted, inspect the database list before retrying.")]
-        public Task<BackupRestoreResult> RestoreDatabasePointInTime(string databaseId, string pointInTime, string name, string confirmName, string destination = "platform", string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "restore_database_point_in_time", Title = "Restore PITR as a new database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Start restoring retained UTC history into a NEW named database in the same project and return the running operation at once instead of waiting for the copy; poll get_restore_status for the completed database. The source database is unchanged. Obtain explicit user consent for the new name, time and source bucket; confirmName must equal name. Consumes one database slot and normal storage quota. Requires management and provisioning access. If interrupted, inspect the database list before retrying.")]
+        public async Task<McpRestoreStart> RestoreDatabasePointInTime(string databaseId, string pointInTime, string name, string confirmName, string destination = "platform", string? organizationId = null, string? projectId = null)
         {
-            return recovery.RestoreAsync(Scope(organizationId, projectId), databaseId, destination, pointInTime, name, confirmName, Cancellation);
+            var started = await recovery.StartRestoreAsync(Scope(organizationId, projectId), databaseId, destination, pointInTime, name, confirmName, Cancellation);
+            return new(started.OperationId, started.Status, name.Trim());
         }
 
         private AccountContext Scope(string? organizationId, string? projectId)

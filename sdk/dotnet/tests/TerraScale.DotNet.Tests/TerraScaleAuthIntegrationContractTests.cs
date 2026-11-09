@@ -86,7 +86,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
             "list_organizations" => client.Platform.ListOrganizationsAsync("fixture-sign-in", limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "get_organization" => client.Platform.GetOrganizationAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
             "rename_organization" => client.Platform.RenameOrganizationAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName)!, cancellationToken: cancellationToken),
-            "delete_organization" => client.Platform.DeleteOrganizationAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
+            "delete_organization" => client.Platform.DeleteOrganizationAsync("fixture-sign-in", organizationId, "fixture-step-up", cancellationToken: cancellationToken),
             "list_members" => client.Platform.ListMembersAsync("fixture-sign-in", organizationId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "change_member_role" => client.Platform.ChangeMemberRoleAsync("fixture-sign-in", organizationId, userId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRole)!, cancellationToken: cancellationToken),
             "remove_member" => client.Platform.RemoveMemberAsync("fixture-sign-in", organizationId, userId, cancellationToken: cancellationToken),
@@ -117,7 +117,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
             "lookup_invitation" => client.Platform.LookupInvitationAsync("fixture-sign-in", JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken)!, cancellationToken: cancellationToken),
             "accept_invitation" => client.Platform.AcceptInvitationAsync("fixture-sign-in", JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken)!, cancellationToken: cancellationToken),
             "decline_invitation" => client.Platform.DeclineInvitationAsync("fixture-sign-in", JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken)!, cancellationToken: cancellationToken),
-            "start_ownership_transfer" => client.Platform.StartOwnershipTransferAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformStartOwnershipTransfer)!, cancellationToken: cancellationToken),
+            "start_ownership_transfer" => client.Platform.StartOwnershipTransferAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformStartOwnershipTransfer)!, "fixture-step-up", cancellationToken: cancellationToken),
             "get_ownership_transfer" => client.Platform.GetOwnershipTransferAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
             "cancel_ownership_transfer" => client.Platform.CancelOwnershipTransferAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
             "confirm_ownership_transfer" => client.Platform.ConfirmOwnershipTransferAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
@@ -138,8 +138,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
         await Assert.That(handler.Uri.Host).IsEqualTo("auth.example.test");
         await Assert.That(handler.Calls).IsEqualTo(1);
         await Assert.That(handler.Authorization!.ToString()).IsEqualTo("Bearer fixture-sign-in");
-        var needsProof = operation is "delete_account" or "create_organization_api_key" or "rotate_organization_api_key"
-            or "create_project_api_key" or "rotate_project_api_key";
+        var needsProof = contract.TryGetProperty("step_up", out _);
         await Assert.That(handler.StepUpProof).IsEqualTo(needsProof ? "fixture-step-up" : null);
         await Assert.That(http.DefaultRequestHeaders.Contains("X-TerraScale-Step-Up-Proof")).IsFalse();
         if (requestJson is not null)

@@ -15,6 +15,8 @@ internal static class CredentialLineage
 {
     internal const string BindingsProperty = "ts-auth.credential-bindings";
 
+    internal const string RedeemedCodeProperty = "ts-auth.redeemed-code";
+
     private const string Claim = "ts_auth_credential_bindings";
 
     internal const string ConflictNotice = "This credential expired, was already used, or lost a concurrent sign-in or rotation in another region. Sign in again or use the latest credential.";
@@ -87,6 +89,7 @@ public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> t
         if (context.EndpointType is OpenIddictServerEndpointType.Token && context.Request?.IsAuthorizationCodeGrantType() == true
             && token is { Type: TokenTypeIdentifiers.Private.AuthorizationCode, Status: Statuses.Redeemed })
         {
+            context.Transaction.SetProperty(CredentialLineage.RedeemedCodeProperty, string.Empty);
             return;
         }
 
@@ -113,6 +116,24 @@ public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> t
                     ? Errors.InvalidClient : Errors.InvalidToken, CredentialLineage.ConflictNotice);
                 return;
         }
+    }
+}
+
+public sealed class ReportCodeReplayNotice : IOpenIddictServerHandler<ApplyTokenResponseContext>
+{
+    public ValueTask HandleAsync(ApplyTokenResponseContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Response.Error != Errors.InvalidGrant
+            || context.Response.ErrorDescription is not ({ Length: > 0 } description)
+            || description is CredentialLineage.ReplayNotice or CredentialLineage.ConflictNotice
+            || context.Transaction.GetProperty<string>(CredentialLineage.RedeemedCodeProperty) is null)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        context.Response.ErrorDescription = CredentialLineage.ReplayNotice;
+        return ValueTask.CompletedTask;
     }
 }
 
