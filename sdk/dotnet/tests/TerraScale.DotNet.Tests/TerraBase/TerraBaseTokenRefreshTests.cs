@@ -27,7 +27,7 @@ public sealed class TerraBaseTokenRefreshTests
             };
         });
         using var http = new HttpClient(handler);
-        var get = new TerraScaleApiKeyTokens(http, "01ARZ3NDEKTSV4RRFFQ69G5FAX_" + new string('a', 52), "key", time)
+        var get = new TerraScaleApiKeyTokens(http, TerraScaleApiKeyTokens.ProductionOrigin, "01ARZ3NDEKTSV4RRFFQ69G5FAX_" + new string('a', 52), "key", time)
             .For(TerraBaseIntegrationFixture.ProjectId);
         try
         {

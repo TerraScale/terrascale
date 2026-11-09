@@ -9,20 +9,22 @@ namespace TerraScale.DotNet.TerraBase;
 /// <summary>
 /// Exchanges a TerraScale API key for project access tokens at ts-auth (platform contract 6.1: client credentials,
 /// Basic keyId:key) and renews each project's token in the background before expiry. Concurrent callers share one
-/// exchange. The key goes only to ts-auth.
+/// exchange. The key goes only to the configured ts-auth origin.
 /// </summary>
 internal sealed partial class TerraScaleApiKeyTokens
 {
-    private static readonly Uri TokenEndpoint = new("https://auth.terrascale.tech/terrascale/oauth/token");
+    internal static readonly Uri ProductionOrigin = new("https://auth.terrascale.tech/");
     private static readonly TimeSpan ExchangeDeadline = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RefreshMargin = TimeSpan.FromSeconds(60);
     private const int MaxResponseBytes = 64 * 1024;
 
     private readonly HttpClient http;
+    private readonly Uri tokenEndpoint;
+    private readonly Uri scopedKeysEndpoint;
     private readonly AuthenticationHeaderValue basic;
     private readonly TimeProvider time;
 
-    internal TerraScaleApiKeyTokens(HttpClient http, string key, string keyName, TimeProvider time)
+    internal TerraScaleApiKeyTokens(HttpClient http, Uri authOrigin, string key, string keyName, TimeProvider time)
     {
         if (!KeyPattern().IsMatch(key))
         {
@@ -31,6 +33,8 @@ internal sealed partial class TerraScaleApiKeyTokens
 
         this.http = http;
         this.time = time;
+        tokenEndpoint = new Uri(authOrigin, "terrascale/oauth/token");
+        scopedKeysEndpoint = new Uri(authOrigin, "v1/terrascale/api-keys/self/scoped-keys");
         basic = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{key[..26]}:{key}")));
     }
 
@@ -45,7 +49,7 @@ internal sealed partial class TerraScaleApiKeyTokens
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(ExchangeDeadline);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys")
+        using var request = new HttpRequestMessage(HttpMethod.Post, scopedKeysEndpoint)
         {
             Content = TerraBaseConnection.Json(body, TerraBaseJsonContext.Wire.TerraBaseScopedKeyRequest),
         };
@@ -77,7 +81,7 @@ internal sealed partial class TerraScaleApiKeyTokens
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(ExchangeDeadline);
-        using var request = new HttpRequestMessage(HttpMethod.Post, TokenEndpoint)
+        using var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint)
         {
             Content = new FormUrlEncodedContent([new("grant_type", "client_credentials"), new("project", project)]),
         };

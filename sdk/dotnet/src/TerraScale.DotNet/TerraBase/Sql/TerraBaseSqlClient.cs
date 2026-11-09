@@ -24,10 +24,19 @@ public sealed record TerraBaseSqlClientOptions
     /// <summary>
     /// A TerraScale API key from the dashboard with <c>sql:read</c>; writes and schema changes also need
     /// <c>sql:write</c>. Database lifecycle mutations need <c>databases:write</c>. The client exchanges the key
-    /// at ts-auth for an access token to each operation's project, caches the token and renews it before it expires.
-    /// The key is sent only to ts-auth.
+    /// at ts-auth (<see cref="AuthAddress"/>) for an access token to each operation's project, caches the token and
+    /// renews it before it expires. The key is sent only to that ts-auth origin.
     /// </summary>
     public string? ApiKey { get; init; }
+
+    /// <summary>
+    /// Origin of the ts-auth that exchanges <see cref="ApiKey"/>, for example <c>https://auth.terrascale.tech</c>, or the
+    /// plain-HTTP origin of a private ts-auth on NetBird <c>100.64.0.0/10</c> addresses or loopback. It defaults to
+    /// <c>https://auth.terrascale.tech</c> only when requests go to TerraScale's public origin (no BaseAddress or
+    /// EndpointResolver, or BaseAddress <c>https://api.terrascale.tech</c>); with any other TerraBase origin an ApiKey
+    /// needs it, so the key never leaves for a host the caller did not name.
+    /// </summary>
+    public Uri? AuthAddress { get; init; }
 
     /// <summary>Supplies the current bearer credential per request or connection. Set this or ApiKey, exclusively.</summary>
     public Func<CancellationToken, ValueTask<string>>? AccessTokenProvider { get; init; }
@@ -56,6 +65,7 @@ public sealed partial class TerraBaseSqlClient
         ArgumentNullException.ThrowIfNull(options);
         if (options.ApiKey is null)
         {
+            if (options.AuthAddress is not null) throw new ArgumentException("AuthAddress exchanges an ApiKey; set ApiKey or remove AuthAddress.", nameof(options));
             connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
                 TerraBaseConnection.DefaultMaxResponseBytes, options.AccessTokenProvider, anonymousAllowed: true, region: options.Region);
             return;
@@ -70,11 +80,21 @@ public sealed partial class TerraBaseSqlClient
         connect = provider => new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
             TerraBaseConnection.DefaultMaxResponseBytes, provider, region: options.Region);
         _ = connect(static _ => ValueTask.FromResult(string.Empty)); // validates the endpoint options now
-        apiKeyTokens = new TerraScaleApiKeyTokens(httpClient, options.ApiKey, nameof(options.ApiKey), TimeProvider.System);
+        apiKeyTokens = new TerraScaleApiKeyTokens(httpClient, AuthOrigin(options), options.ApiKey, nameof(options.ApiKey), TimeProvider.System);
         projectConnections = new(StringComparer.Ordinal);
     }
 
     internal TerraBaseSqlClient(TerraBaseConnection connection) => this.connection = connection;
+
+    private static Uri AuthOrigin(TerraBaseSqlClientOptions options) => options switch
+    {
+        { AuthAddress: { } auth } => TerraBaseConnection.Origin(auth, nameof(options), nameof(options.AuthAddress), "ts-auth"),
+        { EndpointResolver: null, BaseAddress: null } => TerraScaleApiKeyTokens.ProductionOrigin,
+        { EndpointResolver: null, BaseAddress: { } address } when address == TerraBaseRegion.PublicOrigin => TerraScaleApiKeyTokens.ProductionOrigin,
+        _ => throw new ArgumentException(
+            "Set AuthAddress to the ts-auth that exchanges the ApiKey: with a TerraBase origin other than https://api.terrascale.tech the key is not sent to production ts-auth.",
+            nameof(options)),
+    };
 
     /// <summary>
     /// Creates a client from TERRASCALE_API_KEY (required) and the optional TERRASCALE_BASE_URL and TERRASCALE_REGION,
@@ -175,8 +195,9 @@ public sealed class TerraBaseSqlDatabase
         connection.OpenStreamAsync(path + "/export", "text/plain", cancellationToken);
 
     /// <summary>
-    /// Opens a SQL WebSocket session for interactive transactions. The caller owns and disposes it. It connects with its
-    /// own connection, not the client's HttpClient.
+    /// Opens a SQL WebSocket session for interactive transactions. The caller owns and disposes it. The upgrade goes
+    /// through the client's HttpClient and its handlers, with the same credential as REST; a client without a credential
+    /// opens it over HTTP/2 (extended CONNECT) like its REST requests.
     /// </summary>
     public Task<TerraBaseSqlSession> ConnectAsync(CancellationToken cancellationToken = default) =>
         TerraBaseSqlSession.ConnectAsync(connection, path + "/sql/ws", cancellationToken);
