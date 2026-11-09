@@ -56,7 +56,7 @@ public sealed partial class TerraBaseDatabase
         {
             var response = opened.Response;
             if (!response.IsSuccessStatusCode)
-                throw await TerraBaseException.FromResponseAsync(response, opened.Token).ConfigureAwait(false);
+                throw await TerraBaseException.FromResponseAsync(response, null, opened.Token).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK
                 || !string.Equals(response.Content.Headers.ContentType?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase))
                 throw InvalidRequestLogs(response.StatusCode);

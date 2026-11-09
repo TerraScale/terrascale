@@ -80,7 +80,7 @@ public sealed class TerraBaseSqlSocketTests
     }
 
     [Test]
-    public async Task A_refused_key_fails_the_upgrade_with_an_authentication_error()
+    public async Task A_refused_key_fails_the_upgrade_with_an_authentication_error_that_keeps_the_websocket_failure()
     {
         await using var server = await TerraBaseSqlSocketServer.StartAsync((context, _) =>
         {
@@ -92,5 +92,6 @@ public sealed class TerraBaseSqlSocketTests
         var error = await Assert.ThrowsAsync<TerraBaseAuthenticationException>(() => server.Database().ConnectAsync());
 
         await Assert.That((int?)error!.StatusCode).IsEqualTo(401);
+        await Assert.That(error.InnerException).IsTypeOf<WebSocketException>();
     }
 }

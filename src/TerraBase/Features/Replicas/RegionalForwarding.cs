@@ -50,7 +50,7 @@ internal static class RegionalForwarding
             }
             else
             {
-                await ingress.ForwardServiceAsync(context, writer.Address).ConfigureAwait(false);
+                await ingress.ForwardServiceAsync(context, writer).ConfigureAwait(false);
             }
         });
         return app;

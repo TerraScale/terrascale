@@ -31,7 +31,7 @@ public sealed class TerraBaseRegionsClient
         {
             var response = opened.Response;
             if (!response.IsSuccessStatusCode)
-                throw await TerraBaseException.FromResponseAsync(response, opened.Token).ConfigureAwait(false);
+                throw await TerraBaseException.FromResponseAsync(response, null, opened.Token).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
                 throw Invalid(response.StatusCode);
             var bytes = await connection.ReadBodyAsync(response, opened.Token).ConfigureAwait(false);

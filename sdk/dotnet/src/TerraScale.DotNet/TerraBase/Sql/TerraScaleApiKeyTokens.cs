@@ -59,7 +59,7 @@ internal sealed partial class TerraScaleApiKeyTokens
         {
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
-                throw await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);
+                throw await TerraBaseException.FromResponseAsync(response, null, deadline.Token).ConfigureAwait(false);
             using var answer = new BoundedHttpBodyStream(MaxResponseBytes, () => new InvalidDataException("ts-auth's scoped key answer exceeds 64 KiB."), deadline.Token);
             await response.Content.CopyToAsync(answer, deadline.Token).ConfigureAwait(false);
             return TerraBaseConnection.ReadResponse(answer.Written.Span, TerraBaseJsonContext.Wire.TerraBaseScopedKey, response.StatusCode);

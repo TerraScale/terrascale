@@ -56,7 +56,7 @@ public sealed partial class TerraBaseDatabase
             {
                 using var buffered = new HttpResponseMessage(response.StatusCode) { Content = new ByteArrayContent(bytes) };
                 throw new TerraBaseFunctionInvocationException(result,
-                    await TerraBaseException.FromResponseAsync(buffered, opened.Token).ConfigureAwait(false));
+                    await TerraBaseException.FromResponseAsync(buffered, null, opened.Token).ConfigureAwait(false));
             }
             return result;
         }, cancellationToken);

@@ -26,7 +26,7 @@ public sealed class TerraBaseResponseTests
         using var response = TerraBaseIntegrationFixture.Json("{", HttpStatusCode.BadRequest);
         if (header == "oversized") header = new string('A', 4096);
         if (header is not null) response.Headers.TryAddWithoutValidation("x-request-id", duplicate ? [header, header] : [header]);
-        var dataError = await TerraBaseException.FromResponseAsync(response, CancellationToken.None);
+        var dataError = await TerraBaseException.FromResponseAsync(response, null, CancellationToken.None);
         var authError = await TerraScaleAuthErrors.CreateAsync(response, CancellationToken.None);
         var expected = header == RequestId && !duplicate ? RequestId : null;
         await Assert.That(dataError.RequestId).IsEqualTo(expected);

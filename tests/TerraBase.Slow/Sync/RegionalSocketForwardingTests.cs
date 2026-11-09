@@ -24,7 +24,7 @@ public sealed class RegionalSocketForwardingTests
 
     [Test]
     [Timeout(120_000)]
-    public async Task Sql_sessions_sent_to_the_regional_follower_run_on_the_writer_over_both_listeners(CancellationToken token)
+    public async Task Sql_sessions_sent_to_the_regional_follower_run_on_the_writer_over_both_listeners_and_an_unreachable_writer_answers_wrong_region(CancellationToken token)
     {
         await using var nats = await JetStreamServer.StartAsync(token);
         using var issuer = new TestIssuer();
@@ -71,6 +71,12 @@ public sealed class RegionalSocketForwardingTests
                     BaseAddress = follower.Server.ClientAddress,
                     AccessTokenProvider = _ => ValueTask.FromResult(bearer),
                 }).Database(project, "client"), token));
+
+            await File.WriteAllTextAsync(peers, "gru-1 gru 127.0.0.4\ngru-2 gru 127.0.0.3\n", token);
+            var misdirected = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() =>
+                new TerraBaseSqlClient(peer, new TerraBaseSqlClientOptions { BaseAddress = followerInternal }).Database(project, "peer").QueryAsync("SELECT 1", cancellationToken: token));
+            await Assert.That((misdirected!.ErrorCode, misdirected.HomeRegion)).IsEqualTo(("wrong_region", "gru"));
+            await Assert.That(misdirected.ResponseHeaders["Location"]).IsEquivalentTo([$"https://gru.api.terrascale.tech/v1/projects/{project}/databases/peer/sql/execute"]);
         }
         finally
         {

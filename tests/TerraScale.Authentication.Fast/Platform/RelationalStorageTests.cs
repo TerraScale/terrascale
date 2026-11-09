@@ -13,14 +13,19 @@ namespace TerraScale.Authentication.Fast.Platform;
 public sealed class RelationalStorageTests(TerraBaseFixture fixture)
 {
     [Test]
-    public async Task Replicas_starting_on_an_empty_database_migrate_it_once_and_seed_the_platform_organization()
+    public async Task Replicas_starting_on_an_empty_database_migrate_it_once_and_seed_the_platform_organization_without_errors()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync(provision: false);
         await Assert.That(await database.TableNamesAsync()).IsEmpty();
+        var logs = new CapturingLogs();
 
         var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var starting = Enumerable.Range(0, 2).Select(_ => AuthTestServer.StartAsync(settings: values => values["master-key"] = masterKey,
-            services: services => fixture.UseStorage(services, tenant))).ToArray();
+            services: services =>
+            {
+                services.AddSingleton<ILoggerProvider>(logs);
+                fixture.UseStorage(services, tenant);
+            })).ToArray();
         await using var first = await starting[0];
         await using var second = await starting[1];
         await Task.WhenAll(first.App.Services.GetRequiredService<AuthSchema>().Ready, second.App.Services.GetRequiredService<AuthSchema>().Ready)
@@ -37,6 +42,7 @@ public sealed class RelationalStorageTests(TerraBaseFixture fixture)
         var owner = await db.Users.SingleAsync();
         await Assert.That(owner.Email).IsEqualTo(AuthTestServer.BootstrapOwnerEmail);
         await Assert.That((await db.Memberships.SingleAsync()).Role).IsEqualTo(Roles.Owner);
+        await Assert.That(logs.AtLeast(LogLevel.Error)).IsEmpty();
     }
 
     [Test]

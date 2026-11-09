@@ -308,7 +308,7 @@ internal sealed class TerraBaseConnection
                 if (response is not null)
                 {
                     if (!throwOnError || response.IsSuccessStatusCode) break;
-                    refusal = await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);
+                    refusal = await TerraBaseException.FromResponseAsync(response, null, deadline.Token).ConfigureAwait(false);
                     if (attempt >= MaxRetries || !Retryable(method, request.Content, refusal)) throw refusal;
                 }
                 var delay = RetryDelay(refusal?.RetryAfter, attempt);
@@ -396,12 +396,12 @@ internal sealed class TerraBaseConnection
             {
                 await socket.ConnectAsync(target, http, deadline.Token).ConfigureAwait(false);
             }
-            catch (WebSocketException) when (socket.HttpStatusCode is not (0 or HttpStatusCode.SwitchingProtocols))
+            catch (WebSocketException upgrade) when (socket.HttpStatusCode is not (0 or HttpStatusCode.SwitchingProtocols))
             {
                 using var refused = new HttpResponseMessage(socket.HttpStatusCode) { Content = new ByteArrayContent([]) };
                 foreach (var (name, values) in socket.HttpResponseHeaders ?? new Dictionary<string, IEnumerable<string>>())
                     refused.Headers.TryAddWithoutValidation(name, values);
-                throw await TerraBaseException.FromResponseAsync(refused, deadline.Token).ConfigureAwait(false);
+                throw await TerraBaseException.FromResponseAsync(refused, upgrade, deadline.Token).ConfigureAwait(false);
             }
 
             return socket.SubProtocol == subprotocol
