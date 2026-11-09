@@ -24,6 +24,14 @@ func validateBranchOptions(command string, args []string, from, ttl string, fs *
 	var supplied bool
 	fs.Visit(func(f *flag.Flag) { supplied = supplied || f.Name == "from" || f.Name == "ttl" })
 	if command != "db branch create" {
+		if command == "db import" {
+			var ttlSet bool
+			fs.Visit(func(f *flag.Flag) { ttlSet = ttlSet || f.Name == "ttl" })
+			if ttlSet {
+				return 0, fmt.Errorf("--ttl requires db branch create: %w", errUsage)
+			}
+			return 0, nil
+		}
 		if supplied {
 			return 0, fmt.Errorf("--from and --ttl require db branch create: %w", errUsage)
 		}

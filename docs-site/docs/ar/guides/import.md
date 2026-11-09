@@ -12,6 +12,17 @@ description: Load existing data into a TerraScale database with batched SQL stat
 
 There is no file upload or restore endpoint: data enters a TerraScale database as SQL statements, through [SQL over HTTP](/ar/guides/sql-http), the [SDKs](/ar/guides/sdks) or the [Postgres wire](/ar/guides/postgres-clients). Create the tables first, then send the rows in batches that fit the request limits.
 
+## With the CLI
+
+`ts db import` loads a SQL script into a database for you, splitting it into batches that fit the limits below. Export one database and load it into another:
+
+```sh
+ts db export source-db -o dump.sql
+ts db import target-db dump.sql
+```
+
+`-` reads the script from stdin, so `ts db export source-db | ts db import target-db -` also works, and any SQLite-dialect `.sql` file can be imported the same way. The import is not atomic: each batch commits on its own. If a statement fails, the CLI prints the 1-based number of the first statement of the failed batch and you resume with `-from <n>`, which skips the first n-1 statements.
+
 ## Load rows in batches
 
 One `POST /v1/projects/{project}/databases/{database}/sql/execute` carries 1 to 256 statements and runs them as one transaction, all or nothing. Give each row its own `INSERT` with bound parameters, and keep every batch inside the limits: at most 256 statements, each at most 16 KiB, a body of at most 1 MiB and at most 1,024 rows changed — past them the request answers `413 too_large`. Writes need the `sql:write` scope.
