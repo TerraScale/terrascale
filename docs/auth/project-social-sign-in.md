@@ -52,7 +52,8 @@ A project's sign-in and sign-up pages show "Continue with …" for each configur
 3. Sign-in matches a previously linked provider identity (provider, issuer, client ID and subject); accounts are never linked by
    verified email. A provider identity that is already linked signs that account in. A new identity whose email is new to the project
    creates an account when the project allows sign-up. A new identity whose email already belongs to an email/password account is
-   refused with 401 and no session; connect the provider from the signed-in account, which requires proof of the existing account.
+   refused with 401 and no session. Such a user keeps signing in with email and password; linking a social provider to an
+   existing project account is not available yet.
    A user with MFA continues to the hosted second-factor step. A disabled user, an unverified email or any provider failure answers
    401 with no session. Success sets the project's session cookie and continues to `next` like the other hosted methods.
 
