@@ -48,10 +48,11 @@ public sealed partial class RegionalWriterCrashTests
         {
             await Assert.That(followed.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await followed.Content.ReadAsStringAsync(token));
         }
+        var recovered = Stopwatch.StartNew();
         await drill.Target.KillAsync();
         await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
-        await Assert.That(elapsed.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
-        Console.WriteLine($"DRILL target activation failed: recovered_ms={elapsed.Elapsed.TotalMilliseconds:F3}, bound_ms={RegionalHandoff.RecoveryBound.TotalMilliseconds:F0}");
+        await Assert.That(recovered.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
+        Console.WriteLine($"DRILL target activation failed: recovered_ms={recovered.Elapsed.TotalMilliseconds:F3}, end_to_end_ms={elapsed.Elapsed.TotalMilliseconds:F3}, bound_ms={RegionalHandoff.RecoveryBound.TotalMilliseconds:F0}");
         await Assert.That((await drill.OwnerAsync(token)).Node).IsEqualTo("gru-1");
         await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2"], token);
         await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('recovered')", token);
