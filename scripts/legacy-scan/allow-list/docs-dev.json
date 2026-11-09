@@ -1,0 +1,3 @@
+[
+  {"repo": "terrascale", "path": "^docs/dev/host-toolchain\\.md$", "terms": ["engine-brand"], "match": "~/.cache/terrascale/turso-native/|scripts/vendor/verify-turso-native\\.sh", "reason": "Exact retained native-build cache and verification-script paths; required to reproduce the pinned SQL runtime."}
+]

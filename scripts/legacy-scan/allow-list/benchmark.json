@@ -1,0 +1,8 @@
+[
+  {"path": "^benchmark/bench/", "repo": "terrascale", "reason": "Immutable historical measurement reports retained for comparisons."},
+  {"path": "^benchmark/dotnet/(?:DatabaseEncryption|TerraBase\\.LiveRestoreDrill)/packages\\.lock\\.json$", "repo": "terrascale", "terms": ["engine-brand"], "match": "(?i)\\bturso\\.(?:data(?:\\.sqlite)?|raw)\\b", "reason": "Locked internal SQL driver dependency identities must match their package and project names."},
+  {"path": "^benchmark/dotnet/(?:SharedProcessBenchmark\\.cs|TerraBase\\.LiveRestoreDrill/(?:Program|ScratchCleanup)\\.cs)$", "repo": "terrascale", "terms": ["engine-brand"], "match": "\\bTerraBase\\.Engine\\.Turso\\b|\\bTursoStorageEngine\\b", "reason": "Internal SQL engine diagnostics and backup restoration use the actual engine namespace and type."},
+  {"path": "^benchmark/dotnet/DatabaseEncryption/(?:Program\\.cs|DatabaseEncryption\\.csproj)$", "repo": "terrascale", "terms": ["engine-brand"], "match": "\\bTurso\\.Data\\.Sqlite\\b", "reason": "SQL encryption benchmark references the internal ADO.NET driver namespace and project."},
+  {"path": "^benchmark/orm-matrix/js/package-lock\\.json$", "repo": "terrascale", "terms": ["libsql"], "match": "@libsql/client(?:-wasm)?", "reason": "Drizzle publishes optional peer metadata for other adapters; the matrix installs and uses only PostgreSQL clients."},
+  {"path": "^benchmark/turso-sync-host/turso-pin\\.env$", "repo": "terrascale", "terms": ["engine-brand"], "match": "(?i)\\bturso(?:_(?:COMMIT|SHA256))?\\b", "reason": "Required upstream source commit and SHA-256 pin retained at the governance-defined internal path."}
+]

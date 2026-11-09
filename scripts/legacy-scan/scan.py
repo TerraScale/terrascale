@@ -11,6 +11,28 @@ def git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args])
 
 
+def load_allow_list(policy):
+    files = sorted((policy / "allow-list").glob("*.json"))
+    if not files:
+        raise ValueError(f"no allow-list files in {policy / 'allow-list'}")
+    rules = []
+    seen = set()
+    for file in files:
+        entries = json.loads(file.read_text())
+        if not isinstance(entries, list):
+            raise ValueError(f"{file.name} must contain a JSON array of allow-list entries")
+        paths = [entry["path"] for entry in entries]
+        if paths != sorted(paths):
+            raise ValueError(f"{file.name} entries must be sorted by path")
+        for entry in entries:
+            key = json.dumps(entry, sort_keys=True)
+            if key in seen:
+                raise ValueError(f"duplicate allow-list entry in {file.name}: {entry['path']}")
+            seen.add(key)
+        rules.extend(entries)
+    return rules
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path.cwd())
@@ -24,7 +46,7 @@ def main():
     root = args.root.resolve()
     policy = Path(__file__).resolve().parent
     terms = json.loads((policy / "terms.json").read_text())
-    rules = json.loads((policy / "allow-list.json").read_text())
+    rules = load_allow_list(policy)
     owners = json.loads((policy / "owners.json").read_text())
     terms = [(t, re.compile(t["pattern"])) for t in terms if not args.term or t["id"] in args.term]
     rules = [(r, re.compile(r["path"]), re.compile(r["match"]) if "match" in r else None)

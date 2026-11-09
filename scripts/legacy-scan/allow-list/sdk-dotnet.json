@@ -1,0 +1,3 @@
+[
+  {"path": "^sdk/dotnet/src/TerraScale\\.DotNet/TerraBase/Data/", "repo": "terrascale", "terms": ["collections"], "match": "\\b\\w*DbParameterCollection\\b", "reason": "ADO.NET requires deriving from DbParameterCollection; unrelated to the retired collections API."}
+]
