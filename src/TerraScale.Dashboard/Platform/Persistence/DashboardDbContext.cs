@@ -2,6 +2,8 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
+using TerraScale.Dashboard.Features.Logs;
+using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Platform.Persistence;
@@ -22,6 +24,16 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
 
     public DbSet<SqlWorkspaceRow> SqlWorkspaces => Set<SqlWorkspaceRow>();
 
+    public DbSet<AllowanceAlertRow> AllowanceAlerts => Set<AllowanceAlertRow>();
+
+    public DbSet<AlertRuleRow> AlertRules => Set<AlertRuleRow>();
+
+    public DbSet<AlertEventRow> AlertEvents => Set<AlertEventRow>();
+
+    public DbSet<LogDrainRow> LogDrains => Set<LogDrainRow>();
+
+    public DbSet<LogDrainCursorRow> LogDrainCursors => Set<LogDrainCursorRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfiguration(new AuthFlowRow.Configuration());
@@ -31,6 +43,11 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
         modelBuilder.ApplyConfiguration(new McpCodeRow.Configuration());
         modelBuilder.ApplyConfiguration(new SavedQueryRow.Configuration());
         modelBuilder.ApplyConfiguration(new SqlWorkspaceRow.Configuration());
+        modelBuilder.ApplyConfiguration(new AllowanceAlertRow.Configuration());
+        modelBuilder.ApplyConfiguration(new AlertRuleRow.Configuration());
+        modelBuilder.ApplyConfiguration(new AlertEventRow.Configuration());
+        modelBuilder.ApplyConfiguration(new LogDrainRow.Configuration());
+        modelBuilder.ApplyConfiguration(new LogDrainCursorRow.Configuration());
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
             foreach (var property in entity.GetProperties())

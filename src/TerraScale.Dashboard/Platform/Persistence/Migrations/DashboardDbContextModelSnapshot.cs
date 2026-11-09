@@ -277,6 +277,368 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Logs.LogDrainCursorRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Cursor")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cursor");
+
+                    b.Property<string>("DatabaseId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("database_id");
+
+                    b.Property<string>("DrainId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("drain_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DrainId", "DatabaseId")
+                        .IsUnique();
+
+                    b.ToTable("log_drain_cursors", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_log_drain_cursors_cursor", "length(cursor) = 26");
+
+                            t.HasCheckConstraint("ck_log_drain_cursors_id", "length(id) = 26 AND length(drain_id) = 26 AND length(database_id) = 26");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Logs.LogDrainRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("HeaderCiphertext")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("header_ciphertext");
+
+                    b.Property<string>("HeaderName")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("header_name");
+
+                    b.Property<string>("HeaderNonce")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("header_nonce");
+
+                    b.Property<string>("HeaderTag")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("header_tag");
+
+                    b.Property<DateTime?>("LastErrorAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_error_at");
+
+                    b.Property<int?>("LastErrorStatus")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("last_error_status");
+
+                    b.Property<DateTime?>("LastGapAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_gap_at");
+
+                    b.Property<DateTime?>("LastSuccessAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_success_at");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Revision")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("revision");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("url");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("ProjectId")
+                        .IsUnique();
+
+                    b.ToTable("log_drains", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_log_drains_error", "(last_error_at IS NULL) = (last_error_status IS NULL) AND (last_error_status IS NULL OR last_error_status BETWEEN 0 AND 599)");
+
+                            t.HasCheckConstraint("ck_log_drains_header", "(header_name IS NULL AND header_nonce IS NULL AND header_ciphertext IS NULL AND header_tag IS NULL) OR (length(header_name) BETWEEN 1 AND 64 AND header_nonce IS NOT NULL AND header_ciphertext IS NOT NULL AND header_tag IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_log_drains_id", "length(id) = 26 AND length(organization_id) = 26 AND length(project_id) = 26");
+
+                            t.HasCheckConstraint("ck_log_drains_revision", "length(revision) = 26");
+
+                            t.HasCheckConstraint("ck_log_drains_url", "url LIKE 'https://%' AND length(url) <= 2048");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Notifications.AlertEventRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AlertId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("alert_id");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("at");
+
+                    b.Property<string>("DatabaseName")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("database_name");
+
+                    b.Property<string>("EmailStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("email_status");
+
+                    b.Property<string>("RuleId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("rule_id");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("state");
+
+                    b.Property<double>("Value")
+                        .HasColumnType("REAL")
+                        .HasColumnName("value");
+
+                    b.Property<int>("WebhookAttempts")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("webhook_attempts");
+
+                    b.Property<string>("WebhookStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("webhook_status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RuleId", "Id");
+
+                    b.ToTable("alert_events", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_alert_events_email_status", "email_status IN ('pending', 'none', 'accepted', 'unknown', 'rejected', 'no_recipients')");
+
+                            t.HasCheckConstraint("ck_alert_events_id", "length(id) = 26 AND length(rule_id) = 26 AND length(alert_id) = 26");
+
+                            t.HasCheckConstraint("ck_alert_events_pending", "email_status = 'pending' OR webhook_status = 'pending'");
+
+                            t.HasCheckConstraint("ck_alert_events_state", "state IN ('firing', 'resolved')");
+
+                            t.HasCheckConstraint("ck_alert_events_webhook_attempts", "webhook_attempts BETWEEN 0 AND 3");
+
+                            t.HasCheckConstraint("ck_alert_events_webhook_status", "webhook_status IN ('pending', 'none', 'delivered', 'failed')");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Notifications.AlertRuleRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AlertId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("alert_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DatabaseId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("database_id");
+
+                    b.Property<bool>("Email")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("email");
+
+                    b.Property<string>("Metric")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("metric");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<DateTime?>("Since")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("since");
+
+                    b.Property<int>("Slot")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("slot");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("state");
+
+                    b.Property<double>("Threshold")
+                        .HasColumnType("REAL")
+                        .HasColumnName("threshold");
+
+                    b.Property<double?>("Value")
+                        .HasColumnType("REAL")
+                        .HasColumnName("value");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.Property<string>("WebhookCiphertext")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("webhook_ciphertext");
+
+                    b.Property<string>("WebhookNonce")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("webhook_nonce");
+
+                    b.Property<string>("WebhookTag")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("webhook_tag");
+
+                    b.Property<string>("WebhookUrl")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("webhook_url");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("ProjectId", "Slot")
+                        .IsUnique();
+
+                    b.ToTable("alert_rules", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_alert_rules_database", "database_id IS NULL OR length(database_id) = 26");
+
+                            t.HasCheckConstraint("ck_alert_rules_id", "length(id) = 26 AND length(organization_id) = 26 AND length(project_id) = 26");
+
+                            t.HasCheckConstraint("ck_alert_rules_metric", "metric IN ('p95_latency_ms', 'error_rate_percent', 'storage_gb', 'operation_units_percent')");
+
+                            t.HasCheckConstraint("ck_alert_rules_name", "length(name) BETWEEN 1 AND 64");
+
+                            t.HasCheckConstraint("ck_alert_rules_slot", "slot >= 0 AND slot < 20");
+
+                            t.HasCheckConstraint("ck_alert_rules_state", "(state = 'ok' AND (since IS NULL) = (alert_id IS NULL)) OR (state = 'firing' AND since IS NOT NULL AND length(alert_id) = 26)");
+
+                            t.HasCheckConstraint("ck_alert_rules_threshold", "threshold > 0 AND threshold <= 1e12");
+
+                            t.HasCheckConstraint("ck_alert_rules_version", "length(version) = 26");
+
+                            t.HasCheckConstraint("ck_alert_rules_webhook", "(webhook_url IS NULL AND webhook_nonce IS NULL AND webhook_ciphertext IS NULL AND webhook_tag IS NULL) OR (webhook_url LIKE 'https://%' AND webhook_nonce IS NOT NULL AND webhook_ciphertext IS NOT NULL AND webhook_tag IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Notifications.AllowanceAlertRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<long>("Allowance")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("allowance");
+
+                    b.Property<string>("BillingMonth")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("billing_month");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("EmailStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("email_status");
+
+                    b.Property<string>("Metric")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("metric");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<int>("Threshold")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("threshold");
+
+                    b.Property<long>("Used")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("used");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "BillingMonth", "Metric", "Threshold")
+                        .IsUnique();
+
+                    b.ToTable("allowance_alerts", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_allowance_alerts_amounts", "used >= 0 AND allowance > 0");
+
+                            t.HasCheckConstraint("ck_allowance_alerts_billing_month", "length(billing_month) = 7 AND substr(billing_month, 5, 1) = '-'");
+
+                            t.HasCheckConstraint("ck_allowance_alerts_email_status", "email_status IN ('pending', 'accepted', 'unknown', 'rejected', 'no_recipients')");
+
+                            t.HasCheckConstraint("ck_allowance_alerts_id", "length(id) = 26 AND length(organization_id) = 26");
+
+                            t.HasCheckConstraint("ck_allowance_alerts_metric", "metric IN ('operations', 'storage', 'spend')");
+
+                            t.HasCheckConstraint("ck_allowance_alerts_threshold", "threshold IN (80, 100) AND (metric <> 'spend' OR threshold = 100)");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Platform.Identity.SessionRow", b =>
                 {
                     b.Property<string>("Id")
@@ -501,6 +863,24 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade);
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Logs.LogDrainCursorRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Logs.LogDrainRow", null)
+                        .WithMany("Cursors")
+                        .HasForeignKey("DrainId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Notifications.AlertEventRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Notifications.AlertRuleRow", null)
+                        .WithMany("Events")
+                        .HasForeignKey("RuleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Platform.Mcp.McpCodeRow", b =>
                 {
                     b.HasOne("TerraScale.Dashboard.Platform.Mcp.McpClientRow", null)
@@ -514,6 +894,16 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasForeignKey("CredentialId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Logs.LogDrainRow", b =>
+                {
+                    b.Navigation("Cursors");
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Notifications.AlertRuleRow", b =>
+                {
+                    b.Navigation("Events");
                 });
 #pragma warning restore 612, 618
         }

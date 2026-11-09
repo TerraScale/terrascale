@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.E2E.Demo;
 using TerraScale.Dashboard.E2E.Features.Databases;
 using TerraScale.Dashboard.Features.Notifications;
@@ -104,8 +105,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await notifications.RunOnceAsync(CancellationToken.None);
             backend.Observe(new AllowanceUsageObservation(organizationId, StarterAllowance + 2_000_000, null));
             await notifications.RunOnceAsync(CancellationToken.None);
-            var row = await fixture.Service<IDashboardState>().GetAsync(AllowanceNotifications.Table, organizationId, CancellationToken.None);
-            var spendAlerts = AllowanceNotifications.Read(row!, organizationId).Alerts.Where(alert => alert.Metric == "spend").ToArray();
+            var spendAlerts = await SpendAlertsAsync(organizationId);
             await Assert.That(spendAlerts.Length).IsEqualTo(1).Because("Crossing the threshold repeatedly records the notice once per month.");
             await Assert.That(spendAlerts[0].Used).IsEqualTo(150L).Because("300,000 operation units over Starter's allowance are $1.50 at $5.00 per million.");
             await Assert.That(spendAlerts[0].Allowance).IsEqualTo(100L);
@@ -117,8 +117,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             backend.Observe(new AllowanceUsageObservation(organizationId, StarterAllowance + 500_000, null));
             await notifications.RunOnceAsync(CancellationToken.None);
             await notifications.RunOnceAsync(CancellationToken.None);
-            row = await fixture.Service<IDashboardState>().GetAsync(AllowanceNotifications.Table, organizationId, CancellationToken.None);
-            spendAlerts = AllowanceNotifications.Read(row!, organizationId).Alerts.Where(alert => alert.Metric == "spend").ToArray();
+            spendAlerts = await SpendAlertsAsync(organizationId);
             await Assert.That(spendAlerts.Length).IsEqualTo(1).Because("A raised cap re-arms the alert and the higher crossing is recorded once.");
             await Assert.That(spendAlerts[0].Used).IsEqualTo(250L);
             await Assert.That(spendAlerts[0].Allowance).IsEqualTo(200L);
@@ -127,6 +126,12 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(inbox).Contains("Monthly spending alert reached");
             await Assert.That(inbox).Contains("$1.50 reached the $1.00 spending alert");
             await Assert.That(inbox).Contains("$2.50 reached the $2.00 spending alert");
+        }
+
+        private async Task<AllowanceAlertRow[]> SpendAlertsAsync(string organizationId)
+        {
+            await using var db = await fixture.Service<IDbContextFactory<DashboardDbContext>>().CreateDbContextAsync();
+            return await db.AllowanceAlerts.AsNoTracking().Where(alert => alert.OrganizationId == organizationId && alert.Metric == "spend").ToArrayAsync();
         }
 
         private static async Task AssertSpendingAsync(HttpClient client, string disclosure)

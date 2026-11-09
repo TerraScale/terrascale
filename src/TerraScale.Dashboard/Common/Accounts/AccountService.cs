@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.TerraBase.Contracts;
@@ -12,7 +13,7 @@ namespace TerraScale.Dashboard.Common.Accounts
 {
     // ts-auth decides which organizations and projects exist and the caller's role
     // in them. The dashboard stores only its own state for those IDs.
-    public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, TerraBaseRpcClient rpc, TerraBasePlanSync plans,
+    public sealed class AccountService(IDashboardState state, IDbContextFactory<DashboardDbContext> storage, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, TerraBaseRpcClient rpc, TerraBasePlanSync plans,
         IHttpContextAccessor requests, ILogger<AccountService> logger)
     {
         public const string AccountsTable = "dashboard_accounts";
@@ -353,7 +354,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 }
 
                 var selectedContext = new AccountContext(session, account, [.. organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)], selected, selectedProject);
-                await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, selectedContext, cancellationToken);
+                await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, state, selectedContext, cancellationToken);
                 return selectedContext with { Loaded = loadedAt };
             }
             var active = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);
@@ -387,7 +388,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             }
 
             var context = new AccountContext(session, account, [.. organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)], active, project);
-            await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, context, cancellationToken);
+            await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(storage, state, context, cancellationToken);
             return context with { Loaded = loadedAt };
         }
 

@@ -114,8 +114,8 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 38, Level = LogLevel.Warning, Message = "Allowance notifications are unavailable ({ErrorType}); retrying next minute.")]
         internal static partial void AllowanceNotificationsAreUnavailableRetryingNext(this ILogger logger, object? errorType);
 
-        [LoggerMessage(EventId = 39, Level = LogLevel.Warning, Message = "An allowance notification for organization {OrganizationId} could not be processed ({ErrorType}: {Error}); other organizations continue.")]
-        internal static partial void AnAllowanceNotificationForOrganizationCould(this ILogger logger, object? organizationId, object? errorType, object? error);
+        [LoggerMessage(EventId = 39, Level = LogLevel.Warning, Message = "An allowance notification for organization {OrganizationId} could not be processed ({ErrorType}); other organizations continue.")]
+        internal static partial void AnAllowanceNotificationForOrganizationCould(this ILogger logger, object? organizationId, object? errorType);
 
         [LoggerMessage(EventId = 40, Level = LogLevel.Warning, Message = "Revoke dashboard sessions after committed member removal for {UserId} ({ErrorType})")]
         internal static partial void RevokeDashboardSessionsAfterCommittedMember(this ILogger logger, object? userId, object? errorType);

@@ -2,7 +2,6 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Billing.Internal;
-using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Profile
@@ -29,7 +28,11 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
             }
             await DropAsync<BillingChangeReceipt>(StripeBilling.ChangesTable, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
-            await DropAsync<AllowanceNotificationState>(AllowanceNotifications.Table, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
+            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+            {
+                await db.AllowanceAlerts.Where(row => row.OrganizationId == organizationId).ExecuteDeleteAsync(cancellationToken);
+            }
+
             await CleanNotificationsAsync(organizationId, null, cancellationToken);
         }
 
