@@ -76,6 +76,49 @@ classification, `_ts_conflicts` column list, `DatabaseRoute.CheckTenantAsync` bo
 copied `Value(name)` helpers, `QosRequestLease` dispose convention, `TerraBaseJsonContext`
 structure, `TerraBase.csproj` global usings.
 
+## Round 2 continuation (coordinator review)
+
+### F5. Config knobs nothing sets (TerraBaseOptions)
+Removed `shutdown-grace-seconds`, `readiness-cache-seconds` and `storage-queue` settings and
+their parsers; `ShutdownGrace` and `ReadinessCacheTtl` are get-only constants, `StorageQueue`
+a plain init property (the harness sets it directly). Verified zero setters across repo, tests,
+scripts, benchmark tooling and CI. Kept `query-budget-seconds` (harness raises it to 120 s and
+resets it), `storage-threads`, `memory-budget`, `nats-token` (tests/benchmarks/other slices set
+them). `docs/terrabase/decisions/0006` still mentions `--readiness-cache-seconds`; docs are
+outside this slice.
+
+### F6. StorageQuota walk deduplicated further
+`EnterAsync`'s measure closure and `OrganizationUsageAsync` both walked
+list → filter → RegisteredBytesAsync → sum; both now call `SumRegisteredBytesAsync`
+(own exclusion optional). `ReadOrganizationsAsync` keeps its single bucketing pass.
+`QosExtensions`' duplicated tenant_memory 429 write extracted to `RejectTenantMemoryAsync`.
+
+### F7. PressureSignals
+Constructor built a seed `PressureBody` that the `Sample()` call on the next line overwrote:
+dead, deleted (`Sample` returns the snapshot it stores). The five-case plan-name switch
+duplicated the PlanTier JSON names; replaced with `Plan?.ToString().ToLowerInvariant()`
+(member names are the JSON names lowercased).
+
+### F8. Dead test-harness surface
+Deleted `CatalogRegistration.RegisterAsync` (no callers; folded into its only indirect user
+`SyncReplicas.CreateSyncedDatabaseAsync` as a private helper), `TerraBaseTestServer.
+IsDataDirectoryOwned`, `InitializeDataDirectoryAsync`, `FreePort` with its port-claim
+machinery, `UseProductionQueryBudget`, and `SharedServer.InitializeAsync`. All had zero
+references.
+
+### Investigated and left
+- `ListenerMetadata.Management`: NOT folded — see F3 above; reference identity is the
+  "management route" marker consumed by OperatorHandler and RegionalForwarding.
+- `DatabaseRoute.cs`: the CheckTenantAsync/ErrorResponse boilerplate and copied Value(name)
+  helpers are reserved for the coordinator's cross-slice pass.
+- `StorageQuota`'s internal `(engine, directory, limit)` constructor: used by
+  tests/TerraBase.Slow/Sql/SqlNativeHardeningTests.cs (query worker's folder), not rewritten
+  from my slice.
+- `CatalogGate`'s optional `anchors`/`keys` constructor parameters: DI-driven (null when no
+  backup is configured), not a test seam.
+- `GC.GetGCMemoryInfo` in `DefaultMemoryBudget`: derives the default from container memory;
+  real design. No polling loops beyond the intentional PeriodicTimer services.
+
 ## Results
 
 - F1 done: 452 comment lines deleted across 69 files (src slice, analyzers, owned tests,
