@@ -34,10 +34,17 @@ namespace TerraScale.Dashboard.Features.Backups
             return backups.SetPolicyAsync(Scope(organizationId, projectId), databaseId, fullBackupCron, incrementalBackupCron, retentionDays, Cancellation);
         }
 
-        [McpServerTool(Name = "restore_backup", Title = "Restore backup", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Restore a database backup into a new database; the source database is unchanged. Requires an owner or admin role and provisioning rights.")]
-        public Task<BackupRestoreResult> RestoreBackup(string databaseId, string name = "", string backupId = "", string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "restore_backup", Title = "Restore backup", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Start restoring a database backup into a new database and return the running operation at once instead of waiting for the copy; poll get_restore_status for the completed database. The source database is unchanged. Requires an owner or admin role and provisioning rights.")]
+        public async Task<McpRestoreStart> RestoreBackup(string databaseId, string name = "", string backupId = "", string? organizationId = null, string? projectId = null)
         {
-            return backups.RestoreAsync(Scope(organizationId, projectId), databaseId, backupId, name, Cancellation);
+            var started = await backups.StartRestoreAsync(Scope(organizationId, projectId), databaseId, backupId, name, Cancellation);
+            return new(started.OperationId, started.Status, name.Trim().Length == 0 ? null : name.Trim());
+        }
+
+        [McpServerTool(Name = "get_restore_status", Title = "Get restore status", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a restore operation started by restore_backup: its status, the target database identity and name once completed, or the error code and message once failed. Requires read access to the source database.")]
+        public Task<RestoreProgress> GetRestoreStatus(string databaseId, string operationId, string? organizationId = null, string? projectId = null)
+        {
+            return backups.RestoreStatusAsync(Scope(organizationId, projectId), databaseId, operationId, Cancellation);
         }
 
         [McpServerTool(Name = "get_point_in_time_window", Title = "Read retained PITR window", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read actual retained UTC bounds from platform or customer backup history, with database allowance. Destination selects the source bucket, not target database configuration. Requires management access.")]
@@ -67,4 +74,5 @@ namespace TerraScale.Dashboard.Features.Backups
     }
 
     public sealed record McpBackupList([property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BackupPolicyView? Policy, IReadOnlyList<BackupView> Backups, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
+    public sealed record McpRestoreStart(string OperationId, string Status, string? Name);
 }

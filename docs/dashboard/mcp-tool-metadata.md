@@ -1,6 +1,6 @@
 # MCP tool metadata and host isolation
 
-Dashboard MCP schemas are built once per process from the same explicit fifteen
+Dashboard MCP schemas are built once per process from the same explicit sixteen
 attributed tool types. A private `Lazy<McpServerTool[]>` uses
 `ExecutionAndPublication` so concurrently starting hosts share one schema build.
 The original `MethodInfo` goes to MCP 2.2's `McpServerTool.Create`; the SDK still
