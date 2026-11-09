@@ -14,7 +14,8 @@ namespace TerraScale.Authentication.Features.Platform;
 public sealed record StepUpRequest(
     [property: JsonPropertyName("purpose")] string Purpose,
     [property: JsonPropertyName("audience")] string Audience,
-    [property: JsonPropertyName("return_uri")] string ReturnUri);
+    [property: JsonPropertyName("return_uri")] string ReturnUri,
+    [property: JsonPropertyName("organization_id")] string? OrganizationId = null);
 
 /// <summary>The pending secret stays on the calling backend; the browser receives only StepUpUrl.</summary>
 public sealed record StepUpBody(
@@ -40,7 +41,7 @@ public sealed record ConsumeStepUpRequest(
 internal sealed record StepUpRecord(string InstanceId, string Id, string UserId, long AuthEpoch, string? AuthStamp,
     string TokenHash, string Purpose, string Audience, string ReturnUri, DateTimeOffset ExpiresAt,
     bool PrimaryVerified = false, bool Approved = false, bool Consumed = false, bool MailRequested = false,
-    IReadOnlyList<CredentialBinding>? Bindings = null);
+    IReadOnlyList<CredentialBinding>? Bindings = null, string? OrganizationId = null);
 internal sealed record StepUpDeletionGrant(string InstanceId, string UserId, long AuthEpoch, string? AuthStamp, string ReceiptHash,
     DateTimeOffset ExpiresAt, string AuthorizationHash, IReadOnlyList<CredentialBinding> Bindings);
 
@@ -74,10 +75,10 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
     public const string DeletionAuthorizationHeader = "X-TerraScale-Deletion-Authorization";
 
     /// <summary>Consumes the auth API's exact purpose proof from one header value.</summary>
-    public async Task<UserRecord> ConsumeHeaderAsync(UserRecord caller, HttpRequest request, string purpose, CancellationToken cancellationToken)
+    public async Task<UserRecord> ConsumeHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return (await this.ConsumeAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, purpose, "ts-auth", null, cancellationToken).ConfigureAwait(false)).Caller;
+        return (await this.ConsumeAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false)).Caller;
     }
 
     /// <summary>Creates a pending proof; an existing sign-in never approves it.</summary>
@@ -86,6 +87,8 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
         if (!Pair(request.Purpose, request.Audience)
+            || Bound(request.Purpose) != (request.OrganizationId is not null)
+            || request.OrganizationId is not null && !PlatformDirectory.IsId(request.OrganizationId)
             || !Uri.TryCreate(request.ReturnUri, UriKind.Absolute, out var callback)
             || callback.AbsolutePath != "/auth/step-up/callback" || callback.Query.Length != 0 || callback.Fragment.Length != 0 || callback.UserInfo.Length != 0
             || options.DashboardClient?.RedirectUris.Any(uri => uri.GetLeftPart(UriPartial.Authority) == callback.GetLeftPart(UriPartial.Authority)) != true)
@@ -101,7 +104,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
         var id = AuthStore.NewId();
         var secret = id + "." + Tokens.RandomToken(43);
         var record = new StepUpRecord(caller.InstanceId, id, caller.Id, caller.AuthEpoch, caller.AuthStamp, Tokens.Sha256Hex(secret),
-            request.Purpose, request.Audience, callback.AbsoluteUri, clock.GetUtcNow().AddMinutes(5));
+            request.Purpose, request.Audience, callback.AbsoluteUri, clock.GetUtcNow().AddMinutes(5), OrganizationId: request.OrganizationId);
         if (await store.TransactAsync([Current(caller), AuthStore.Create(AuthStore.StepUpProofTable, caller.InstanceId, id, Serialize(record))], cancellationToken).ConfigureAwait(false) is not null)
         {
             throw Required();
@@ -132,13 +135,14 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
     }
 
     /// <summary>Consumes exactly one approved proof with the current account state, optionally binding one deletion operation.</summary>
-    public async Task<StepUpConsumption> ConsumeAsync(UserRecord caller, string? proof, string purpose, string audience, string? receiptHash, CancellationToken cancellationToken)
+    public async Task<StepUpConsumption> ConsumeAsync(UserRecord caller, string? proof, string purpose, string audience, string? receiptHash, CancellationToken cancellationToken, string? organizationId = null)
     {
         ArgumentNullException.ThrowIfNull(caller);
         if (!Pair(purpose, audience) || receiptHash is not null && purpose != "delete_account"
             || proof is not { Length: 70 } || proof[26] != '.' || !PlatformDirectory.IsId(proof[..26])
             || await this.ReadAsync(caller, proof[..26], cancellationToken).ConfigureAwait(false) is not { Record: { Approved: true, PrimaryVerified: true, Bindings.Count: > 0 } } current
             || current.Record.Purpose != purpose || current.Record.Audience != audience
+            || current.Record.OrganizationId != organizationId
             || !Tokens.FixedTimeEquals(current.Record.TokenHash, Tokens.Sha256Hex(proof))
             || !await store.AreCredentialsCurrentAsync(caller.InstanceId, current.Record.Bindings ?? [], cancellationToken).ConfigureAwait(false))
         {
@@ -251,6 +255,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
         "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "delete_passkey" or "create_api_key" or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "enroll_totp",
         _ => false,
     };
+    private static bool Bound(string purpose) => purpose is "delete_organization" or "start_ownership_transfer";
     private static JsonElement Serialize(StepUpRecord value) => JsonSerializer.SerializeToElement(value, StepUpJson.Default.StepUpRecord);
     private static StoreOperation Current(UserRecord user) => AuthStore.Require(AuthStore.UserTable, user.InstanceId, user.Id,
         JsonSerializer.SerializeToElement(new JsonObject

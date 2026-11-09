@@ -138,8 +138,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
         await Assert.That(handler.Uri.Host).IsEqualTo("auth.example.test");
         await Assert.That(handler.Calls).IsEqualTo(1);
         await Assert.That(handler.Authorization!.ToString()).IsEqualTo("Bearer fixture-sign-in");
-        var needsProof = operation is "delete_account" or "create_organization_api_key" or "rotate_organization_api_key"
-            or "create_project_api_key" or "rotate_project_api_key";
+        var needsProof = contract.TryGetProperty("step_up", out _);
         await Assert.That(handler.StepUpProof).IsEqualTo(needsProof ? "fixture-step-up" : null);
         await Assert.That(http.DefaultRequestHeaders.Contains("X-TerraScale-Step-Up-Proof")).IsFalse();
         if (requestJson is not null)

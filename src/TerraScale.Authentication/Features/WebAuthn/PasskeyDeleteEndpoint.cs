@@ -33,7 +33,7 @@ public sealed class PasskeyDeleteEndpoint(PasskeyCredentials passkeys, TotpCrede
             throw PasskeyGuard.LastFactor();
         }
 
-        var verified = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "delete_passkey", cancellationToken).ConfigureAwait(false);
+        var verified = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "delete_passkey", null, cancellationToken).ConfigureAwait(false);
         if (await passkeys.DeleteAsync(verified, id, cancellationToken).ConfigureAwait(false) is null)
         {
             throw new ApiException(403, "passkey_denied", "Sign in again before deleting a passkey.");

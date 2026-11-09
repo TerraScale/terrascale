@@ -269,7 +269,7 @@ public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, P
             throw Invalid("user_id must be a user id.");
         }
 
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "start_ownership_transfer", cancellationToken);
+        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "start_ownership_transfer", this.RouteId("organization"), cancellationToken);
         var transfer = await platform.StartTransferAsync(caller.Id, this.RouteId("organization"), nominee!, cancellationToken);
         return Results.Json(Map(transfer), PlatformApiJson.Default.OwnershipTransferBody, statusCode: StatusCodes.Status201Created);
     }

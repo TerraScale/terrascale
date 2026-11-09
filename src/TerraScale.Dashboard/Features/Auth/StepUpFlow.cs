@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     public interface IAuthStepUpGateway
     {
-        Task<StepUpChallenge> BeginAsync(SessionRecord session, string purpose, string audience, string returnUri, CancellationToken cancellationToken);
+        Task<StepUpChallenge> BeginAsync(SessionRecord session, string purpose, string audience, string? organizationId, string returnUri, CancellationToken cancellationToken);
         Task<string?> ConsumeAsync(SessionRecord session, string proof, string purpose, string audience, string? operationReceipt, CancellationToken cancellationToken);
     }
 
@@ -103,7 +103,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 throw Required();
             }
 
-            var challenge = await http.RequestServices.GetRequiredService<IAuthStepUpGateway>().BeginAsync(context.Session, purpose, audience,
+            var challenge = await http.RequestServices.GetRequiredService<IAuthStepUpGateway>().BeginAsync(context.Session, purpose, audience, context.Organization?.Id,
                 $"{http.Request.Scheme}://{http.Request.Host}/auth/step-up/callback", http.RequestAborted);
             if (challenge.Proof.Length is 0 or > 4096 || challenge.ExpiresAt <= http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow() ||
                 !Uri.TryCreate(challenge.StepUpUrl, UriKind.Absolute, out var url) || url.Scheme != "https" || !url.IsDefaultPort ||

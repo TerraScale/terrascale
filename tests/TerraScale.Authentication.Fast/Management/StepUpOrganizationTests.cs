@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Tests;
 using static TerraScale.Authentication.Tests.PlatformCalls;
 
@@ -21,6 +22,14 @@ public sealed class StepUpOrganizationTests(TerraBaseFixture fixture)
 
         using var deleted = await oidc.CallAsync(HttpMethod.Delete, $"{Organizations}/{organization}", token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+        var other = await oidc.CreateOrganizationAsync(token);
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"{Organizations}/{other}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Add(StepUpProofs.Header, (await oidc.ApprovedProofAsync(token, "delete_organization", organizationId: organization))!);
+        using var refusedOther = await oidc.Client.SendAsync(request);
+        await Assert.That(refusedOther.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(await OidcHarness.EnvelopeCodeAsync(refusedOther)).IsEqualTo("step_up_required");
     }
 
     [Test]

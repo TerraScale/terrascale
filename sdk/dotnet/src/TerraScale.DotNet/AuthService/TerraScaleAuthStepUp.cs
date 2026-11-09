@@ -3,11 +3,12 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
 
-/// <summary>A purpose-bound step-up request. ReturnUri is the registered dashboard origin's /auth/step-up/callback.</summary>
+/// <summary>A purpose-bound step-up request. ReturnUri is the registered dashboard origin's /auth/step-up/callback. OrganizationId is required for and binds delete_organization and start_ownership_transfer proofs.</summary>
 public sealed record TerraScaleAuthStepUpRequest(
     [property: JsonPropertyName("purpose")] string Purpose,
     [property: JsonPropertyName("audience")] string Audience,
-    [property: JsonPropertyName("return_uri")] string ReturnUri);
+    [property: JsonPropertyName("return_uri")] string ReturnUri,
+    [property: JsonPropertyName("organization_id")] string? OrganizationId = null);
 
 /// <summary>A pending proof. Keep Proof on the backend; navigate the browser only to StepUpUrl.</summary>
 public sealed record TerraScaleAuthStepUp(

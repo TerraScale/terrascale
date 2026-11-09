@@ -268,7 +268,7 @@ public sealed class DeleteOrganizationEndpoint(PlatformDirectory platform, Platf
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "delete_organization", cancellationToken);
+        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "delete_organization", this.RouteId("organization"), cancellationToken);
         await platform.DeleteOrganizationAsync(caller.Id, this.RouteId("organization"), cancellationToken);
         return Results.NoContent();
     }

@@ -13,7 +13,7 @@ namespace TerraScale.Authentication.Tests;
 public static class StepUpFixtures
 {
     private static readonly JsonSerializerOptions Metadata = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-    public static async Task<string?> ApprovedProofAsync(this OidcHarness oidc, string token, string purpose, string audience = "ts-auth", IReadOnlyList<CredentialBinding>? bindings = null)
+    public static async Task<string?> ApprovedProofAsync(this OidcHarness oidc, string token, string purpose, string audience = "ts-auth", IReadOnlyList<CredentialBinding>? bindings = null, string? organizationId = null)
     {
         if (!new JsonWebTokenHandler().CanReadToken(token))
         {
@@ -48,6 +48,7 @@ public static class StepUpFixtures
             consumed = false,
             mailRequested = false,
             bindings = bindings ?? user.AuthenticationBindings,
+            organizationId,
         };
         await store.CreateAsync(AuthStore.StepUpProofTable, user.InstanceId, id,
             JsonSerializer.SerializeToElement(record, Metadata));
@@ -68,7 +69,8 @@ public static class StepUpFixtures
             : request.Method == HttpMethod.Delete && path.StartsWith("/v1/terrascale/account/passkeys/", StringComparison.Ordinal) ? "delete_passkey"
             : request.Method == HttpMethod.Post && path == "/v1/terrascale/account/email-change" ? "change_email"
             : request.Method == HttpMethod.Post && path == "/v1/terrascale/account/passkeys/verify" ? "add_passkey" : null;
-        if (token is not null && purpose is not null && await oidc.ApprovedProofAsync(token, purpose) is { } proof)
+        if (token is not null && purpose is not null && await oidc.ApprovedProofAsync(token, purpose,
+                organizationId: purpose is "delete_organization" or "start_ownership_transfer" ? path.Split('/')[4] : null) is { } proof)
         {
             request.Headers.Add(StepUpProofs.Header, proof);
         }

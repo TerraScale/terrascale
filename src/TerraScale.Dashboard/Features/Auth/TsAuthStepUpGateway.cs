@@ -6,10 +6,10 @@ namespace TerraScale.Dashboard.Features.Auth
     // authorizes local effects or an automatic retry with the consumed proof.
     public sealed partial class TsAuthGateway : IAuthStepUpGateway
     {
-        public async Task<StepUpChallenge> BeginAsync(SessionRecord session, string purpose, string audience, string returnUri, CancellationToken cancellationToken)
+        public async Task<StepUpChallenge> BeginAsync(SessionRecord session, string purpose, string audience, string? organizationId, string returnUri, CancellationToken cancellationToken)
         {
             var challenge = await PlatformAsync(() => Client().Platform.BeginStepUpAsync(Bearer(session),
-                new TsAuthStepUpRequest(purpose, audience, returnUri), cancellationToken));
+                new TsAuthStepUpRequest(purpose, audience, returnUri, organizationId), cancellationToken));
             return new(challenge.Proof, challenge.StepUpUrl, challenge.ExpiresAt);
         }
 
