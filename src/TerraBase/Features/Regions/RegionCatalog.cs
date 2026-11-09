@@ -1,3 +1,4 @@
+using System.Net.Http;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
 
@@ -36,6 +37,11 @@ public static class RegionsExtensions
                 var sockets = (SocketsHttpHandler)handler;
                 sockets.AllowAutoRedirect = false;
                 sockets.UseCookies = false;
+                sockets.PooledConnectionLifetime = Timeout.InfiniteTimeSpan;
+                sockets.PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan;
+                sockets.KeepAlivePingDelay = TimeSpan.FromMinutes(1);
+                sockets.KeepAlivePingTimeout = TimeSpan.FromSeconds(30);
+                sockets.KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always;
             });
         return services;
     }
