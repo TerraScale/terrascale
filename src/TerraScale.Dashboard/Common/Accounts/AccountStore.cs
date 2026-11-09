@@ -46,7 +46,7 @@ public sealed class AccountStore(IDbContextFactory<DashboardDbContext> storage, 
     {
         if (stored.Erased || stored.Account.Id != stored.Row.Id)
         {
-            throw new StateConflictException();
+            throw new DbUpdateConcurrencyException("Dashboard storage changed concurrently.");
         }
 
         await using var db = await storage.CreateDbContextAsync(cancellationToken);
@@ -100,7 +100,7 @@ public sealed class AccountStore(IDbContextFactory<DashboardDbContext> storage, 
                 await (stored is null ? RowSync.CreateAsync(db, cancellationToken) : RowSync.ReplaceAsync(db, cancellationToken));
                 return;
             }
-            catch (StateConflictException) when (attempt < 3) { }
+            catch (DbUpdateConcurrencyException) when (attempt < 3) { }
         }
     }
 

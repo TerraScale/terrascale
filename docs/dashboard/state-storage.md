@@ -3,16 +3,12 @@
 The dashboard keeps its own data in SQL tables of its TerraBase database `ts-dashboard`, project
 `00000000000000000000000005`. TerraBase seeds that database; the dashboard never creates it.
 
-The storage is moving from JSON-body tables to relational tables read and written through Entity Framework Core
-(`DashboardDbContext`, the [TerraBase EF Core provider](../../sdk/dotnet/docs/entity-framework-core.md)). Both run
-against the same database today:
+Every dashboard record is a row of a relational table, read and written through Entity Framework Core
+(`DashboardDbContext`, the [TerraBase EF Core provider](../../sdk/dotnet/docs/entity-framework-core.md)). There is no
+other storage path: MagicOnion reaches only TerraBase's product APIs (database management, customer SQL, backups,
+usage), never the dashboard's own data.
 
-| Data | Store |
-|---|---|
-| OIDC and step-up flows, browser sessions, PAT and MCP credentials, access tokens, MCP OAuth clients and codes, saved queries, SQL workspaces, allowance alerts, alert rules and their events, log drains and their cursors, accounts and their notifications, organizations with their projects, project databases, audit events and invitation reservations, billing, Stripe customers, checkouts and plan changes, internal billing | Relational tables (below) |
-| Account deletions and the deletion cleanup journal | JSON-body tables (`IDashboardState`, last section) |
-
-## Relational tables
+## Tables
 
 ### Access
 
@@ -23,7 +19,7 @@ request and to the SQL WebSocket upgrade:
 - `X-TerraBase-Peer-Credential`: the `TERRABASE_PEER_SECRET` the dashboard already holds; TerraBase treats the call
   as the platform operator.
 - `TerraScale-Write: home`: every read and write runs at the database's home, so a flow reads its own writes in
-  every region, as the MagicOnion calls pinned to the home did before.
+  every region.
 
 Request paths save with one `SaveChangesAsync` (one `/sql/execute` request, one transaction) or one
 `ExecuteDeleteAsync`; none opens an explicit transaction. Storage calls appear in `Server-Timing` as `terrabase`
@@ -57,6 +53,10 @@ calls named `state/sql/execute`.
 | `stripe_checkouts` | A Checkout Session the dashboard created, bound to its reservation | `id` ULID; unique `checkout_id` (`cs_…`); foreign keys to `billing` and to `stripe_customers.customer_id`, both cascade; project ID empty or a ULID |
 | `billing_changes` | An organization's latest plan change receipt and its Stripe idempotency binding | `id` ULID; unique `organization_id`, foreign key to `billing` with cascade delete; `action` is `change` or `undo`; `status` is `reserved`, `applying`, `applied` or `abandoned`; `revision >= 1`; `version` concurrency token |
 | `internal_billing` | The one organization that owns internal billing, with its hidden plan ID | `id` ULID; unique `scope`, always `organization`, so at most one row exists; `organization_id` foreign key to `organizations` with cascade delete; plan ID is a ULID |
+| `account_deletions` | A browser's account deletion operation: the sealed session, receipt and step-up authorization while it runs, then only a completion window | `id` ULID; unique `key_hash` (SHA-256 of the browser's 256-bit deletion cookie, lowercase hex); a running row has `user_id` and a 12-byte nonce, ciphertext and 16-byte tag, a completed row has none of them and a `completed_until`; indexes on `user_id` and `completed_until`; `version` concurrency token |
+| `deletion_cleanup` | The deletion cleanup journal: one ts-auth deletion proof the dashboard accepted | `id` is the proof's ULID; `scope` is `account` (no organization), `organization` (organization absent or another than the subject) or `project` (organization ULID); `subject_id` ULID; index on `(scope, subject_id)` |
+| `deletion_cleanup_targets` | A project or Stripe customer the journal entry found before removing its aggregate | Key `(cleanup_id, kind, target_id)`; `cleanup_id` foreign key to `deletion_cleanup` with cascade delete; `kind` is `project` (a ULID) or `customer` (1 to 255 characters) |
+| `pending_restores` | A backup or point-in-time restore the dashboard started and still polls | `id` is the TerraBase operation ULID; organization, project and source database ULIDs; index on `(organization_id, project_id)` |
 
 Grants (access and refresh tokens) stay encrypted with `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` (AES-GCM) in
 `nonce`, `ciphertext` and `tag` columns; owner, kind, device and expiry are plain columns, so listing, revocation and
@@ -65,7 +65,9 @@ rotates a grant; a stale token makes the save write nothing and the caller rerea
 
 A constraint violation (a duplicate saved query name, a second redemption of an MCP code, a second database of one
 name in a project) fails the one request and writes nothing; the dashboard answers it as the feature's conflict
-(`409`, `invalid_grant`).
+(`409`, `invalid_grant`). A save that loses a concurrency token race, or a create that finds the row already inserted,
+raises EF Core's `DbUpdateConcurrencyException`; callers reread and apply their change again, and one that still loses
+answers `412`.
 
 ### Accounts and organizations
 
@@ -120,6 +122,19 @@ is on file; the billing writers set them from Stripe's subscription or the inter
 row keeps only the Stripe or internal binding behind them. Every billing row needs its organization's row. Deleting an
 organization fences the `organizations` row first, so no checkout can start, and then the `billing` row.
 
+### Deletions
+
+`DeletionReconciler` replays every `deletion_cleanup` entry, ordered by `id`, before it asks ts-auth for new proofs,
+and keeps the entries forever, so a regional write that lands after ts-auth's acknowledgement is removed again. A new
+proof is recorded with its targets in one `SaveChangesAsync`; a second reconciler recording the same proof fails on the
+primary key and reads the stored entry, which must carry the same scope, subject and organization.
+
+An account deletion started in a browser inserts its `account_deletions` row before ts-auth is called. The row is found
+only through the hash of the browser's deletion cookie. When the account proof is replayed, the reconciler opens each
+running row of that `user_id`, checks the sealed session belongs to it and replaces the row, with its `version` as
+concurrency token, by a completed row that keeps only `key_hash` and `completed_until` (15 days); expired completed rows
+are deleted on the same pass.
+
 ### Migrations
 
 `Platform/Persistence/Migrations` holds one EF Core migration per table, generated with `dotnet ef` through the design
@@ -149,31 +164,16 @@ and codes), expired `mcp_codes`, and MCP clients that never finished a first sig
 Project and organization deletion delete `alert_rules` and `log_drains` (their events and cursors cascade) and the
 organization's `allowance_alerts`.
 
-## JSON-body tables
-
-The remaining tables keep the original shape, written over MagicOnion (`IManagementService.ExecuteSqlAsync`) by
-`TerraBaseDashboardState`:
-
-```sql
-CREATE TABLE IF NOT EXISTS <table> (id TEXT PRIMARY KEY NOT NULL, version TEXT NOT NULL, body TEXT NOT NULL)
-```
-
-`DashboardStateSchema.Tables` lists them. `id` is the record's natural key, `version` a new ULID on every write and
-`body` the record as JSON. Writes are compare-and-set on `version`; a conflict raises `StateConflictException`
-(HTTP 412) and callers reread and retry. Startup creates the tables before running the migrations.
-
 ## Tests
 
 The E2E suite (`tests/TerraScale.Dashboard.E2E`) runs the relational tables on a real TerraBase built from the same
 commit by `scripts/dashboard/TerraScale.Dashboard.slnx` (`Demo/TerraBaseStorage.cs`). Each test process starts one
-TerraBase with the test peer secret and one project. Each `DemoEnvironment` gets its own database there, with the script `dotnet ef` generates from the committed migrations applied in one request (history rows
+TerraBase with the test peer secret and one project when the assembly starts, and generates the migration script while
+TerraBase launches. Each `DemoEnvironment` gets its own database there, with the script `dotnet ef` generates from the committed migrations applied in one request (history rows
 included), and its hosts replace only the `TerraBaseSqlDatabase` registration; their startup `MigrateAsync` finds
 nothing pending. Journeys read rows through `DemoEnvironment.StorageAsync()`. The production-process journey
 (`Platform/OciProductionJourneyTests.cs`) starts the built program against a fresh `ts-dashboard` platform database
 and waits for `MigrateAsync` to make it ready.
-
-The JSON-body tables still run on the in-memory `TestState`, and on `TestSqlEngine` behind the real MagicOnion
-services in `StateSdkScenario`.
 
 ## Resets
 

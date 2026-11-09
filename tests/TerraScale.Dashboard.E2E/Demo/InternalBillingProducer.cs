@@ -9,8 +9,8 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E
 {
-    sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, Func<Task<DashboardDbContext>> storage, Func<DateTimeOffset> now, Func<string> subject,
-        Action<OrganizationRecord>? seedOrganization = null) : IDashboardState
+    sealed class InternalBillingProducer(TestWorkspace workspace, Func<Task<DashboardDbContext>> storage, Func<DateTimeOffset> now, Func<string> subject,
+        Action<OrganizationRecord>? seedOrganization = null)
     {
         private readonly OrganizationStore organizations = new(new TestStorageFactory(storage));
         private readonly AccountStore accounts = new(new TestStorageFactory(storage), TimeProvider.System);
@@ -22,40 +22,6 @@ namespace TerraScale.Dashboard.E2E
         private int pausedUsage;
         private int failCliBuild;
         private int cliBuildFailures;
-
-        public Task InitializeAsync(CancellationToken cancellationToken)
-        {
-            return state.InitializeAsync(cancellationToken);
-        }
-
-        public Task CheckReadyAsync(CancellationToken cancellationToken)
-        {
-            return state.CheckReadyAsync(cancellationToken);
-        }
-
-        public Task<StateRecord?> GetAsync(string table, string id, CancellationToken cancellationToken)
-        {
-            return state.GetAsync(table, id, cancellationToken);
-        }
-        public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken cancellationToken)
-        {
-            return state.ListAsync(table, cancellationToken);
-        }
-
-        public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
-        {
-            return state.PageAsync(table, scope, fields, limit, cursor, cancellationToken);
-        }
-
-        public Task DeleteAsync(string table, string id, string version, CancellationToken cancellationToken)
-        {
-            return state.DeleteAsync(table, id, version, cancellationToken);
-        }
-
-        public Task PutAsync(string table, string id, JsonElement row, StatePrecondition precondition, CancellationToken cancellationToken)
-        {
-            return state.PutAsync(table, id, row, precondition, cancellationToken);
-        }
 
         public async Task<IResult> ControlAsync(JsonElement command, CancellationToken cancellationToken)
         {

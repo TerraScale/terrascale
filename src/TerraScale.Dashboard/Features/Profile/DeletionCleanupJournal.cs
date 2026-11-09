@@ -1,28 +1,33 @@
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
-    // Immutable authorization and opaque owned references survive ACK indefinitely.
-    // Retain cleanup authority so delayed regional writes can be removed again.
-    public sealed class DeletionCleanupJournal(IDashboardState state, IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations)
+    public sealed class DeletionCleanupJournal(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, TimeProvider clock)
     {
-        public const string Table = "dashboard_deletion_cleanup";
         public sealed record Entry(TsAuthDeletionProof Proof, string[] ProjectIds, string[] CustomerIds);
+
+        public async Task<IReadOnlyList<Entry>> ListAsync(CancellationToken cancellationToken)
+        {
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var rows = await db.DeletionCleanup.AsNoTracking().OrderBy(row => row.Id).ToListAsync(cancellationToken);
+            var targets = (await db.DeletionCleanupTargets.AsNoTracking().ToListAsync(cancellationToken)).ToLookup(row => row.CleanupId, StringComparer.Ordinal);
+            return [.. rows.Select(row => Read(row, targets[row.Id]))];
+        }
 
         public async Task<Entry> RememberAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(Table, proof.Id, cancellationToken) is { } existing)
+            if (await FindAsync(proof.Id, cancellationToken) is { } existing)
             {
                 return Match(existing, proof);
             }
 
             HashSet<string> projects = [];
             HashSet<string> customers = [];
-            if (proof.Scope == "organization")
+            if (proof.Scope == DeletionCleanupRow.Organization)
             {
                 if (await organizations.FindAsync(proof.SubjectId, cancellationToken) is { Erased: false } org)
                 {
@@ -54,37 +59,56 @@ namespace TerraScale.Dashboard.Features.Profile
                     }
                 }
             }
+
             var entry = new Entry(proof, [.. projects.Order(StringComparer.Ordinal)], [.. customers.Order(StringComparer.Ordinal)]);
-            try { await state.PutAsync(Table, proof.Id, JsonSerializer.SerializeToElement(entry), StatePrecondition.Absent, cancellationToken); }
-            catch (StateConflictException)
+            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
             {
-                return Match(await state.GetAsync(Table, proof.Id, cancellationToken) ?? throw new IOException("Cleanup journal disappeared."), proof);
+                db.DeletionCleanup.Add(new DeletionCleanupRow
+                {
+                    Id = proof.Id,
+                    Scope = proof.Scope,
+                    SubjectId = proof.SubjectId,
+                    OrganizationId = proof.OrganizationId,
+                    CreatedAt = clock.GetUtcNow().UtcDateTime,
+                });
+                db.DeletionCleanupTargets.AddRange(entry.ProjectIds.Select(id => Target(proof.Id, DeletionCleanupTargetRow.Project, id)));
+                db.DeletionCleanupTargets.AddRange(entry.CustomerIds.Select(id => Target(proof.Id, DeletionCleanupTargetRow.Customer, id)));
+                try
+                {
+                    await db.SaveChangesAsync(cancellationToken);
+                    return entry;
+                }
+                catch (DbUpdateException error) when (error.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.PrimaryKeyViolation })
+                {
+                }
             }
-            return entry;
+
+            return Match(await FindAsync(proof.Id, cancellationToken) ?? throw new IOException("Cleanup journal disappeared."), proof);
         }
 
-        public async Task<Entry> ReadAsync(StateRecord row, CancellationToken cancellationToken)
+        private async Task<Entry?> FindAsync(string id, CancellationToken cancellationToken)
         {
-            var entry = AccountService.Read<Entry>(row);
-            if (entry.Proof is null || !TerraScaleIds.IsValid(entry.Proof.Id) || entry.ProjectIds is null || entry.CustomerIds is null ||
-                entry.ProjectIds.Any(id => !TerraScaleIds.IsValid(id)) || entry.CustomerIds.Any(string.IsNullOrEmpty))
-            {
-                throw new IOException("Cleanup journal is invalid.");
-            }
-
-            var stored = await state.GetAsync(Table, entry.Proof.Id, cancellationToken) ?? throw new IOException("Cleanup journal disappeared.");
-            return Match(stored, entry.Proof);
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var row = await db.DeletionCleanup.AsNoTracking().SingleOrDefaultAsync(row => row.Id == id, cancellationToken);
+            return row is null ? null : Read(row, await db.DeletionCleanupTargets.AsNoTracking().Where(target => target.CleanupId == id).ToListAsync(cancellationToken));
         }
 
-        private static Entry Match(StateRecord row, TsAuthDeletionProof proof)
+        private static DeletionCleanupTargetRow Target(string cleanupId, string kind, string targetId)
         {
-            var entry = AccountService.Read<Entry>(row);
-            if (row.Id != proof.Id || entry.Proof is null || entry.Proof.Id != proof.Id || entry.Proof.Scope != proof.Scope || entry.Proof.SubjectId != proof.SubjectId || entry.Proof.OrganizationId != proof.OrganizationId || entry.ProjectIds is null || entry.CustomerIds is null)
-            {
-                throw new IOException("Cleanup journal proof changed.");
-            }
+            return new() { CleanupId = cleanupId, Kind = kind, TargetId = targetId };
+        }
 
-            return entry;
+        private static Entry Read(DeletionCleanupRow row, IEnumerable<DeletionCleanupTargetRow> targets)
+        {
+            var kept = targets.ToLookup(target => target.Kind, StringComparer.Ordinal);
+            return new(new(row.Id, row.Scope, row.SubjectId, row.OrganizationId),
+                [.. kept[DeletionCleanupTargetRow.Project].Select(target => target.TargetId).Order(StringComparer.Ordinal)],
+                [.. kept[DeletionCleanupTargetRow.Customer].Select(target => target.TargetId).Order(StringComparer.Ordinal)]);
+        }
+
+        private static Entry Match(Entry entry, TsAuthDeletionProof proof)
+        {
+            return entry.Proof == proof ? entry : throw new IOException("Cleanup journal proof changed.");
         }
     }
 }

@@ -75,7 +75,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     await ActivateAsync(reservation, cancellationToken);
                     return;
                 }
-                catch (StateConflictException) when (attempt < 7) { }
+                catch (DbUpdateConcurrencyException) when (attempt < 7) { }
             }
             throw new IOException("Internal billing changed concurrently. Retry configuration.");
         }
@@ -383,7 +383,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     alert?.Id ?? ids.NewId(), month, bill.Alert!, time.GetUtcNow());
                 Organization.InternalBillingAlerts[alertKey] = alert;
                 try { await organizations.ReplaceAsync(record, cancellationToken); break; }
-                catch (StateConflictException) when (attempt < 7) { alert = null; }
+                catch (DbUpdateConcurrencyException) when (attempt < 7) { alert = null; }
             }
             if (alert is null || alert.Month != month || alert.Id.Length == 0 || alert.OwnerUserId.Length == 0)
             {
@@ -432,7 +432,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 // The account CAS deduplicates inbox writes; it cannot atomically
                 // guard a later change to the separate organization row.
                 try { await accountStore.ReplaceAsync(row, cancellationToken); return; }
-                catch (StateConflictException) when (attempt < 7) { }
+                catch (DbUpdateConcurrencyException) when (attempt < 7) { }
             }
             throw new IOException("Internal billing owner inbox changed concurrently.");
         }

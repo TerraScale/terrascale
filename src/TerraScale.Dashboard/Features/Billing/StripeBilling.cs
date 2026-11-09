@@ -548,7 +548,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 if (!conflicted)
                 {
                     try { await organizations.ReplaceAsync(organizationRow, cancellationToken); }
-                    catch (StateConflictException) when (attempt < 3) { conflicted = true; }
+                    catch (DbUpdateConcurrencyException) when (attempt < 3) { conflicted = true; }
                 }
 
                 if (!conflicted)

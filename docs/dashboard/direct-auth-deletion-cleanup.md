@@ -8,27 +8,25 @@ outage never authorizes deletion. Older auth deployments without the outbox rout
 are retried; logs contain the exception type, without response bodies or secrets.
 
 Before any cleanup or ACK, the dashboard creates an immutable record keyed by the
-auth erasure ULID in `dashboard_deletion_cleanup`. It retains the exact proof and
-opaque project/customer references discovered before removing their aggregates.
+auth erasure ULID in `deletion_cleanup`. It retains the exact proof, and in
+`deletion_cleanup_targets` the opaque project/customer references discovered
+before removing their aggregates ([state storage](state-storage.md#deletions)).
 A failed journal write prevents cleanup and ACK. Every poll replays retained
 entries before contacting auth, including after ACK and during auth outages.
 Entries have no TTL or retirement rule. A failed entry does not block the others.
 
 An account proof erases that subject's profile and identity data, sessions,
-credentials, personal access tokens and indexes. Account and identity keys retain
-only `{ ErasureId }`. These same-key terminal markers block create-only writes
-and stale conditional writes from an already-loaded session. The browser deletion
+credentials and personal access tokens. The `accounts` row keeps only its key and
+`erasure_id`; this terminal marker blocks create-only writes and stale
+conditional writes from an already-loaded session. The browser deletion
 flow uses the same markers and preserves its preflight and consent requirements.
 Account proofs leave shared organizations and every other user's records intact;
 sole organizations are removed only under their own organization proofs.
 
-Every session, credential, session-index and PAT enrollment first writes a minimal
-immutable reference to `dashboard_account_enrollments`. References contain only
-subject, table and record IDs and remain indefinitely. Replay follows these
-references even after mutable indexes disappear. It decrypts sessions and
-credentials to validate ownership without requiring an active auth grant. Pending
-MCP authorization codes and their owned credentials, and encrypted account deletion
-operations, are also removed. Anonymous MCP registrations, anonymous auth flows
+Sessions, credentials and access tokens carry their subject in an indexed
+`user_id` column, so every replay deletes them in SQL without requiring an active
+auth grant. Pending MCP authorization codes go with their credentials, and running
+`account_deletions` rows of the subject become completion-only rows. Anonymous MCP registrations, anonymous auth flows
 and email-only audit entries are not inferred to belong to a deleted account.
 
 An organization proof first moves Stripe billing into a terminal `deleting`

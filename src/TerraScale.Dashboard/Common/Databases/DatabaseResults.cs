@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.Dashboard.Features.Data;
@@ -18,7 +19,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         internal static int Status(Exception error)
         {
-            return error switch { AccountAccessException access => access.StatusCode, TerraBaseException provider => provider.Status, DatabaseWrongRegionException => 409, HttpRequestException { StatusCode: { } status } when (int)status is >= 400 and <= 599 => (int)status, _ => 503 };
+            return error switch { AccountAccessException access => access.StatusCode, TerraBaseException provider => provider.Status, DatabaseWrongRegionException => 409, DbUpdateConcurrencyException => StatusCodes.Status412PreconditionFailed, HttpRequestException { StatusCode: { } status } when (int)status is >= 400 and <= 599 => (int)status, _ => 503 };
         }
 
         internal static string Message(Exception error)

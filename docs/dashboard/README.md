@@ -1,8 +1,11 @@
 # TerraScale.Dashboard
 
 Platform UI, MCP server and billing for TerraScale. Identity belongs to ts-auth;
-persistent state lives in TerraBase, reached over MagicOnion through the shared
-contracts library. It is a .NET 11 application using RazorSlices and Datastar.
+persistent state lives in relational tables of its TerraBase database, read and
+written through the TerraBase EF Core provider ([state storage](state-storage.md)).
+TerraBase's product APIs (database management, SQL, backups, usage) are reached
+over MagicOnion through the shared contracts library. It is a .NET 11
+application using RazorSlices and Datastar.
 
 The C# application is the only implementation; the Go application was removed.
 Production runs on OCI gru under ts-orch; see the

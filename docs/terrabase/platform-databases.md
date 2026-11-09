@@ -12,7 +12,7 @@ TerraScale services store their state in TerraBase SQL databases. TerraBase seed
 
 `Features/Platform/PlatformDatabases.cs` defines these identities. Startup seeds missing fixed catalog bindings conditionally and refuses conflicting identities. Seeding storage does not grant customer access or replace ts-auth's independent identity bootstrap. Verify placement and data convergence against the serving revision rather than inferring them from a catalog entry.
 
-Auth uses the .NET SDK's SQL endpoint; dashboard uses SQL RPC through the shared MagicOnion contracts. Every call requires the listener's credential and authorization boundary. Service credentials never belong in a customer browser, tool output or logs. Missing or incompatible issuer/audience metadata fails closed.
+Auth and dashboard use the .NET SDK's SQL endpoint, the dashboard through the TerraBase EF Core provider. Every call requires the listener's credential and authorization boundary. Service credentials never belong in a customer browser, tool output or logs. Missing or incompatible issuer/audience metadata fails closed.
 
 - [Auth storage](../auth/storage.md).
 - [Dashboard SQL storage](../dashboard/state-storage.md).

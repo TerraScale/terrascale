@@ -1,13 +1,12 @@
 using Cronos;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
-    public sealed class BackupService(AccountService accounts, DatabaseService databases, IBackupBackend backend, IDashboardState state)
+    public sealed class BackupService(AccountService accounts, DatabaseService databases, IBackupBackend backend, IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
     {
-        public const string PendingRestoresTable = "dashboard_pending_restores";
-
         // One producer page per call: the dashboard forwards its own cursor and returns exactly that page (TS-1230 pattern).
         public async Task<BackupPageSlice> ListPageAsync(AccountContext context, string databaseId, string? cursor, int limit, CancellationToken ct)
         {
@@ -127,9 +126,7 @@ namespace TerraScale.Dashboard.Features.Backups
         {
             var (scope, home, source, restoreId) = await RestoreRequestAsync(context, databaseId, backupId, name, ct);
             var operation = await backend.StartRestoreAsync(scope, home, databaseId, restoreId, name.Length == 0 ? null : DatabaseService.ValidName(name), ct);
-            await state.PutAsync(PendingRestoresTable, operation.OperationId,
-                JsonSerializer.SerializeToElement(new PendingRestore(operation.OperationId, scope.OrganizationId, scope.ProjectId, source.Id), BackupBackendJson.Default.PendingRestore),
-                StatePrecondition.Absent, ct);
+            await storage.RecordRestoreAsync(operation.OperationId, scope.OrganizationId, scope.ProjectId, source.Id, time.GetUtcNow(), ct);
             return new(operation.OperationId, operation.Status);
         }
 
@@ -141,41 +138,24 @@ namespace TerraScale.Dashboard.Features.Backups
             }
 
             var settled = false;
-            foreach (var row in await state.ListAsync(PendingRestoresTable, ct))
+            foreach (var pending in await storage.PendingRestoresAsync(context.Organization.Id, context.Project.Id, ct))
             {
-                PendingRestore? pending = null;
-                try { pending = row.Body.Deserialize(BackupBackendJson.Default.PendingRestore); }
-                catch (JsonException) { }
-                if (pending is null || pending.OrganizationId != context.Organization.Id || pending.ProjectId != context.Project.Id)
-                {
-                    continue;
-                }
-
                 try
                 {
-                    await RestoreStatusAsync(context, pending.SourceDatabaseId, pending.OperationId, ct);
+                    await RestoreStatusAsync(context, pending.SourceDatabaseId, pending.Id, ct);
                     settled = true;
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
                     if (error is AccountAccessException { StatusCode: 404 })
                     {
-                        await DropPendingAsync(pending.OperationId, ct);
+                        await storage.DropRestoreAsync(pending.Id, ct);
                         settled = true;
                     }
                 }
             }
 
             return settled ? await databases.CurrentAsync(context, ct) : context;
-        }
-
-        private async Task DropPendingAsync(string operationId, CancellationToken ct)
-        {
-            var row = await state.GetAsync(PendingRestoresTable, operationId, ct);
-            if (row is not null)
-            {
-                await state.DeleteAsync(PendingRestoresTable, operationId, row.Version, ct);
-            }
         }
 
         public async Task<RestoreProgress> RestoreStatusAsync(AccountContext context, string databaseId, string operationId, CancellationToken ct)
@@ -194,7 +174,7 @@ namespace TerraScale.Dashboard.Features.Backups
             {
                 if (operation.Status == "failed")
                 {
-                    await DropPendingAsync(operationId, ct);
+                    await storage.DropRestoreAsync(operationId, ct);
                 }
 
                 return new(operationId, operation.Status, ErrorCode: operation.ErrorCode,
@@ -217,7 +197,7 @@ namespace TerraScale.Dashboard.Features.Backups
                 }
             }
 
-            await DropPendingAsync(operationId, ct);
+            await storage.DropRestoreAsync(operationId, ct);
             return new(operationId, "completed", recorded.DatabaseId, recorded.Name);
         }
 

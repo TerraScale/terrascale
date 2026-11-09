@@ -711,6 +711,41 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Backups.PendingRestoreRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("SourceDatabaseId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source_database_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "ProjectId");
+
+                    b.ToTable("pending_restores", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_pending_restores_id", "length(id) = 26 AND length(organization_id) = 26 AND length(project_id) = 26 AND length(source_database_id) = 26");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Features.Billing.BillingBinding", b =>
                 {
                     b.Property<string>("OrganizationId")
@@ -1549,6 +1584,124 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Profile.AccountDeletionRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<byte[]>("Ciphertext")
+                        .HasColumnType("BLOB")
+                        .HasColumnName("ciphertext");
+
+                    b.Property<DateTime?>("CompletedUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("completed_until");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("KeyHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("key_hash");
+
+                    b.Property<byte[]>("Nonce")
+                        .HasColumnType("BLOB")
+                        .HasColumnName("nonce");
+
+                    b.Property<byte[]>("Tag")
+                        .HasColumnType("BLOB")
+                        .HasColumnName("tag");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompletedUntil");
+
+                    b.HasIndex("KeyHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("account_deletions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_account_deletions_id", "length(id) = 26 AND length(version) = 26");
+
+                            t.HasCheckConstraint("ck_account_deletions_key_hash", "length(key_hash) = 64 AND key_hash NOT GLOB '*[^0-9a-f]*'");
+
+                            t.HasCheckConstraint("ck_account_deletions_state", "(completed_until IS NULL AND length(user_id) > 0 AND length(nonce) = 12 AND length(ciphertext) > 0 AND length(tag) = 16) OR (completed_until IS NOT NULL AND user_id IS NULL AND nonce IS NULL AND ciphertext IS NULL AND tag IS NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Profile.DeletionCleanupRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("SubjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subject_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Scope", "SubjectId");
+
+                    b.ToTable("deletion_cleanup", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_deletion_cleanup_id", "length(id) = 26 AND length(subject_id) = 26");
+
+                            t.HasCheckConstraint("ck_deletion_cleanup_scope", "(scope = 'account' AND organization_id IS NULL) OR (scope = 'organization' AND (organization_id IS NULL OR organization_id <> subject_id)) OR (scope = 'project' AND length(organization_id) = 26)");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Profile.DeletionCleanupTargetRow", b =>
+                {
+                    b.Property<string>("CleanupId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cleanup_id");
+
+                    b.Property<string>("Kind")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("TargetId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_id");
+
+                    b.HasKey("CleanupId", "Kind", "TargetId");
+
+                    b.ToTable("deletion_cleanup_targets", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_deletion_cleanup_targets_kind", "(kind = 'project' AND length(target_id) = 26) OR (kind = 'customer' AND length(target_id) BETWEEN 1 AND 255)");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Platform.Identity.SessionRow", b =>
                 {
                     b.Property<string>("Id")
@@ -1890,6 +2043,15 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     b.HasOne("TerraScale.Dashboard.Features.Notifications.AlertRuleRow", null)
                         .WithMany("Events")
                         .HasForeignKey("RuleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Profile.DeletionCleanupTargetRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Features.Profile.DeletionCleanupRow", null)
+                        .WithMany()
+                        .HasForeignKey("CleanupId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

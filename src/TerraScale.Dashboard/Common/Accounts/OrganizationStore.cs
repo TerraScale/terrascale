@@ -69,7 +69,7 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
     {
         if (stored.Erased || stored.Organization.Id != stored.Rows.Root.Id)
         {
-            throw new StateConflictException();
+            throw new DbUpdateConcurrencyException("Dashboard storage changed concurrently.");
         }
 
         await using var db = await storage.CreateDbContextAsync(cancellationToken);
@@ -119,7 +119,7 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 await (stored is null ? RowSync.CreateAsync(db, cancellationToken) : RowSync.ReplaceAsync(db, cancellationToken));
                 return;
             }
-            catch (StateConflictException) when (attempt < 3) { }
+            catch (DbUpdateConcurrencyException) when (attempt < 3) { }
         }
     }
 

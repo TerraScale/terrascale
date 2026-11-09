@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.EntityFrameworkCore;
 
 namespace TerraScale.Dashboard.Platform.Observability
 {
@@ -29,7 +30,7 @@ namespace TerraScale.Dashboard.Platform.Observability
 
         public static void MarkFailure(Exception error)
         {
-            var status = error is AccountAccessException access ? access.StatusCode :
+            var status = error is AccountAccessException access ? access.StatusCode : error is DbUpdateConcurrencyException ? StatusCodes.Status412PreconditionFailed :
                 error is HttpRequestException { StatusCode: { } code } ? (int)code : 503;
             if (status is >= 500 or 408)
             {

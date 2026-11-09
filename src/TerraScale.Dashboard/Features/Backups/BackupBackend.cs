@@ -242,7 +242,6 @@ namespace TerraScale.Dashboard.Features.Backups
     [JsonSerializable(typeof(ManagedDatabase))]
     [JsonSerializable(typeof(BackupPolicyRequest))]
     [JsonSerializable(typeof(BackupRestoreRequest))]
-    [JsonSerializable(typeof(PendingRestore))]
     [JsonSerializable(typeof(ProducerRestoreOperation))]
     [JsonSerializable(typeof(BackupDestinationRequest))]
     internal sealed partial class BackupBackendJson : JsonSerializerContext;

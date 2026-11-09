@@ -44,7 +44,6 @@ namespace TerraScale.Dashboard.E2E
         private WebApplication? second;
         private ProducerTransport? transport;
         private readonly DatabaseProducer protocol = new();
-        private RecordingState? state;
         public Uri Origin { get; private set; } = null!;
         public Uri ReplicaOrigin { get; private set; } = null!;
         public Uri ProviderOrigin { get; private set; } = null!;
@@ -143,8 +142,6 @@ namespace TerraScale.Dashboard.E2E
             await environment.InitializeAsync();
             void Configure(WebApplicationBuilder application)
             {
-                state ??= new((IDashboardState)application.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!);
-                protocol.State = state;
                 protocol.Organizations = environment.Organizations;
                 protocol.Workspace = environment.Workspace;
                 protocol.Platform ??= ProjectCounter.Wrap(environment.Workspace, protocol.CountProject);
@@ -154,7 +151,6 @@ namespace TerraScale.Dashboard.E2E
                 protocol.ResolveProjectToken = token => auth.ResolveProjectToken(token) ?? protocol.ApiKeys?.ResolveMachineToken(token);
                 protocol.ApiKeys ??= new TestAuthApiKeys(auth.ResolveAccessToken, protocol.KeyRole);
                 transport!.ApiKeys = protocol.ApiKeys;
-                application.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(state));
                 application.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new ProducerFactory(transport)));
                 application.Services.Replace(ServiceDescriptor.Singleton<TerraBaseRpcClient>(services => new(
                     services.GetRequiredService<IDashboardIdentity>(), ProviderOrigin, null, peersFile, services.GetRequiredService<IMeterFactory>())));
@@ -258,60 +254,6 @@ namespace TerraScale.Dashboard.E2E
             }
         }
 
-        private sealed class RecordingState(IDashboardState inner) : IDashboardState
-        {
-            // The encrypted data-key registry is gone; recording its former table shows nothing writes customer keys again.
-            private const string Credentials = "dashboard_data_credentials";
-            private readonly ConcurrentQueue<string> encrypted = new();
-            private int credentialReads;
-            public bool ConflictCredentials { get; set; }
-            public string[] Encrypted => encrypted.ToArray();
-            public int CredentialReads => Volatile.Read(ref credentialReads);
-            public Task InitializeAsync(CancellationToken ct)
-            {
-                return inner.InitializeAsync(ct);
-            }
-
-            public Task CheckReadyAsync(CancellationToken ct)
-            {
-                return inner.CheckReadyAsync(ct);
-            }
-
-            public async Task<StateRecord?> GetAsync(string table, string id, CancellationToken ct)
-            {
-                var value = await inner.GetAsync(table, id, ct);
-                if (table != Credentials)
-                {
-                    return value;
-                }
-
-                Interlocked.Increment(ref credentialReads);
-                return ConflictCredentials && value is not null ? throw new IOException("Synthetic credential read conflict.") : value;
-            }
-            public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition condition, CancellationToken ct)
-            {
-                await inner.PutAsync(table, id, row, condition, ct);
-                if (table == Credentials)
-                {
-                    encrypted.Enqueue(row.GetRawText());
-                }
-            }
-            public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken ct)
-            {
-                return inner.ListAsync(table, ct);
-            }
-
-            public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken ct)
-            {
-                return inner.PageAsync(table, scope, fields, limit, cursor, ct);
-            }
-
-            public Task DeleteAsync(string table, string id, string version, CancellationToken ct)
-            {
-                return inner.DeleteAsync(table, id, version, ct);
-            }
-        }
-
         private sealed class DatabaseProducer
         {
             private static readonly string[] BackupPolicyFields = ["fullBackupCron", "retentionDays"];
@@ -352,7 +294,6 @@ namespace TerraScale.Dashboard.E2E
             private int anchorDeleteFailures;
             private int branchCreates;
             private int branchConflicts;
-            public RecordingState State { get; set; } = null!;
             public OrganizationStore Organizations { get; set; } = null!;
             // ts-auth's canonical organizations, projects and memberships for this fixture; the producer stores no identity.
             public TestWorkspace Workspace { get; set; } = null!;
@@ -561,7 +502,6 @@ namespace TerraScale.Dashboard.E2E
                     case "release-key-list": ApiKeys!.ReleaseLists(); break;
                     case "pause-database-creates": Interlocked.Exchange(ref pausedCreates, 0); createGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                     case "release-database-creates": createGate?.TrySetResult(); createGate = null; break;
-                    case "credential-conflict": State.ConflictCredentials = body.GetProperty("value").GetBoolean(); break;
                     case "role": Workspace.Role = body.GetProperty("value").GetString()!; break;
                     case "backup-failure": backupFailure = body.GetProperty("value").GetString()!; break;
                     case "policy-health": policyHealth = body.GetProperty("value").GetString()!; break;
@@ -660,8 +600,6 @@ namespace TerraScale.Dashboard.E2E
                         backups = snapshots.Values.Select(value => value.Backup).ToArray(),
                         credentials = (ApiKeys?.Issued() ?? []).Select(value => new { value.Key.Id, value.Key.Name, Secret = value.Secret, Host = "auth.terrascale.tech", value.Key.Scopes, value.Key.Database }).ToArray(),
                         authKeys = ApiKeys?.Observations(),
-                        encrypted = State.Encrypted,
-                        credentialReads = State.CredentialReads,
                         databases = databases.Values.ToArray()
                     });
                 }

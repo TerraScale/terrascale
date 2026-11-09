@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
@@ -228,7 +229,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     await organizations.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
-                catch (StateConflictException) when (attempt < 3) { }
+                catch (DbUpdateConcurrencyException) when (attempt < 3) { }
             }
         }
     }

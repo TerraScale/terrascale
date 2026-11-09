@@ -32,7 +32,6 @@ namespace TerraScale.Dashboard.E2E.Demo
             billingPlans.Dispose();
             reporting.Dispose();
         }
-        private readonly TestState state = new();
         private readonly TestAuth auth;
         private readonly TestIdentity identity = new();
         private readonly TestClock clock = new();
@@ -63,7 +62,6 @@ namespace TerraScale.Dashboard.E2E.Demo
         internal TestAuthApiKeys ApiKeys => apiKeys;
         internal TestAuthentication Authentication => authentication;
         // The E2E suite seeds its reference fixtures through these.
-        internal TestState State => state;
         internal TestAuth Auth => auth;
         internal TestDatabases Databases => databases;
 
@@ -114,7 +112,6 @@ namespace TerraScale.Dashboard.E2E.Demo
                     builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
                     terraBase.Use(builder.Services, database);
                     builder.Services.AddSingleton(stripe);
-                    builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(state));
                     builder.Services.Replace(ServiceDescriptor.Singleton<IAuthGateway>(auth));
                     builder.Services.Replace(ServiceDescriptor.Singleton<IAuthRefreshGateway>(auth));
                     builder.Services.Replace(ServiceDescriptor.Singleton<IAuthOidcGateway>(auth));
@@ -157,10 +154,10 @@ namespace TerraScale.Dashboard.E2E.Demo
 
             app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
             // Test-only: ts-auth completes the held deletions and the reconciler runs the account proof's operation cleanup.
-            app.MapPost("/__test/deletions/complete/{userId}", async (string userId, IDashboardState state, IDashboardIdentity identity, TimeProvider clock) =>
+            app.MapPost("/__test/deletions/complete/{userId}", async (string userId, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, TimeProvider clock) =>
             {
                 workspace.CompleteHeldDeletions();
-                await TerraScale.Dashboard.Features.Profile.AccountDeletion.CleanOperationsAsync(state, identity, userId, clock, default);
+                await TerraScale.Dashboard.Features.Profile.AccountDeletion.CleanOperationsAsync(storage, identity, userId, clock, default);
                 return Results.NoContent();
             });
             // Test-only: report the signed-in organization's operation units now (or mark its pending overage invoiced), then list its overage items.
@@ -452,85 +449,6 @@ namespace TerraScale.Dashboard.E2E.Demo
 
     sealed record TestProjectExchange(string UserId, string OrganizationId, string ProjectId,
         IReadOnlyList<string> RequestedScopes, IReadOnlyList<string> GrantedScopes, HttpStatusCode Status);
-    sealed class TestState : IDashboardState
-    {
-        public ConcurrentDictionary<string, StateRecord> Items { get; } = new();
-        public Exception? ReadyError { get; set; }
-        public Func<string, string, Task>? BeforeWriteAsync { get; set; }
-        public Func<string, string, Exception?>? WriteFailure { get; set; }
-        public Func<string, Exception?>? ReadFailure { get; set; }
-        public Task InitializeAsync(CancellationToken cancellationToken)
-        {
-            return Task.CompletedTask;
-        }
-
-        public Task CheckReadyAsync(CancellationToken cancellationToken)
-        {
-            return ReadyError is null ? Task.CompletedTask : Task.FromException(ReadyError);
-        }
-
-        public Task<StateRecord?> GetAsync(string table, string id, CancellationToken cancellationToken)
-        {
-            return ReadFailure?.Invoke(table) is { } failure ? Task.FromException<StateRecord?>(failure) : Task.FromResult(Items.GetValueOrDefault(table + "/" + id));
-        }
-
-        public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken cancellationToken)
-        {
-            return Task.FromResult<IReadOnlyList<StateRecord>>(Rows(table).ToArray());
-        }
-
-        public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor,
-            CancellationToken cancellationToken)
-        {
-            return Task.FromResult(TestStateQuery.Page(Rows(table), scope, fields, limit, cursor));
-        }
-
-        public async Task PutAsync(string table, string id, JsonElement body, StatePrecondition precondition, CancellationToken cancellationToken)
-        {
-            if (BeforeWriteAsync is { } before)
-            {
-                await before(table, id);
-            }
-
-            if (WriteFailure?.Invoke(table, id) is { } error)
-            {
-                throw error;
-            }
-
-            lock (Items)
-            {
-                var key = table + "/" + id;
-                var existing = Items.GetValueOrDefault(key);
-                if (precondition.Version is null ? existing is not null : existing?.Version != precondition.Version)
-                {
-                    throw new StateConflictException();
-                }
-
-                Items[key] = new(id, Guid.NewGuid().ToString("N"), body.Clone());
-            }
-        }
-
-        public Task DeleteAsync(string table, string id, string version, CancellationToken cancellationToken)
-        {
-            var key = table + "/" + id;
-            lock (Items)
-            {
-                if (Items.GetValueOrDefault(key)?.Version != version)
-                {
-                    throw new StateConflictException();
-                }
-
-                Items.TryRemove(key, out _);
-            }
-            return Task.CompletedTask;
-        }
-
-        private IEnumerable<StateRecord> Rows(string table)
-        {
-            return Items.Where(item => item.Key.StartsWith(table + "/", StringComparison.Ordinal)).Select(item => item.Value);
-        }
-    }
-
     // One provider registry per DemoEnvironment: its host pair shares it, other scenarios never do.
     public sealed class TestWorkspace : ITsAuthPlatform
     {

@@ -2,10 +2,12 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Notifications;
+using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Platform.Persistence;
@@ -60,6 +62,14 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
 
     public DbSet<InternalBillingRow> InternalBilling => Set<InternalBillingRow>();
 
+    public DbSet<AccountDeletionRow> AccountDeletions => Set<AccountDeletionRow>();
+
+    public DbSet<DeletionCleanupRow> DeletionCleanup => Set<DeletionCleanupRow>();
+
+    public DbSet<DeletionCleanupTargetRow> DeletionCleanupTargets => Set<DeletionCleanupTargetRow>();
+
+    public DbSet<PendingRestoreRow> PendingRestores => Set<PendingRestoreRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfiguration(new AuthFlowRow.Configuration());
@@ -86,6 +96,10 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
         modelBuilder.ApplyConfiguration(new StripeCheckoutRow.Configuration());
         modelBuilder.ApplyConfiguration(new BillingChangeReceipt.Configuration());
         modelBuilder.ApplyConfiguration(new InternalBillingRow.Configuration());
+        modelBuilder.ApplyConfiguration(new AccountDeletionRow.Configuration());
+        modelBuilder.ApplyConfiguration(new DeletionCleanupRow.Configuration());
+        modelBuilder.ApplyConfiguration(new DeletionCleanupTargetRow.Configuration());
+        modelBuilder.ApplyConfiguration(new PendingRestoreRow.Configuration());
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
             foreach (var property in entity.GetProperties())

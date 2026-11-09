@@ -29,50 +29,6 @@ namespace TerraScale.Dashboard.Common.Accounts
             return Ids.NewId();
         }
 
-        public static bool IsDeletionFence(StateRecord row)
-        {
-            return row.Body.ValueKind == JsonValueKind.Object && row.Body.EnumerateObject().Count() == 1 &&
-            row.Body.TryGetProperty(nameof(DeletionFence.ErasureId), out var id) && id.ValueKind == JsonValueKind.String && TerraScaleIds.IsValid(id.GetString());
-        }
-
-        public static async Task FenceRecordAsync(IDashboardState state, string table, string key, string erasureId,
-            Func<StateRecord, bool> owns, CancellationToken cancellationToken)
-        {
-            if (!TerraScaleIds.IsValid(erasureId))
-            {
-                throw new IOException("Erasure identity is invalid.");
-            }
-
-            for (var attempt = 0; ; attempt++)
-            {
-                var row = await state.GetAsync(table, key, cancellationToken);
-                if (row is not null)
-                {
-                    if (row.Id != key)
-                    {
-                        throw new IOException("Erasure scope does not match.");
-                    }
-
-                    if (IsDeletionFence(row))
-                    {
-                        return;
-                    }
-
-                    if (!owns(row))
-                    {
-                        throw new IOException("Erasure ownership does not match.");
-                    }
-                }
-                try
-                {
-                    await state.PutAsync(table, key, JsonSerializer.SerializeToElement(new DeletionFence(erasureId)),
-                        row is null ? StatePrecondition.Absent : StatePrecondition.Matches(row.Version), cancellationToken);
-                    return;
-                }
-                catch (StateConflictException) when (attempt < 3) { }
-            }
-        }
-
         public async Task<AccountRecord> EnsureAsync(SessionRecord session, CancellationToken cancellationToken)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(session.UserId);
@@ -85,7 +41,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 {
                     var created = new AccountRecord { Id = NewId(), UserId = session.UserId, Name = session.Name, Email = session.Email, CreatedAt = now, PersonalClaimUntil = now.AddMinutes(1) };
                     try { await accountStore.CreateAsync(created, cancellationToken); }
-                    catch (StateConflictException) { continue; }
+                    catch (DbUpdateConcurrencyException) { continue; }
                 }
                 else
                 {
@@ -120,7 +76,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     }
                     account.PersonalClaimUntil = now.AddMinutes(1);
                     try { await accountStore.ReplaceAsync(stored, cancellationToken); }
-                    catch (StateConflictException) { continue; }
+                    catch (DbUpdateConcurrencyException) { continue; }
                 }
                 OrganizationRecord personal;
                 try { personal = await CreatePersonalAsync(session, cancellationToken); }
@@ -178,7 +134,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 Projects = new() { [project.Id] = new() { Id = project.Id, OrganizationId = live.Id, Name = project.Name, Slug = Slug(project.Name), IsDefault = true, CreatedAt = project.CreatedAt } }
             };
             try { await organizationStore.CreateAsync(org, cancellationToken); }
-            catch (StateConflictException)
+            catch (DbUpdateConcurrencyException)
             {
                 var stored = await organizationStore.FindAsync(org.Id, cancellationToken);
                 if (stored is not { Erased: false })
@@ -400,7 +356,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 await organizationStore.CreateAsync(created, cancellationToken);
                 return created;
             }
-            catch (StateConflictException)
+            catch (DbUpdateConcurrencyException)
             {
                 var stored = await organizationStore.FindAsync(live.Id, cancellationToken) ?? throw new IOException("Organization state did not persist.");
                 return stored.Erased ? throw new AccountAccessException("Organization is unavailable.", 404) : stored.Organization;
@@ -556,7 +512,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     await accountStore.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
-                catch (StateConflictException) when (attempt < 3) { }
+                catch (DbUpdateConcurrencyException) when (attempt < 3) { }
             }
         }
 
@@ -621,7 +577,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     await organizationStore.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
-                catch (StateConflictException) when (attempt < 3) { }
+                catch (DbUpdateConcurrencyException) when (attempt < 3) { }
             }
         }
 
@@ -707,7 +663,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             };
             // A context read between creation and this write stores the default business state; keep it.
             try { await organizationStore.CreateAsync(org, cancellationToken); }
-            catch (StateConflictException)
+            catch (DbUpdateConcurrencyException)
             {
                 var current = await organizationStore.FindAsync(org.Id, cancellationToken);
                 if (current is not { Erased: false })
@@ -734,16 +690,6 @@ namespace TerraScale.Dashboard.Common.Accounts
         public static string Slug(string name)
         {
             return string.Join('-', name.ToLowerInvariant().Split(name.Where(character => !char.IsAsciiLetterOrDigit(character)).Distinct().ToArray(), StringSplitOptions.RemoveEmptyEntries));
-        }
-
-        public static T Read<T>(StateRecord row)
-        {
-            if (IsDeletionFence(row))
-            {
-                throw new IOException("Dashboard record was erased.");
-            }
-
-            return row.Body.Deserialize<T>() ?? throw new JsonException("Dashboard record is invalid.");
         }
 
         private static AccountAccessException IdentityMismatch()

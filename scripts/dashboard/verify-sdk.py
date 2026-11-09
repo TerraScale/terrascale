@@ -32,4 +32,10 @@ assert [item.get("Path") for item in solution.iter("Project")] == [
     "../../src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj",
     "../../tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj"], \
     "The dashboard solution lists its full Release build closure: the application, its EF design host, TerraBase for the E2E suite, the shared contracts, RPC, endpoint, logging and SDK projects, the vendored driver, the analyzers and the E2E suite"
+sources = {path.relative_to(root).as_posix(): path.read_text(encoding="utf-8")
+           for path in (root / "src/TerraScale.Dashboard").rglob("*.cs") if not {"bin", "obj"} & set(path.parts)}
+assert sorted(name for name, text in sources.items() if ".ExecuteSqlAsync(" in text) == ["src/TerraScale.Dashboard/Common/Databases/DatabaseBackend.cs"], \
+    "Only customer SQL goes over MagicOnion; dashboard state never does"
+assert sorted(name for name, text in sources.items() if "UseTerraBase(" in text) == ["src/TerraScale.Dashboard/Platform/Persistence/DashboardStorage.cs"], \
+    "DashboardStorage registers the one DashboardDbContext over the dashboard's TerraBase database"
 print("PASS: dashboard stores state through the TerraBase EF Core provider on .NET 11")
