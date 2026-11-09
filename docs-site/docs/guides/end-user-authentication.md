@@ -110,6 +110,20 @@ Use a maintained OpenID Connect library with authorization-code and PKCE support
 
 The access token is a JWT with your project's issuer as `iss`, your client ID as `aud` and the user's ID as `sub`. Your API must verify its signature, issuer, audience and time validity; an ID token is for the client sign-in, not API authorization. `/oauth/userinfo` returns `sub`, and `email` with the `email` scope. Access tokens last 5 minutes.
 
+In Python, verify it with [PyJWT](https://pyjwt.readthedocs.io/) (install `pyjwt[crypto]`, which brings the `cryptography` package ES256 needs). `PyJWKClient` fetches and caches the project issuer's keys; every published key is ES256, and the JWKS URL is also the discovery document's `jwks_uri`:
+
+```python
+import jwt
+
+issuer = f"https://auth.terrascale.tech/{project_id}"
+jwks = jwt.PyJWKClient(f"{issuer}/.well-known/jwks.json")
+key = jwks.get_signing_key_from_jwt(access_token)
+claims = jwt.decode(access_token, key.key, algorithms=["ES256"],
+                    audience=client_id, issuer=issuer)
+```
+
+`jwt.decode` raises `jwt.InvalidTokenError` (such as `InvalidSignatureError`, `ExpiredSignatureError`, `InvalidAudienceError` or `InvalidIssuerError`) when any check fails; treat every subtype as one rejection.
+
 Refresh tokens rotate on every use. The initial project refresh token expires at **original sign-in (`auth_time`) + configured project session lifetime** (5 minutes–30 days, default 14 days). Rotation never extends the observed expiry; a policy reduction can shorten it further. Store each successor securely and stop using its predecessor. Keep tokens and client secrets out of URLs, logs and browser persistent storage. On sign-out, clear your app session, use `/oauth/logout` for hosted sign-out and `/oauth/revoke` for token revocation; these are separate from clearing local state.
 
 A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project sign-in tokens are for your own application: TerraScale's APIs do not accept them. Your users reach data stored in TerraScale through short-lived scoped tokens your backend mints for them; see [Data access for your users](#data-access-for-your-users).
