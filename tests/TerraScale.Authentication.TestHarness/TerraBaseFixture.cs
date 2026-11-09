@@ -18,11 +18,13 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     // Separate databases avoid queueing every parallel management journey on one database writer.
     private readonly Lazy<Task<OidcHarness>>[] management;
     private int nextManagement = -1;
+    private readonly Lazy<Task<OidcHarness>> shared;
     private readonly Lazy<Task> initialized;
 
     public TerraBaseFixture()
     {
         this.management = Enumerable.Range(0, 4).Select(_ => new Lazy<Task<OidcHarness>>(this.StartManagementAsync)).ToArray();
+        this.shared = new(this.StartSharedAsync);
         this.initialized = new(this.InitializeCoreAsync);
     }
 
@@ -32,6 +34,16 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         this.management[(uint)Interlocked.Increment(ref this.nextManagement) % (uint)this.management.Length].Value;
 
     internal Task InitializeManagementAsync() => Task.WhenAll(this.management.Select(host => host.Value));
+
+    internal Task InitializeSharedAsync() => this.shared.Value;
+
+    public Task<OidcHarness> SharedAsync() => this.shared.Value;
+
+    private Task<OidcHarness> StartSharedAsync()
+    {
+        using var flow = ExecutionContext.SuppressFlow();
+        return Task.Run(() => OidcHarness.StartAsync(this));
+    }
 
     private Task<OidcHarness> StartManagementAsync()
     {
@@ -131,6 +143,10 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         {
             await Task.WhenAll(this.management.Where(host => host.IsValueCreated).Select(async host =>
                 await (await host.Value).DisposeAsync()));
+            if (this.shared.IsValueCreated)
+            {
+                await (await this.shared.Value).DisposeAsync();
+            }
         }
         finally
         {

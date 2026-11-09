@@ -18,8 +18,7 @@ public sealed class PasskeySignInTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_user_verified_passkey_sign_in_opens_a_session_that_satisfies_mfa()
     {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var oidc = await fixture.SharedAsync();
         var (user, token) = await oidc.SignInUserAsync("passkey-signin-happy@example.test");
         using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var credentialId = await EnrollAsync(oidc, token, ecdsa);
@@ -44,8 +43,7 @@ public sealed class PasskeySignInTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_replayed_challenge_or_a_frozen_sign_count_is_refused()
     {
-        var clock = new ManualClock(DateTimeOffset.UtcNow);
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var oidc = await fixture.SharedAsync();
         var (user, token) = await oidc.SignInUserAsync("passkey-signin-refused@example.test");
         using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var credentialId = await EnrollAsync(oidc, token, ecdsa);

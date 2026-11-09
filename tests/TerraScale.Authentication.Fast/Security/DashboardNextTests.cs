@@ -64,7 +64,7 @@ public sealed partial class DashboardNextTests(TerraBaseFixture fixture)
     [Test]
     public async Task Near_misses_of_the_dashboard_profile_url_are_refused()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var oidc = await fixture.SharedAsync();
         var user = await oidc.CreateUserAsync(oidc.UniqueEmail("near"));
         foreach (var hostile in new[] { "https://evil.example/profile", TerraScale.Authentication.Configuration.AuthOptions.DashboardOrigin + ".evil.example/profile",
             TerraScale.Authentication.Configuration.AuthOptions.DashboardOrigin + "/profile/../admin", TerraScale.Authentication.Configuration.AuthOptions.DashboardOrigin + "/profile%3Ftab%3Dsecurity",
