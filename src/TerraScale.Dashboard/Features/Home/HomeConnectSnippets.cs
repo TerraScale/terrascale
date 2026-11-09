@@ -55,7 +55,7 @@ namespace TerraScale.Dashboard.Features.Home
                 "go" => $"go get terrascale.tech/sdk@{SdkVersions.Go}",
                 "python" => $"pip install \"terrascale @ git+https://github.com/TerraScale/terrascale@{SdkVersions.PythonRef}#subdirectory=sdk/python\"",
                 "rust" => "cargo add terrascale --git https://github.com/TerraScale/terrascale",
-                "dotnet" => "dotnet pack TerraScale.DotNet.slnx -c Release -o ~/.nuget/packages-terrascale\ndotnet add package TerraScale.DotNet --source ~/.nuget/packages-terrascale",
+                "dotnet" => "git clone --depth 1 https://github.com/TerraScale/terrascale.git\ncd terrascale/sdk/dotnet\ndotnet pack TerraScale.DotNet.slnx -c Release -o ~/.nuget/packages-terrascale\ncd ../../..\ndotnet add package TerraScale.DotNet --source ~/.nuget/packages-terrascale",
                 _ => ""
             };
         }
