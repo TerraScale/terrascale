@@ -13,7 +13,8 @@
     "StepUpRequest": {"sdk_type": "TerraScaleAuthStepUpRequest", "provenance": "step-up-provenance.json", "fields": [
       {"name": "purpose", "type": "string", "nullable": false, "default": null},
       {"name": "audience", "type": "string", "nullable": false, "default": null},
-      {"name": "return_uri", "type": "string", "nullable": false, "default": null}]},
+      {"name": "return_uri", "type": "string", "nullable": false, "default": null},
+      {"name": "organization_id", "type": "string", "nullable": true, "default": null}]},
     "StepUpBody": {"sdk_type": "TerraScaleAuthStepUp", "provenance": "step-up-provenance.json", "fields": [
       {"name": "proof", "type": "string", "nullable": false, "default": null},
       {"name": "step_up_url", "type": "string", "nullable": false, "default": null},
