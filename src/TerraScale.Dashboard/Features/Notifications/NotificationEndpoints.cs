@@ -25,51 +25,12 @@ namespace TerraScale.Dashboard.Features.Notifications
 
     public static class NotificationEndpoints
     {
-        public static IEndpointRouteBuilder MapNotifications(this IEndpointRouteBuilder endpoints)
-        {
-            endpoints.MapGet("/notifications", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
-
-                context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted);
-                await ApiKeyExpiryNotifications.RefreshAsync(http, context);
-                return NotificationView.Create(Page(http, context));
-            });
-            endpoints.MapGet("/notifications/dialog", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted);
-                if (http.Request.Headers["Datastar-Request"] != "true")
-                {
-                    return Results.Redirect("/notifications");
-                }
-
-                await ApiKeyExpiryNotifications.RefreshAsync(http, context);
-                await DatastarEvents.PatchElementsAsync(http, NotificationPatch.Create(Page(http, context, true)));
-                return Results.Empty;
-            });
-            endpoints.MapPost("/api/v1/notifications/read-all", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
-                await MarkAsync(http, sessions, accounts, null));
-            endpoints.MapPost("/api/v1/notifications/{id}/read", async (HttpContext http, DashboardSessions sessions, AccountService accounts, string id) =>
-                await MarkAsync(http, sessions, accounts, id));
-            return endpoints;
-        }
-
-        private static NotificationPage Page(HttpContext http, AccountContext context, bool dialog = false)
+        internal static NotificationPage Page(HttpContext http, AccountContext context, bool dialog = false)
         {
             return NotificationPage.For(ShellModel.For(http, context, "Notifications"), http.Request.Query["status"], http.Request.Query["page"], dialog);
         }
 
-        private static async Task<IResult> MarkAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, string? id)
+        internal static async Task<IResult> MarkAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, string? id)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
