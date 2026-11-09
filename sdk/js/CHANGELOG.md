@@ -12,6 +12,12 @@ entrypoint and the `terrascale-models` CLI. Database placement is one region:
 removed. SQL over HTTPS and WebSocket, live SQL table shapes, the database
 catalog, backups, usage and file buckets remain.
 
+The new `@terrascale/sdk/prisma` export exposes `PrismaTerraScale`, a driver
+adapter factory over a `V1Database` for the ORM's driver-adapters interface:
+`queryRaw`, `executeRaw`, `executeScript`, typed column mapping and the last
+insert id, with queries running over HTTPS. Interactive transactions arrive in
+the next release; `startTransaction` throws a clear error meanwhile.
+
 ## 0.0.19 — public-client refresh
 
 `oidc.refreshPublic(clientId, refreshToken)` refreshes a public-client session

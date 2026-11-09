@@ -1,0 +1,31 @@
+import { expect, test } from "vitest";
+import { PrismaTerraScale } from "../src/prisma.js";
+import { fixture, json } from "./helpers/v1-http.js";
+
+const created = {
+  columns: [{ name: "id", decltype: "INTEGER" }, { name: "name", decltype: "TEXT" }, { name: "score", decltype: "REAL" }, { name: "avatar", decltype: "BLOB" }],
+  rows: [[1, "Ada", 1.5, { base64: "AQI=" }], [2, "Grace", null, null]],
+  rows_affected: 0, last_insert_rowid: null,
+};
+
+test("adapter maps typed columns, rows, affected rows and the last insert id", async () => {
+  let calls = 0;
+  const { client } = await fixture((_request, response) => {
+    calls += 1;
+    if (calls === 1) json(response, { results: [created] });
+    else response.writeHead(200, { "content-type": "application/json" }).end('{"results":[{"columns":[],"rows":[],"rows_affected":1,"last_insert_rowid":9007199254740993}]}');
+  });
+  const adapter = await new PrismaTerraScale(client.database("app")).connect();
+  expect(adapter.provider).toBe("sqlite");
+  expect(adapter.adapterName).toBe("@terrascale/sdk/prisma");
+  const result = await adapter.queryRaw({ sql: "SELECT * FROM people", args: [], argTypes: [] });
+  expect(result.columnNames).toEqual(["id", "name", "score", "avatar"]);
+  expect(result.columnTypes).toEqual([0, 7, 3, 13]);
+  expect(result.rows).toEqual([[1, "Ada", 1.5, Uint8Array.from([1, 2])], [2, "Grace", null, null]]);
+  expect(await adapter.executeRaw({ sql: "INSERT INTO people (name) VALUES (?)", args: ["Linus"], argTypes: [{ scalarType: "string", arity: "scalar" }] })).toBe(1);
+  expect(result.lastInsertId).toBeUndefined();
+  const insert = await adapter.queryRaw({ sql: "INSERT INTO people (name) VALUES (?)", args: ["Ada"], argTypes: [] });
+  expect(insert.lastInsertId).toBe("9007199254740993");
+  await expect(adapter.startTransaction()).rejects.toThrow("interactive transactions arrive in the next release");
+  await adapter.dispose();
+});
