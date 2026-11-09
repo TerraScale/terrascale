@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
@@ -36,7 +37,7 @@ internal sealed partial class UsageMeter
         PublishIfFull(stripe);
     }
 
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Meter, string Kind), UsageDimension?> _dimensions = new();
+    private readonly ConcurrentDictionary<(string Meter, string Kind), UsageDimension?> _dimensions = new();
 
     private UsageDimension? Dimension(string meter, string kind) =>
         _dimensions.GetOrAdd((meter, kind), static (key, region) =>

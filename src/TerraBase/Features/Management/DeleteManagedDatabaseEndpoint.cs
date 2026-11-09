@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -38,7 +39,7 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
         {
             return placement switch
             {
-                Done => throw new System.Diagnostics.UnreachableException(),
+                Done => throw new UnreachableException(),
                 DatabaseRegions.Misdirected elsewhere => elsewhere,
                 NotFound error => ManagementRoute.DatabaseNotFound(error),
                 Unavailable error => ErrorResponse.From(error),

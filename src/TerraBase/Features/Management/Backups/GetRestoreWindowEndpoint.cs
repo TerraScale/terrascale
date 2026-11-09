@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Microsoft.OpenApi;
 using TerraBase.Errors;
@@ -50,7 +51,7 @@ internal sealed class GetRestoreWindowEndpoint(IManagementService management, IP
             {
                 NotFound error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),
-                TenantContext => throw new System.Diagnostics.UnreachableException(),
+                TenantContext => throw new UnreachableException(),
             };
         }
 

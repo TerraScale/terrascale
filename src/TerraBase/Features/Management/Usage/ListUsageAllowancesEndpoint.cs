@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -53,7 +54,7 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
             return local switch
             {
                 Unavailable error => ErrorResponse.From(error),
-                AllowanceUsagePage => throw new System.Diagnostics.UnreachableException(),
+                AllowanceUsagePage => throw new UnreachableException(),
             };
         }
 

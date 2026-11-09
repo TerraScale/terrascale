@@ -1,6 +1,7 @@
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
@@ -40,7 +41,7 @@ internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog
         return ManagementRoute.CheckPlan(request) switch
         {
             Validation error => ErrorResponse.From(error),
-            TerraBase.Tenancy.PlanTier plan => await catalog.SetStoragePlanAsync(organization, plan, cancellationToken).ConfigureAwait(false) switch
+            PlanTier plan => await catalog.SetStoragePlanAsync(organization, plan, cancellationToken).ConfigureAwait(false) switch
             {
                 Organization value => await fanout.PublishAsync(HttpContext, value.Id, plan, cancellationToken).ConfigureAwait(false) is { } error
                     ? ErrorResponse.From(error) : TypedResults.Ok(value),

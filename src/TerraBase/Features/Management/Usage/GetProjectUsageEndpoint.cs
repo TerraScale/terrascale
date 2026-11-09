@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
@@ -55,7 +56,7 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
                 NotFound error => ErrorResponse.From(error),
                 Validation error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),
-                ProjectUsage => throw new System.Diagnostics.UnreachableException(),
+                ProjectUsage => throw new UnreachableException(),
             };
         }
 

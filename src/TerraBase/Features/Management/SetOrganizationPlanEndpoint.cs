@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
+using TerraBase.Tenancy;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -30,10 +32,10 @@ internal sealed class SetOrganizationPlanEndpoint(IManagementService management,
         ManagementRoute.CheckPlan(request) switch
         {
             Validation error => ErrorResponse.From(error),
-            TerraBase.Tenancy.PlanTier plan => await SetPlanAsync(plan, cancellationToken),
+            PlanTier plan => await SetPlanAsync(plan, cancellationToken),
         };
 
-    private async ValueTask<IResult> SetPlanAsync(TerraBase.Tenancy.PlanTier plan, CancellationToken cancellationToken)
+    private async ValueTask<IResult> SetPlanAsync(PlanTier plan, CancellationToken cancellationToken)
     {
         var user = ManagementRoute.UserId(HttpContext);
         var organization = ManagementRoute.OrganizationId(HttpContext);
@@ -44,7 +46,7 @@ internal sealed class SetOrganizationPlanEndpoint(IManagementService management,
             {
                 NotFound error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),
-                Organization => throw new System.Diagnostics.UnreachableException(),
+                Organization => throw new UnreachableException(),
             };
         }
 
