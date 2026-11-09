@@ -237,7 +237,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             {
                 var (context, page) = await NewContextAsync();
                 await GotoAsync(page, "/login/callback?state=forged&code=test-code", 400);
-                await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "This sign-in link expired or was started in another browser." }).WaitForAsync();
+                await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "This sign-in was already used, or was started in another browser." }).WaitForAsync();
                 await BrowserAudit.AssertAccessibleAsync(page, "sign-in failure accessibility");
                 await ShotAsync(page, "signin-failure");
                 await Assert.That(await page.GetByRole(AriaRole.Link, new() { Name = "Try again", Exact = true }).GetAttributeAsync("href")).IsEqualTo("/login");
@@ -248,10 +248,13 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
                     .Because("test-only OIDC producer returns the issued state");
                 await Assert.That(page.Url).IsEqualTo(origin + "/api/v1/auth/me");
                 await Assert.That((await context.APIRequest.GetAsync(origin + "/api/v1/auth/me")).Status).IsEqualTo(200);
-                await GotoAsync(page, callbackUrl.PathAndQuery, 400);
-                await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "This sign-in link expired or was started in another browser." }).WaitForAsync();
+                await GotoAsync(page, callbackUrl.PathAndQuery);
+                await Assert.That(new Uri(page.Url).AbsolutePath).IsNotEqualTo("/login/callback");
                 await LogoutAsync(page);
-                checks.Add("failed-callback recovery page, test-only producer callback, state verification and single-use callback");
+                var (_, other) = await NewContextAsync();
+                await GotoAsync(other, callbackUrl.PathAndQuery, 400);
+                await other.GetByRole(AriaRole.Status).Filter(new() { HasText = "This sign-in was already used, or was started in another browser." }).WaitForAsync();
+                checks.Add("failed-callback recovery page, test-only producer callback, state verification, single-use callback and signed-in callback replay");
             }
         }
 

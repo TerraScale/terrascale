@@ -40,12 +40,12 @@ namespace TerraScale.Dashboard.Features.Auth
         public async Task StoreStepUpAsync(HttpContext http, StepUpIntent intent)
         {
             await EndAsync(http, StepUpCookie);
-            await StoreAsync(http, StepUpCookie, intent, intent.Challenge.ExpiresAt);
+            await StoreAsync(http, StepUpCookie, StepUpCookie, intent, intent.Challenge.ExpiresAt);
         }
 
         public async Task<StepUpIntent?> TakeStepUpAsync(HttpContext http)
         {
-            var stored = await ReadAsync<StepUpIntent>(http, StepUpCookie);
+            var stored = await ReadAsync<StepUpIntent>(http, StepUpCookie, StepUpCookie);
             http.Response.Cookies.Delete(StepUpCookie, Options(http));
             if (stored is null)
             {
