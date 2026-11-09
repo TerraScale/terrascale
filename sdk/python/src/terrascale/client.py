@@ -22,6 +22,7 @@ from .auth import (
     create_api_key_call,
     create_project_client_call,
     delete_project_client_call,
+    delete_provider_call,
     delete_user_call,
     disable_user_call,
     enable_user_call,
@@ -30,9 +31,12 @@ from .auth import (
     get_user_call,
     list_api_keys_call,
     list_project_clients_call,
+    list_sessions_call,
     list_users_call,
     revoke_api_key_call,
+    revoke_session_call,
     rotate_project_client_secret_call,
+    set_provider_call,
     update_project_client_call,
     update_settings_call,
 )
@@ -398,6 +402,27 @@ class TerraScale:
         """Fetch one audited directory-export page; pass the previous page's ``next_cursor`` as ``after``."""
         return self._send(export_users_call(self._issuer, project if project is not None else self.project, limit,
                                             after))
+
+    def set_provider(self, provider: str, update: models.ProjectProviderUpdate, *,
+                     project: str | None = None) -> models.ProjectSettings:
+        """Configure a federated sign-in provider (google, github, apple or oidc); an omitted secret is kept."""
+        return self._send(set_provider_call(self._issuer, project if project is not None else self.project, provider,
+                                            update))
+
+    def delete_provider(self, provider: str, *, project: str | None = None) -> models.ProjectSettings:
+        """Remove a federated sign-in provider; the answered settings no longer carry it."""
+        return self._send(delete_provider_call(self._issuer, project if project is not None else self.project,
+                                               provider))
+
+    def list_sessions(self, *, user_id: str | None = None, limit: int | None = None, after: str | None = None,
+                      project: str | None = None) -> models.ProjectSessionPage:
+        """List live sessions, optionally of one user, in creation order."""
+        return self._send(list_sessions_call(self._issuer, project if project is not None else self.project, user_id,
+                                             limit, after))
+
+    def revoke_session(self, session_id: str, *, project: str | None = None) -> None:
+        """Revoke one session; the session is signed out at once."""
+        self._send(revoke_session_call(self._issuer, project if project is not None else self.project, session_id))
 
 
 def _error(response: httpx.Response, *, mutation: bool = False) -> APIError:

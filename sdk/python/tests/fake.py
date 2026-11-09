@@ -34,6 +34,11 @@ class Fake:
             "01J" + "V" * 23: {"id": "01J" + "V" * 23, "email": "ada@example.com",
                                "created_at": "2026-11-04T00:00:00Z", "disabled": False},
         }
+        self.sessions: dict[str, dict[str, Any]] = {
+            "01J" + "S" * 23: {"id": "01J" + "S" * 23, "user_id": "01J" + "V" * 23,
+                               "email": "ada@example.com", "created_at": "2026-11-04T00:00:00Z",
+                               "expires_at": "2026-11-18T00:00:00Z"},
+        }
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -66,6 +71,12 @@ class Fake:
             m = re.fullmatch(rf"/v1/{PROJECT}/users(?:/([^/]+))?(/disable|/enable)?", path)
             if m:
                 return self._users(request, m.group(1), m.group(2))
+            m = re.fullmatch(rf"/v1/{PROJECT}/providers/([^/]+)", path)
+            if m:
+                return self._providers(request, m.group(1))
+            m = re.fullmatch(rf"/v1/{PROJECT}/sessions(?:/([^/]+))?", path)
+            if m:
+                return self._sessions(request, m.group(1))
             return self._token(request)
         path = unquote(request.url.raw_path.split(b"?")[0].decode())
         path = unquote(request.url.raw_path.split(b"?")[0].decode())
@@ -233,7 +244,10 @@ class Fake:
             return self._err(401, "invalid_token")
         if request.method == "PUT":
             return httpx.Response(200, json={"updated": json.loads(request.content)})
-        return httpx.Response(200, json={
+        return httpx.Response(200, json=self._settings_body())
+
+    def _settings_body(self) -> dict[str, Any]:
+        return {
             "project_id": PROJECT, "issuer": f"https://auth.test/{PROJECT}",
             "discovery_url": f"https://auth.test/{PROJECT}/.well-known/openid-configuration",
             "sign_in_url": f"https://auth.test/{PROJECT}/sign-in",
@@ -241,9 +255,44 @@ class Fake:
             "branding": {"name": "Acme", "logo_url": None, "theme_color": "#0f62fe",
                          "footer_links": [{"label": "Acme", "url": "https://acme.example"}]},
             "counts": {"users": len(self.users), "clients": len(self.clients)},
-            "providers": [], "configuration": {"redirect_urls": ["https://app.example/cb"],
-                                               "session_lifetime_seconds": 1209600},
-        })
+            "providers": [{"provider": "google", "configured": True, "client_id": "google-client",
+                           "issuer": "https://accounts.google.com", "team_id": None, "key_id": None,
+                           "callback_url": f"https://auth.test/{PROJECT}/callback/google"}],
+            "configuration": {"redirect_urls": ["https://app.example/cb"],
+                              "session_lifetime_seconds": 1209600},
+        }
+
+    def _providers(self, request: httpx.Request, provider: str) -> httpx.Response:
+        if not self._bearer(request):
+            return self._err(401, "invalid_token")
+        if provider not in ("google", "github", "apple", "oidc"):
+            return self._err(404, "unknown_route")
+        if request.method == "PUT":
+            body = json.loads(request.content)
+            assert body["client_id"]
+            return httpx.Response(200, json=self._settings_body())
+        if request.method == "DELETE":
+            return httpx.Response(200, json={**self._settings_body(), "providers": []})
+        return self._err(404, "unknown_route")
+
+    def _sessions(self, request: httpx.Request, session: str | None) -> httpx.Response:
+        if not self._bearer(request):
+            return self._err(401, "invalid_token")
+        if session is None:
+            if request.method != "GET":
+                return self._err(404, "unknown_route")
+            items = list(self.sessions.values())
+            user = request.url.params.get("user")
+            if user:
+                items = [s for s in items if s["user_id"] == user]
+            return httpx.Response(200, json={"items": items, "next": None})
+        record = self.sessions.get(session)
+        if record is None:
+            return self._err(404, "unknown_session")
+        if request.method == "DELETE":
+            del self.sessions[session]
+            return httpx.Response(204)
+        return self._err(404, "unknown_route")
 
     def _users(self, request: httpx.Request, user: str | None, action: str | None) -> httpx.Response:
         if not self._bearer(request):

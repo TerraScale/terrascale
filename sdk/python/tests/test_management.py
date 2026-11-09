@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fake import PROJECT, Fake
 
-from terrascale import AsyncTerraScale, TerraScale, new_id
+from terrascale import AsyncTerraScale, TerraScale, models, new_id
 
 
 def test_api_key_lifecycle(ts: TerraScale, fake: Fake) -> None:
@@ -54,3 +54,22 @@ def test_project_user_admin(ts: TerraScale, fake: Fake) -> None:
     assert disabled.disabled is True
     request = fake.requests[-1]
     assert (request.method, request.url.path) == ("POST", f"/v1/{PROJECT}/users/{user_id}/disable")
+
+
+def test_project_sessions_and_providers(ts: TerraScale, fake: Fake) -> None:
+    page = ts.list_sessions(user_id="01J" + "V" * 23, limit=10)
+    assert [s.email for s in page.items] == ["ada@example.com"]
+    assert page.items[0].expires_at == "2026-11-18T00:00:00Z"
+    assert page.next_cursor is None
+    request = fake.requests[-1]
+    assert (request.method, request.url.path) == ("GET", f"/v1/{PROJECT}/sessions")
+    assert dict(request.url.params) == {"user": "01J" + "V" * 23, "limit": "10"}
+    assert request.headers["authorization"].startswith("Bearer tok-")
+    ts.revoke_session(page.items[0].id)
+    request = fake.requests[-1]
+    assert (request.method, request.url.path) == ("DELETE", f"/v1/{PROJECT}/sessions/{page.items[0].id}")
+    assert fake.sessions == {}
+    settings = ts.set_provider("google", models.ProjectProviderUpdate(client_id="google-client"))
+    assert settings.providers[0].provider == "google"
+    request = fake.requests[-1]
+    assert (request.method, request.url.path) == ("PUT", f"/v1/{PROJECT}/providers/google")

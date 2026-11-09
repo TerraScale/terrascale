@@ -21,6 +21,9 @@ __all__ = [
     "ProjectClientSecret",
     "ProjectDirectoryUser",
     "ProjectLinkedProvider",
+    "ProjectProviderUpdate",
+    "ProjectSession",
+    "ProjectSessionPage",
     "ProjectSettings",
     "ProjectSettingsUpdate",
     "ProjectUser",
@@ -634,6 +637,57 @@ class ProjectUserExportPage:
         return cls(
             items=[ProjectDirectoryUser.from_json(u) for u in body.get("items") or []],
             created_before=body["created_before"],
+            next_cursor=body.get("next") or None,
+        )
+
+
+@dataclass(frozen=True)
+class ProjectProviderUpdate:
+    """A federated provider's credentials; an omitted ``client_secret`` keeps the stored one."""
+
+    client_id: str
+    client_secret: str = field(default="", repr=False)
+    issuer: str | None = None
+    team_id: str | None = None
+    key_id: str | None = None
+
+    def to_body(self) -> dict[str, Any]:
+        body: dict[str, Any] = {"client_id": self.client_id}
+        for key in ("client_secret", "issuer", "team_id", "key_id"):
+            value = getattr(self, key)
+            if value:
+                body[key] = value
+        return body
+
+
+@dataclass(frozen=True)
+class ProjectSession:
+    """One live end-user session; revoking it signs the session out."""
+
+    id: str
+    user_id: str
+    email: str
+    created_at: str
+    expires_at: str
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectSession:
+        for key in ("id", "user_id", "email", "created_at", "expires_at"):
+            if not isinstance(body.get(key), str) or not body[key]:
+                raise ValueError("invalid project session")
+        return cls(id=validate_id(body["id"]), user_id=validate_id(body["user_id"]), email=body["email"],
+                   created_at=body["created_at"], expires_at=body["expires_at"])
+
+
+@dataclass(frozen=True)
+class ProjectSessionPage:
+    items: list[ProjectSession]
+    next_cursor: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectSessionPage:
+        return cls(
+            items=[ProjectSession.from_json(s) for s in body.get("items") or []],
             next_cursor=body.get("next") or None,
         )
 

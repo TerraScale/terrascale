@@ -220,6 +220,42 @@ def delete_user_call(issuer: str | None, project: str, user_id: str) -> _spec.Ca
                       success=(204,), base_url=_origin(issuer))
 
 
+PROVIDERS = ("google", "github", "apple", "oidc")
+
+
+def _provider(value: str) -> str:
+    if value not in PROVIDERS:
+        raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
+    return value
+
+
+def set_provider_call(issuer: str | None, project: str, provider: str,
+                      update: models.ProjectProviderUpdate) -> _spec.Call:
+    return _spec.Call("PUT", _tenant_path(project, "providers", _provider(provider)),
+                      lambda r: models.ProjectSettings.from_json(r.json()), body=update.to_body(),
+                      base_url=_origin(issuer))
+
+
+def delete_provider_call(issuer: str | None, project: str, provider: str) -> _spec.Call:
+    return _spec.Call("DELETE", _tenant_path(project, "providers", _provider(provider)),
+                      lambda r: models.ProjectSettings.from_json(r.json()), base_url=_origin(issuer))
+
+
+def list_sessions_call(issuer: str | None, project: str, user_id: str | None, limit: int | None,
+                       after: str | None) -> _spec.Call:
+    params = _spec._page_params(_page_limit(limit), _cursor(after))
+    if user_id is not None:
+        params["user"] = validate_id(user_id, "user id")
+    return _spec.Call("GET", _tenant_path(project, "sessions"),
+                      lambda r: models.ProjectSessionPage.from_json(r.json()), params=params, replay_safe=True,
+                      base_url=_origin(issuer))
+
+
+def revoke_session_call(issuer: str | None, project: str, session_id: str) -> _spec.Call:
+    return _spec.Call("DELETE", _tenant_path(project, "sessions", validate_id(session_id, "session id")),
+                      _spec._none, success=(204,), base_url=_origin(issuer))
+
+
 def _transport_error(attempts: int, exc: Exception) -> TokenError:
     detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
     return TokenError(0, "token_transport_error", f"token exchange failed after {attempts} attempt{'s' if attempts != 1 else ''}"
