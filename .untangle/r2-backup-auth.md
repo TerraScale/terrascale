@@ -69,6 +69,31 @@ All line numbers are post-deletion anchors in the surviving code.
 - `Backup/ObjectStore.cs` (customer deadline) customer endpoints are untrusted; one wall-clock deadline also bounds streamed bodies the SDK's header timeout does not.
 
 
+## Round 2 continuation (coordinator review)
+
+- `FileStorageService.cs` sweep deadline handled where it is raised: the 20-second
+  per-sweep budget now ends the pass inside `SweepAsync` with an explicit return for its
+  own cancellation; the tick loop's empty `catch (OperationCanceledException) { }` is gone
+  and shutdown cancellation propagates.
+- `UserAuthExtensions.cs` (459 lines) split: DI wiring, claim helpers and one-line
+  middleware registrations stay; the bearer challenge moved to `BearerChallenge.cs`, the
+  key-watch cutoff and claim gate to `ProjectCheck.cs`, the project-catalog middleware to
+  `ProjectCatalog.cs`, socket admission to `SocketAdmission.cs`, project granting to
+  `ProjectGrants.cs`. Pure move, no behavior change.
+- `ContinuousBackup.cs` (1384 lines) split by concern: WAL segment shipping, sealing and
+  failure handling moved to `ContinuousBackup.Shipping.cs`; generations, daily snapshots
+  and side work to `ContinuousBackup.Snapshots.cs`; lifecycle/scheduling stays in the core
+  file with Lineage and Maintenance. Pure move of method groups, no body touched.
+- `BackupReader.BuildAsync` six-argument forwarding overload (one caller) removed; the
+  caller passes `next: null` directly.
+- Listing and paging reviewed across `ObjectStore`, `PointInTimeRestore`, `BackupReader`,
+  `DatabaseBackupPurge`, `DataKeys`: listing is centralized in `IObjectStore.ListAsync`
+  and key parsing in `BackupLayout`; the consumer loops deliberately differ in scan-budget
+  semantics (raw-item counting vs parsed-only) that are load-bearing, so fusing them would
+  need policy flags and was not done. Key wrap/unwrap lives only in `MasterKey`.
+- Test-only seams: none found; `PrepareScratch` and `RunOnceAsync` are used by production
+  paths and the shared integration-test harness.
+
 ## CROSS-SLICE (for the coordinator)
 
 - `LegacyManagementRoute` (defined in `Features/Management/ProjectApiRoute.cs`, consumed in
