@@ -19,9 +19,9 @@ Use the [quickstart](/de/getting-started/) to establish one working application 
 - [Errors and safe retries](/de/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/de/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
 - [Functions](/de/guides/functions) (being updated for SQL).
-- [Metrics, log drains and alerts](/de/guides/monitoring) (being updated for SQL).
+- [Monitoring](/de/guides/monitoring): usage counters, request analytics, Prometheus metrics, request logs and the status page.
 - [Backups and restore](/de/guides/backups-and-restore) (being updated for SQL).
-- [Rename a database](/de/guides/rename-database) (being updated for SQL).
+- [Rename a database](/de/guides/rename-database): change a database's name from the dashboard, API, CLI or SDKs.
 - [File storage](/de/guides/file-storage): project files in buckets with owner, role and public read and write rules.
 - [Schema migrations](/de/guides/migrations): versioned SQL table migrations with `ts migrate`.
 - [Branches](/de/guides/branches) (being updated for SQL).
