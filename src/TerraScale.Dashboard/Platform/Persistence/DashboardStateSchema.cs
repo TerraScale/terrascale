@@ -16,12 +16,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
             "dashboard_internal_billing",
             "dashboard_stripe_customers",
             "dashboard_billing_changes",
-            "dashboard_stripe_checkouts",
-            "dashboard_allowance_alerts",
-            "dashboard_alert_rules",
-            "dashboard_alert_projects",
-            "dashboard_log_drains",
-            "dashboard_log_drain_projects"
+            "dashboard_stripe_checkouts"
         ]);
 
         public static IReadOnlyList<string> Statements { get; } = Array.AsReadOnly(

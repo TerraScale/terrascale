@@ -3,24 +3,16 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
+using TerraBaseSqlErrorCodes = TerraScale.DotNet.TerraBase.TerraBaseSqlErrorCodes;
+using TerraBaseSqlException = TerraScale.DotNet.TerraBase.TerraBaseSqlException;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    // One transition's pending work. The delivery id stays the same across webhook retries.
-    public sealed record AlertEvent(string AlertId, string DeliveryId, string State, double Value, string? DatabaseName, DateTimeOffset At,
-        string EmailStatus, string WebhookStatus, int WebhookAttempts = 0)
-    {
-        public bool Pending => EmailStatus == "pending" || WebhookStatus == "pending";
-    }
     public sealed record AlertRule(string Id, string Name, string Metric, double Threshold, string? DatabaseId, bool Email, string? WebhookUrl,
-        SealedSecret? WebhookSecret, DateTimeOffset CreatedAt, string State = "ok", DateTimeOffset? Since = null, string? AlertId = null, double? Value = null)
-    {
-        public List<AlertEvent> Events { get; init; } = [];
-    }
-    public sealed record AlertRuleSet(string ProjectId, string OrganizationId, List<AlertRule> Rules);
-    public sealed record AlertProjectIndex(Dictionary<string, string> Projects);
+        DateTimeOffset CreatedAt, string State = "ok", DateTimeOffset? Since = null, string? AlertId = null, double? Value = null);
 
     public sealed record AlertBucket(DateTimeOffset Start, long Requests, long Errors, double? P95Ms, long? StorageBytes);
     public sealed record AlertSeries(string DatabaseId, string DatabaseName, string Region, IReadOnlyList<AlertBucket> Buckets);
@@ -34,16 +26,19 @@ namespace TerraScale.Dashboard.Features.Notifications
         Task<string> SendEmailAsync(AlertEmail email, CancellationToken cancellationToken);
     }
 
-    public sealed class AlertRules(IDashboardState state, IAlertSource source, ICustomerDelivery delivery, IDashboardIdentity identity, TimeProvider clock, ILogger<AlertRules> logger)
+    public sealed class AlertRules(IDbContextFactory<DashboardDbContext> storage, IDashboardState state, IAlertSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
+        TimeProvider clock, ILogger<AlertRules> logger)
     {
-        public const string Table = "dashboard_alert_rules";
-        // A single row lists every project that has (or had) rules, so the worker needs no table scan.
-        public const string IndexTable = "dashboard_alert_projects";
+        public const int RuleLimit = 20;
+        public const int WebhookAttempts = 3;
+        private const int EventLimit = 10;
         public static readonly string[] Metrics = ["p95_latency_ms", "error_rate_percent", "storage_gb", "operation_units_percent"];
 
         public async Task<IReadOnlyList<AlertRule>> ListAsync(string projectId, CancellationToken cancellationToken)
         {
-            return await state.GetAsync(Table, projectId, cancellationToken) is { } row ? Read(row, projectId).Rules : [];
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var rows = await db.AlertRules.AsNoTracking().Where(row => row.ProjectId == projectId).OrderBy(row => row.Id).ToListAsync(cancellationToken);
+            return [.. rows.Select(Rule)];
         }
 
         public async Task<(AlertRule Rule, string? Secret)> CreateAsync(AccountContext context, IFormCollection form, CancellationToken cancellationToken)
@@ -72,46 +67,72 @@ namespace TerraScale.Dashboard.Features.Notifications
             var id = AccountService.NewId();
             var secret = url is null ? null : WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
             var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
-            var rule = new AlertRule(id, name, metric, threshold, databaseId, form["email"] == "on", url,
-                secret is null ? null : SealedSecret.Seal(secret, key, Purpose(project.Id, id)), clock.GetUtcNow());
-            await state.UpdateAsync(Table, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), row => Read(row, project.Id), set =>
+            var sealedSecret = secret is null ? null : SealedSecret.Seal(secret, key, Purpose(project.Id, id));
+            var createdAt = clock.GetUtcNow().UtcDateTime;
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            for (var attempt = 0; attempt < RuleLimit; attempt++)
             {
-                if (set.Rules.Count >= 20)
+                var taken = await db.AlertRules.Where(row => row.ProjectId == project.Id).Select(row => row.Slot).ToListAsync(cancellationToken);
+                if (Enumerable.Range(0, RuleLimit).Except(taken).Select(slot => (int?)slot).FirstOrDefault() is not { } slot)
                 {
-                    throw new AccountAccessException("A project can have up to 20 alert rules.", 409);
+                    break;
                 }
 
-                set.Rules.Add(rule);
-                return set;
-            }, cancellationToken);
-            await state.UpdateAsync(IndexTable, "all", () => new AlertProjectIndex([]), AccountService.Read<AlertProjectIndex>,
-                index => index.Projects.TryAdd(project.Id, organization.Id) ? index : null, cancellationToken);
-            return (rule, secret);
+                var row = new AlertRuleRow
+                {
+                    Id = id,
+                    OrganizationId = organization.Id,
+                    ProjectId = project.Id,
+                    Slot = slot,
+                    Name = name,
+                    Metric = metric,
+                    Threshold = threshold,
+                    DatabaseId = databaseId,
+                    Email = form["email"] == "on",
+                    WebhookUrl = url,
+                    WebhookNonce = sealedSecret?.Nonce,
+                    WebhookCiphertext = sealedSecret?.Ciphertext,
+                    WebhookTag = sealedSecret?.Tag,
+                    CreatedAt = createdAt,
+                    State = "ok",
+                    Version = AccountService.NewId(),
+                };
+                db.AlertRules.Add(row);
+                try
+                {
+                    await db.SaveChangesAsync(cancellationToken);
+                    return (Rule(row), secret);
+                }
+                catch (DbUpdateException error) when (error.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation })
+                {
+                    db.Entry(row).State = EntityState.Detached;
+                }
+            }
+
+            throw new AccountAccessException($"A project can have up to {RuleLimit} alert rules.", 409);
         }
 
         public async Task DeleteAsync(AccountContext context, string id, CancellationToken cancellationToken)
         {
             var (organization, project) = Owner(context);
-            await state.UpdateAsync(Table, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), row => Read(row, project.Id),
-                set => set.Rules.RemoveAll(rule => rule.Id == id) > 0 ? set : throw new AccountAccessException("Alert rule is unavailable.", 404), cancellationToken);
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            if (await db.AlertRules.Where(row => row.Id == id && row.OrganizationId == organization.Id && row.ProjectId == project.Id).ExecuteDeleteAsync(cancellationToken) == 0)
+            {
+                throw new AccountAccessException("Alert rule is unavailable.", 404);
+            }
         }
 
-        // A changed threshold takes effect on the next run: raising it above the current value resolves a firing rule.
         public async Task UpdateThresholdAsync(AccountContext context, string id, string? value, CancellationToken cancellationToken)
         {
             var (organization, project) = Owner(context);
             var threshold = Threshold(value);
-            await state.UpdateAsync(Table, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), row => Read(row, project.Id), set =>
+            var version = AccountService.NewId();
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            if (await db.AlertRules.Where(row => row.Id == id && row.OrganizationId == organization.Id && row.ProjectId == project.Id)
+                .ExecuteUpdateAsync(row => row.SetProperty(rule => rule.Threshold, threshold).SetProperty(rule => rule.Version, version), cancellationToken) == 0)
             {
-                var index = set.Rules.FindIndex(rule => rule.Id == id);
-                if (index < 0)
-                {
-                    throw new AccountAccessException("Alert rule is unavailable.", 404);
-                }
-
-                set.Rules[index] = set.Rules[index] with { Threshold = threshold };
-                return set;
-            }, cancellationToken);
+                throw new AccountAccessException("Alert rule is unavailable.", 404);
+            }
         }
 
         private static double Threshold(string? value)
@@ -122,16 +143,18 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(IndexTable, "all", cancellationToken) is not { } index)
+            List<(string ProjectId, string OrganizationId)> projects;
+            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
             {
-                return;
+                projects = [.. (await db.AlertRules.AsNoTracking().Select(row => new { row.ProjectId, row.OrganizationId }).Distinct().ToListAsync(cancellationToken))
+                    .Select(owner => (owner.ProjectId, owner.OrganizationId))];
             }
 
             Task<IReadOnlyDictionary<string, long>>? units = null;
-            foreach (var (projectId, organizationId) in AccountService.Read<AlertProjectIndex>(index).Projects)
+            foreach (var (projectId, organizationId) in projects)
             {
                 try { await ObserveAsync(projectId, organizationId, () => units ??= source.ReadOperationUnitsAsync(cancellationToken), cancellationToken); }
-                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or TerraBaseException ||
+                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or TerraBaseException or DbUpdateException ||
                     error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
                     logger.AlertRulesForAProjectCould(error.GetType().Name);
@@ -141,11 +164,6 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         private async Task ObserveAsync(string projectId, string organizationId, Func<Task<IReadOnlyDictionary<string, long>>> units, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(Table, projectId, cancellationToken) is not { } row || Read(row, projectId).Rules.Count == 0)
-            {
-                return;
-            }
-
             if (await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken) is not { } organizationRow)
             {
                 return;
@@ -157,68 +175,117 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return;
             }
 
-            var rules = Read(row, projectId).Rules;
-            var analytics = await source.ReadAnalyticsAsync(projectId, cancellationToken);
-            double? percent = null;
-            if (rules.Any(rule => rule.Metric == "operation_units_percent") && PlanCatalog.Limits(organization).MonthlyOperations is > 0 and var allowance &&
-                (await units()).TryGetValue(organizationId, out var used))
-            {
-                percent = used * 100d / allowance;
-            }
+            await EvaluateAsync(projectId, organization, project, units, cancellationToken);
+            await DeliverAsync(projectId, organizationId, cancellationToken);
+        }
 
-            var now = clock.GetUtcNow();
-            var saved = await state.UpdateAsync(Table, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
-            {
-                var changed = false;
-                for (var index = 0; index < set.Rules.Count; index++)
-                {
-                    var rule = set.Rules[index];
-                    if (Evaluate(rule, analytics, project, percent) is not var (value, database))
-                    {
-                        continue;
-                    }
-
-                    var firing = value > rule.Threshold;
-                    if (firing == (rule.State == "firing"))
-                    {
-                        changed |= rule.Value != value;
-                        set.Rules[index] = rule with { Value = value };
-                        continue;
-                    }
-                    changed = true;
-                    var alertId = firing ? AccountService.NewId() : rule.AlertId ?? AccountService.NewId();
-                    var events = rule.Events.TakeLast(9).Append(new(alertId, AccountService.NewId(), firing ? "firing" : "resolved", value, database, now,
-                        rule.Email ? "pending" : "none", rule.WebhookUrl is null ? "none" : "pending")).ToList();
-                    set.Rules[index] = rule with { State = firing ? "firing" : "ok", Since = now, AlertId = alertId, Value = value, Events = events };
-                }
-                return changed ? set : null;
-            }, cancellationToken);
-            var results = new Dictionary<string, AlertEvent>(StringComparer.Ordinal);
-            foreach (var rule in saved.Rules)
-            {
-                foreach (var pending in rule.Events.Where(item => item.Pending))
-                {
-                    results[pending.DeliveryId] = await DeliverAsync(saved, rule, pending, cancellationToken);
-                }
-            }
-
-            if (results.Count == 0 && !saved.Rules.Any(rule => rule.Events.Any(item => !item.Pending)))
+        private async Task EvaluateAsync(string projectId, OrganizationRecord organization, ProjectRecord project, Func<Task<IReadOnlyDictionary<string, long>>> units,
+            CancellationToken cancellationToken)
+        {
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var rules = await db.AlertRules.Include(row => row.Events).Where(row => row.ProjectId == projectId && row.OrganizationId == organization.Id)
+                .OrderBy(row => row.Id).ToListAsync(cancellationToken);
+            if (rules.Count == 0)
             {
                 return;
             }
 
-            await state.UpdateAsync(Table, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
+            var analytics = await source.ReadAnalyticsAsync(projectId, cancellationToken);
+            double? percent = null;
+            if (rules.Any(rule => rule.Metric == "operation_units_percent") && PlanCatalog.Limits(organization).MonthlyOperations is > 0 and var allowance &&
+                (await units()).TryGetValue(organization.Id, out var used))
             {
-                for (var index = 0; index < set.Rules.Count; index++)
+                percent = used * 100d / allowance;
+            }
+
+            var now = clock.GetUtcNow().UtcDateTime;
+            var changed = false;
+            foreach (var row in rules)
+            {
+                if (Evaluate(Rule(row), analytics, project, percent) is not var (value, database))
                 {
-                    set.Rules[index] = set.Rules[index] with { Events = [.. set.Rules[index].Events.Select(item => results.GetValueOrDefault(item.DeliveryId) ?? item).Where(item => item.Pending)] };
+                    continue;
                 }
 
-                return set;
-            }, cancellationToken);
+                var firing = value > row.Threshold;
+                if (firing == (row.State == "firing"))
+                {
+                    if (row.Value != value)
+                    {
+                        row.Value = value;
+                        row.Version = AccountService.NewId();
+                        changed = true;
+                    }
+
+                    continue;
+                }
+
+                var alertId = firing ? AccountService.NewId() : row.AlertId ?? AccountService.NewId();
+                row.State = firing ? "firing" : "ok";
+                row.Since = now;
+                row.AlertId = alertId;
+                row.Value = value;
+                row.Version = AccountService.NewId();
+                changed = true;
+                if (!row.Email && row.WebhookUrl is null)
+                {
+                    continue;
+                }
+
+                db.AlertEvents.RemoveRange(row.Events.OrderBy(item => item.Id, StringComparer.Ordinal).SkipLast(EventLimit - 1).ToArray());
+                db.AlertEvents.Add(new AlertEventRow
+                {
+                    Id = AccountService.NewId(),
+                    RuleId = row.Id,
+                    AlertId = alertId,
+                    State = firing ? "firing" : "resolved",
+                    Value = value,
+                    DatabaseName = database,
+                    At = now,
+                    EmailStatus = row.Email ? "pending" : "none",
+                    WebhookStatus = row.WebhookUrl is null ? "none" : "pending",
+                    WebhookAttempts = 0,
+                });
+            }
+
+            if (!changed)
+            {
+                return;
+            }
+
+            try { await db.SaveChangesAsync(cancellationToken); }
+            catch (DbUpdateConcurrencyException) { }
         }
 
-        // The last five complete one-minute buckets; the newest bucket of the response is still filling.
+        private async Task DeliverAsync(string projectId, string organizationId, CancellationToken cancellationToken)
+        {
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var rules = await db.AlertRules.AsNoTracking().Where(row => row.ProjectId == projectId && row.OrganizationId == organizationId).ToDictionaryAsync(row => row.Id, cancellationToken);
+            var pending = await db.AlertEvents.Where(item => db.AlertRules.Any(rule => rule.Id == item.RuleId && rule.ProjectId == projectId && rule.OrganizationId == organizationId))
+                .OrderBy(item => item.Id).ToListAsync(cancellationToken);
+            if (pending.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var item in pending)
+            {
+                if (!rules.TryGetValue(item.RuleId, out var rule))
+                {
+                    continue;
+                }
+
+                await DeliverAsync(projectId, organizationId, rule, item, cancellationToken);
+                if (item.EmailStatus != "pending" && item.WebhookStatus != "pending")
+                {
+                    db.AlertEvents.Remove(item);
+                }
+            }
+
+            try { await db.SaveChangesAsync(cancellationToken); }
+            catch (DbUpdateConcurrencyException) { }
+        }
+
         public static (double Value, string? Database)? Evaluate(AlertRule rule, AlertAnalytics analytics, ProjectRecord project, double? operationUnitsPercent)
         {
             if (rule.Metric == "operation_units_percent")
@@ -242,46 +309,43 @@ namespace TerraScale.Dashboard.Features.Notifications
             return (Math.Round(value, 3), rule.DatabaseId is null ? null : project.Databases.GetValueOrDefault(rule.DatabaseId)?.Name);
         }
 
-        private async Task<AlertEvent> DeliverAsync(AlertRuleSet set, AlertRule rule, AlertEvent item, CancellationToken cancellationToken)
+        private async Task DeliverAsync(string projectId, string organizationId, AlertRuleRow rule, AlertEventRow item, CancellationToken cancellationToken)
         {
             if (item.EmailStatus == "pending")
             {
-                // ts-auth owns the send claim per alert and state, so repeating this call after a crash sends at most once.
-                var status = await source.SendEmailAsync(new(set.OrganizationId, set.ProjectId, item.AlertId, item.State, rule.Name, rule.Metric, item.DatabaseName, rule.Threshold, item.Value), cancellationToken);
-                item = item with { EmailStatus = status == "retryable" ? "pending" : status };
+                var status = await source.SendEmailAsync(new(organizationId, projectId, item.AlertId, item.State, rule.Name, rule.Metric, item.DatabaseName, rule.Threshold, item.Value), cancellationToken);
+                item.EmailStatus = status == "retryable" ? "pending" : status;
             }
-            if (item.WebhookStatus != "pending" || rule.WebhookUrl is null || rule.WebhookSecret is null)
+
+            if (item.WebhookStatus != "pending" || rule.WebhookUrl is null || rule.WebhookNonce is null || rule.WebhookCiphertext is null || rule.WebhookTag is null)
             {
-                return item;
+                return;
             }
 
             var body = JsonSerializer.SerializeToUtf8Bytes(new
             {
                 type = "alert." + item.State,
                 alertId = item.AlertId,
-                projectId = set.ProjectId,
+                projectId,
                 rule = new { id = rule.Id, name = rule.Name, metric = rule.Metric, threshold = rule.Threshold },
                 database = rule.DatabaseId is null ? null : new { id = rule.DatabaseId, name = item.DatabaseName },
                 value = item.Value,
-                at = item.At
+                at = Utc(item.At)
             });
-            var key = WebEncoders.Base64UrlDecode(rule.WebhookSecret.Open((await identity.ReadAsync(cancellationToken)).SessionEncryptionKey, Purpose(set.ProjectId, rule.Id)));
+            var key = WebEncoders.Base64UrlDecode(new SealedSecret(rule.WebhookNonce, rule.WebhookCiphertext, rule.WebhookTag)
+                .Open((await identity.ReadAsync(cancellationToken)).SessionEncryptionKey, Purpose(projectId, rule.Id)));
             var timestamp = clock.GetUtcNow().ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
             var signature = Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.ASCII.GetBytes(timestamp + ".").Concat(body).ToArray()));
             int code;
             try
             {
                 code = await delivery.PostAsync(new Uri(rule.WebhookUrl), body,
-                    [new("X-TerraScale-Delivery", item.DeliveryId), new("X-TerraScale-Timestamp", timestamp), new("X-TerraScale-Signature", "v1=" + signature)], cancellationToken);
+                    [new("X-TerraScale-Delivery", item.Id), new("X-TerraScale-Timestamp", timestamp), new("X-TerraScale-Signature", "v1=" + signature)], cancellationToken);
             }
             catch (Exception error) when (error is TerraBaseException or HttpRequestException or ArgumentException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested) { code = 0; }
             finally { CryptographicOperations.ZeroMemory(key); }
-            if (code is >= 200 and <= 299)
-            {
-                return item with { WebhookStatus = "delivered", WebhookAttempts = item.WebhookAttempts + 1 };
-            }
-
-            return item with { WebhookStatus = item.WebhookAttempts + 1 >= 3 ? "failed" : "pending", WebhookAttempts = item.WebhookAttempts + 1 };
+            item.WebhookAttempts++;
+            item.WebhookStatus = code is >= 200 and <= 299 ? "delivered" : item.WebhookAttempts >= WebhookAttempts ? "failed" : "pending";
         }
 
         private static (OrganizationRecord Organization, ProjectRecord Project) Owner(AccountContext context)
@@ -304,16 +368,15 @@ namespace TerraScale.Dashboard.Features.Notifications
             return "alert-webhook/" + projectId + "/" + ruleId;
         }
 
-        public static AlertRuleSet Read(StateRecord row, string projectId)
+        private static AlertRule Rule(AlertRuleRow row)
         {
-            var saved = AccountService.Read<AlertRuleSet>(row);
-            if (row.Id != projectId || saved.ProjectId != projectId || saved.Rules is null || saved.Rules.Count > 20 ||
-                saved.Rules.Any(rule => !TerraScaleIds.IsValid(rule.Id) || !Metrics.Contains(rule.Metric) || rule.Events is null))
-            {
-                throw new IOException("Alert rule identity is invalid.");
-            }
+            return new(row.Id, row.Name, row.Metric, row.Threshold, row.DatabaseId, row.Email, row.WebhookUrl, Utc(row.CreatedAt), row.State,
+                row.Since is { } since ? Utc(since) : null, row.AlertId, row.Value);
+        }
 
-            return saved;
+        private static DateTimeOffset Utc(DateTime value)
+        {
+            return new(DateTime.SpecifyKind(value, DateTimeKind.Utc));
         }
     }
 }

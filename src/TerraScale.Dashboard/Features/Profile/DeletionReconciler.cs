@@ -14,7 +14,7 @@ namespace TerraScale.Dashboard.Features.Profile
         AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ILogger<DeletionReconciler> logger) : BackgroundService
     {
         private readonly DeletionCleanupJournal journal = new(state);
-        private readonly DeletionProjectRecords projectRecords = new(state, storage);
+        private readonly DeletionProjectRecords projectRecords = new(storage);
         private readonly DeletionRelatedRecords related = new(state, storage);
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -111,46 +111,10 @@ namespace TerraScale.Dashboard.Features.Profile
                         projects.UnionWith(org.Projects.Keys);
                         projects.UnionWith(org.DeletedProjectIds);
                     }
-                    foreach (var table in new[] { "dashboard_alert_rules", "dashboard_log_drains" })
+                    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
                     {
-                        foreach (var row in await state.ListAsync(table, cancellationToken))
-                        {
-                            if (!row.Body.TryGetProperty("OrganizationId", out var owner) || owner.GetString() != proof.SubjectId)
-                            {
-                                continue;
-                            }
-
-                            if (!row.Body.TryGetProperty("ProjectId", out var project) || !TerraScaleIds.IsValid(project.GetString()))
-                            {
-                                throw new IOException("Owned project record identity is invalid.");
-                            }
-
-                            projects.Add(project.GetString()!);
-                        }
-                    }
-
-                    foreach (var table in new[] { "dashboard_alert_projects", "dashboard_log_drain_projects" })
-                    {
-                        if (await state.GetAsync(table, "all", cancellationToken) is { } index)
-                        {
-                            if (!index.Body.TryGetProperty("Projects", out var entries) || entries.ValueKind != JsonValueKind.Object)
-                            {
-                                throw new IOException("Owned project index is invalid.");
-                            }
-
-                            foreach (var project in entries.EnumerateObject())
-                            {
-                                if (project.Value.GetString() == proof.SubjectId)
-                                {
-                                    if (!TerraScaleIds.IsValid(project.Name))
-                                    {
-                                        throw new IOException("Owned project index identity is invalid.");
-                                    }
-
-                                    projects.Add(project.Name);
-                                }
-                            }
-                        }
+                        projects.UnionWith(await db.AlertRules.Where(row => row.OrganizationId == proof.SubjectId).Select(row => row.ProjectId).ToListAsync(cancellationToken));
+                        projects.UnionWith(await db.LogDrains.Where(row => row.OrganizationId == proof.SubjectId).Select(row => row.ProjectId).ToListAsync(cancellationToken));
                     }
 
                     foreach (var projectId in projects)
