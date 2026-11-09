@@ -1,8 +1,11 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Data.Common;
 using System.Globalization;
 using System.Text;
 using Turso;
+using Turso.Data.Sqlite;
+using Turso.Raw.Public;
 
 namespace TerraBase.Engine.Turso;
 
@@ -412,7 +415,7 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     private bool Reset(TursoSession writer) => Reset(writer.Connection);
 
-    private bool Reset(System.Data.Common.DbConnection connection, bool publish = true)
+    private bool Reset(DbConnection connection, bool publish = true)
     {
         using (var newest = connection.CreateCommand())
         {
@@ -877,7 +880,7 @@ internal static class ChangeLog
 
                 return true;
             }
-            catch (Exception error) when (error is global::Turso.Raw.Public.TursoException or global::Turso.Data.Sqlite.SqliteException or InvalidDataException or EndOfStreamException
+            catch (Exception error) when (error is TursoException or SqliteException or InvalidDataException or EndOfStreamException
                 or DecoderFallbackException)
             {
                 return false;

@@ -1,5 +1,6 @@
 using TerraBase.Tenancy;
 using Turso.Raw.Public;
+using Turso.Raw.Public.Value;
 using Turso.Raw.Public.Handles;
 using TerraScale.TerraBase.Contracts;
 using ZLogger;
@@ -267,7 +268,7 @@ internal sealed partial class TursoReplicas
             }
 
             private static byte[]? Blob(TursoStatementHandle statement, int column) =>
-                TursoBindings.GetValueType(statement, column) == global::Turso.Raw.Public.Value.TursoValueType.Blob ? TursoBindings.GetValue(statement, column).BlobValue : null;
+                TursoBindings.GetValueType(statement, column) == TursoValueType.Blob ? TursoBindings.GetValue(statement, column).BlobValue : null;
         }
     }
 }

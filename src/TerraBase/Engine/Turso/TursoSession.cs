@@ -1,5 +1,10 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Reflection;
+using System.Text;
+using System.Data.Common;
 using Turso.Data.Sqlite;
+using Turso.Raw.Public.Handles;
 
 namespace TerraBase.Engine.Turso;
 
@@ -34,8 +39,8 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
 
     public SqliteConnection Connection => connection;
 
-    internal global::Turso.Raw.Public.Handles.TursoDatabaseHandle Native =>
-        NativeHandle?.GetValue(connection) as global::Turso.Raw.Public.Handles.TursoDatabaseHandle
+    internal TursoDatabaseHandle Native =>
+        NativeHandle?.GetValue(connection) as TursoDatabaseHandle
         ?? throw new InvalidOperationException("the Turso driver no longer exposes its native connection handle");
 
     /// <summary>The store's statistics generation when this connection opened (<see cref="TursoDatabaseStore.StatisticsChanged"/>).</summary>
@@ -113,7 +118,7 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     public static byte[] Bytes(SqliteDataReader reader, int ordinal) => reader.GetValue(ordinal) switch
     {
         byte[] bytes => bytes,
-        string text => System.Text.Encoding.UTF8.GetBytes(text),
+        string text => Encoding.UTF8.GetBytes(text),
         var other => throw new InvalidCastException($"column {ordinal} holds {other.GetType().Name}, not TEXT or BLOB"),
     };
 
@@ -130,7 +135,7 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         var cacheKib = Math.Max(2048, pageCacheBytes / threads / 1024);
         // NORMAL until the first transaction. Every write transaction runs with FULL, so its log is synced before it is
         // answered (0003 as amended, 0012); the writer keeps FULL after it, also for its work outside transactions (backup tap).
-        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"""
+        return string.Create(CultureInfo.InvariantCulture, $"""
             PRAGMA synchronous = NORMAL;
             PRAGMA cache_size = -{cacheKib};
             PRAGMA foreign_keys = ON;
@@ -196,7 +201,7 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     /// as its database is deleted must not leave an empty file behind. Every database file holds at least its schema, so
     /// an empty one is such a file.
     /// </summary>
-    public static void OpenExisting(System.Data.Common.DbConnection connection, string path)
+    public static void OpenExisting(DbConnection connection, string path)
     {
         if (!File.Exists(path))
         {
@@ -302,7 +307,7 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "PRAGMA schema_version;";
-        var schema = Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        var schema = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
         if (schema != _schema)
         {
             Drop(_commands);
@@ -350,8 +355,8 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     }
 
     // Turso's provider keeps its native connection handle private; Dispose closes it even when the provider's close throws.
-    private static readonly System.Reflection.FieldInfo? NativeHandle =
-        typeof(SqliteConnection).GetField("_database", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+    private static readonly FieldInfo? NativeHandle =
+        typeof(SqliteConnection).GetField("_database", BindingFlags.NonPublic | BindingFlags.Instance);
 
     /// <summary>
     /// Releases a quiescent connection without graceful close or checkpoint. The native handle is closed even when
@@ -359,7 +364,7 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     /// </summary>
     public void Dispose()
     {
-        var handle = NativeHandle?.GetValue(connection) as global::Turso.Raw.Public.Handles.TursoDatabaseHandle;
+        var handle = NativeHandle?.GetValue(connection) as TursoDatabaseHandle;
         try
         {
             // Idle eviction must not mutate storage after its operation's durable intent has retired.

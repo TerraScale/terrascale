@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
@@ -455,14 +456,18 @@ internal sealed partial class TursoDatabaseStore(
         }
         finally
         {
-            if (logger is not null && Time.GetElapsedTime(started) is var waited && waited >= SlowWriterWait)
+            if (logger is not null)
             {
-                var holder = Volatile.Read(ref _writerHolder) ?? "nothing recorded";
-                var holderAt = CallSite(Volatile.Read(ref _writerFile), Volatile.Read(ref _writerLine));
-                var writerAt = CallSite(file, line);
-                var held = Time.GetElapsedTime(Volatile.Read(ref _writerTaken));
+                var waited = Time.GetElapsedTime(started);
+                if (waited >= SlowWriterWait)
+                {
+                    var holder = Volatile.Read(ref _writerHolder) ?? "nothing recorded";
+                    var holderAt = CallSite(Volatile.Read(ref _writerFile), Volatile.Read(ref _writerLine));
+                    var writerAt = CallSite(file, line);
+                    var held = Time.GetElapsedTime(Volatile.Read(ref _writerTaken));
 
-                logger.ZLogWarning($"Waited {Math.Round(waited.TotalSeconds, 1):@Waited} s for a database's writer {outcome:@Outcome}: {writer:@Writer} ({writerAt:@WriterAt}) queued behind {holder:@Holder} ({holderAt:@HolderAt}), which had held it for {Math.Round(held.TotalSeconds, 1):@Held} s and was {(WriteLane.Running ? "running a storage call" : "between storage calls"):@State}");
+                    logger.ZLogWarning($"Waited {Math.Round(waited.TotalSeconds, 1):@Waited} s for a database's writer {outcome:@Outcome}: {writer:@Writer} ({writerAt:@WriterAt}) queued behind {holder:@Holder} ({holderAt:@HolderAt}), which had held it for {Math.Round(held.TotalSeconds, 1):@Held} s and was {(WriteLane.Running ? "running a storage call" : "between storage calls"):@State}");
+                }
             }
         }
 
@@ -507,7 +512,8 @@ internal sealed partial class TursoDatabaseStore(
             var held = TimeSpan.Zero;
             var holder = _writerHolder;
             var holderAt = CallSite(_writerFile, _writerLine);
-            if (_holdStarted is var started and not 0)
+            var started = _holdStarted;
+            if (started != 0)
             {
                 _holdStarted = 0;
                 held = Time.GetElapsedTime(started);
@@ -780,11 +786,12 @@ internal sealed partial class TursoDatabaseStore(
 
     private long _fileSeenAt;
     private long _fileSeenEpoch = -1;
+    private const long FileSeenWindow = 1000;
 
     internal bool FilePresent(long epoch)
     {
         var now = Environment.TickCount64;
-        if (Volatile.Read(ref _fileSeenEpoch) == epoch && now - Volatile.Read(ref _fileSeenAt) < 1000)
+        if (Volatile.Read(ref _fileSeenEpoch) == epoch && now - Volatile.Read(ref _fileSeenAt) < FileSeenWindow)
         {
             return true;
         }
@@ -1285,7 +1292,7 @@ internal sealed partial class TursoDatabaseStore(
     {
         var version = Convert.ToInt32(
             Scalar(connection, transaction, "PRAGMA user_version;"),
-            System.Globalization.CultureInfo.InvariantCulture);
+            CultureInfo.InvariantCulture);
         return version is 0 or SchemaVersion
             ? version
             : throw new InvalidOperationException(

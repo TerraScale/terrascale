@@ -23,7 +23,8 @@ internal sealed class DatabaseFences
         {
             foreach (var file in Directory.EnumerateFiles(directory))
             {
-                if (Path.GetFileName(file) is var name && EntityIds.IsValid(name))
+                var name = Path.GetFileName(file);
+                if (EntityIds.IsValid(name))
                 {
                     _fences[name] = new Fence(Paused: false, Home: null);
                 }
@@ -105,15 +106,9 @@ internal sealed class DatabaseFences
 
     private void Set(string database, Fence fence)
     {
-        if (_fences.TryGetValue(database, out var previous))
-        {
-            _fences[database] = fence;
-            previous.Changed.TrySetResult();
-        }
-        else
-        {
-            _fences[database] = fence;
-        }
+        var previous = _fences.GetValueOrDefault(database);
+        _fences[database] = fence;
+        previous?.Changed.TrySetResult();
     }
 
     private string PathOf(string database) => EntityIds.IsValid(database)

@@ -1103,10 +1103,14 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private static void CheckLayout(string dataDirectory, FileStream ownership)
     {
         var recorded = ownership.Length > 0;
-        if (recorded && RecordedFormat(ownership) is var format && format != StorageFormat.Id)
+        if (recorded)
         {
-            throw new TerraBaseConfigurationException(
-                $"data directory has storage format {format}; this build writes {StorageFormat.Id}; start with an empty data directory (no automatic migration)");
+            var format = RecordedFormat(ownership);
+            if (format != StorageFormat.Id)
+            {
+                throw new TerraBaseConfigurationException(
+                    $"data directory has storage format {format}; this build writes {StorageFormat.Id}; start with an empty data directory (no automatic migration)");
+            }
         }
 
         var entries = Directory.EnumerateFileSystemEntries(dataDirectory)

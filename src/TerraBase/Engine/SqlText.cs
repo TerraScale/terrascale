@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace TerraBase.Engine;
 
 internal enum SqlTokenKind
@@ -146,7 +148,7 @@ internal static class SqlText
 
     private static bool TryQuoted(string sql, ref int i, char quote, out string value)
     {
-        var text = new System.Text.StringBuilder();
+        var text = new StringBuilder();
         for (var j = i + 1; j < sql.Length; j++)
         {
             if (sql[j] != quote)

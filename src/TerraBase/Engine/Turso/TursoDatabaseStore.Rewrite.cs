@@ -1,10 +1,14 @@
 using System.Buffers.Binary;
+using System.Data.Common;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using Turso;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
 
@@ -254,7 +258,7 @@ internal sealed partial class TursoDatabaseStore
         try
         {
             var sourceConnection = await ConnectionStringAsync(runner, cancellationToken).ConfigureAwait(false);
-            var targetConnection = new global::Turso.Data.Sqlite.SqliteConnectionStringBuilder(sourceConnection) { DataSource = target }.ToString();
+            var targetConnection = new SqliteConnectionStringBuilder(sourceConnection) { DataSource = target }.ToString();
             return await runner.RunAsync(() =>
             {
                 var source = new FaultAwareCopySource(sourceConnection, error =>
@@ -284,7 +288,7 @@ internal sealed partial class TursoDatabaseStore
                     {
                         throw new RewriteRefusedException("the rewrite source incarnation changed");
                     }
-                    offset = Convert.ToInt64(Scalar(source, TursoStatements.CurrentOffset), System.Globalization.CultureInfo.InvariantCulture);
+                    offset = Convert.ToInt64(Scalar(source, TursoStatements.CurrentOffset), CultureInfo.InvariantCulture);
                     if (offset < minimumOffset)
                     {
                         throw new RewriteRefusedException("the copied cut precedes the requested commit offset");
@@ -323,7 +327,7 @@ internal sealed partial class TursoDatabaseStore
                             {
                                 changes = replay!.ReplayRewrite(source, copy, finalPass, cancellationToken);
                             }
-                            offset = Convert.ToInt64(Scalar(source, TursoStatements.CurrentOffset), System.Globalization.CultureInfo.InvariantCulture);
+                            offset = Convert.ToInt64(Scalar(source, TursoStatements.CurrentOffset), CultureInfo.InvariantCulture);
                             var converged = changes <= 1024 && replay!.RewriteBytes <= 4L * 1024 * 1024 && Stopwatch.GetElapsedTime(started) <= RewriteRoundBudget;
                             if (!verified && converged)
                             {
@@ -557,10 +561,10 @@ internal sealed partial class TursoDatabaseStore
 
     internal void Rewritten(Ulid incarnation) => _incarnation = new(incarnation);
 
-    private System.Collections.Immutable.ImmutableDictionary<Ulid, Ulid> _healthy = [];
+    private ImmutableDictionary<Ulid, Ulid> _healthy = [];
 
     internal void RewroteHealthily(Ulid source, Ulid target) =>
-        System.Collections.Immutable.ImmutableInterlocked.Update(ref _healthy,
+        ImmutableInterlocked.Update(ref _healthy,
             healthy => (healthy.Count >= 64 ? [] : healthy).SetItem(target, source));
 
     internal bool IsHealthyPredecessor(Ulid pinned)
@@ -634,7 +638,7 @@ internal sealed partial class TursoDatabaseStore
         }
     }
 
-    private static void Append(IncrementalHash hash, System.Data.Common.DbDataReader row)
+    private static void Append(IncrementalHash hash, DbDataReader row)
     {
         Span<byte> scalar = stackalloc byte[9];
         for (var i = 0; i < row.FieldCount; i++)

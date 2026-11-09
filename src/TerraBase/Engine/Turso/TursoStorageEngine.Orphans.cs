@@ -15,9 +15,9 @@ internal sealed partial class TursoStorageEngine : IOrphanDatabaseFiles
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            return Ledger.FailedClosed is not null ? null : _pendingIntents.Contains(key) || _initializing.ContainsKey(key) || _publishing.ContainsKey(key)
-                || _stores.TryGetValue(key, out var store) && Ledger.Refusal(store) is not null
-;
+            return Ledger.FailedClosed is not null ? null
+                : _pendingIntents.Contains(key) || _initializing.ContainsKey(key) || _publishing.ContainsKey(key)
+                || _stores.TryGetValue(key, out var store) && Ledger.Refusal(store) is not null;
         }
         finally
         {

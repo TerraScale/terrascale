@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Google.Protobuf;
 using System.Globalization;
 using System.Net;
@@ -899,7 +900,7 @@ internal sealed partial class TursoReplicas(
 
             // A reader's BEGIN is refused as locked while the replica's writer commits or checkpoints (a local write, an
             // overlay re-apply). Like the primary store's sessions, wait it out in 50 ms steps for up to five seconds.
-            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var started = Stopwatch.GetTimestamp();
             while (true)
             {
                 try
@@ -907,7 +908,7 @@ internal sealed partial class TursoReplicas(
                     Run(native, "BEGIN;");
                     break;
                 }
-                catch (TursoException error) when (Locked(error) && System.Diagnostics.Stopwatch.GetElapsedTime(started) < LockedWait)
+                catch (TursoException error) when (Locked(error) && Stopwatch.GetElapsedTime(started) < LockedWait)
                 {
                     try
                     {
