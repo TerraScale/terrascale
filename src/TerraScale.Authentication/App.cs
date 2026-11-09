@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
+using TerraScale.Authentication.Features.Http;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
@@ -13,6 +14,7 @@ using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Ui;
+using TerraScale.Authentication.Features.Webhooks;
 using Fido2NetLib;
 using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Hosting;
@@ -176,6 +178,7 @@ public static class App
         builder.Services.AddSingleton<Features.Social.PlatformSocialSignIn>();
         builder.Services.AddHttpClient(Features.Social.PlatformSocialSignIn.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(10))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = PublicAddresses.ConnectionLifetime });
+        builder.Services.AddWebhookDelivery();
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
         builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseSqlDatabase>()));
