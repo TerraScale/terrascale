@@ -9,7 +9,6 @@ using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Webhooks;
 
-/// <summary>Lifecycle webhook endpoint registration (<c>/v1/{project}/webhook-endpoints</c>) over real HTTP on the real TerraBase.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class WebhookEndpointTests(TerraBaseFixture fixture)
 {

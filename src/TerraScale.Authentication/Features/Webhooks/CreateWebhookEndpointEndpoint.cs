@@ -4,18 +4,15 @@ using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Features.Webhooks;
 
-/// <summary><c>POST /v1/{project}/webhook-endpoints</c>.</summary>
 public sealed class CreateWebhookEndpointEndpoint(TenantDirectory tenants, PlatformAuthentication authentication, WebhookEndpoints webhooks,
     StepUpProofs proofs) : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(Root + "/webhook-endpoints");
         this.Describe("create_webhook_endpoint", "Register a webhook endpoint", "Subscribes an https URL to a non-empty subset of the end-user lifecycle events user.signed_up, user.signed_in, user.disabled, user.enabled, user.deleted, user.provider_linked and user.provider_unlinked. The URL is at most 2048 characters, without userinfo or fragment; a project registers at most 3 endpoints (409 webhook_endpoint_limit). The whsec_ signing secret is answered exactly once and stored sealed under the master key. Needs the admin project role and a create_webhook_endpoint step-up proof.", "Project tenants", typeof(CreateWebhookEndpointRequest), StatusCodes.Status201Created, typeof(WebhookEndpointBody), conflict: true);
     }
 
-    /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
