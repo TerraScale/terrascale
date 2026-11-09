@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
@@ -7,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     // Immutable authorization and opaque owned references survive ACK indefinitely.
     // Retain cleanup authority so delayed regional writes can be removed again.
-    public sealed class DeletionCleanupJournal(IDashboardState state, OrganizationStore organizations)
+    public sealed class DeletionCleanupJournal(IDashboardState state, IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations)
     {
         public const string Table = "dashboard_deletion_cleanup";
         public sealed record Entry(TsAuthDeletionProof Proof, string[] ProjectIds, string[] CustomerIds);
@@ -29,7 +30,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     projects.UnionWith(value.Projects.Keys);
                     projects.UnionWith(value.DeletedProjectIds);
                 }
-                if (await state.GetAsync(StripeBilling.Table, proof.SubjectId, cancellationToken) is { } billing && !AccountService.IsDeletionFence(billing))
+                if (await storage.BindingRowAsync(proof.SubjectId, cancellationToken) is { ErasureId: null } billing)
                 {
                     var binding = StripeBilling.ReadBinding(billing, proof.SubjectId);
                     if (binding.CustomerId.Length > 0)
@@ -37,19 +38,16 @@ namespace TerraScale.Dashboard.Features.Profile
                         customers.Add(binding.CustomerId);
                     }
                 }
-                foreach (var row in await state.ListAsync(StripeBilling.CheckoutsTable, cancellationToken))
+
+                List<StripeCheckoutRow> checkouts;
+                await using (var db = await storage.CreateDbContextAsync(cancellationToken))
                 {
-                    var checkout = AccountService.Read<CheckoutBinding>(row);
-                    if (checkout.OrganizationId != proof.SubjectId)
-                    {
-                        continue;
-                    }
+                    checkouts = await db.StripeCheckouts.AsNoTracking().Where(row => row.OrganizationId == proof.SubjectId).ToListAsync(cancellationToken);
+                }
 
-                    if (checkout.CustomerId.Length > 0)
-                    {
-                        customers.Add(checkout.CustomerId);
-                    }
-
+                foreach (var checkout in checkouts)
+                {
+                    customers.Add(checkout.CustomerId);
                     if (TerraScaleIds.IsValid(checkout.ProjectId))
                     {
                         projects.Add(checkout.ProjectId);

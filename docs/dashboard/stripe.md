@@ -2,10 +2,13 @@
 
 The C# billing implementation uses the official Stripe.net 53 SDK through its `StripeClient.V1`
 resources. Stripe is the authority for Stripe customer, checkout, subscription,
-invoice and payment method facts. Dashboard state stores the organization
-binding and coordinates checkout and plan-change requests; reconciliation reads
-current Stripe state. Signed webhooks trigger reconciliation and do not grant
-entitlements from their payloads.
+invoice and payment method facts. The dashboard's `billing`, `stripe_customers`,
+`stripe_checkouts` and `billing_changes` tables ([state storage](state-storage.md))
+store the organization binding and coordinate checkout and plan-change requests;
+reconciliation reads current Stripe state. Signed webhooks trigger reconciliation
+and do not grant entitlements from their payloads; every delivery, a redelivered
+event ID included, rereads Stripe, and a webhook that races another writer rereads
+and saves again instead of overwriting it.
 
 The shared canonical public origin is `https://dash.terrascale.tech`. Checkout
 return/cancel URLs, the billing portal return URL and the webhook audit all use

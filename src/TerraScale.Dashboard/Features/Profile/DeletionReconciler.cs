@@ -13,9 +13,9 @@ namespace TerraScale.Dashboard.Features.Profile
     public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDashboardState state, IDbContextFactory<DashboardDbContext> storage, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
         AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ILogger<DeletionReconciler> logger) : BackgroundService
     {
-        private readonly DeletionCleanupJournal journal = new(state, organizations);
+        private readonly DeletionCleanupJournal journal = new(state, storage, organizations);
         private readonly DeletionProjectRecords projectRecords = new(storage);
-        private readonly DeletionRelatedRecords related = new(state, storage, accounts);
+        private readonly DeletionRelatedRecords related = new(storage, accounts);
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -118,26 +118,21 @@ namespace TerraScale.Dashboard.Features.Profile
                     }
 
                     await related.CleanOrganizationAsync(proof.SubjectId, cancellationToken);
-                    foreach (var table in new[] { StripeBilling.CheckoutsTable, StripeBilling.CustomersTable })
+                    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
                     {
-                        foreach (var row in await state.ListAsync(table, cancellationToken))
-                        {
-                            if (row.Body.TryGetProperty("OrganizationId", out var owner) && owner.GetString() == proof.SubjectId)
-                            {
-                                await state.DeleteAsync(table, row.Id, row.Version, cancellationToken);
-                            }
-                        }
+                        await db.StripeCheckouts.Where(row => row.OrganizationId == proof.SubjectId).ExecuteDeleteAsync(cancellationToken);
+                        await db.StripeCustomers.Where(row => row.OrganizationId == proof.SubjectId).ExecuteDeleteAsync(cancellationToken);
                     }
 
-                    await AccountService.FenceRecordAsync(state, StripeBilling.Table, proof.SubjectId, proof.Id, row =>
+                    await organizations.FenceAsync(proof.SubjectId, proof.Id, cancellationToken);
+                    await billing.FenceAsync(proof.SubjectId, proof.Id, row =>
                     {
                         var current = StripeBilling.ReadBinding(row, proof.SubjectId);
                         return ended is not null && current.RequestId == ended.RequestId && current.CustomerId == ended.CustomerId &&
                             current.CheckoutId == ended.CheckoutId && current.SubscriptionId == ended.SubscriptionId &&
-                            (current.Kind != "stripe" || current.State == "deleting" && current.Status == "canceled" && !current.PaymentValidated);
+                            (current.Kind != "stripe" || current.State == "deleting" && current.Status == "canceled");
                     }, cancellationToken);
-                    await organizations.FenceAsync(proof.SubjectId, proof.Id, cancellationToken);
-                    await VerifyFenceAsync(StripeBilling.Table, proof.SubjectId, cancellationToken);
+                    await billing.VerifyFenceAsync(proof.SubjectId, cancellationToken);
                     if (!await organizations.IsErasedAsync(proof.SubjectId, cancellationToken))
                     {
                         throw new IOException("Erasure fence is unavailable.");
@@ -200,15 +195,6 @@ namespace TerraScale.Dashboard.Features.Profile
                     return;
                 }
                 catch (StateConflictException) when (attempt < 3) { }
-            }
-        }
-
-        private async Task VerifyFenceAsync(string table, string key, CancellationToken cancellationToken)
-        {
-            var row = await state.GetAsync(table, key, cancellationToken);
-            if (row is null || row.Id != key || !AccountService.IsDeletionFence(row))
-            {
-                throw new IOException("Erasure fence is unavailable.");
             }
         }
 

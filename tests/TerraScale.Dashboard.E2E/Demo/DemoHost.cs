@@ -41,7 +41,6 @@ namespace TerraScale.Dashboard.E2E.Demo
         private readonly TestDatabases databases;
         private readonly TestStripeTransport stripe = new();
         private readonly TestBillingPlanTransport billingPlans;
-        private readonly TestBillingCheckoutPersistence checkoutPersistence;
         private readonly TestReportingTransport reporting;
         private readonly TestAuthApiKeys apiKeys;
         private readonly Lazy<Task<(TerraBaseStorage TerraBase, string Database)>> storage = new(async () =>
@@ -55,7 +54,6 @@ namespace TerraScale.Dashboard.E2E.Demo
             auth = new(workspace.ProjectRole);
             databases = new TestDatabases();
             billingPlans = new TestBillingPlanTransport(stripe);
-            checkoutPersistence = new TestBillingCheckoutPersistence(state);
             apiKeys = new TestAuthApiKeys(auth.ResolveAccessToken, workspace.ProjectRole);
             reporting = new TestReportingTransport(Organizations, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys);
         }
@@ -116,7 +114,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
                     terraBase.Use(builder.Services, database);
                     builder.Services.AddSingleton(stripe);
-                    builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(checkoutPersistence));
+                    builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(state));
                     builder.Services.Replace(ServiceDescriptor.Singleton<IAuthGateway>(auth));
                     builder.Services.Replace(ServiceDescriptor.Singleton<IAuthRefreshGateway>(auth));
                     builder.Services.Replace(ServiceDescriptor.Singleton<IAuthOidcGateway>(auth));
@@ -217,7 +215,6 @@ namespace TerraScale.Dashboard.E2E.Demo
             app.MapGet("/__test/portal", () => Results.Content("<h1>Test-only Stripe customer portal</h1><p>The official Stripe SDK issued this portal session.</p><a href='/organization?tab=billing'>Return to billing</a>", "text/html"));
             reporting.MapRoutes(app);
             billingPlans.MapRoutes(app);
-            checkoutPersistence.MapRoutes(app);
             return app;
         }
     }

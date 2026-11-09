@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Features.Billing;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness
 {
@@ -14,20 +17,20 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             await CompleteCheckoutAsync(owner, "starter");
             using var anonymous = scenario.CreateClient();
             using var replica = scenario.CreateClient(replica: true);
-            var replay = scenario.EventBody();
-            var revision = scenario.State.Billing!.Revision;
+            var replay = await scenario.EventBodyAsync();
+            var revision = (await scenario.BillingAsync()).Revision;
             var reads = scenario.Stripe.SubscriptionReads;
             scenario.Stripe.Status = "past_due";
-            using var failed = await PaymentWebhookAuditScenario.SendAsync(anonymous, scenario.EventBody("invoice.payment_failed"));
+            using var failed = await PaymentWebhookAuditScenario.SendAsync(anonymous, await scenario.EventBodyAsync("invoice.payment_failed"));
             await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var dunning = await OrganizationAsync(owner);
             await Assert.That(dunning.GetProperty("planId").GetString()).IsEqualTo("443RCMMF70MNP6S1QMT230NF99");
             await Assert.That(dunning.GetProperty("billingStatus").GetString()).IsEqualTo("billing_required");
             scenario.Stripe.Status = "active";
-            using var paid = await PaymentWebhookAuditScenario.SendAsync(replica, scenario.EventBody("invoice.paid"), legacy: true);
+            using var paid = await PaymentWebhookAuditScenario.SendAsync(replica, await scenario.EventBodyAsync("invoice.paid"), legacy: true);
             await Assert.That(paid.StatusCode).IsEqualTo(HttpStatusCode.OK);
             scenario.Stripe.Status = "canceled";
-            using var newer = await PaymentWebhookAuditScenario.SendAsync(replica, scenario.EventBody("customer.subscription.deleted", "evt_newer", 2), legacy: true);
+            using var newer = await PaymentWebhookAuditScenario.SendAsync(replica, await scenario.EventBodyAsync("customer.subscription.deleted", "evt_newer", 2), legacy: true);
             await Assert.That(newer.StatusCode).IsEqualTo(HttpStatusCode.OK);
             using var older = await PaymentWebhookAuditScenario.SendAsync(anonymous, replay);
             using var duplicate = await PaymentWebhookAuditScenario.SendAsync(replica, replay, legacy: true);
@@ -36,8 +39,9 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             var organization = await OrganizationAsync(owner);
             await Assert.That(organization.GetProperty("planId").GetString()).IsEqualTo("3BN8V1JQWTB3R3NSZ26SERTHWT");
             await Assert.That(organization.GetProperty("paymentMethodValidated").GetBoolean()).IsFalse();
-            await Assert.That(scenario.State.Billing!.EffectivePlan).IsEqualTo("free");
-            await Assert.That(scenario.State.Billing.Revision).IsGreaterThan(revision);
+            var billing = await scenario.BillingAsync();
+            await Assert.That(billing.EffectivePlan).IsEqualTo("free");
+            await Assert.That(billing.Revision).IsGreaterThan(revision);
             await Assert.That(scenario.Stripe.SubscriptionReads - reads).IsEqualTo(5)
                 .Because("Every delivery, including the duplicate ID, rereads canonical provider state.");
         }
@@ -56,7 +60,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             scenario.Stripe.Status = "active";
             scenario.Stripe.PriceCurrency = "eur";
             using var anonymous = scenario.CreateClient();
-            using var delivery = await PaymentWebhookAuditScenario.SendAsync(anonymous, scenario.EventBody());
+            using var delivery = await PaymentWebhookAuditScenario.SendAsync(anonymous, await scenario.EventBodyAsync());
             await Assert.That(delivery.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((await OrganizationAsync(owner)).GetProperty("billingStatus").GetString()).IsEqualTo("billing_required");
             using var second = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/databases", new()
@@ -79,18 +83,77 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             using var repeated = await CheckoutAsync(owner, csrf, "starter");
             await Assert.That(repeated.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(repeated.Headers.Location).IsEqualTo(first.Headers.Location);
-            var checkoutId = scenario.State.Billing!.CheckoutId;
+            var checkoutId = (await scenario.BillingAsync()).CheckoutId;
             using var canceled = await HttpJourney.PostFormAsync(owner, "/checkout/" + checkoutId + "/cancel", new() { ["_csrf"] = csrf });
             await Assert.That(canceled.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             using var anonymous = scenario.CreateClient();
-            using var late = await PaymentWebhookAuditScenario.SendAsync(anonymous, scenario.EventBody("invoice.paid"));
+            using var late = await PaymentWebhookAuditScenario.SendAsync(anonymous, await scenario.EventBodyAsync("invoice.paid"));
             await Assert.That(late.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(scenario.State.Billing!.PaymentValidated).IsFalse();
-            await Assert.That(scenario.State.Billing.SubscriptionId).IsEqualTo("");
+            var billing = await scenario.BillingAsync();
+            await Assert.That((await OrganizationAsync(owner)).GetProperty("paymentMethodValidated").GetBoolean()).IsFalse();
+            await Assert.That(billing.SubscriptionId).IsEqualTo("");
             using var replaced = await CheckoutAsync(owner, csrf, "starter");
             await Assert.That(replaced.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(scenario.Stripe.LastCheckoutKey).IsNotEqualTo(originalKey);
             await Assert.That(scenario.Stripe.LastTrialDays).IsEqualTo("");
+        }
+
+        [Test]
+        public async Task WebhookRacingAUserRefreshOnAnotherReplicaRereadsAndKeepsBothWrites()
+        {
+            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
+            using var owner = scenario.CreateClient();
+            await CompleteCheckoutAsync(owner, "starter");
+            var before = await scenario.BillingAsync();
+            using var anonymous = scenario.CreateClient(replica: true);
+            var body = await scenario.EventBodyAsync();
+            scenario.Stripe.HoldNextSubscriptionRead = true;
+            var webhook = PaymentWebhookAuditScenario.SendAsync(anonymous, body);
+            await scenario.Stripe.SubscriptionReadHeld.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using (var callback = await owner.GetAsync("/billing/checkout/return?session_id=" + Uri.EscapeDataString(before.CheckoutId)))
+            {
+                await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            var user = await scenario.BillingAsync();
+            await Assert.That(user.Revision).IsEqualTo(before.Revision + 1);
+            scenario.Stripe.ReleaseSubscriptionRead.TrySetResult();
+            using var delivered = await webhook;
+            await Assert.That(delivered.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var after = await scenario.BillingAsync();
+            await Assert.That(after.Revision).IsEqualTo(before.Revision + 2)
+                .Because("The webhook read the row before the user's write, lost the version check, reread it and applied on top.");
+            await Assert.That(after.Version).IsNotEqualTo(user.Version);
+            var organization = await OrganizationAsync(owner);
+            await Assert.That(organization.GetProperty("paymentMethodValidated").GetBoolean()).IsTrue();
+            await Assert.That(organization.GetProperty("billingStatus").GetString()).IsEqualTo("active");
+        }
+
+        [Test]
+        public async Task SecondStripeCustomerForAnOrganizationIsRejected()
+        {
+            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
+            using var owner = scenario.CreateClient();
+            await CompleteCheckoutAsync(owner, "starter");
+            var binding = await scenario.BillingAsync();
+            await using (var db = await scenario.StorageAsync())
+            {
+                db.StripeCustomers.Add(new StripeCustomerRow
+                {
+                    Id = AccountService.NewId(),
+                    CustomerId = "cus_payment_audit_duplicate",
+                    OrganizationId = binding.OrganizationId,
+                    CreatedAt = DateTime.UtcNow,
+                });
+                var error = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+                await Assert.That(error!.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation }).IsTrue();
+            }
+
+            await using (var db = await scenario.StorageAsync())
+            {
+                var customers = await db.StripeCustomers.AsNoTracking().Where(row => row.OrganizationId == binding.OrganizationId).Select(row => row.CustomerId).ToListAsync();
+                await Assert.That(customers).IsEquivalentTo([binding.CustomerId]);
+            }
         }
 
         [Test]

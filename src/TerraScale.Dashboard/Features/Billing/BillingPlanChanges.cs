@@ -21,8 +21,6 @@ namespace TerraScale.Dashboard.Features.Billing
     // receipt only serializes changes and preserves their provider idempotency key.
     public sealed partial class StripeBilling
     {
-        public const string ChangesTable = "dashboard_billing_changes";
-
         public async Task<BillingPlanState?> PlanStateAsync(AccountContext context, CancellationToken cancellationToken)
         {
             context = await MemberAsync(context, cancellationToken);
@@ -344,8 +342,7 @@ namespace TerraScale.Dashboard.Features.Billing
             for (var attempt = 0; attempt < 4; attempt++)
             {
                 context = await OwnerAsync(context, cancellationToken);
-                var row = await state.GetAsync(ChangesTable, context.Organization!.Id, cancellationToken);
-                var previous = row is null ? null : AccountService.Read<BillingChangeReceipt>(row);
+                var previous = await storage.ChangeRowAsync(context.Organization!.Id, cancellationToken);
                 if (previous is not null && (previous.OrganizationId != context.Organization.Id || previous.Revision < 1 || previous.RequestId.Length == 0 || previous.Status is not ("reserved" or "applying" or "applied" or "abandoned")))
                 {
                     throw new IOException("Billing change scope is invalid.");
@@ -363,6 +360,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
                 var receipt = new BillingChangeReceipt
                 {
+                    Id = previous?.Id ?? AccountService.NewId(),
+                    Version = previous?.Version ?? "",
                     OrganizationId = context.Organization.Id,
                     SubscriptionId = snapshot.Subscription.Id,
                     RequestId = Guid.CreateVersion7().ToString(),
@@ -375,15 +374,16 @@ namespace TerraScale.Dashboard.Features.Billing
                     PeriodEnd = snapshot.Item.CurrentPeriodEnd,
                     Revision = checked((previous?.Revision ?? 0) + 1)
                 };
-                try { await state.PutAsync(ChangesTable, context.Organization.Id, JsonSerializer.SerializeToElement(receipt), row is null ? StatePrecondition.Absent : StatePrecondition.Matches(row.Version), cancellationToken); return receipt; }
-                catch (StateConflictException) when (attempt < 3) { }
+                if (previous is null ? await storage.InsertAsync(receipt, cancellationToken) : await storage.ReplaceAsync(receipt, cancellationToken))
+                {
+                    return receipt;
+                }
             }
             throw Conflict("Billing changed concurrently. Retry the change.");
         }
         private async Task BeginChangeAsync(string orgId, BillingChangeReceipt receipt, CancellationToken cancellationToken)
         {
-            var row = await state.GetAsync(ChangesTable, orgId, cancellationToken) ?? throw Conflict("Billing changed concurrently. Reload billing.");
-            var current = AccountService.Read<BillingChangeReceipt>(row);
+            var current = await storage.ChangeRowAsync(orgId, cancellationToken) ?? throw Conflict("Billing changed concurrently. Reload billing.");
             if (current.OrganizationId != orgId || current.RequestId != receipt.RequestId)
             {
                 throw Conflict("Billing changed concurrently. Reload billing.");
@@ -401,14 +401,10 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             current.Status = "applying";
-            try { await state.PutAsync(ChangesTable, orgId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(row.Version), cancellationToken); }
-            catch (StateConflictException)
+            if (!await storage.ReplaceAsync(current, cancellationToken) &&
+                (await storage.ChangeRowAsync(orgId, cancellationToken) is not { Status: "applying" } applying || applying.RequestId != receipt.RequestId))
             {
-                var latest = await state.GetAsync(ChangesTable, orgId, cancellationToken);
-                if (latest is null || AccountService.Read<BillingChangeReceipt>(latest) is not { Status: "applying" } applying || applying.RequestId != receipt.RequestId)
-                {
-                    throw Conflict("Billing changed concurrently. Reload billing.");
-                }
+                throw Conflict("Billing changed concurrently. Reload billing.");
             }
             receipt.Status = "applying";
         }
@@ -418,8 +414,7 @@ namespace TerraScale.Dashboard.Features.Billing
             for (var attempt = 0; attempt < 4; attempt++)
             {
                 context = await OwnerAsync(context, cancellationToken);
-                var row = await state.GetAsync(ChangesTable, context.Organization!.Id, cancellationToken) ?? throw Conflict("Billing changed concurrently. Reload billing.");
-                var current = AccountService.Read<BillingChangeReceipt>(row);
+                var current = await storage.ChangeRowAsync(context.Organization!.Id, cancellationToken) ?? throw Conflict("Billing changed concurrently. Reload billing.");
                 if (current.OrganizationId != context.Organization.Id || current.RequestId != receipt.RequestId)
                 {
                     throw Conflict("Billing changed concurrently. Reload billing.");
@@ -446,13 +441,11 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 candidate ??= await PriceAsync(client, PlanCatalog.For(receipt.Plan), receipt.Interval, cancellationToken);
                 current.TargetPriceId = candidate.Id;
-                try
+                if (await storage.ReplaceAsync(current, cancellationToken))
                 {
-                    await state.PutAsync(ChangesTable, context.Organization.Id, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(row.Version), cancellationToken);
                     receipt.TargetPriceId = candidate.Id;
                     return candidate;
                 }
-                catch (StateConflictException) when (attempt < 3) { }
             }
             throw Conflict("Billing changed concurrently. Retry the change.");
         }
@@ -461,21 +454,14 @@ namespace TerraScale.Dashboard.Features.Billing
             // A reserved receipt has never admitted a vendor mutation. An applying
             // receipt can have an unknown provider outcome and must keep its key.
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            var row = await state.GetAsync(ChangesTable, orgId, cleanup.Token);
-            if (row is null)
-            {
-                return;
-            }
-
-            var current = AccountService.Read<BillingChangeReceipt>(row);
-            if (current.OrganizationId != orgId || current.RequestId != receipt.RequestId || current.Status != "reserved")
+            var current = await storage.ChangeRowAsync(orgId, cleanup.Token);
+            if (current is null || current.OrganizationId != orgId || current.RequestId != receipt.RequestId || current.Status != "reserved")
             {
                 return;
             }
 
             current.Status = "abandoned";
-            try { await state.PutAsync(ChangesTable, orgId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(row.Version), cleanup.Token); }
-            catch (StateConflictException) { }
+            await storage.ReplaceAsync(current, cleanup.Token);
         }
         private async Task SettleChangeAsync(AccountContext context, BillingChangeReceipt receipt)
         {
@@ -500,8 +486,7 @@ namespace TerraScale.Dashboard.Features.Billing
         }
         private async Task FinishChangeAsync(string orgId, BillingChangeReceipt receipt, CancellationToken cancellationToken)
         {
-            var row = await state.GetAsync(ChangesTable, orgId, cancellationToken) ?? throw new IOException("Billing change receipt is unavailable.");
-            var current = AccountService.Read<BillingChangeReceipt>(row);
+            var current = await storage.ChangeRowAsync(orgId, cancellationToken) ?? throw new IOException("Billing change receipt is unavailable.");
             if (current.OrganizationId != orgId || current.RequestId != receipt.RequestId)
             {
                 throw Conflict("Billing changed concurrently. Reload billing.");
@@ -513,13 +498,10 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             current.Status = "applied";
-            try { await state.PutAsync(ChangesTable, orgId, JsonSerializer.SerializeToElement(current), StatePrecondition.Matches(row.Version), cancellationToken); }
-            catch (StateConflictException)
+            if (!await storage.ReplaceAsync(current, cancellationToken) &&
+                (await storage.ChangeRowAsync(orgId, cancellationToken) is not { Status: "applied" } applied || applied.RequestId != receipt.RequestId))
             {
-                var latest = await state.GetAsync(ChangesTable, orgId, cancellationToken); if (latest is null || AccountService.Read<BillingChangeReceipt>(latest) is not { Status: "applied" } applied || applied.RequestId != receipt.RequestId)
-                {
-                    throw;
-                }
+                throw new IOException("Billing changed concurrently.");
             }
         }
         private static bool Realized(BillingChangeReceipt receipt, BillingPlanState state)
@@ -592,22 +574,5 @@ namespace TerraScale.Dashboard.Features.Billing
         }
 
         private sealed record PlanSnapshot(StripeClient Client, BillingBinding Binding, Subscription Subscription, SubscriptionItem Item, BillingPlanState State);
-    }
-
-    public sealed class BillingChangeReceipt
-    {
-        public string OrganizationId { get; set; } = "";
-        public string SubscriptionId { get; set; } = "";
-        public string RequestId { get; set; } = "";
-        public string Action { get; set; } = "";
-        public string Plan { get; set; } = "";
-        public string Interval { get; set; } = "";
-        public string SourcePlanKey { get; set; } = "";
-        public string SourceInterval { get; set; } = "";
-        public string SourcePriceId { get; set; } = "";
-        public string TargetPriceId { get; set; } = "";
-        public DateTimeOffset PeriodEnd { get; set; }
-        public long Revision { get; set; }
-        public string Status { get; set; } = "reserved";
     }
 }

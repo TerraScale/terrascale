@@ -9,8 +9,8 @@ against the same database today:
 
 | Data | Store |
 |---|---|
-| OIDC and step-up flows, browser sessions, PAT and MCP credentials, access tokens, MCP OAuth clients and codes, saved queries, SQL workspaces, allowance alerts, alert rules and their events, log drains and their cursors, accounts and their notifications, organizations with their projects, project databases, audit events and invitation reservations | Relational tables (below) |
-| Billing, Stripe customers, checkouts and plan changes, internal billing, account deletions and the deletion cleanup journal | JSON-body tables (`IDashboardState`, last section) |
+| OIDC and step-up flows, browser sessions, PAT and MCP credentials, access tokens, MCP OAuth clients and codes, saved queries, SQL workspaces, allowance alerts, alert rules and their events, log drains and their cursors, accounts and their notifications, organizations with their projects, project databases, audit events and invitation reservations, billing, Stripe customers, checkouts and plan changes, internal billing | Relational tables (below) |
+| Account deletions and the deletion cleanup journal | JSON-body tables (`IDashboardState`, last section) |
 
 ## Relational tables
 
@@ -47,11 +47,16 @@ calls named `state/sql/execute`.
 | `log_drain_cursors` | The drain's TerraBase request-log cursor for one database | `id` ULID; unique `(drain_id, database_id)`; `drain_id` foreign key to `log_drains` with cascade delete; cursor is a ULID |
 | `accounts` | A signed-in user's dashboard profile, onboarding step and selected organization and project | `id` ULID (the public account id); unique `subject_hash` (SHA-256 of the ts-auth subject) and `user_id`; `erasure_id` fence (below); `version` concurrency token |
 | `notifications` | An account's inbox item | key `(account_id, id)`, foreign key to `accounts` with cascade delete; status `unread` or `read` |
-| `organizations` | Dashboard state of a ts-auth organization: kind, status, plan and billing fields, internal billing policy and alerts, audit retention, pending and deleted project markers | `id` is the ts-auth ULID; kind `personal` or `business`; audit retention 1 to 90 days; `erasure_id` fence; `version` concurrency token |
+| `organizations` | Dashboard state of a ts-auth organization: kind, status, the plan it is entitled to with its billing status, payment-method flag and spend cap, internal billing policy and alerts, audit retention, pending and deleted project markers | `id` is the ts-auth ULID; kind `personal` or `business`; audit retention 1 to 90 days; `erasure_id` fence; `version` concurrency token |
 | `organization_projects` | Dashboard settings of a ts-auth project: regions, status, default flag, spend cap, operation limits | `id` is the ts-auth ULID; foreign key to `organizations` with cascade delete; non-negative limits |
 | `project_databases` | A project's database: name, placement, endpoint, status, limits, backup retention, branch source, expiry | `id` is the TerraBase ULID; foreign keys to `organizations` and `organization_projects`, both cascade; unique `(project_id, name)` |
 | `audit_events` | An organization's dashboard audit event | `id` ULID; foreign key to `organizations` with cascade delete; index on `(organization_id, occurred_at)` |
 | `invitation_reservations` | A plan member slot taken while ts-auth creates an invitation | `id` ULID (the operation id); foreign key to `organizations` with cascade delete; unique `(organization_id, invitation_id)` once ts-auth answered |
+| `billing` | An organization's billing binding: its Stripe checkout reservation and subscription projection, or its internal billing reservation, or an erasure marker | Key `organization_id`, foreign key to `organizations` with cascade delete, so one row per organization; `kind` is `stripe` or `internal`, `state` is `reserved`, `active` or `deleting`; `internal_reservation` (JSON policy snapshot and cap) exactly when `kind = 'internal'`; unique `customer_id` when set (`cus_…`); `erasure_id` ULID marks an erased organization and clears the rest; `revision >= 0`; `version` ULID concurrency token |
+| `stripe_customers` | The Stripe customer that belongs to an organization | `id` ULID; unique `customer_id` (`cus_…`); unique `organization_id`, foreign key to `billing` with cascade delete |
+| `stripe_checkouts` | A Checkout Session the dashboard created, bound to its reservation | `id` ULID; unique `checkout_id` (`cs_…`); foreign keys to `billing` and to `stripe_customers.customer_id`, both cascade; project ID empty or a ULID |
+| `billing_changes` | An organization's latest plan change receipt and its Stripe idempotency binding | `id` ULID; unique `organization_id`, foreign key to `billing` with cascade delete; `action` is `change` or `undo`; `status` is `reserved`, `applying`, `applied` or `abandoned`; `revision >= 1`; `version` concurrency token |
+| `internal_billing` | The one organization that owns internal billing, with its hidden plan ID | `id` ULID; unique `scope`, always `organization`, so at most one row exists; `organization_id` foreign key to `organizations` with cascade delete; plan ID is a ULID |
 
 Grants (access and refresh tokens) stay encrypted with `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` (AES-GCM) in
 `nonce`, `ciphertext` and `tag` columns; owner, kind, device and expiry are plain columns, so listing, revocation and
@@ -97,6 +102,20 @@ Alerts and log drains:
 - A log drain edit keeps the row, its cursors and a stored header whose name is unchanged and value left blank; it
   writes a new `revision` and clears the delivery status. The drain worker saves cursors and status with the
   `revision` it read, so a save that races an edit writes nothing and the new endpoint receives those requests.
+
+Billing rows are written compare-and-set: a writer reads the row, changes it and saves it with the `version` it read
+as concurrency token and a new ULID as the next `version`. Stripe event deliveries, the checkout return page, the plan
+reconciler and user actions on any replica race on the same `billing` row; the loser's save writes nothing, it rereads
+the row and Stripe's current state and applies on top, so no write is lost and a redelivered event only repeats the
+reconciliation. Create-only rows (a reservation, a Stripe customer, a checkout, the internal billing owner) are
+inserted, and a primary key or unique violation means another writer created it first: the caller reads that row and
+accepts it only if it matches. A second Stripe customer for an organization, or one Stripe customer for two
+organizations, is refused by the unique indexes.
+
+The `organizations` row keeps the plan the organization is entitled to, its billing status and whether a payment method
+is on file; the billing writers set them from Stripe's subscription or the internal billing policy, and the `billing`
+row keeps only the Stripe or internal binding behind them. Every billing row needs its organization's row. Deleting an
+organization fences the `organizations` row first, so no checkout can start, and then the `billing` row.
 
 ### Migrations
 

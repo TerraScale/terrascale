@@ -6,12 +6,12 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Stripe;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness
 {
@@ -21,10 +21,10 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
     {
         private WebApplication? first;
         private WebApplication? second;
+        private DemoEnvironment environment = null!;
         public string Root { get; private set; } = "";
         public Uri Origin { get; private set; } = null!;
         public Uri ReplicaOrigin { get; private set; } = null!;
-        public PaymentWebhookAuditState State { get; private set; } = null!;
         public PaymentWebhookAuditTransport Stripe { get; private set; } = null!;
 
         public static async Task<PaymentWebhookAuditScenario> StartAsync()
@@ -37,6 +37,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             }
 
             var environment = new DemoEnvironment();
+            scenario.environment = environment;
             scenario.Root = root.FullName;
             await environment.InitializeAsync();
             try
@@ -54,9 +55,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
 
         private void Configure(WebApplicationBuilder builder)
         {
-            State ??= new((IDashboardState)builder.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!);
             Stripe ??= new((IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!);
-            builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(State));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(Stripe)));
         }
 
@@ -71,9 +70,20 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             { BaseAddress = replica ? ReplicaOrigin : Origin, Timeout = TimeSpan.FromSeconds(30) };
         }
 
-        public string EventBody(string type = "customer.subscription.updated", string id = "evt_payment_audit_replay", long created = 1)
+        public Task<DashboardDbContext> StorageAsync()
         {
-            var binding = State.Billing ?? throw new InvalidOperationException("Create the local checkout first.");
+            return environment.StorageAsync();
+        }
+
+        public async Task<BillingBinding> BillingAsync()
+        {
+            await using var db = await environment.StorageAsync();
+            return await db.Billing.AsNoTracking().SingleAsync(row => row.OrganizationId != ReferenceFixtures.LabsId);
+        }
+
+        public async Task<string> EventBodyAsync(string type = "customer.subscription.updated", string id = "evt_payment_audit_replay", long created = 1)
+        {
+            var binding = await BillingAsync();
             return JsonSerializer.Serialize(new
             {
                 id,
@@ -115,62 +125,6 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
             if (second is not null) { await second.StopAsync(); await second.DisposeAsync(); }
             if (first is not null) { await first.StopAsync(); await first.DisposeAsync(); }
             Stripe?.Dispose();
-        }
-    }
-
-    internal sealed class PaymentWebhookAuditState(IDashboardState underlying) : IDashboardState
-    {
-        public BillingBinding? Billing { get; private set; }
-        public Task InitializeAsync(CancellationToken cancellationToken)
-        {
-            return underlying.InitializeAsync(cancellationToken);
-        }
-
-        public Task CheckReadyAsync(CancellationToken cancellationToken)
-        {
-            return underlying.CheckReadyAsync(cancellationToken);
-        }
-
-        public Task<StateRecord?> GetAsync(string table, string id, CancellationToken cancellationToken)
-        {
-            return underlying.GetAsync(table, id, cancellationToken);
-        }
-
-        public Task<IReadOnlyList<StateRecord>> ListAsync(string table, CancellationToken cancellationToken)
-        {
-            return underlying.ListAsync(table, cancellationToken);
-        }
-
-        public Task<StatePage> PageAsync(string table, IReadOnlyDictionary<string, string> scope, IReadOnlyList<string>? fields, int limit, string? cursor, CancellationToken cancellationToken)
-        {
-            return underlying.PageAsync(table, scope, fields, limit, cursor, cancellationToken);
-        }
-
-        public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition precondition, CancellationToken cancellationToken)
-        {
-            await underlying.PutAsync(table, id, row, precondition, cancellationToken);
-            if (table == StripeBilling.Table)
-            {
-                Billing = row.Deserialize<BillingBinding>()!;
-            }
-        }
-        public Task DeleteAsync(string table, string id, string version, CancellationToken cancellationToken)
-        {
-            return underlying.DeleteAsync(table, id, version, cancellationToken);
-        }
-
-        public async Task AgeFreeReservationAsync()
-        {
-            var binding = Billing ?? throw new InvalidOperationException("Complete the Free setup first.");
-            if (binding.Plan != "free" || binding.SubscriptionId.Length != 0 || !binding.PaymentValidated)
-            {
-                throw new InvalidOperationException("Only a completed local Free setup can be aged.");
-            }
-
-            var row = await underlying.GetAsync(StripeBilling.Table, binding.OrganizationId, default)
-                ?? throw new InvalidOperationException("Missing fixture binding.");
-            binding.StartedAt = DateTimeOffset.UtcNow.AddHours(-2);
-            await PutAsync(StripeBilling.Table, binding.OrganizationId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(row.Version), default);
         }
     }
 

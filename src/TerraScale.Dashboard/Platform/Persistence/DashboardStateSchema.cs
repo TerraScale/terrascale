@@ -8,12 +8,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
         public static IReadOnlyList<string> Tables { get; } = Array.AsReadOnly(
         [
             "account_deletions",
-            "dashboard_deletion_cleanup",
-            "dashboard_billing",
-            "dashboard_internal_billing",
-            "dashboard_stripe_customers",
-            "dashboard_billing_changes",
-            "dashboard_stripe_checkouts"
+            "dashboard_deletion_cleanup"
         ]);
 
         public static IReadOnlyList<string> Statements { get; } = Array.AsReadOnly(

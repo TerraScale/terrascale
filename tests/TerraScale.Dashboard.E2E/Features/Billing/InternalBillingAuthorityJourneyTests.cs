@@ -36,8 +36,6 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(stored.GetProperty("InternalBilling").ValueKind).IsEqualTo(JsonValueKind.Null);
             await Assert.That(billing.GetProperty("bindings").GetArrayLength()).IsEqualTo(0);
             await Assert.That(billing.GetProperty("singleton").ValueKind).IsEqualTo(JsonValueKind.Null);
-            await Assert.That(billing.GetProperty("writes").EnumerateArray().Any(write =>
-                write.GetProperty("table").GetString() is "dashboard_billing" or "dashboard_internal_billing")).IsFalse();
             await Assert.That(billing.GetProperty("stripeRequests").GetArrayLength()).IsEqualTo(0);
             await Assert.That(result.Observed.GetProperty("contractFailures").GetInt32()).IsEqualTo(0);
             await Assert.That(result.Observed.GetProperty("managementMutations").GetInt32()).IsEqualTo(0);

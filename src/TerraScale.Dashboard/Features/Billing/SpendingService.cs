@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing
@@ -6,12 +7,12 @@ namespace TerraScale.Dashboard.Features.Billing
     public sealed record SpendingProject(string Id, string Name, string Region, IReadOnlyList<SpendingDatabase> Databases);
     public sealed record SpendingSnapshot(string OrganizationId, long OrganizationCapCents, IReadOnlyList<SpendingProject> Projects);
 
-    public sealed class SpendingService(AccountService accounts, TimeProvider time, IDashboardState state)
+    public sealed class SpendingService(AccountService accounts, TimeProvider time, IDbContextFactory<DashboardDbContext> storage)
     {
         public async Task<SpendingSnapshot> ReadAsync(AccountContext context, CancellationToken cancellationToken, bool requireProject = false)
         {
             var fresh = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject);
-            await InternalBillingService.ValidateClaimsAsync(state, fresh.Organization!, cancellationToken);
+            await InternalBillingService.ValidateClaimsAsync(storage, fresh.Organization!, cancellationToken);
             return Snapshot(fresh.Organization!);
         }
 
@@ -48,7 +49,7 @@ namespace TerraScale.Dashboard.Features.Billing
         private async Task<AccountContext> FreshAsync(AccountContext context, CancellationToken cancellationToken)
         {
             var fresh = await AccountScope.RefreshAsync(accounts, context, cancellationToken);
-            await InternalBillingService.ValidateClaimsAsync(state, fresh.Organization!, cancellationToken);
+            await InternalBillingService.ValidateClaimsAsync(storage, fresh.Organization!, cancellationToken);
             return fresh;
         }
         public static SpendingSnapshot Snapshot(OrganizationRecord org)

@@ -9,8 +9,6 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.E2E
 {
-    // External test controls prepare provider-owned rows and inject storage/network
-    // failures. Journeys exercise the running app and its public CLI entry only.
     sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, Func<Task<DashboardDbContext>> storage, Func<DateTimeOffset> now, Func<string> subject,
         Action<OrganizationRecord>? seedOrganization = null) : IDashboardState
     {
@@ -19,20 +17,7 @@ namespace TerraScale.Dashboard.E2E
         private readonly ConcurrentQueue<object> usageRequests = new();
         private readonly ConcurrentQueue<object> scopeRequests = new();
         private readonly ConcurrentQueue<string> stripeRequests = new();
-        private readonly ConcurrentQueue<object> writes = new();
         private string usageMode = "coherent";
-        private TaskCompletionSource? writeGate;
-        private string pauseTable = "";
-        private string pauseId = "";
-        private string pauseKind = "";
-        private bool pauseAfter;
-        private int pauseRemaining;
-        private int pausedWrites;
-        private string failTable = "";
-        private bool failAfter;
-        private int failRemaining;
-        private int failStatus;
-        private int injectedFailures;
         private TaskCompletionSource? usageGate;
         private int pausedUsage;
         private int failCliBuild;
@@ -67,54 +52,9 @@ namespace TerraScale.Dashboard.E2E
             return state.DeleteAsync(table, id, version, cancellationToken);
         }
 
-        public async Task PutAsync(string table, string id, JsonElement row, StatePrecondition precondition, CancellationToken cancellationToken)
+        public Task PutAsync(string table, string id, JsonElement row, StatePrecondition precondition, CancellationToken cancellationToken)
         {
-            var kind = row.TryGetProperty("Kind", out var discriminator) ? discriminator.GetString() ?? "" : "";
-            await PauseAsync(false);
-            if (!failAfter)
-            {
-                MaybeFail(table);
-            }
-
-            await state.PutAsync(table, id, row, precondition, cancellationToken);
-            if (Allowed(table))
-            {
-                writes.Enqueue(new { table, id, kind });
-            }
-
-            await PauseAsync(true);
-            if (failAfter)
-            {
-                MaybeFail(table);
-            }
-
-            async Task PauseAsync(bool after)
-            {
-                if (after != pauseAfter || table != pauseTable || (pauseId.Length != 0 && id != pauseId) || (pauseKind.Length != 0 && kind != pauseKind))
-                {
-                    return;
-                }
-
-                if (Interlocked.Decrement(ref pauseRemaining) >= 0 && writeGate is { } gate)
-                {
-                    Interlocked.Increment(ref pausedWrites);
-                    await gate.Task.WaitAsync(cancellationToken);
-                }
-            }
-        }
-
-        private void MaybeFail(string table)
-        {
-            if (table == failTable && Interlocked.Decrement(ref failRemaining) >= 0)
-            {
-                Interlocked.Increment(ref injectedFailures);
-                if (failStatus != 0)
-                {
-                    throw new HttpRequestException("Injected test-only storage unavailability.", null, (System.Net.HttpStatusCode)failStatus);
-                }
-
-                throw new IOException("Injected test-only internal billing storage interruption.");
-            }
+            return state.PutAsync(table, id, row, precondition, cancellationToken);
         }
 
         public async Task<IResult> ControlAsync(JsonElement command, CancellationToken cancellationToken)
@@ -140,42 +80,6 @@ namespace TerraScale.Dashboard.E2E
                     break;
                 case "internal-release-usage": usageGate?.TrySetResult(); usageGate = null; break;
                 case "internal-fail-cli-build-once": Interlocked.Exchange(ref failCliBuild, 1); break;
-                case "internal-pause-put":
-                    var table = command.GetProperty("table").GetString()!;
-                    if (!Allowed(table))
-                    {
-                        return Results.BadRequest();
-                    }
-
-                    Release();
-                    pauseTable = table;
-                    pauseId = command.TryGetProperty("id", out var id) ? id.GetString()! : "";
-                    pauseKind = command.TryGetProperty("kind", out var kind) ? kind.GetString()! : "";
-                    pauseAfter = command.TryGetProperty("after", out var committed) && committed.GetBoolean();
-                    pauseRemaining = command.TryGetProperty("count", out var remaining) ? remaining.GetInt32() : 1;
-                    if (pauseRemaining is < 1 or > 2)
-                    {
-                        return Results.BadRequest();
-                    }
-
-                    pausedWrites = 0;
-                    writeGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                    break;
-                case "internal-release-put": Release(); break;
-                case "internal-fail-put-once":
-                    failTable = command.GetProperty("table").GetString()!;
-                    if (!Allowed(failTable))
-                    {
-                        return Results.BadRequest();
-                    }
-
-                    failAfter = command.TryGetProperty("after", out var after) && after.GetBoolean();
-                    failStatus = command.TryGetProperty("status", out var status) ? status.GetInt32() : 0;
-                    failRemaining = 1;
-                    break;
-                case "internal-clear-faults":
-                    Release(); failTable = ""; failRemaining = 0;
-                    break;
                 default: return Results.BadRequest();
             }
             return Results.Ok(new { configured = true });
@@ -183,19 +87,10 @@ namespace TerraScale.Dashboard.E2E
 
         public void Release()
         {
-            writeGate?.TrySetResult();
             usageGate?.TrySetResult();
             usageGate = null;
-            pauseTable = "";
-            pauseRemaining = 0;
         }
 
-        private static bool Allowed(string table)
-        {
-            return table is "dashboard_billing" or "dashboard_internal_billing";
-        }
-
-        // Gives the signed-in account's active project one saved database, so reporting reads have something to report.
         private async Task<IResult> AddDatabaseAsync(string name, CancellationToken cancellationToken)
         {
             if (await accounts.FindAsync(subject(), cancellationToken) is not { Erased: false } accountRow)
@@ -429,6 +324,8 @@ namespace TerraScale.Dashboard.E2E
             var stored = await organizations.ListAsync(CancellationToken.None);
             await using var db = await storage();
             var notifications = await db.Notifications.AsNoTracking().OrderBy(note => note.CreatedAt).ThenBy(note => note.Id).ToListAsync();
+            var bindings = await db.Billing.AsNoTracking().ToListAsync();
+            var singleton = await db.InternalBilling.AsNoTracking().SingleOrDefaultAsync();
             return new
             {
                 now = now(),
@@ -436,14 +333,11 @@ namespace TerraScale.Dashboard.E2E
                 usageRequests = usageRequests.ToArray(),
                 scopeRequests = scopeRequests.ToArray(),
                 stripeRequests = stripeRequests.ToArray(),
-                pausedWrites,
                 pausedUsage,
                 cliBuildFailures,
-                injectedFailures,
-                writes = writes.ToArray(),
                 organizations = stored.Select(organization => new { id = organization.Id, row = JsonSerializer.SerializeToElement(organization) }).ToArray(),
-                bindings = state.Items.Where(pair => pair.Key.StartsWith("dashboard_billing/", StringComparison.Ordinal)).Select(pair => pair.Value.Body).ToArray(),
-                singleton = state.Items.GetValueOrDefault("dashboard_internal_billing/organization")?.Body,
+                bindings,
+                singleton,
                 notifications = notifications.Select(note => JsonSerializer.SerializeToElement(new { note.Id, note.OrganizationId, note.ProjectId, note.Type, note.BillingMonth, note.Title, note.Body, note.Severity, note.Status, note.Url, CreatedAt = RowTime(note.CreatedAt) })).ToArray()
             };
         }
