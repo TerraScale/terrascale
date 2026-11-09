@@ -19,6 +19,7 @@ Use the [quickstart](/pt-br/getting-started/) to establish one working applicati
 - [Use Drizzle ORM](/pt-br/guides/orm-drizzle): run Drizzle's SQLite dialect over the JavaScript SDK.
 - [Use Prisma ORM](/pt-br/guides/orm-prisma): run Prisma's SQLite dialect over the JavaScript SDK's driver adapter.
 - [Use SQLAlchemy and Alembic](/pt-br/guides/orm-sqlalchemy): run SQLAlchemy's SQLite dialect, the ORM and Alembic migrations over the Python SDK.
+- [Use GORM, sqlc and bun with Go](/pt-br/guides/orm-go): run GORM, sqlc and bun over the Go SDK's database/sql driver.
 - [Typed SQL with the Rust SDK](/pt-br/guides/rust-sql): queries, typed `query_as` selects, transactions over the session and batches in Rust.
 - [Errors and safe retries](/pt-br/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/pt-br/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
