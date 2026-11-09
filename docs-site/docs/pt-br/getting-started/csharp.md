@@ -15,7 +15,7 @@ Run a complete SQL workflow against your TerraScale database in about ten minute
 ## Prerequisites
 
 - The .NET SDK, .NET 10 or .NET 11
-- A TerraScale account, a project with a database, and an API key. Follow steps 1–4 of [Getting started](/pt-br/getting-started/): the key needs **Read and write** access to that database.
+- A TerraScale account, a project with a database, and an API key. Follow steps 1–4 of [Getting started](/pt-br/getting-started/): the key needs the **sql:read** and **sql:write** scopes on that database.
 - The **Current project** ID (a ULID) from the dashboard's **Organization** page, and the API key. Export both:
 
 ```bash

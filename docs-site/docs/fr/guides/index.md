@@ -11,7 +11,7 @@ title: Practical guides
 
 Use the [quickstart](/fr/getting-started/) to establish one working application connection, then choose the guide for the next operation. For the SQL model, see [SQL](/fr/concepts/sql).
 
-- [SDK reference](/fr/guides/sdks) (being updated for SQL).
+- [SDK reference](/fr/guides/sdks)
 - [Authentication capabilities](/fr/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/fr/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
 - [Connect with psql and Postgres drivers](/fr/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
@@ -21,13 +21,13 @@ Use the [quickstart](/fr/getting-started/) to establish one working application 
 - [Use SQLAlchemy and Alembic](/fr/guides/orm-sqlalchemy): run SQLAlchemy's SQLite dialect, the ORM and Alembic migrations over the Python SDK.
 - [Errors and safe retries](/fr/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/fr/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
-- [Functions](/fr/guides/functions) (being updated for SQL).
+- [Functions](/fr/guides/functions)
 - [Monitoring](/fr/guides/monitoring): usage counters, request analytics, Prometheus metrics, request logs and the status page.
-- [Backups and restore](/fr/guides/backups-and-restore) (being updated for SQL).
+- [Backups and restore](/fr/guides/backups-and-restore)
 - [Rename a database](/fr/guides/rename-database): change a database's name from the dashboard, API, CLI or SDKs.
 - [File storage](/fr/guides/file-storage): project files in buckets with owner, role and public read and write rules.
 - [Schema migrations](/fr/guides/migrations): versioned SQL table migrations with `ts migrate`.
-- [Branches](/fr/guides/branches) (being updated for SQL).
+- [Branches](/fr/guides/branches)
 - [Multi-region writes and conflicts](/fr/guides/multi-region-writes-and-conflicts): column winners, transaction states and the conflict log.
 - [Dashboard usage](/fr/guides/dashboard): customer account and database workflow.
 - [Connect an AI assistant with MCP](/fr/guides/mcp): sign in or use a personal access token to connect an assistant.

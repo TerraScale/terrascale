@@ -29,12 +29,18 @@ datasource db {
 }
 ```
 
+Export `TERRASCALE_PROJECT_ID`, exchange `TERRASCALE_API_KEY` for a short-lived access token as shown in the [JavaScript getting-started guide](/ja/getting-started/javascript), and export it as `TERRASCALE_ACCESS_TOKEN`.
+
 ```js
 import { PrismaClient } from "@prisma/client";
 import { createTerraBaseClient } from "@terrascale/sdk";
 import { PrismaTerraScale } from "@terrascale/sdk/prisma";
 
-const db = createTerraBaseClient({ project: "my-project", token: process.env.TERRABASE_TOKEN, baseUrl: "https://…" }).database("app");
+const db = createTerraBaseClient({
+  baseUrl: "https://api.terrascale.tech",
+  project: process.env.TERRASCALE_PROJECT_ID,
+  token: process.env.TERRASCALE_ACCESS_TOKEN,
+}).database("app");
 const prisma = new PrismaClient({ adapter: new PrismaTerraScale(db) });
 ```
 
