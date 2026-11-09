@@ -34,9 +34,6 @@ public sealed record BackupStatusRecord(
 /// <summary>Retention by plan, daily restore drills and the backup record of each shipped file.</summary>
 internal sealed partial class ContinuousBackup
 {
-    /// <summary>Observes expiry cancelling this file's active drill before deletion; for integration tests.</summary>
-    internal Action<string>? RetentionWaiting { get; set; }
-
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan DrillInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan SizeInterval = TimeSpan.FromDays(1);
@@ -225,7 +222,7 @@ internal sealed partial class ContinuousBackup
     // Inventories and deletions belong to one destination: partial uploads or a failed delete in the other destination
     // must remain discoverable on later passes. Bound deletion candidates, scanning the entire inventory to protect
     // snapshots beyond the batch. Hard-expired objects drain in batches of sixteen in the same pass.
-    private async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, HashSet<Ulid> leased, CancellationToken cancellationToken)
+    private static async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, HashSet<Ulid> leased, CancellationToken cancellationToken)
     {
         var complete = true;
         // Include orphan generations and the newest segment: a failing snapshot must not retain WAL forever.
@@ -321,7 +318,7 @@ internal sealed partial class ContinuousBackup
         return complete && await RetainGenerationProofsAsync(store, file.Prefix, file.Generation, expires, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<bool> DeleteSegmentsAsync(IObjectStore store, ShippedFile file, Ulid generation, long? before, CancellationToken cancellationToken)
+    private static async Task<bool> DeleteSegmentsAsync(IObjectStore store, ShippedFile file, Ulid generation, long? before, CancellationToken cancellationToken)
     {
         var complete = true;
         var batch = new List<string>(16);
@@ -352,7 +349,7 @@ internal sealed partial class ContinuousBackup
 
     // Ordinary shipping never waits for a drill. Only actual expiry ends one: cancel and join before deleting
     // its possible inputs, then let the next snapshot perform the daily check against retained history.
-    private async Task<bool> DeleteRetainedAsync(ShippedFile file, IObjectStore store, List<string> keys, CancellationToken cancellationToken)
+    private static async Task<bool> DeleteRetainedAsync(ShippedFile file, IObjectStore store, List<string> keys, CancellationToken cancellationToken)
     {
         if (keys.Count > 0)
         {
@@ -364,7 +361,6 @@ internal sealed partial class ContinuousBackup
             if (active is not null)
             {
                 file.DrilledAt = DateTimeOffset.MinValue;
-                RetentionWaiting?.Invoke(file.Prefix);
                 active.Cancellation.Cancel();
                 await active.Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }

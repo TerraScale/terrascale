@@ -154,24 +154,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             await Task.WhenAll(pending).ConfigureAwait(false);
         }
     }
-    internal async Task WaitForShippingAsync(string prefix, CancellationToken cancellationToken)
-    {
-        Task? completion;
-        await _pass.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            completion = _files.TryGetValue(prefix, out var file) ? file.Job?.Completion : null;
-        }
-        finally
-        {
-            _pass.Release();
-        }
-        if (completion is not null)
-        {
-            await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
     internal async Task RetireDeletedAsync(TenantContext database, CancellationToken cancellationToken)
     {
         var prefix = BackupLayout.File(database, _node);
