@@ -13,7 +13,7 @@ the project's admin role.
 | `GET /webhook-endpoints` | admin | `{items: [WebhookEndpoint], next: null}`, never secrets |
 | `POST /webhook-endpoints` | admin | `201 WebhookEndpoint` with `secret` once; `create_webhook_endpoint` step-up proof required |
 | `DELETE /webhook-endpoints/{id}` | admin | `204` |
-| `POST /webhook-endpoints/{id}/rotate-secret` | admin | `WebhookSecret` with `secret` once; `rotate_webhook_secret` step-up proof required |
+| `POST /webhook-endpoints/{id}/rotate-secret` | admin | `WebhookSecret` with `secret` once; `rotate_webhook_secret` step-up proof required; a concurrent change to the endpoint answers `409 version_conflict` |
 
 ```text
 POST /v1/{project}/webhook-endpoints
@@ -31,7 +31,8 @@ POST /v1/{project}/webhook-endpoints/{id}/rotate-secret
 ## Registration rules
 
 - `url` is an absolute `https` URL of at most 2048 characters, without userinfo
-  or fragment. Anything else fails with `400 invalid_request`.
+  or fragment. It is stored and answered in its normalized form. Anything else
+  fails with `400 invalid_request`.
 - `event_types` is a non-empty duplicate-free subset of `user.signed_up`,
   `user.signed_in`, `user.disabled`, `user.enabled`, `user.deleted`,
   `user.provider_linked` and `user.provider_unlinked`.

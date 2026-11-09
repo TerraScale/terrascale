@@ -17,9 +17,8 @@ public sealed class CreateWebhookEndpointEndpoint(TenantDirectory tenants, Platf
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(WebhooksJson.Default.CreateWebhookEndpointRequest, cancellationToken);
-        if (request.Url is not { Length: > 0 and <= 2048 }
-            || !Uri.TryCreate(request.Url, UriKind.Absolute, out var uri)
-            || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length > 0 || uri.Fragment.Length > 0)
+        if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var uri)
+            || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length > 0 || uri.Fragment.Length > 0 || uri.AbsoluteUri.Length > 2048)
         {
             throw Invalid("url must be an absolute https URL of at most 2048 characters, without userinfo or fragment.");
         }
@@ -31,7 +30,7 @@ public sealed class CreateWebhookEndpointEndpoint(TenantDirectory tenants, Platf
         }
 
         caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "create_webhook_endpoint", null, cancellationToken);
-        var (endpoint, secret) = await webhooks.CreateAsync(projectId, request.Url, [.. events], cancellationToken);
+        var (endpoint, secret) = await webhooks.CreateAsync(projectId, uri.AbsoluteUri, [.. events], cancellationToken);
         return Results.Json(new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, secret),
             WebhooksJson.Default.WebhookEndpointBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"/v1/{projectId}/webhook-endpoints/{endpoint.Id}");

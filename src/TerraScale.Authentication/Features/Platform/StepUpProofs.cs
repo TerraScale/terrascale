@@ -59,6 +59,11 @@ public sealed record StepUpConsumption(UserRecord Caller, string? OperationGrant
     public override string ToString() => nameof(StepUpConsumption);
 }
 
+internal sealed record PreparedStepUp(UserRecord Caller, StepUpRecord Record, IReadOnlyList<StoreOperation> Operations, string? Authorization)
+{
+    public override string ToString() => nameof(PreparedStepUp);
+}
+
 /// <summary>Durable, five-minute purpose proofs. TerraBase transactions serialize approval and consumption.</summary>
 public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvider clock, AttemptLimiter limiter)
 {
@@ -79,6 +84,12 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
     {
         ArgumentNullException.ThrowIfNull(request);
         return (await this.ConsumeAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false)).Caller;
+    }
+
+    internal async Task<PreparedStepUp?> PrepareHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return await this.PrepareAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false);
     }
 
     /// <summary>Creates a pending proof; an existing sign-in never approves it.</summary>
@@ -138,15 +149,33 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
     public async Task<StepUpConsumption> ConsumeAsync(UserRecord caller, string? proof, string purpose, string audience, string? receiptHash, CancellationToken cancellationToken, string? organizationId = null)
     {
         ArgumentNullException.ThrowIfNull(caller);
+        if (await this.PrepareAsync(caller, proof, purpose, audience, receiptHash, cancellationToken, organizationId).ConfigureAwait(false) is not { } prepared)
+        {
+            throw Required();
+        }
+
+        if (prepared.Record.ExpiresAt <= clock.GetUtcNow() || await store.TransactAsync(prepared.Operations, cancellationToken).ConfigureAwait(false) is not null
+            || prepared.Record.ExpiresAt <= clock.GetUtcNow())
+        {
+            throw Required();
+        }
+
+        return new StepUpConsumption(prepared.Caller, prepared.Authorization);
+    }
+
+    internal async Task<PreparedStepUp?> PrepareAsync(UserRecord caller, string? proof, string purpose, string audience, string? receiptHash, CancellationToken cancellationToken, string? organizationId = null)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
         if (!Pair(purpose, audience) || receiptHash is not null && purpose != "delete_account"
             || proof is not { Length: 70 } || proof[26] != '.' || !PlatformDirectory.IsId(proof[..26])
             || await this.ReadAsync(caller, proof[..26], cancellationToken).ConfigureAwait(false) is not { Record: { Approved: true, PrimaryVerified: true, Bindings.Count: > 0 } } current
             || current.Record.Purpose != purpose || current.Record.Audience != audience
             || current.Record.OrganizationId != organizationId
             || !Tokens.FixedTimeEquals(current.Record.TokenHash, Tokens.Sha256Hex(proof))
-            || !await store.AreCredentialsCurrentAsync(caller.InstanceId, current.Record.Bindings ?? [], cancellationToken).ConfigureAwait(false))
+            || !await store.AreCredentialsCurrentAsync(caller.InstanceId, current.Record.Bindings ?? [], cancellationToken).ConfigureAwait(false)
+            || current.Record.ExpiresAt <= clock.GetUtcNow())
         {
-            throw Required();
+            return null;
         }
 
         var verified = Merge(caller, current.Record.Bindings ?? []);
@@ -160,14 +189,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
             operations.Add(AuthStore.Create(AuthStore.StepUpDeletionGrantTable, caller.InstanceId, receiptHash, JsonSerializer.SerializeToElement(grant, StepUpJson.Default.StepUpDeletionGrant)));
         }
 
-        if (current.Record.ExpiresAt <= clock.GetUtcNow() || await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is not null
-            || current.Record.ExpiresAt <= clock.GetUtcNow())
-        {
-            throw Required();
-        }
-
-        // No acknowledgement secret is persisted or recoverable. A late commit or lost response cannot authorize DELETE.
-        return new StepUpConsumption(verified, authorization);
+        return new PreparedStepUp(verified, current.Record, operations, authorization);
     }
 
     /// <summary>Authorizes only this account's exact deletion continuation; no proof can be re-used.</summary>
