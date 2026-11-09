@@ -140,8 +140,6 @@ namespace TerraScale.Dashboard.Features.Auth
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
-        // ts-auth refusals become account errors with a fixed dashboard message; server and transport failures stay
-        // HttpRequestException so the console reports ts-auth as unreachable.
         private static async Task<T> ProjectAsync<T>(Func<Task<T>> call)
         {
             try { return await call(); }
