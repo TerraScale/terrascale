@@ -97,9 +97,6 @@
     <!-- Last MIT release: 9.x NuGet binaries introduce commercial maintenance terms. -->
     <PackageVersion Include="JsonSchema.Net" Version="8.0.5" />
   </ItemGroup>
-  <ItemGroup Label="Entity Framework Core design hosts">
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" />
-  </ItemGroup>
   <!-- S3-compatible object storage (Tigris) for continuous backups (Features/Backup). -->
   <ItemGroup Label="Object storage">
     <PackageVersion Include="AWSSDK.S3" Version="4.0.104.1" />
