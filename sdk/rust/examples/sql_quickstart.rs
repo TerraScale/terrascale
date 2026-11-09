@@ -9,9 +9,9 @@ struct Note {
 
 #[tokio::main]
 async fn main() -> terrascale::v1::Result<()> {
-    let project = std::env::var("TERRASCALE_PROJECT").expect("TERRASCALE_PROJECT");
+    let project = std::env::var("TERRASCALE_PROJECT_ID").expect("TERRASCALE_PROJECT_ID");
     let api_key = std::env::var("TERRASCALE_API_KEY").expect("TERRASCALE_API_KEY");
-    let database = std::env::var("TERRASCALE_DATABASE").unwrap_or_else(|_| "main".into());
+    let database = std::env::var("TERRASCALE_DATABASE_NAME").unwrap_or_else(|_| "main".into());
     let client = Client::for_project_api_key(project, api_key).build()?;
     let handle = client.database(database);
     match handle.create().await {
