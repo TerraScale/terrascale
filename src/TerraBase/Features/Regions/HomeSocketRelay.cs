@@ -77,12 +77,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
         catch (Exception error) when (error is WebSocketException or HttpRequestException or OperationCanceledException)
         {
-            context.Response.Headers.CacheControl = "no-store";
-            context.Response.Headers["X-TerraBase-Database-Home"] = home.Region;
-            var url = HomeForwarding.RetryUrl(context, home.Region);
-            context.Response.Headers.Location = url;
-            await BadRequests.WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region",
-                $"the database is served in {home.Region}: send it to https://{HomeForwarding.Host(home.Region)}", op: null, url: url).ConfigureAwait(false);
+            await HomeForwarding.MisdirectedAsync(context, home.Region).ConfigureAwait(false);
             return;
         }
 

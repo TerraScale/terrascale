@@ -1,3 +1,4 @@
+using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 using Microsoft.AspNetCore.Http.Features;
 
@@ -85,10 +86,10 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
         }
     }
 
-    internal async Task ForwardServiceAsync(HttpContext context, Uri address)
+    internal async Task ForwardServiceAsync(HttpContext context, HomeNode writer)
     {
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
-            new Uri(address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()));
+            new Uri(writer.Address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()));
         if (context.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true)
         {
             request.Content = new StreamContent(context.Request.Body);
@@ -105,7 +106,18 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
                 request.Headers.TryAddWithoutValidation(name, (IEnumerable<string?>)values);
             }
         }
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted).ConfigureAwait(false);
+        HttpResponseMessage answered;
+        try
+        {
+            answered = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted).ConfigureAwait(false);
+        }
+        catch (HttpRequestException)
+        {
+            await HomeForwarding.MisdirectedAsync(context, writer.Region).ConfigureAwait(false);
+            return;
+        }
+
+        using var response = answered;
         context.Response.StatusCode = (int)response.StatusCode;
         foreach (var (name, values) in response.Headers.Concat(response.Content.Headers))
         {
