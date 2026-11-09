@@ -17,7 +17,7 @@ public static class SuiteTimings
     {
         var fixture = SharedDataSources.GetOrCreate<TerraBaseFixture>(SharedType.PerTestSession, typeof(SuiteTimings), null);
         await fixture.InitializeAsync();
-        await Task.WhenAll(fixture.InitializeManagementAsync(), fixture.InitializeSharedAsync());
+        await Task.WhenAll(fixture.InitializeManagementAsync(), fixture.InitializeSharedAsync(), fixture.InitializePoolAsync());
     }
 
     [Before(HookType.TestSession)]
