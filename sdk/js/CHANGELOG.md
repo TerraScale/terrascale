@@ -2,6 +2,12 @@
 
 ## Unreleased — SQL only
 
+`@terrascale/sdk/prisma` maps refused SQL statements to Prisma's driver-adapter
+error kinds by SQLSTATE: unique, not-null and foreign-key violations, missing
+tables and missing columns surface as P2002/P2011/P2003/P2021/P2022; other
+refusals keep the server's message. Both the HTTPS query path and interactive
+transactions share the mapping.
+
 `@terrascale/sdk/drizzle` exports `drizzleProxy(database)`, the two callbacks
 Drizzle's `sqlite-proxy` driver expects, mapped from a root database handle's
 `execute` and atomic `batch`. The SDK adds no `drizzle-orm` dependency.

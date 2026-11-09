@@ -50,3 +50,19 @@ test("interactive transactions run begin, statements and rollback or commit over
   await expect(adapter.startTransaction("READ COMMITTED")).rejects.toThrow("Unsupported isolation level: READ COMMITTED");
   await adapter.dispose();
 });
+
+test("a unique violation surfaces as Prisma's UniqueConstraintViolation kind", async () => {
+  const { client } = await fixture((_request, response) =>
+    json(response, { error: { code: "unique_violation", message: "UNIQUE constraint failed: people.id", statement: 0, sqlstate: "23505" } }, 400));
+  const adapter = await new PrismaTerraScale(client.database("app")).connect();
+  const error = await adapter.executeRaw({ sql: "INSERT INTO people (id) VALUES (1)", args: [], argTypes: [] }).catch(error => error);
+  expect(error).toBeInstanceOf(Error);
+  expect(error.name).toBe("DriverAdapterError");
+  expect(error.cause).toEqual({
+    kind: "UniqueConstraintViolation",
+    originalCode: "unique_violation",
+    originalMessage: "TerraBase 400 unique_violation: UNIQUE constraint failed: people.id",
+  });
+  expect(error.message).toContain("UNIQUE constraint failed: people.id");
+  await adapter.dispose();
+});

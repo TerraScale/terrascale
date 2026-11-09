@@ -17,6 +17,7 @@ Use the [quickstart](/es/getting-started/) to establish one working application 
 - [Connect with psql and Postgres drivers](/es/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
 - [SQL over HTTP](/es/guides/sql-http): run SQL statements with any HTTP client.
 - [Use Drizzle ORM](/es/guides/orm-drizzle): run Drizzle's SQLite dialect over the JavaScript SDK.
+- [Use Prisma ORM](/es/guides/orm-prisma): run Prisma's SQLite dialect over the JavaScript SDK's driver adapter.
 - [Errors and safe retries](/es/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/es/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
 - [Functions](/es/guides/functions) (being updated for SQL).

@@ -345,6 +345,39 @@ SDK takes no `drizzle-orm` dependency; each query is one `execute` call and a
 Drizzle batch is one atomic `batch` request. `drizzle-kit push` and schema
 introspection are not supported.
 
+`@terrascale/sdk/prisma` exports `PrismaTerraScale`, a Prisma driver-adapter
+factory over a root database handle. It ships in the next SDK release; until
+then install it from source (this monorepo's `sdk/js`). The SDK takes no
+`@prisma/*` dependency. Use it as Prisma's SQLite adapter:
+
+```prisma
+datasource db {
+  provider = "sqlite"
+}
+```
+
+```js
+import { PrismaClient } from "@prisma/client";
+import { createTerraBaseClient } from "@terrascale/sdk";
+import { PrismaTerraScale } from "@terrascale/sdk/prisma";
+
+const db = createTerraBaseClient({ project: "my-project", token: process.env.TERRABASE_TOKEN, baseUrl: "https://…" }).database("app");
+const prisma = new PrismaClient({ adapter: new PrismaTerraScale(db) });
+```
+
+No `previewFeatures` or `url` wiring is needed with Prisma 7: the adapter is
+passed to the client constructor. Queries run over the SQL API; interactive
+transactions (`prisma.$transaction(async tx => …)`) run over a dedicated SQL
+WebSocket session and the server ends each one after 5 seconds, so keep them
+short. Database errors map to Prisma's error kinds: unique, not-null and
+foreign-key violations, missing tables and missing columns surface as
+P2002/P2011/P2003/P2021/P2022; everything else keeps the server's message.
+Migrations are not run by Prisma: `prisma migrate dev` and `db push` (and the
+shadow database they need) are not supported. Instead generate SQL with
+`prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > migration.sql`
+(later diffs use `--from-migrations prisma/migrations`), then apply the script
+with `ts migrate` or the SQL API.
+
 The retired `./local`, `./postgres`, `./schema`, `./sql`, `./tanstack` and `./codegen`
 entrypoints and the `terrascale-local` and `terrascale-models` CLIs are gone. SQL runs on the root database
 handle. React/Svelte exports retain generic observer, hook and store utilities. Their
