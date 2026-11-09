@@ -28,3 +28,11 @@ Round 1 already reviewed the suites (all drive real listeners/servers via `Terra
 
 ## Fix 6 — modern C# spot checks
 Self-check greps (rule 5 of the brief): comments gone, `System.*` qualified names gone. Re-verify no `_ =>` arms on owned closed types appeared; keep round 1's modernizations as they are.
+
+## Outcomes (post-work)
+- Fix 1: 185 comment lines deleted in src (Replicas 148, HomePush 12, LocalAck 5, Regions 17, Clock 3) and 76 in tests, plus 2 inline and 2 `///` blocks. THIRD-PARTY kept-code/deleted-comment list above.
+- Fix 2: 5 FQN sites fixed (1 src, 4 tests). Self-check grep now empty.
+- Fix 3/4: no workarounds or legacy paths needed changes; findings recorded above.
+- Fix 5: `RegionReplicaTests` constructs `TursoReplicas` directly but drives the real home server over HTTP with real storage (encryption-at-rest leak scans, delayed-answer interleaving, checkpoint/reopen) — integration tests of the replica subsystem, kept. `LocalWriteWorld` builds a real second node from real stores to fake partner health — kept. `ClockSafetyTests` drives the real gRPC clock service — already through the public interface. No unit tests deleted.
+- Reviewed and left: `DateTime.UtcNow` for test credential expiry and one `Task.Wait()` rendezvous in `HomeMoveDeleteFenceTests`' paused-checkpoint drill (test-side blocking by design).
+- Checks: `dotnet build src/TerraBase -c Debug` 0 errors/0 warnings; Slow and E2E test builds 0/0; `dotnet format whitespace --verify-no-changes` clean for src, Fast and Slow; `make terrabase-test-fast`: 12.837 s / 30 s, 88 tests, slowest 7.7 s, all passed.
