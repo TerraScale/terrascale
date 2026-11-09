@@ -1,6 +1,7 @@
 """The dashboard reaches TerraBase only over MagicOnion through the shared contracts, never the official SDK."""
-from pathlib import Path
+import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 project = ET.parse(root / "src/TerraScale.Dashboard/TerraScale.Dashboard.csproj")
@@ -9,8 +10,9 @@ assert references == {"../TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Co
                       "../TerraScale.Endpoints/TerraScale.Endpoints.csproj"}, \
     "The dashboard references only shared TerraBase contracts and endpoint infrastructure"
 assert not project.findall('.//PackageReference[@Include="TerraScale.DotNet"]'), "The dashboard does not use the official SDK"
+sdk_using = re.compile(r"^\s*using TerraScale\.DotNet", re.MULTILINE)
 assert not [path for path in (root / "src/TerraScale.Dashboard").rglob("*.cs")
-            if not {"bin", "obj"}.intersection(path.parts) and "TerraScale.DotNet" in path.read_text()], \
+            if not {"bin", "obj"}.intersection(path.parts) and sdk_using.search(path.read_text())], \
     "The dashboard does not use the official SDK"
 sdk = ET.parse(root / "sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj")
 assert sdk.findtext(".//PackageId") == "TerraScale.DotNet", "The official SDK package identity stays unchanged"

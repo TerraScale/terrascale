@@ -266,17 +266,23 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public static TsAuthCreateWebhookEndpoint NewWebhook(string? url, IEnumerable<string?> eventTypes)
         {
             var trimmed = url?.Trim();
-            if (trimmed is not { Length: > 0 and <= 2048 }
+            if (trimmed is not { Length: > 0 }
                 || !Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
-                || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length > 0 || uri.Fragment.Length > 0)
+                || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length > 0 || uri.Fragment.Length > 0
+                || uri.AbsoluteUri.Length > 2048)
             {
                 throw new AccountAccessException("The URL must be an absolute https URL of up to 2048 characters.", 422);
             }
 
             var events = eventTypes.Where(value => value is not null).Select(value => value!).Distinct().ToArray();
-            if (events.Length == 0 || events.Any(value => !LifecycleEvents.Contains(value)))
+            if (events.Length == 0)
             {
                 throw new AccountAccessException("Choose at least one lifecycle event.", 422);
+            }
+
+            if (events.Any(value => !LifecycleEvents.Contains(value)))
+            {
+                throw new AccountAccessException("Choose a valid lifecycle event.", 422);
             }
 
             return new(trimmed, events);
