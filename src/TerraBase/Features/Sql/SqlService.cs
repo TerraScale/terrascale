@@ -169,7 +169,7 @@ internal sealed class SqlService(
                 break;
             }
 
-            var columns = await run(SqlSession.Internal($"PRAGMA table_xinfo(\"{name.Replace("\"", "\"\"", StringComparison.Ordinal)}\")")).ConfigureAwait(false);
+            var columns = await run(SqlSession.Internal($"PRAGMA table_xinfo({SqlScript.Quote(name)})")).ConfigureAwait(false);
             tables.Add(new SqlTableInfo(name, [.. columns.Rows.Select(column => new SqlTableColumn(
                 column[1] as string ?? "",
                 column[2] is string { Length: > 0 } type ? type : null,
@@ -419,9 +419,16 @@ internal sealed class SqlSession(
 
     private int _consumed;
 
-    private bool RequestExpired =>
-        Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue
-        && time.GetElapsedTime(started) > SqlLimits.MaxRequestTime;
+    private bool RequestExpired => RequestStarted is { } started && time.GetElapsedTime(started) > SqlLimits.MaxRequestTime;
+
+    private long? RequestStarted
+    {
+        get
+        {
+            var started = Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue);
+            return started == long.MaxValue ? null : started;
+        }
+    }
 
     private SqlPlanOutcome Plan(string sql)
     {
@@ -442,7 +449,7 @@ internal sealed class SqlSession(
             timeout = Min(timeout, limit);
         }
 
-        if (Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue)
+        if (RequestStarted is { } started)
         {
             timeout = Min(timeout, SqlLimits.MaxRequestTime - time.GetElapsedTime(started));
         }

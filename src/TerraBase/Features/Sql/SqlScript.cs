@@ -58,6 +58,8 @@ internal static class SqlScript
 
     public static bool IsReservedName(string name) => TerraBaseSqlNames.IsInternalTable(name);
 
+    public static string Quote(string name) => "\"" + name.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+
     public static int CountAtMost(string script)
     {
         if (!SqlText.TryTokenize(script, out var tokens))
