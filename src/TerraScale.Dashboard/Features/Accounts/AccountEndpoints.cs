@@ -9,71 +9,25 @@ namespace TerraScale.Dashboard.Features.Accounts
             return services.AddSingleton<AccountService>();
         }
 
-        public static IEndpointRouteBuilder MapAccountFeatures(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> SwitchAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, string field,
+            Func<SessionRecord, string, CancellationToken, Task<AccountContext>> select)
         {
-            endpoints.MapGet("/api/v1/auth/me", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+            var session = await sessions.ReadAsync(http);
+            if (session is null)
             {
-                // Who is signed in stays readable while the selected organization requires two-factor.
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
+                return Results.Unauthorized();
+            }
 
-                return Results.Json(new AccountIdentityResponse(context.UserId, context.Account.Id,
-                    context.Account.Name, context.Account.Email, context.Account.Phone, context.Account.Locale,
-                    context.Account.OnboardingCompleted, context.Organization?.Id, context.Project?.Id, context.Role),
-                    AccountContractJson.Default.AccountIdentityResponse);
-            }).WithGroupName("integration").WithName("getDashboardIdentity").WithTags("Session")
-                .WithSummary("Read the current dashboard session and workspace")
-                .Produces<AccountIdentityResponse>().Produces(StatusCodes.Status401Unauthorized);
-            endpoints.MapPost("/api/v1/dashboard/switch-organization", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
             {
-                var session = await sessions.ReadAsync(http);
-                if (session is null)
-                {
-                    return Results.Unauthorized();
-                }
+                return Results.BadRequest("Invalid form token.");
+            }
 
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.BadRequest("Invalid form token.");
-                }
-
-                AccountContext selected;
-                try { selected = await accounts.SwitchOrganizationAsync(session, form["organizationId"].ToString(), http.RequestAborted); }
-                catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-                return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
-            }).WithGroupName("integration").WithName("switchDashboardOrganization").WithTags("Workspace")
-                .WithSummary("Select an organization the current user can access")
-                .Accepts<SwitchOrganizationRequest>("application/x-www-form-urlencoded")
-                .Produces(StatusCodes.Status303SeeOther).Produces(StatusCodes.Status400BadRequest)
-                .Produces(StatusCodes.Status401Unauthorized).ProducesProblem(StatusCodes.Status403Forbidden);
-            endpoints.MapPost("/api/v1/dashboard/switch-project", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
-            {
-                var session = await sessions.ReadAsync(http);
-                if (session is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.BadRequest("Invalid form token.");
-                }
-
-                AccountContext selected;
-                try { selected = await accounts.SwitchProjectAsync(session, form["projectId"].ToString(), http.RequestAborted); }
-                catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-                return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
-            }).WithGroupName("integration").WithName("switchDashboardProject").WithTags("Workspace")
-                .WithSummary("Select a project the current user can access")
-                .Accepts<SwitchProjectRequest>("application/x-www-form-urlencoded")
-                .Produces(StatusCodes.Status303SeeOther).Produces(StatusCodes.Status400BadRequest)
-                .Produces(StatusCodes.Status401Unauthorized).ProducesProblem(StatusCodes.Status403Forbidden);
-            return endpoints;
+            AccountContext selected;
+            try { selected = await select(session, form[field].ToString(), http.RequestAborted); }
+            catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
+            return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
         }
 
         private static string SwitchReturnPath(string? returnUrl, AccountContext selected)

@@ -61,27 +61,7 @@ namespace TerraScale.Dashboard.Features.Support
             return services.AddSingleton<ISupportMail, SupportMail>();
         }
 
-        public static IEndpointRouteBuilder MapSupport(this IEndpointRouteBuilder endpoints)
-        {
-            endpoints.MapGet("/support", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
-
-                var sent = http.Request.Query["sent"].ToString();
-                return SupportView.Create(new(ShellModel.For(http, context, "Support"), Sent: sent.Length == 8 && sent.All(char.IsAsciiLetterOrDigit) ? sent : "")
-                {
-                    Draft = new(context.Organization?.Id ?? "", context.Project?.Id ?? "", "", "normal", "", "", AccountService.NewId(), TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(http.Request.Query["relatedRequestId"].ToString()) ? http.Request.Query["relatedRequestId"].ToString() : "")
-                });
-            });
-            endpoints.MapPost("/api/v1/dashboard/support", SendAsync);
-            return endpoints;
-        }
-
-        private static async Task<IResult> SendAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ISupportMail mail, ILogger<SupportMail> logger)
+        internal static async Task<IResult> SendAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ISupportMail mail, ILogger<SupportMail> logger)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
