@@ -1,6 +1,7 @@
 package v1_test
 
 import (
+	"database/sql"
 	"net/http"
 	"strings"
 	"testing"
@@ -23,6 +24,14 @@ func TestOpenDBDriverTimeValues(t *testing.T) {
 	}
 	if !strings.Contains(wire, `"args":["2026-03-04 03:06:07.8+00:00"]`) {
 		t.Fatalf("wire params: %s", wire)
+	}
+	nt := sql.NullTime{Time: created, Valid: true}
+	ptr := created
+	if _, err := db.Exec("INSERT INTO events (created_at, updated_at) VALUES (?, ?)", nt, &ptr); err != nil {
+		t.Fatalf("insert nulltime/ptr: %v", err)
+	}
+	if !strings.Contains(wire, `"args":["2026-03-04 03:06:07.8+00:00","2026-03-04 03:06:07.8+00:00"]`) {
+		t.Fatalf("wire nulltime/ptr params: %s", wire)
 	}
 	rows, err := db.Query("SELECT created_at, n FROM events")
 	if err != nil {
