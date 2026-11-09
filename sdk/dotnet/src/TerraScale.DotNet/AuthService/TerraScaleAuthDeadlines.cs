@@ -30,8 +30,8 @@ public sealed partial class TerraScaleAuthClient
 
     internal Task SendAuthenticatedForStatusAsync<TRequest>(HttpMethod method, string route, TRequest? body,
         JsonTypeInfo<TRequest> requestType, AuthenticationHeaderValue authorization, HttpStatusCode expectedStatus,
-        int maxRequestBytes, CancellationToken caller) where TRequest : class =>
-        WithDeadlineAsync(token => SendAuthenticatedForStatusCoreAsync(method, route, body, requestType, authorization, expectedStatus, maxRequestBytes, token), caller);
+        int maxRequestBytes, CancellationToken caller, string? stepUpProof = null) where TRequest : class =>
+        WithDeadlineAsync(token => SendAuthenticatedForStatusCoreAsync(method, route, body, requestType, authorization, expectedStatus, maxRequestBytes, token, stepUpProof), caller);
 
     internal Task<bool> SendAuthenticatedForDeletionAsync(string route, AuthenticationHeaderValue authorization, CancellationToken caller) =>
         WithDeadlineAsync(token => SendAuthenticatedForDeletionCoreAsync(route, authorization, token), caller);

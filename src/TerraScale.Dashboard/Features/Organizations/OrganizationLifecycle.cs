@@ -28,7 +28,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         // Completes on the owner's confirmed request. An organization already marked by the earlier
         // deletion request reaches the same path, so its owner can finish it.
-        public async Task DeleteAsync(AccountContext context, string confirmation, CancellationToken cancellationToken)
+        public async Task DeleteAsync(AccountContext context, string confirmation, CancellationToken cancellationToken, string? stepUpProof = null)
         {
             context = await FreshAsync(context, cancellationToken);
             var org = context.Organization!;
@@ -82,7 +82,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 }
                 catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
             }
-            try { await platform.DeleteOrganizationAsync(context.Session, org.Id, cancellationToken); }
+            try { await platform.DeleteOrganizationAsync(context.Session, org.Id, stepUpProof ?? throw new AccountAccessException("A fresh confirmation is required.", 403, "step_up_required"), cancellationToken); }
             catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
             await ProjectAfterRemovalAsync(context, true, cancellationToken);
             await ForgetAsync(context, cancellationToken);

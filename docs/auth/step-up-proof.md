@@ -2,7 +2,8 @@
 
 Sensitive operations require a fresh credential check, including MFA when active.
 A valid management access token or hosted session alone cannot authorize account
-deletion, API-key creation/rotation, or confidential OAuth client creation.
+deletion, organization deletion, ownership-transfer start, API-key
+creation/rotation, or confidential OAuth client creation.
 Dashboard PAT issuance also consumes a proof before storing any credential.
 
 The backend calls `POST /v1/terrascale/step-up` with its management bearer and
@@ -12,9 +13,10 @@ hosted URL. The callback must be `/auth/step-up/callback` on a registered
 dashboard callback origin, without a query or fragment.
 
 Supported pairs are `delete_account` with `ts-dashboard` or `ts-auth`,
-`create_pat` with `ts-dashboard`, and `create_api_key`, `rotate_api_key`,
+`create_pat` with `ts-dashboard`, and `delete_organization`,
+`start_ownership_transfer`, `create_api_key`, `rotate_api_key`,
 `create_oauth_client`, `update_oauth_client`, `rotate_oauth_client`,
-`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). The hosted page identifies the operation
+`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). Organization deletion and starting an ownership transfer consume their proof exactly like API-key creation; the hosted page identifies the operation
 and account. It requires a fresh password, or one explicitly requested email
 code for a passwordless account, followed by a fresh active MFA factor.
 Opening the page sends no email. An attempt requests at most one code and uses

@@ -707,7 +707,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.CompletedTask;
         }
 
-        public Task DeleteOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+        public Task DeleteOrganizationAsync(SessionRecord session, string organizationId, string stepUpProof, CancellationToken cancellationToken)
         {
             lock (Gate)
             {
@@ -932,7 +932,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         }
         public Task<TsAuthPlatformOwnershipTransfer?> GetOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
         { lock (Gate) { Member(session.UserId, organizationId); return Task.FromResult(transfers.GetValueOrDefault(organizationId)); } }
-        public Task StartOwnershipTransferAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken)
+        public Task StartOwnershipTransferAsync(SessionRecord session, string organizationId, string userId, string stepUpProof, CancellationToken cancellationToken)
         {
             lock (Gate)
             {

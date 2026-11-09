@@ -11,9 +11,11 @@ The pending proof expires after five minutes. The registered dashboard origin's
 sign-in alone does not approve the proof; auth requires fresh credentials and any active MFA factor.
 
 Supported pairs are `delete_account` with `ts-auth` or `ts-dashboard`, `create_pat`
-with `ts-dashboard`, and `create_api_key`, `rotate_api_key`, `create_oauth_client`
+with `ts-dashboard`, and `delete_organization`, `start_ownership_transfer`,
+`create_api_key`, `rotate_api_key`, `create_oauth_client`
 with `ts-auth`. For auth operations, pass the approved proof to the required
-`stepUpProof` argument on API-key create/rotate, `auth.Projects.CreateClientAsync`,
+`stepUpProof` argument on API-key create/rotate, organization deletion,
+ownership-transfer start, `auth.Projects.CreateClientAsync`,
 or `auth.Platform.DeleteAccountWithProofAsync`. The SDK sends it only as
 `X-TerraScale-Step-Up-Proof`. The old proof-free account deletion method is removed;
 the receipt overload remains for an authorized deletion continuation.
