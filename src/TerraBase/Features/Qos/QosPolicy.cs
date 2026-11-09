@@ -2,8 +2,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Qos;
 
-// StorageBytes, Databases, MonthlyWriteCap and MonthlySqlReads mirror pricing.json entitlements
-// (storageLimitGb, databases, operationUnitCapPerMonth, sqlReadUnitsPerMonth).
 public sealed record QosPolicy(
     int RequestsPerSecond, int Burst, int Concurrency, int Weight, double MemoryShare, double CacheShare,
     TimeSpan QueryTimeout, long QueryWork, long ScanRows, long ScanBytes, long StorageBytes, long Databases,

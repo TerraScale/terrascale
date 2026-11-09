@@ -10,7 +10,6 @@ internal sealed class MemoryBudget : IMemoryBudget
     private const int MaxReservations = 65_536;
     private const int MaxOrganizationChars = 256;
     private readonly long _limit;
-    // ponytail: one gate keeps process and tenant accounting atomic; split only after measuring contention.
     private readonly Lock _gate = new();
     private readonly Dictionary<string, TenantUsage> _tenants = [];
     private long _reserved;
@@ -32,7 +31,6 @@ internal sealed class MemoryBudget : IMemoryBudget
         var tenantReservations = Math.Min(MaxReservations - 4096, (int)(MaxReservations * share));
         if (bytes == 0)
         {
-            // Zero-byte leases retain no tenant or budget state, even when capacity is exhausted.
             return EmptyReservation.Instance;
         }
 
@@ -85,7 +83,6 @@ internal sealed class MemoryBudget : IMemoryBudget
             ArgumentOutOfRangeException.ThrowIfNegative(more);
             lock (budget._gate)
             {
-                // Growth takes no table entry, so both byte limits are the whole admission.
                 if (issuer != budget || Volatile.Read(ref _released) != 0 || more > budget._limit - budget._reserved)
                 {
                     return false;

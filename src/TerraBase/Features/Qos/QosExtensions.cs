@@ -101,7 +101,6 @@ internal static class QosExtensions
         }
 
         using var scope = QosContext.Enter(tenant, admission: admission);
-        // Known lengths reserve before decoding; chunked bodies reserve before each bounded read.
         var bodyBytes = context.Request.ContentLength ?? 0;
         using var body = budget.TryReserve(MemoryLane.Foreground, 16 * 1024 + bodyBytes * 3);
         if (body is null)

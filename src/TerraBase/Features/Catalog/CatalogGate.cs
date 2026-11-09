@@ -52,7 +52,6 @@ internal sealed class CatalogGate(
     private readonly TaskCompletionSource _opened = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Counter<long> _bucketMissing = null!;
     private volatile bool _open;
-    // 0 unverified, 1 bucket missing; an int for volatile access.
     private int _bucketMissingState;
     private bool _started;
     private bool _fresh;
