@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.Features.Settings
 
         public static IEndpointRouteBuilder MapSettings(this IEndpointRouteBuilder endpoints)
         {
-            foreach (var operation in new[] { "audit-retention", "delete-project", "backup-policy", "backup-now", "restore" })
+            foreach (var operation in new[] { "audit-retention", "delete-project", "backup-policy", "backup-now" })
             {
                 var action = operation;
                 endpoints.MapPost("/api/v1/dashboard/settings/" + action, async (HttpContext http, DashboardSessions sessions, AccountService accounts, SettingsService settings) =>
@@ -43,13 +43,6 @@ namespace TerraScale.Dashboard.Features.Settings
                                 await settings.SetBackupPolicyAsync(context, form["databaseId"].ToString(), form["fullBackupCron"].ToString(),
                                     form["incrementalBackupCron"].ToString(), retention, http.RequestAborted); break;
                             case "backup-now": await settings.CreateBackupAsync(context, form["databaseId"].ToString(), http.RequestAborted); break;
-                            case "restore":
-                                if (form["replace"].ToString() is "on" or "true" or "1")
-                                {
-                                    BackupService.RejectOverwrite();
-                                }
-
-                                await settings.RestoreBackupAsync(context, form["databaseId"].ToString(), form["backupId"].ToString(), http.RequestAborted); break;
                         }
                         return HttpRedirects.SeeOther(action == "delete-project" ? "/organization" : "/");
                     }

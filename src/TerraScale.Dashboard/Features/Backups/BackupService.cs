@@ -123,13 +123,6 @@ namespace TerraScale.Dashboard.Features.Backups
             return saved;
         }
 
-        public async Task<BackupRestoreResult> RestoreAsync(AccountContext context, string databaseId, string backupId, string name, CancellationToken ct)
-        {
-            var (scope, home, source, restoreId) = await RestoreRequestAsync(context, databaseId, backupId, name, ct);
-            var restored = await backend.RestoreAsync(scope, home, databaseId, restoreId, name.Length == 0 ? null : DatabaseService.ValidName(name), ct);
-            return await RecordRestoreAsync(context, source, home, restored, name, ct);
-        }
-
         public async Task<BackupRestoreStart> StartRestoreAsync(AccountContext context, string databaseId, string backupId, string name, CancellationToken ct)
         {
             var (scope, home, source, restoreId) = await RestoreRequestAsync(context, databaseId, backupId, name, ct);

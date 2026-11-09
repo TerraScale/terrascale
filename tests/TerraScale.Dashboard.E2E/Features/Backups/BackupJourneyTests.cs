@@ -229,12 +229,15 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             async Task<int> ScoreAsync(string databaseId) => (await CallAsync(replica, secret, "execute_sql", new { databaseId, sql = "SELECT score FROM users" })).GetProperty("rows")[0][0].GetInt32();
         }
 
-        private static async Task<JsonElement> RestoreCompletedAsync(HttpClient client, string databaseId, string operationId)
+        internal static async Task<JsonElement> RestoreCompletedAsync(HttpClient client, string databaseId, string operationId)
         {
             JsonElement status = default;
             for (var attempt = 0; attempt < 120; attempt++)
             {
-                status = await ReadAsync(client, "/api/v1/dashboard/backups/restore?databaseId=" + databaseId + "&operation=" + operationId);
+                using var poll = await client.GetAsync("/api/v1/dashboard/backups/restore?databaseId=" + databaseId + "&operation=" + operationId);
+                poll.EnsureSuccessStatusCode();
+                using var polled = JsonDocument.Parse(await poll.Content.ReadAsStringAsync());
+                status = polled.RootElement.Clone();
                 if (status.GetProperty("status").GetString() != "running")
                 {
                     return status;
