@@ -16,8 +16,6 @@ public static class ApiKeysExtensions
         var authorization = services.AddAuthorizationBuilder();
         foreach (var scope in ApiKeyScopes.All.Concat(ApiKeyScopes.ProjectTokenScopes))
         {
-            // Hidden legacy aliases accept sign-in/service identities without project scopes. Every alias target
-            // must independently check the caller's real organization membership and role in its management service.
             authorization.AddPolicy(scope, policy => policy
                 .AddAuthenticationSchemes("TerraBaseBearer", UserAuthExtensions.OperatorScheme)
                 .RequireAuthenticatedUser()

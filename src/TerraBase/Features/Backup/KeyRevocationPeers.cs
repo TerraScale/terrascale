@@ -7,8 +7,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-// Deletion is off the write hot path. All nodes, including hold partners, must evict before 204.
-// An unavailable peer keeps deletion pending; its restart has empty caches and cold reads fail closed.
 internal sealed class KeyRevocationPeers(TerraBaseOptions options, InternalCredential credential, KeyRevocationLocal local) : IDisposable
 {
     private readonly HttpClient _http = PeerHttp.Create(credential);

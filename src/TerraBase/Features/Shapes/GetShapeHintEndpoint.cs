@@ -255,7 +255,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
         }
 
         HttpContext.User = auth.Principal;
-        if (await UserAuthExtensions.AdmitShapeSocketAsync(HttpContext, stop, watch =>
+        if (await SocketAdmission.AdmitShapeSocketAsync(HttpContext, stop, watch =>
             {
                 if (watches is null)
                 {

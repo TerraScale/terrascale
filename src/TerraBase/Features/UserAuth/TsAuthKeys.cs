@@ -65,7 +65,6 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
                 _fetch = Task.Run(FetchAsync, CancellationToken.None);
             }
 
-            // A fetch already running answers this caller too, without counting against the interval.
             fetch = _fetch;
         }
 
@@ -86,8 +85,6 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
-        // Startup never waits for ts-auth (no circular startup dependency): the first fetch runs in the background, and a
-        // request that comes before it finishes joins it (UserAuthenticationHandler).
         _firstFetch = _issuer is null ? null : JoinOrStartFetch();
         return base.StartAsync(cancellationToken);
     }
@@ -120,25 +117,21 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         }
     }
 
-    // Never throws: a failure keeps the cached keys, so ts-auth being down after startup does not stop validation.
     private async Task<IReadOnlyList<SecurityKey>?> FetchAsync()
     {
         try
         {
-            // Shared by every waiting request, so bounded by its own deadline and shutdown, never by one request.
             using var deadline = new CancellationTokenSource(FetchTimeout, _time);
             using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopping);
             var client = _http.CreateClient(HttpClientName);
             var configuration = OpenIdConnectConfiguration.Create(await GetJsonAsync(client, _discovery, cancellation.Token).ConfigureAwait(false));
             if (!string.Equals(configuration.Issuer, _issuer, StringComparison.Ordinal))
             {
-                // OIDC Discovery 1.0 §4.3: a discovery document naming another issuer must not be used, so its jwks_uri is never fetched.
                 _logger.ZLogError($"The ts-auth discovery document names an issuer other than auth-issuer; its keys were not used");
                 return Fail();
             }
 
             var keySet = new JsonWebKeySet(await GetJsonAsync(client, configuration.JwksUri, cancellation.Token).ConfigureAwait(false));
-            // Asymmetric keys only: a symmetric ("oct") key would let anyone holding it sign tokens.
             SecurityKey[] keys = [.. keySet.GetSigningKeys().Where(key => key is AsymmetricSecurityKey or JsonWebKey { Kty: "RSA" or "EC" })];
             if (keys.Length == 0)
             {
@@ -152,8 +145,6 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         }
         catch (Exception error)
         {
-            // Any failure, whatever ts-auth sent: an escaping exception would fault the shared fetch and stop the host.
-            // The type only: messages can carry the issuer URL, and settings are never logged by value.
             if (!_stopping.IsCancellationRequested)
             {
                 _logger.ZLogWarning($"Could not fetch ts-auth signing keys from auth-issuer ({error.GetType().Name:@Error}); keeping {Keys?.Count ?? 0:@Count} cached keys");
@@ -169,7 +160,6 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         return Keys;
     }
 
-    // Every response must come from an https URL with a 2xx answer. The client follows no redirects, so a 3xx fails here.
     private static async Task<string> GetJsonAsync(HttpClient client, string? address, CancellationToken cancellationToken)
     {
         if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)

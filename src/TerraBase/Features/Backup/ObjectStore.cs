@@ -2,7 +2,9 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Net;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Security.Authentication;
 using System.Text;
 using Amazon.Runtime;
 using Amazon.S3;
@@ -20,15 +22,12 @@ internal readonly record struct StoredObject(string Key, long Size);
 
 internal interface IObjectStore
 {
-    // Content is seekable and read from its position; a file larger than one part uploads in parts and keeps its position.
     Task PutAsync(string key, Stream content, CancellationToken cancellationToken);
 
     Task<bool> ReadAsync(string key, Func<Stream, CancellationToken, Task> read, CancellationToken cancellationToken);
 
-    // Unusable entries have an empty key and zero size so raw-item scan budgets still count them.
     IAsyncEnumerable<StoredObject> ListAsync(string prefix, string? startAfter, CancellationToken cancellationToken);
 
-    // Deleting a missing object succeeds; false means the bucket's retention rule (an object lock) still protects it.
     Task<bool> DeleteAsync(string key, CancellationToken cancellationToken);
 }
 
@@ -45,25 +44,15 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(15);
 
-    // Larger files upload in parts, so a failed or timed-out part restarts alone and no request nears S3's 5 GiB PUT cap.
-    // S3 allows 10,000 parts: 128 MiB parts cover objects up to 1.25 TiB.
     private const long PartSize = 128L << 20;
     private const int MaxParts = 10_000;
-    // Parts stream from the file at their own offsets: no part is held in memory.
     private const int PartsInFlight = 4;
-    // Each attempt is one request under RequestTimeout, including the SDK's own retries of transient errors.
     private const int PartAttempts = 3;
     private static readonly TimeSpan AbortTimeout = TimeSpan.FromSeconds(5);
-    // No multipart upload outlives the deadline of the largest one (MaxParts parts, about seven days), so one initiated longer
-    // ago than that plus an hour (clock skew with the bucket, the owner's own abort) has no live owner on any node.
     internal static readonly TimeSpan StaleUpload = UploadDeadline(MaxParts) + TimeSpan.FromHours(1);
-    // User metadata naming the upload that created an object (x-amz-meta-terrabase-upload).
     private const string UploadMetadata = "terrabase-upload";
 
     private readonly AmazonS3Client _s3;
-    // Requests that read their response headers, with the reader. The client reads its response event twice per response
-    // (a null check, then the call), so a reader subscribed and removed per request broke a request completing at the same
-    // time (NullReferenceException in ProcessResponseHandlers): one handler stays subscribed for the client's life instead.
     private readonly ConcurrentDictionary<AmazonWebServiceRequest, Action<WebServiceResponseEventArgs>> _responseReaders = new(ReferenceEqualityComparer.Instance);
     private readonly string _bucket;
     private readonly bool _customer;
@@ -123,7 +112,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
             throw new IOException("backup object exceeds the multipart upload limit");
         }
 
-        // A customer upload and every multipart upload keep one deadline for the whole object.
         var file = parts > 1 ? content as FileStream : null;
         using var deadline = _customer || file is not null ? new CancellationTokenSource(UploadDeadline(parts), _time) : null;
         using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -141,16 +129,12 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
             InputStream = content,
             AutoCloseStream = false,
             Headers = { CacheControl = "no-store" },
-            // A signed payload hash rather than aws-chunked encoding, which S3-compatible services do not all accept.
             UseChunkEncoding = false,
         }, cancellationToken)).ConfigureAwait(false);
     }
 
-    // Fifteen minutes, plus a minute for each further part (a sustained ~2 MiB/s).
     private static TimeSpan UploadDeadline(long parts) => RequestTimeout + TimeSpan.FromMinutes(parts - 1);
 
-    // Customer requests are untrusted endpoints: every whole operation runs under one wall-clock deadline that also
-    // covers streamed bodies the SDK's response-header timeout does not bound. Platform requests only follow the caller.
     private CustomerDeadline CustomerStop(CancellationToken cancellationToken) => new(
         _customer ? new CancellationTokenSource(RequestTimeout, _time) : null, cancellationToken);
 
@@ -170,7 +154,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     private async Task PutPartsAsync(string key, SafeFileHandle file, long start, long length, int parts, CancellationToken cancellationToken)
     {
-        // The completed object carries this upload's own id in its metadata, so it cannot be mistaken for an older object at the key.
         var id = Ulid.NewUlid().ToString();
         var initiate = new InitiateMultipartUploadRequest { BucketName = _bucket, Key = key };
         initiate.Metadata.Add(UploadMetadata, id);
@@ -199,10 +182,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
                 PartETags = [.. etags],
             }, cancellationToken)).ConfigureAwait(false);
             completed = true;
-            // S3-compatible services may answer a failed completion with 200 and an error body, and an older object of the same
-            // length may sit at the key. The stored object proves this upload by its whole length and either this upload's id in
-            // its metadata or S3's multipart ETag of this upload's own parts (stores need not keep metadata). Missing or other
-            // evidence fails it (and aborts the upload if it still exists).
             var stored = await SafeAsync(_s3.GetObjectMetadataAsync(_bucket, key, cancellationToken)).ConfigureAwait(false);
             if (stored.ContentLength != length
                 || stored.Metadata[UploadMetadata] != id && !(MultipartETag(etags) is { } etag && string.Equals(stored.ETag?.Trim('"'), etag, StringComparison.OrdinalIgnoreCase)))
@@ -222,8 +201,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         }
     }
 
-    // S3's ETag of a multipart object: the MD5 of its parts' binary MD5s (their ETags), then "-" and the part count. Null when a
-    // part's ETag is not an MD5, as on stores with opaque ETags. MD5 is S3's protocol here, not a security check.
     private static string? MultipartETag(PartETag[] parts)
     {
         var digests = new byte[parts.Length * 16];
@@ -239,10 +216,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         return $"{Convert.ToHexStringLower(CryptoUtilFactory.CryptoInstance.ComputeMD5Hash(digests))}-{parts.Length}";
     }
 
-    // An unproven completed object would stay as a whole, unrecorded copy. Only a snapshot key is this attempt's alone: it names
-    // the pin time, a generation and a position, ContinuousBackup stores each snapshot key once (a retry pins a new snapshot
-    // under a new key), and nothing else writes snapshot keys. So only there is the object deleted; another key, such as a log
-    // segment's that a retry rewrites, keeps its object.
     private async Task DeleteUnprovenAsync(string key)
     {
         if (!key.AsSpan(0, key.LastIndexOf('/') + 1).EndsWith("/snapshots/", StringComparison.Ordinal) || BackupLayout.ParseSnapshot(key) is null)
@@ -278,7 +251,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
                     UploadId = upload,
                     PartNumber = part,
                     InputStream = content,
-                    // A signed payload hash per part, as for single uploads.
                     UseChunkEncoding = false,
                 }, cancellationToken)).ConfigureAwait(false);
                 return response.ETag;
@@ -323,8 +295,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         }
     }
 
-    // Best effort under its own deadline, also after cancellation. An upload left behind is never visible as an object; its
-    // parts hold bucket storage until AbortStaleUploadsAsync finds it past StaleUpload.
     private async Task AbortAsync(string key, string upload)
     {
         using var deadline = new CancellationTokenSource(AbortTimeout, _time);
@@ -348,7 +318,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         try
         {
             var request = new GetObjectRequest { BucketName = _bucket, Key = key };
-            // Mutable security anchors must observe the latest write across Tigris regions.
             if (!_customer && key.StartsWith("catalog-anchor/", StringComparison.Ordinal))
             {
                 request = Tigris(request, "X-Tigris-Consistent", "true");
@@ -362,7 +331,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         }
         catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound)
         {
-            // The gate must never read a missing bucket as a missing anchor (2026-11-03, docs/qa/P0-TIGRIS.md).
             _bucketMissing?.Add(1);
             throw new ObjectStoreBucketMissingException(_bucket);
         }
@@ -379,7 +347,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
     {
         using var deadline = CustomerStop(cancellationToken);
         cancellationToken = deadline.Token;
-        // Leave room for metadata after sixfold XML expansion of 1024-byte keys within the customer 2 MiB limit.
         var request = new ListObjectsV2Request { BucketName = _bucket, Prefix = prefix, StartAfter = startAfter, MaxKeys = _customer ? 250 : 1000 };
         if (!_customer && prefix.StartsWith("catalog-anchor/", StringComparison.Ordinal))
         {
@@ -413,8 +380,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
                 }
 
                 previous = key;
-                // Keep unusable entries in scan accounting without exposing their keys to backup operations.
-                // A foreign or nonascending response above still fails before any operation.
                 if (key.Length == 0 || Encoding.UTF8.GetByteCount(key) > 1024 || key.Split('/').Any(part => part is "." or "..") || item.Size is < 0)
                 {
                     yield return new(string.Empty, 0);
@@ -456,7 +421,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     public void Dispose() => _s3.Dispose();
 
-    // S3 orders UTF-8 bytes; valid Unicode scalar values have the same order, without allocating encoded keys.
     private static int CompareKeys(string left, string right)
     {
         var leftRunes = left.EnumerateRunes();
@@ -481,7 +445,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
     public async Task<IReadOnlyList<(string Version, DateTimeOffset At)>> ListSnapshotsAsync(CancellationToken cancellationToken)
     {
         var response = await _s3.ListBucketsAsync(Tigris(new ListBucketsRequest(), "X-Tigris-Snapshot", _bucket), cancellationToken).ConfigureAwait(false);
-        // Each entry is named "<version>; name=<name>".
         return [.. (response.Buckets ?? []).Select(bucket => (bucket.BucketName.Split(';')[0],
             new DateTimeOffset(DateTime.SpecifyKind(bucket.CreationDate ?? DateTime.MinValue, DateTimeKind.Utc))))];
     }
@@ -514,8 +477,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     public async Task DeleteSnapshotAsync(string version, CancellationToken cancellationToken)
     {
-        // Without the version header this is a bucket delete, which no TerraBase code path may ever issue: a whole-bucket
-        // deletion is never sanctioned (P0 2026-11-03). Refuse before any request leaves the process.
         if (version.Length == 0 || !version.All(char.IsAsciiDigit))
         {
             BucketDeleteRefusal(_logger, null);
@@ -543,7 +504,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         }
         catch (AmazonS3Exception error) when (_customer)
         {
-            // Untrusted S3 errors can echo signed request fields. Preserve only statuses needed for normal control flow.
             if (error.ErrorCode == "NoSuchBucket")
             {
                 throw new HttpRequestException("customer backup bucket is unavailable", null, error.StatusCode);
@@ -566,7 +526,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         }
     }
 
-    // Sanitize transport reads only: validation in the consumer must keep its own integrity errors.
     private sealed class CustomerBody(Stream inner) : Stream
     {
         public override bool CanRead => inner.CanRead;
@@ -608,10 +567,9 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         }
 
         private static bool IsBodyTransportFailure(Exception error) => error is IOException or HttpRequestException or AmazonClientException
-            or System.Net.Sockets.SocketException or System.Security.Authentication.AuthenticationException;
+            or SocketException or AuthenticationException;
     }
 
-    // One part of a file, read at its own offsets so parts upload concurrently without sharing the file's position.
     private sealed class FilePart(SafeFileHandle file, long start, long length) : Stream
     {
         private long _position;
@@ -664,7 +622,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         private int Remaining(int count) => (int)Math.Clamp(length - _position, 0, count);
     }
 
-    // Requests go through IHttpClientFactory, so tests replace the transport like every other outbound client.
     private sealed class NamedClients(IHttpClientFactory http, string name) : HttpClientFactory
     {
         public override HttpClient CreateHttpClient(IClientConfig clientConfig)

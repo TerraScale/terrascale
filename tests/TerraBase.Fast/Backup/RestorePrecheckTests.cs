@@ -25,7 +25,6 @@ public sealed class RestorePrecheckTests
             ManagementApi.Uri($"{host.Database.Path}/point-in-time/restore"), new { pointInTime = host.SnapshotAt, name = second.Name }, cancellationToken);
         await ErrorAssert.ErrorAsync(restored, HttpStatusCode.Conflict, "name_taken", "name is already taken");
 
-        // The replay never ran: the restore read no object of the database's backup.
         await Assert.That(gets).IsEqualTo(0);
     }
 }

@@ -4,7 +4,6 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Backup;
 
-// Ciphertext is base64(nonce | ciphertext | tag) of the key pair, sealed with the data key wrapped by WrappedKey.
 public sealed record SealedCredentials(string WrappedKey, string Ciphertext);
 
 internal sealed record CustomerKeyPair(string AccessKeyId, string SecretKey);

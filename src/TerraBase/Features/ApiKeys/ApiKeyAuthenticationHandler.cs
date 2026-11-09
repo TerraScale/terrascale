@@ -18,13 +18,11 @@ internal sealed class ApiKeyAuthenticationHandler(
     {
         if (Secret(Request) is not { } secret)
         {
-            // No bearer token, or another scheme's: leave it to that scheme instead of logging a failed API key.
             return AuthenticateResult.NoResult();
         }
 
         if (await keys.FindAsync(secret, Context.RequestAborted).ConfigureAwait(false) is not ApiKey key)
         {
-            // Never echo the presented secret.
             return AuthenticateResult.Fail("unknown API key");
         }
 
@@ -36,7 +34,6 @@ internal sealed class ApiKeyAuthenticationHandler(
 
     internal static string? Secret(HttpRequest request)
     {
-        // The scheme name is case-insensitive (RFC 9110); the secret is not.
         var header = request.Headers.Authorization.ToString();
         if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {

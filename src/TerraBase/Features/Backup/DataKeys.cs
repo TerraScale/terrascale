@@ -43,7 +43,6 @@ internal sealed class DataKeys : IDisposable
     private const int CacheCapacity = 65536;
     private const int MaxWrappedKeyBytes = 16 * 1024;
     internal const int MaxReads = 8;
-    // Customer managers share a separate host-wide pool; slow customer keys cannot consume platform capacity.
     private readonly SemaphoreSlim _readSlots;
     private readonly bool _waitForReadSlot;
     private readonly TimeSpan _rotation;
@@ -52,8 +51,6 @@ internal sealed class DataKeys : IDisposable
     private readonly Lock _cacheAdmission = new();
     private readonly HashSet<string> _refreshing = new(StringComparer.Ordinal);
     private readonly Channel<string> _refreshes = Channel.CreateBounded<string>(64);
-    // ponytail: 64 stripes per operation bound synchronization memory; colliding selections or key reads serialize.
-    // Separate arrays keep a slow publication from blocking historical reads and prevent re-entering a selection stripe.
     private readonly SemaphoreSlim[] _selectionGates = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
     private readonly SemaphoreSlim[] _keyGates = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
 
@@ -108,7 +105,6 @@ internal sealed class DataKeys : IDisposable
         {
             var generation = BeginRead(scope);
             admitted = true;
-            // Another file of the same project may have selected a key while this call waited.
             if (Current(scope) is { } selected)
             {
                 return (selected.Id, selected.Key);
@@ -116,7 +112,6 @@ internal sealed class DataKeys : IDisposable
 
             _current.TryGetValue(scope, out CurrentKey? previous);
             var id = previous?.Id;
-            // Customer shipping starts with its own durable key, including when it mirrors both buckets.
             if (!_freshKey)
             {
                 var after = id is null ? null : BackupLayout.Key(scope, id);
@@ -131,7 +126,6 @@ internal sealed class DataKeys : IDisposable
                     var candidate = item.Key[prefix.Length..];
                     if (candidate == BackupLayout.ShreddedName)
                     {
-                        // A deleted database's keys are destroyed; it never gets a new one.
                         throw new DatabaseShreddedException((await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false))?.ShreddedAt);
                     }
 
@@ -149,7 +143,6 @@ internal sealed class DataKeys : IDisposable
             }
             else
             {
-                // Customer shipping skips the listing: check the deletion record before creating a key.
                 if (_freshKey && await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
                 {
                     throw new DatabaseShreddedException(priorShred.ShreddedAt);
@@ -175,7 +168,6 @@ internal sealed class DataKeys : IDisposable
                 }
             }
 
-            // A deletion may race key generation. Remove our late publication before refusing it.
             if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
             {
                 _ = await _store.DeleteAsync(BackupLayout.Key(scope, id), cancellationToken).ConfigureAwait(false);
@@ -183,7 +175,6 @@ internal sealed class DataKeys : IDisposable
                 throw new DatabaseShreddedException(shredded.ShreddedAt);
             }
 
-            // Never select a key until its wrapped copy is durable; old objects keep naming old keys.
             lock (_cacheAdmission)
             {
                 CheckGeneration(generation);
@@ -227,8 +218,6 @@ internal sealed class DataKeys : IDisposable
                 return selected;
             }
 
-            // Warm decodes never perform network I/O. A cold read must consult permanent custody
-            // authority before unwrapping; DELETE synchronously evicts every peer before acknowledging.
             if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
             {
                 Forget(scope);
@@ -237,7 +226,6 @@ internal sealed class DataKeys : IDisposable
 
             if (_waitForReadSlot)
             {
-                // Holding a key stripe bounds platform slot waiters to 64 without reserving another read buffer.
                 await _readSlots.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
             else if (!await _readSlots.WaitAsync(0, cancellationToken).ConfigureAwait(false))
@@ -323,8 +311,6 @@ internal sealed class DataKeys : IDisposable
                     affected = true;
                 }
             }
-            // Repeated tombstone scans must not disturb unrelated cold loads when this scope
-            // has neither cached material nor an in-flight load that could repopulate it.
             if (affected)
             {
                 Interlocked.Increment(ref _generation);
@@ -364,8 +350,6 @@ internal sealed class DataKeys : IDisposable
             _current.Dispose();
             _keys.Dispose();
         }
-        // Async-only gates never expose a wait handle. Let GC reclaim them after holders and waiters finish;
-        // disposing a gate here could mask an in-flight operation's outcome when its finally releases it.
     }
 
     private long BeginRead(string scope)
@@ -405,8 +389,6 @@ internal sealed class DataKeys : IDisposable
     {
         lock (_cacheAdmission)
         {
-            // Bound admission by count: MemoryCache's size accounting can lag concurrent expiration and reject Set.
-            // Make room synchronously before publishing the gate's result so waiters reuse it.
             if (cache.Count >= CacheCapacity && !cache.TryGetValue(id, out _))
             {
                 cache.Compact(0.05);
@@ -427,11 +409,8 @@ internal sealed class DataKeys : IDisposable
             ? current
             : null;
 
-    // The pinned parser accepts some invalid ASCII; only canonical IDs are persisted key names.
     private static bool TryParseKey(string id, out Ulid key) => Ulid.TryParse(id, out key) && key.ToString() == id;
 
-    // Compare raw ULIDs before converting Time: a valid 48-bit timestamp may exceed DateTimeOffset's range.
-    // Maximum randomness includes every key created in the current millisecond.
     private bool NotFuture(Ulid key) => key.CompareTo(Ulid.NewUlid(_time.GetUtcNow(),
         [255, 255, 255, 255, 255, 255, 255, 255, 255, 255])) <= 0;
 

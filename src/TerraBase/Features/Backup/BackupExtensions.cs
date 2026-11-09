@@ -6,7 +6,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-// Continuous backup ships here (TS-633).
 public static class BackupExtensions
 {
     public static IServiceCollection AddTerraBaseBackup(this IServiceCollection services, TerraBaseOptions options)
@@ -20,7 +19,6 @@ public static class BackupExtensions
                 .AddSingleton<IBackupKeyShredding>(provider => provider.GetRequiredService<NoBackup>());
         }
 
-        // Engine/Cluster registers IShipperLeases: a database's primary member ships it while it holds its lease.
         services.AddHttpClient(S3ObjectStore.HttpClientName);
         services.AddSingleton<ICustomerBackupDns, CustomerBackupDns>();
         services.AddSingleton<ICustomerBackupConnector, CustomerBackupConnector>();
@@ -45,7 +43,7 @@ public static class BackupExtensions
             .AddSingleton<KeyCustody>()
             .AddSingleton<KeyRevocationLocal>()
             .AddSingleton<KeyRevocationPeers>()
-            .AddSingleton(provider => new Lazy<Management.EngineManagementService>(provider.GetRequiredService<Management.EngineManagementService>))
+            .AddSingleton<IShreddedDatabases>(provider => provider.GetRequiredService<Management.EngineManagementService>())
             .AddSingleton<ShreddedDatabaseSweep>()
             .AddHostedService(provider => provider.GetRequiredService<ShreddedDatabaseSweep>())
             .AddSingleton(provider => new DataKeys(provider.GetRequiredService<KeyCustody>().Store, provider.GetRequiredService<IMasterKey>(),

@@ -5,14 +5,10 @@ namespace TerraBase.Features.Backup;
 
 internal sealed partial class ContinuousBackup
 {
-    // A generation id is allocated before pinning, possibly before the erasure publishes its rewrite receipt. Its ULID
-    // timestamp cannot prove whether its file contains old pages. Bind the initial snapshot to the identity/offset read
-    // inside that pin instead. A tap ends on every rewrite, so subsequent WAL belongs to this same physical generation.
     private async Task StoreGenerationProofAsync(ShippedFile file, Ulid generation, string snapshot, WalSnapshot pin, CancellationToken cancellationToken)
     {
         if (pin.Incarnation == Ulid.Empty || pin.Offset < 0)
         {
-            // Engines without an identity still ship, but cannot furnish a causal erasure certificate.
             return;
         }
 
@@ -32,9 +28,6 @@ internal sealed partial class ContinuousBackup
         await StoreAsync(file, BackupLayout.GenerationProof(file.Prefix, generation), body, "lineage", cancellationToken).ConfigureAwait(false);
     }
 
-    // A certificate carries no content but must not outlive all data of its generation indefinitely. Keep it while any
-    // snapshot or WAL references it, including retention-locked objects. The active generation can still publish new
-    // snapshots after retention expires every old baseline; an incomplete inventory never authorizes deletion.
     private static async Task<bool> RetainGenerationProofsAsync(IObjectStore store, string file, Ulid? activeGeneration, DateTimeOffset expires, CancellationToken cancellationToken)
     {
         var prefix = file + "/generations/";

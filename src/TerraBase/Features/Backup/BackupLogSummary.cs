@@ -7,7 +7,6 @@ internal sealed class BackupLogSummaryStream(DateTimeOffset at) : BackupCounting
     private enum Part { Kind, Length, Skip, Time }
 
     private readonly long _milliseconds = at.ToUnixTimeMilliseconds();
-    // A commit in the requested second either reaches the target or makes CutLog report an ambiguous time.
     private readonly long _seconds = at.ToUnixTimeSeconds();
     private Part _part;
     private int _kind;
@@ -75,7 +74,6 @@ internal sealed class BackupLogSummaryStream(DateTimeOffset at) : BackupCounting
                         throw new InvalidDataException("a change log record has an unknown kind");
                     }
 
-                    // Untimed commits cannot prove a candidate: replay reports its precise unproven-history error.
                     _boundary |= _kind == 3;
                     NextField();
                     break;
@@ -119,7 +117,6 @@ internal sealed class BackupLogSummaryStream(DateTimeOffset at) : BackupCounting
 
     private void NextField()
     {
-        // ChangeLog: 1=name,rowid,row; 2=name,rowid; 3=commit; 4=SQL; 5=type,name; 6=first,last; 7=mark.
         _part = (_kind, _field++) switch
         {
             (1, 0) or (2, 0) or (4, 0) or (5, 0) or (1, 2) or (5, 1) => Part.Length,

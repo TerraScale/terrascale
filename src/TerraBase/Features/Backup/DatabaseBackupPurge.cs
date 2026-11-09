@@ -27,9 +27,6 @@ public interface IBackupKeyShredding
     Task<bool> DestroyAsync(TenantContext database, CancellationToken cancellationToken);
 }
 
-// Purge authority and credentials outlive the deleted database and project authorization.
-// Keys are shredded first, without waiting: a deletion record in the key scope stops any member from creating another.
-// All holders must acknowledge closure before objects are deleted: otherwise a late upload could recreate an erased prefix.
 internal sealed class DatabaseBackupPurge(
     SystemCatalog catalog, S3ObjectStore platform, DataKeys platformKeys, BackupTargets targets, TimeProvider time,
     IMeterFactory meters, ILogger<DatabaseBackupPurge> logger, KeyCustody custody, IServiceProvider services) : BackgroundService, IBackupKeyShredding
@@ -76,8 +73,6 @@ internal sealed class DatabaseBackupPurge(
                 var progress = await catalog.ReadUncheckedAsync(transaction => SystemCatalog.GetAsync(transaction, ProgressKind,
                     job.Database.DatabaseId!, BackupPurgeJsonContext.Default.BackupPurgeProgress, token), token).ConfigureAwait(false)
                     ?? new BackupPurgeProgress(job.RequestedAt, null, null, null, null);
-                // A crash between the physical-erasure certificate and progress publication must
-                // not strand a closure forever. Repair missing key certificates even on verified jobs.
                 if (job.BackupVerifiedAt is not null && progress.KeysShreddedAt is not null)
                 {
                     _pending.Verified(job.Database.DatabaseId!);
@@ -89,7 +84,6 @@ internal sealed class DatabaseBackupPurge(
                 }
                 catch (Exception) when (!token.IsCancellationRequested)
                 {
-                    // Provider errors can contain credentials. Persist and log only a bounded classification.
                     progress = progress with { ObjectsAbsentAt = null, Failure = "storage_unavailable", InventoryFailed = true };
                     _failures.Add(1, new KeyValuePair<string, object?>("reason", "storage_unavailable"));
                     if (_pending.Report(job.Database.DatabaseId!, "inventory", "storage_unavailable"))
@@ -110,7 +104,6 @@ internal sealed class DatabaseBackupPurge(
                     _pending.Pending(job.Database.DatabaseId!, job.RequestedAt);
                     if (_pending.Report(job.Database.DatabaseId!, "reason", progress.Failure))
                     {
-                        // Names whom a closure waits on: only a holder's own receipt proves its copy gone.
                         var holders = progress.Failure == "active_copies_pending"
                             ? string.Join(", ", await catalog.ReadUncheckedAsync(transaction => DatabasePurge.UnacknowledgedHoldersAsync(transaction, job, token), token).ConfigureAwait(false))
                             : "";
@@ -183,8 +176,6 @@ internal sealed class DatabaseBackupPurge(
             return null;
         }
 
-        // Managed snapshots are engine databases with independent keys. Include pending/expiring
-        // records too; the snapshot sweep must shred a scope before removing its ownership record.
         string? after = null;
         do
         {
@@ -203,8 +194,6 @@ internal sealed class DatabaseBackupPurge(
         }
         while (after is not null);
 
-        // DELETE/tenant closure should see the certificate immediately, independently of the
-        // one-minute physical-erasure sweep. Keep authority and this local certificate durable.
         var saved = await catalog.WriteDurableAsync(async transaction =>
         {
             var progress = await SystemCatalog.GetAsync(transaction, ProgressKind, database.DatabaseId!,
@@ -227,7 +216,6 @@ internal sealed class DatabaseBackupPurge(
         var scope = BackupLayout.KeyScope(database);
         platformKeys.Forget(scope);
         var (record, complete) = await custody.ShredAsync(database, time.GetUtcNow(), token).ConfigureAwait(false);
-        // A selection racing the shred may have cached a key again; it cannot create one any more.
         platformKeys.Forget(scope);
         if (!complete)
         {
@@ -236,7 +224,6 @@ internal sealed class DatabaseBackupPurge(
 
         await services.GetRequiredService<KeyRevocationPeers>().RevokeAsync(database, token).ConfigureAwait(false);
 
-        // Admit this database's CDN work before acknowledging DELETE, independently of the shared erasure backlog.
         if (!await services.GetRequiredService<Shapes.ShapeMirror>().DeleteIndexedDatabaseAsync(database, token).ConfigureAwait(false))
         {
             return null;
@@ -304,7 +291,6 @@ internal sealed class DatabaseBackupPurge(
 
         if (progress.ObjectsAbsentAt is null)
         {
-            // The next complete inventory verifies bucket copies against this immutable absence cut.
             return progress with { ObjectsAbsentAt = time.GetUtcNow(), Failure = "verification_pending" };
         }
 
@@ -324,7 +310,6 @@ internal sealed class DatabaseBackupPurge(
     private async Task<bool> AttemptAsync(DatabasePurgeRecord job, string destinationId, ProjectBackupDestinationRecord? destination,
         string prefix, DateTimeOffset? absentAt, CancellationToken token)
     {
-        // Each destination gets its own deadline and durable cursor; an inaccessible archived credential cannot starve others.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), time);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
         var kind = "backup_purge_destinations/" + job.Database.DatabaseId;
@@ -346,16 +331,12 @@ internal sealed class DatabaseBackupPurge(
                 return false;
             }
 
-            // Customer-owned bucket snapshots remain pending until their owner expires them.
             return absentAt is null || !await store.SnapshotsEnabledAsync(stop.Token).ConfigureAwait(false)
                 || !(await store.ListSnapshotsAsync(stop.Token).ConfigureAwait(false)).Any(snapshot => snapshot.At <= absentAt);
         }
         catch (Exception error) when (!token.IsCancellationRequested)
         {
             _failures.Add(1, new KeyValuePair<string, object?>("reason", "storage_unavailable"));
-            // Provider messages can hold credentials: only the error's type, HTTP status and bucket kind. Without them 31
-            // erasures failed every pass for two days on every node with nothing saying why (2026-10-27).
-            // One warning per erasure and cause, not per attempt: every pass retries, so the gauges show how long it stays stuck.
             var status = error switch
             {
                 HttpRequestException { StatusCode: { } code } => (int)code,
@@ -363,7 +344,6 @@ internal sealed class DatabaseBackupPurge(
                 _ => 0,
             };
             var bucket = destination is null ? "platform" : "customer";
-            // TerraBase's own InvalidDataException messages are fixed text naming the failed validation.
             var reason = error is InvalidDataException ? error.Message : "";
             if (_pending.Report(job.Database.DatabaseId!, destinationId, $"{error.GetType().Name} {status} {reason}"))
             {
@@ -387,7 +367,6 @@ internal sealed class DatabaseBackupPurge(
         }, static _ => false, token).ConfigureAwait(false);
     }
 
-    // Erasures still unverified at their last attempt, with their request times; written only under _pass.
     private sealed class PendingErasures
     {
         private readonly ConcurrentDictionary<string, DateTimeOffset> _requested = new(StringComparer.Ordinal);
@@ -431,7 +410,6 @@ internal sealed class DatabaseBackupPurge(
             return true;
         }
 
-        // The purge listing wrapped: an erasure not seen since it started is no longer listed.
         public void Wrapped()
         {
             foreach (var database in _requested.Keys.Where(database => !_swept.Contains(database)))
