@@ -55,7 +55,7 @@ assert "steps: *slow-steps" in slow_workflow
 for invariant in ("--locked",):
     assert invariant in (root / "Makefile").read_text()
 assert "CLOUDFLARE_API_TOKEN" not in workflow and "r2 objects" not in workflow
-assert "dotnet build tests/TerraScale.Authentication.Fast/" in (root / "scripts/ci/auth-build.sh").read_text()
+assert "dotnet build scripts/auth/fast.slnx" in (root / "scripts/ci/auth-build.sh").read_text()
 fast_commands = {"libs": "test-area.sh fast libs", "auth": "auth-test-fast", "terrabase": "test-area.sh fast terrabase"}
 for area, command in fast_commands.items():
     block = re.split(r"\n  [a-z][a-z0-9-]*:\n", workflow.split(f"\n  {area}:\n", 1)[1], maxsplit=1)[0]

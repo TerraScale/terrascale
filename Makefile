@@ -20,12 +20,6 @@ REDOCLY := npx --yes @redocly/cli@2.57.0
 VENDORED_UPSTREAM := src/vendor/Turso.Data.Sqlite/src
 ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
 
-LIBS_PROJECTS := src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
-	src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj \
-	src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj \
-	src/TerraScale.Logging/TerraScale.Logging.csproj \
-	tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj \
-	tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj
 LIBS_TEST_PROJECTS := tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj \
 	tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj
 
@@ -38,7 +32,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 .PHONY: restore turso-native build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-nativeaot-check \
 	auth-restore auth-build auth-fast-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-mail-delivery-check auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e-local terrabase-e2e terrabase-check terrabase-run terrabase-publish \
+	terrabase-build terrabase-analyzer-check terrabase-fast-build terrabase-test-fast terrabase-test-slow terrabase-e2e-local terrabase-e2e terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke region-sim
 
 # Global: the whole solution.
@@ -96,7 +90,7 @@ libs-test: libs-build
 	status=0; for pid in $$pids; do wait $$pid || status=$$?; done; trap - EXIT INT TERM; exit $$status
 
 libs-check: libs-build
-	set -e; for p in $(LIBS_PROJECTS); do dotnet format style $$p --verify-no-changes --no-restore; done
+	dotnet format style libs.slnf --verify-no-changes --no-restore --exclude benchmark/dotnet
 
 # Publishes the in-repo example with native AOT: the generated registration and the endpoint pipeline must trim and AOT-compile.
 libs-nativeaot-check: restore
@@ -109,7 +103,7 @@ auth-restore:
 auth-build: auth-restore turso-native
 	dotnet build auth.slnf --configuration $(CONFIGURATION) --no-restore --nologo -m
 
-auth-audit:
+auth-audit: auth-restore
 	dotnet run scripts/auth/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj
 
 # The served OpenAPI schema, and the platform contract (TS-598) that later slices implement.
@@ -169,9 +163,11 @@ terrabase-analyzer-check: restore
 	if grep -vE 'error (TB0001|RS0030)' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in analyzer build check' >&2; exit 1; fi
 
 # Builds only the Fast suite: TerraBase and its analyzer build as its references; the Slow suite has its own target.
-terrabase-test-fast: restore turso-native
+terrabase-fast-build: restore turso-native
 	dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration $(CONFIGURATION) --no-restore
 	dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration $(CONFIGURATION) --no-restore
+
+terrabase-test-fast: terrabase-fast-build
 	# The independent driver and integration assemblies run in parallel; preserve both exit codes.
 	@set -e; \
 	python3 scripts/ci/fast-budget.py turso -- python3 scripts/ci/tunit.py 4 -- dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- & driver=$$!; \

@@ -7,14 +7,14 @@ case "$1:$2" in
     make -o restore fmt-check libs-build SOLUTION=libs.slnf CONFIGURATION=Release
     make -o restore -o libs-build libs-check CONFIGURATION=Release
     [[ $1 == build ]] && exit 0
-    make -o restore libs-test CONFIGURATION=Release
+    make -o restore -o libs-build libs-test CONFIGURATION=Release
     ;;
   build:terrabase|fast:terrabase)
     make -o restore fmt-check SOLUTION=terrabase.slnf CONFIGURATION=Release
     publish_pid=
     publish_log=$(mktemp)
     if [[ $1 == fast ]]; then
-      dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --no-restore -p:PublishReadyToRun=false --output "$RUNNER_TEMP/terrabase-publish" >"$publish_log" 2>&1 &
+      dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --no-restore -p:PublishReadyToRun=false -p:RunAnalyzers=false -p:EnforceCodeStyleInBuild=false -p:GenerateDocumentationFile=false --output "$RUNNER_TEMP/terrabase-publish" >"$publish_log" 2>&1 &
       publish_pid=$!
     fi
     cleanup() {
@@ -31,7 +31,7 @@ case "$1:$2" in
     fi
     scripts/vendor/test-turso-native-singlefile.sh
     [[ $1 == build ]] && exit 0
-    make -o restore terrabase-test-fast CONFIGURATION=Release
+    make -o restore -o terrabase-fast-build terrabase-test-fast CONFIGURATION=Release
     make -j2 -o restore -o terrabase-build terrabase-e2e-local CONFIGURATION=Release
     ;;
   *)
