@@ -24,7 +24,8 @@ async def test_background_refresh_is_shared_until_actual_expiry(monkeypatch: pyt
     async_release = asyncio.Event()
 
     def answer() -> httpx.Response:
-        return httpx.Response(200, json={"access_token": f"token-{calls}", "token_type": "Bearer", "expires_in": 60})
+        lifetime = 60 if calls == 1 else 120
+        return httpx.Response(200, json={"access_token": f"token-{calls}", "token_type": "Bearer", "expires_in": lifetime})
 
     def exchange(request: httpx.Request) -> httpx.Response:
         nonlocal calls
