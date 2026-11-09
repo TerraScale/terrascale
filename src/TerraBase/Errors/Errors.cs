@@ -1,8 +1,5 @@
 namespace TerraBase.Errors;
 
-// Expected failures are values, not exceptions (docs/error-handling.md). A feature returns a union of its
-// success types and the failures below that it can produce; callers handle every case in a switch, which
-// the compiler checks is exhaustive. Messages describe the rule that failed and never echo client input.
 
 public sealed record NotFound(string? Message = null, string Code = "not_found");
 
@@ -30,8 +27,6 @@ public sealed record RequestTimeout(string Message, string Code = "request_timeo
 
 public sealed record Gone(string Message, string Code = "gone");
 
-// A write committed or may have committed, but its durable copy in another region was not confirmed in time
-// (decision 0013a): it may be applied, even durably later, or lost. Not safe to retry blindly.
 public sealed record OutcomeUnknown(string Message, string Region, string Machine, string Code = "write_outcome_unknown");
 
 public sealed record Done;

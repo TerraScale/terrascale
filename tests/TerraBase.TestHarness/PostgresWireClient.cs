@@ -4,7 +4,6 @@ using System.Text;
 
 namespace TerraBase.Testing;
 
-// The simple-query protocol as psql speaks it: one Query message, every response until ReadyForQuery.
 internal sealed class PostgresWireClient(TcpClient tcp, NetworkStream stream) : IAsyncDisposable
 {
     public static async Task<PostgresWireClient> ConnectAsync(int port, string key, string database)
@@ -13,7 +12,7 @@ internal sealed class PostgresWireClient(TcpClient tcp, NetworkStream stream) : 
         await tcp.ConnectAsync("127.0.0.1", port);
         var client = new PostgresWireClient(tcp, tcp.GetStream());
         await client.SendAsync(null, [0, 3, 0, 0, .. CString("user"), .. CString("wire"), .. CString("database"), .. CString(database), 0]);
-        await client.ReadAsync(); // AuthenticationCleartextPassword
+        await client.ReadAsync();
         await client.SendAsync('p', CString(key));
         while ((await client.ReadAsync()).Type != 'Z')
         {
@@ -28,7 +27,6 @@ internal sealed class PostgresWireClient(TcpClient tcp, NetworkStream stream) : 
         return await ReadyAsync();
     }
 
-    // Extended-protocol messages, then Sync: errors skip to it, so each refusal is its own call.
     public async Task<List<(char Type, string?[] Fields)>> SyncAsync(params (char Type, byte[] Body)[] messages)
     {
         foreach (var (type, body) in messages)
@@ -48,7 +46,6 @@ internal sealed class PostgresWireClient(TcpClient tcp, NetworkStream stream) : 
 
     public static (char, byte[]) Execute(string portal) => ('E', [.. CString(portal), 0, 0, 0, 0]);
 
-    // Parse, bind and describe a portal, then either close it or execute with the requested row limit.
     public async Task<List<char>> PortalAsync(string sql, int? maxRows)
     {
         await SendAsync('P', [0, .. CString(sql), 0, 0]);

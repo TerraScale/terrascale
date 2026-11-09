@@ -12,10 +12,6 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.Testing;
 
-/// <summary>
-/// A server with the client listener that trusts a <see cref="TestIssuer"/>, and clients that call it like ts-dashboard
-/// forwarding a signed-in user's ts-auth access token.
-/// </summary>
 public sealed class ManagementApi : IAsyncDisposable
 {
 
@@ -37,34 +33,26 @@ public sealed class ManagementApi : IAsyncDisposable
 
     public ClientTls Tls { get; }
 
-    /// <summary>The ts-auth stand-in whose tokens the server accepts.</summary>
     public TestIssuer Issuer { get; }
 
     public string User { get; }
 
-    /// <summary>A client acting as <see cref="User"/>.</summary>
     public HttpClient Client { get; }
 
     internal Task CleanupCompletion => _cleanup.Value;
 
-    /// <summary>A separate user and client on the assembly-owned server; customized and restart tests keep their own hosts.</summary>
     public static async Task<ManagementApi> StartSharedAsync()
     {
         var shared = await SharedServer.GetAsync(CancellationToken.None);
         return new(shared.Server, new ClientTls(), shared.Issuer, EntityIds.New().ToString(), ownsIssuer: false, ownsServer: false);
     }
 
-    /// <summary>Borrows the assembly server as an existing fixture-owned tenant.</summary>
     internal static async Task<ManagementApi> StartSharedAsAsync(string user)
     {
         var shared = await SharedServer.GetAsync(CancellationToken.None);
         return new(shared.Server, new ClientTls(), shared.Issuer, user, ownsIssuer: false, ownsServer: false);
     }
 
-    /// <summary>
-    /// Starts a server; <paramref name="configure"/> edits its settings after the issuer is configured, <paramref name="time"/>
-    /// replaces its clock and <paramref name="services"/> its other services.
-    /// </summary>
     public static async Task<ManagementApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null, TimeProvider? time = null,
         CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null, string? userId = null,
@@ -89,12 +77,8 @@ public sealed class ManagementApi : IAsyncDisposable
                 }
 
                 services?.Invoke(registrations);
-                // A test about query deadlines installs its own clock. Every other test gets one that stands still, so a
-                // runtime pause (another parallel test's GC) can't spend a plan's wall-clock deadline (Hobby: 1 s) on a
-                // query that does almost no work; work, scan and byte budgets still apply.
                 registrations.TryAddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             }, cancellationToken: cancellationToken, failedStartCleanup: task => failedCleanup = task, lifetimeCancellationToken: lifetimeCancellationToken);
-            // Startup waited for the issuer's keys, so tokens work from the first request.
             return new ManagementApi(server, tls, issuer, userId ?? EntityIds.New().ToString(), sharedIssuer is null);
         }
         catch (Exception startupError)
@@ -122,13 +106,11 @@ public sealed class ManagementApi : IAsyncDisposable
         }
     }
 
-    /// <summary>Verifies a fixture's catalog even when its frozen clock cannot schedule a retry after the startup deadline.</summary>
     internal Task VerifyCatalogAsync(CancellationToken cancellationToken) =>
         Server.Services.GetRequiredService<ICatalogGate>().Opened.WaitAsync(cancellationToken);
 
     public HttpClient As(string user) => Authorized(() => Issuer.Mint(user));
 
-    /// <summary>A client acting as <paramref name="user"/> through the platform operator on the internal listener.</summary>
     public HttpClient Service(string user)
     {
         var client = PeerTls.CreateClient(Server.BaseAddress);
@@ -136,7 +118,6 @@ public sealed class ManagementApi : IAsyncDisposable
         return client;
     }
 
-    /// <summary>Publishes a resource plan through the trusted service listener, retaining owner authorization.</summary>
     public async Task SetPlanAsync(string user, string organization, string plan, CancellationToken cancellationToken = default)
     {
         using var service = Service(user);
@@ -144,24 +125,19 @@ public sealed class ManagementApi : IAsyncDisposable
         response.EnsureSuccessStatusCode();
     }
 
-    /// <summary>A project access token for <paramref name="project"/> with <paramref name="scopes"/> (space-separated).</summary>
     public string ProjectToken(string project, string scopes) => Issuer.Mint(EntityIds.New().ToString(), token =>
     {
         token.Claims["project_id"] = project;
         token.Claims["scope"] = scopes;
     });
 
-    /// <summary>A client that sends <paramref name="token"/> as its bearer token, or no token when it is null.</summary>
     public HttpClient WithToken(string? token) => Tls.CreateClient(Server.ClientAddress!, token);
 
-    /// <summary>A data API client for the client listener that sends <paramref name="apiKey"/>, if any.</summary>
     public HttpClient DataClient(string? apiKey = null) => Tls.CreateClient(Server.ClientAddress!, apiKey);
 
-    /// <summary>A data API client with a fresh API key of <paramref name="organization"/> holding <paramref name="scopes"/>.</summary>
     public async Task<HttpClient> CreateClientAsync(string organization, params string[] scopes) =>
         DataClient(await Server.IssueAsync(organization, scopes));
 
-    /// <summary>A relative URI.</summary>
     public static Uri Uri(string path) => new(path, UriKind.Relative);
 
     public async Task<string> CreateOrganizationAsync(string name, HttpClient? client = null) =>
@@ -174,7 +150,6 @@ public sealed class ManagementApi : IAsyncDisposable
         return project;
     }
 
-    /// <summary>Creates a database through the canonical project route, acting with a project token of <paramref name="project"/>.</summary>
     public async Task<string> CreateDatabaseAsync(string organization, string project, string name, HttpClient? client = null, IReadOnlyList<string>? replicaRegions = null)
     {
         using var owner = ProjectClient(project);
@@ -186,13 +161,10 @@ public sealed class ManagementApi : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
     }
 
-    /// <summary>A client of the canonical project routes of <paramref name="project"/>: a project token with both database scopes.</summary>
     public HttpClient ProjectClient(string project) => WithToken(ProjectToken(project, "databases:read databases:write"));
 
-    /// <summary>Registers a persisted project with this harness's issuer, so its project tokens carry the organization.</summary>
     public void RegisterProject(string project, string organization) => Issuer.RegisterProject(project, organization);
 
-    /// <summary>Creates an organization, a project and a database in it, as <see cref="User"/>.</summary>
     public async Task<ManagedDatabaseRef> CreateManagedDatabaseAsync(string name = "main")
     {
         var organization = await CreateOrganizationAsync("Org " + EntityIds.New().ToString());
@@ -200,18 +172,15 @@ public sealed class ManagementApi : IAsyncDisposable
         return await CreateManagedDatabaseAsync(organization, project, name);
     }
 
-    /// <summary>Creates a database in an existing project, as <see cref="User"/>.</summary>
     public async Task<ManagedDatabaseRef> CreateManagedDatabaseAsync(string organization, string project, string name) =>
         new(organization, project, await CreateDatabaseAsync(organization, project, name), name);
 
-    /// <summary>Posts one SQL statement to <c>…/sql/execute</c> of the database at <paramref name="databasePath"/>.</summary>
     public static Task<HttpResponseMessage> SqlAsync(HttpClient data, string databasePath, string sql, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(data);
         return data.PostAsJsonAsync(Uri($"{databasePath}/sql/execute"), new { statements = new[] { new { sql } } }, cancellationToken);
     }
 
-    /// <summary>Runs one query that must succeed and returns its rows.</summary>
     public static async Task<JsonElement[]> RowsAsync(HttpClient data, string databasePath, string sql, CancellationToken cancellationToken = default)
     {
         using var response = await SqlAsync(data, databasePath, sql, cancellationToken);
@@ -248,17 +217,12 @@ public sealed class ManagementApi : IAsyncDisposable
         }
     }
 
-    /// <summary>Posts one SQL statement to <paramref name="database"/> (see <see cref="SqlAsync(HttpClient, string, string, CancellationToken)"/>).</summary>
     public static Task<HttpResponseMessage> SqlAsync(HttpClient data, ManagedDatabaseRef database, string sql, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(database);
         return SqlAsync(data, database.Data, sql, cancellationToken);
     }
 
-    /// <summary>
-    /// Runs one statement straight on the file of <paramref name="database"/> and returns the rows it changed: for stored
-    /// data the data API no longer accepts (written by an earlier build), such as duplicate members or legacy ids.
-    /// </summary>
     public static async Task<int> ExecuteStoredAsync(string dataDirectory, ManagedDatabaseRef database, string sql, params (string Name, object Value)[] parameters)
     {
         ArgumentNullException.ThrowIfNull(database);
@@ -276,10 +240,6 @@ public sealed class ManagementApi : IAsyncDisposable
         return await command.ExecuteNonQueryAsync();
     }
 
-    /// <summary>
-    /// Creates an organization with one project, as a new user, and a data client whose API key has
-    /// <paramref name="scopes"/> and reaches the whole organization.
-    /// </summary>
     public async Task<Tenant> CreateTenantAsync(params string[] scopes)
     {
         var user = EntityIds.New().ToString();
@@ -354,7 +314,6 @@ public sealed class ManagementApi : IAsyncDisposable
         return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
     }
 
-    // A fresh token on every request, so a long test never sends an expired one.
     private HttpClient Authorized(Func<string> token) =>
         new(new BearerToken(token) { InnerHandler = Tls.CreateHandler() })
         {
@@ -384,25 +343,16 @@ public sealed class Tenant(string user, string organizationId, string projectId,
 
     public HttpClient Data { get; } = data;
 
-    /// <summary>The data API route of the database named <paramref name="name"/> in <see cref="ProjectId"/>.</summary>
     public Uri Database(string name, string path = "") => new($"/v1/projects/{ProjectId}/databases/{name}{path}", UriKind.Relative);
 
     public void Dispose() => Data.Dispose();
 }
 
-/// <summary>A managed database created by a test.</summary>
-/// <param name="Organization">Organization id.</param>
-/// <param name="Project">Project id.</param>
-/// <param name="Id">Database id.</param>
-/// <param name="Name">Database name, which the data API addresses it by in its project.</param>
 public sealed record ManagedDatabaseRef(string Organization, string Project, string Id, string Name)
 {
-    /// <summary><c>/v1/management/organizations/{organization}/projects/{project}</c>.</summary>
     public string ProjectPath => $"/v1/management/organizations/{Organization}/projects/{Project}";
 
-    /// <summary><c>/v1/projects/{project}/databases/{id}</c>.</summary>
     public string Path => $"/v1/projects/{Project}/databases/{Id}";
 
-    /// <summary>The data API route of the database: <c>/v1/projects/{project}/databases/{name}</c>.</summary>
     public string Data => $"/v1/projects/{Project}/databases/{Name}";
 }

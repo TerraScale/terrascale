@@ -18,7 +18,6 @@ internal static class ClientCors
 
     public static WebApplication UseTerraBaseClientCors(this WebApplication app)
     {
-        // Preflight has no endpoint listener metadata and no bearer token. Restrict it before the listener/auth gates.
         app.UseWhen(context => Listeners.ArrivedOn(context) == TerraBaseListener.Client
                 && context.Request.Path.Value is { } path
                 && (path.Equals("/healthz", StringComparison.OrdinalIgnoreCase)

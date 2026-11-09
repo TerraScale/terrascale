@@ -26,7 +26,6 @@ public sealed class DiscardedUnionAnalyzer : DiagnosticAnalyzer
         context.RegisterOperationAction(Analyze, OperationKind.ExpressionStatement);
     }
 
-    // Wrappers whose value is the wrapped result: x?.M() is a Nullable<T>, a task may be configured, in any order.
     private static readonly ImmutableHashSet<string> Wrappers =
     [
         "System.Nullable`1",
@@ -50,18 +49,14 @@ public sealed class DiscardedUnionAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    // ponytail: a fixed depth bounds self-referential and ever-expanding types (class R<T> : Task<R<R<T>>>);
-    // a union nested deeper than this many wrappers or constraints is not reported.
     private const int MaxDepth = 16;
 
-    // Whether the value is a union, or wraps one (directly, through a type parameter's constraints or a base task).
     private static bool HoldsUnion(ITypeSymbol type, int depth) =>
         depth > 0
         && (type is ITypeParameterSymbol parameter
             ? parameter.ConstraintTypes.Any(constraint => HoldsUnion(constraint, depth - 1))
             : IsUnion(type) || (WrapperOf(type) is { } wrapper && HoldsUnion(wrapper.TypeArguments[0], depth - 1)));
 
-    // The wrapper the type is or derives from (class ResultTask : Task<Union>), if any.
     private static INamedTypeSymbol? WrapperOf(ITypeSymbol type)
     {
         for (var candidate = type as INamedTypeSymbol; candidate is not null; candidate = candidate.BaseType)
@@ -76,7 +71,6 @@ public sealed class DiscardedUnionAnalyzer : DiagnosticAnalyzer
         return null;
     }
 
-    // The compiler marks every union declaration with [Union] and implements IUnion on it.
     private static bool IsUnion(ITypeSymbol type) =>
         IsUnionInterface(type)
         || type.AllInterfaces.Any(IsUnionInterface)

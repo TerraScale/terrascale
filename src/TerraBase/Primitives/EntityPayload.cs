@@ -55,7 +55,6 @@ internal static class EntityPayload
             }
 
             first = false;
-            // Preserve parsed token bytes so removing identity cannot expand names or values.
             buffer.Write("\""u8);
             buffer.Write(JsonMarshal.GetRawUtf8PropertyName(property));
             buffer.Write("\":"u8);

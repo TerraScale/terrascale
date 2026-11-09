@@ -2,7 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace TerraBase.Tenancy;
 
-// QoS compares tiers, so they stay sorted by entitlement.
 [JsonConverter(typeof(JsonStringEnumConverter<PlanTier>))]
 public enum PlanTier
 {

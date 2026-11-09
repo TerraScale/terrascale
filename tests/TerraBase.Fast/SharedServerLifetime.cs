@@ -1,6 +1,5 @@
 namespace TerraBase.Fast;
 
-/// <summary>The assembly owns shared host startup; test durations cover their isolated journeys.</summary>
 public static class SharedServerLifetime
 {
     [Before(HookType.Assembly)]

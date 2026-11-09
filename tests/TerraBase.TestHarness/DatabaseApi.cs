@@ -9,7 +9,6 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.Testing;
 
-/// <summary>A response read to the end: status, JSON body (Undefined when empty) and the headers tests check.</summary>
 internal sealed record ApiResponse(HttpStatusCode Status, JsonElement Json, string? ETag, Uri? Location)
 {
     public string? Code => Json.ValueKind == JsonValueKind.Object && Json.TryGetProperty("error", out var error)
@@ -24,10 +23,6 @@ internal sealed record ApiResponse(HttpStatusCode Status, JsonElement Json, stri
 
 }
 
-/// <summary>
-/// One test's own tenant (an organization with one project), a key of that organization and database
-/// <c>db</c>, plus helpers that send JSON and read whole responses.
-/// </summary>
 internal sealed class DatabaseApi : IAsyncDisposable
 {
     public const string Database = "db";
@@ -42,7 +37,6 @@ internal sealed class DatabaseApi : IAsyncDisposable
         DatabaseId = databaseId;
     }
 
-    /// <summary>The id of <c>db</c>.</summary>
     public string DatabaseId { get; }
 
     public ManagementApi Management { get; }
@@ -51,10 +45,6 @@ internal sealed class DatabaseApi : IAsyncDisposable
 
     public TerraBaseTestServer Server => Management.Server;
 
-    /// <summary>
-    /// Process memory reserved once pending usage observations are flushed: they hold admission until the next usage flush,
-    /// so a request's own observations do not read as a leak.
-    /// </summary>
     public async Task<double> ReservedBytesAsync(CancellationToken cancellationToken = default)
     {
         await Server.Services.GetRequiredService<UsageMeter>().FlushAsync(cancellationToken);
@@ -63,16 +53,13 @@ internal sealed class DatabaseApi : IAsyncDisposable
 
     public HttpClient Client => Tenant.Data;
 
-    /// <summary>The data API root of the tenant's project.</summary>
     public string Project => $"/v1/projects/{Tenant.ProjectId}";
 
-    /// <summary>Creates <c>db</c> in a new tenant on the assembly's server; customized hosts remain test-owned.</summary>
     public static Task<DatabaseApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null,
         TimeProvider? time = null, CancellationToken cancellationToken = default) =>
         StartCoreAsync(configure, services, time, ownsServer: configure is not null || services is not null || time is not null, cancellationToken);
 
-    /// <summary>Owns a separate host for tests that stop it, mutate system storage or measure host-wide state.</summary>
     public static Task<DatabaseApi> StartIsolatedAsync() => StartCoreAsync(null, null, null, ownsServer: true, CancellationToken.None);
 
     private static async Task<DatabaseApi> StartCoreAsync(
@@ -94,7 +81,6 @@ internal sealed class DatabaseApi : IAsyncDisposable
         }
         catch
         {
-            // The tenant's client is not the management API's to dispose.
             tenant?.Dispose();
             if (ownsServer)
             {
@@ -104,16 +90,12 @@ internal sealed class DatabaseApi : IAsyncDisposable
         }
     }
 
-    /// <summary>The data API route of the database named <paramref name="name"/> in the tenant's project.</summary>
     public string DatabasePath(string name = Database) => $"{Project}/databases/{name}";
 
-    /// <summary>The tenant context of <c>db</c>, as the engine addresses it.</summary>
     public TenantContext TenantOf() => new(Tenant.OrganizationId, PlanTier.Hobby, Tenant.ProjectId, DatabaseId);
 
-    /// <summary>A new ULID.</summary>
     public static string NewId() => EntityIds.New().ToString();
 
-    /// <summary>A connection string for a file at <paramref name="path"/>, built rather than interpolated.</summary>
     public static string ConnectionString(string path, bool readOnly = false) => TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
     {
         DataSource = path,
@@ -121,7 +103,6 @@ internal sealed class DatabaseApi : IAsyncDisposable
         Pooling = false,
     });
 
-    /// <summary>A client for the same server and tenant with other scopes.</summary>
     public async Task<HttpClient> ClientWithScopesAsync(params string[] scopes) =>
         Management.DataClient(await Server.IssueAsync(Tenant.OrganizationId, scopes));
 
@@ -163,7 +144,6 @@ internal sealed class DatabaseApi : IAsyncDisposable
 
 internal static class StatusAssertions
 {
-    /// <summary>Fails setup early when a precondition request does not return <paramref name="expected"/>.</summary>
     public static void ShouldBe(this HttpStatusCode actual, HttpStatusCode expected)
     {
         if (actual != expected)

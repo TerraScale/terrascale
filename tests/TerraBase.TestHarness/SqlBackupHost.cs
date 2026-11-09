@@ -22,7 +22,6 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvid
 
     public ManagedDatabaseRef Database { get; } = database;
 
-    /// <summary>The database's backup object prefix: <c>v1/{organization}/{project}/{database}/nodes/local</c>.</summary>
     public string File => $"v1/{Database.Organization}/{Database.Project}/{Database.Id}/nodes/local";
 
     public DateTimeOffset SnapshotAt { get; private set; }
@@ -33,7 +32,6 @@ internal sealed class SqlBackupHost(ManagementApi api, FakeS3 s3, FakeTimeProvid
 
     private HttpClient? _management;
 
-    /// <summary>A client of the canonical project routes of <see cref="Database"/>'s project.</summary>
     public HttpClient Management => _management ??= Api.ProjectClient(Database.Project);
 
     private IContinuousBackup Backup => Api.Server.Services.GetRequiredService<IContinuousBackup>();

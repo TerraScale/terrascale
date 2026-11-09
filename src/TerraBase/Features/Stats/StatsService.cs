@@ -9,7 +9,6 @@ internal sealed class StatsService(DatabaseStats stats, TimeProvider time) : Bac
         using var timer = new PeriodicTimer(Window, time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            // Leave the clock's callback thread, as the flush loops do, so a test clock advanced far ahead does not close windows inline.
             await Task.Yield();
             _ = stats.Close(time.GetUtcNow());
         }

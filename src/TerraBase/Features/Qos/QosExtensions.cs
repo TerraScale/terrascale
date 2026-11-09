@@ -38,10 +38,7 @@ internal static class QosExtensions
             }
             catch (QosMemoryException) when (!context.Response.HasStarted)
             {
-                context.Response.Clear();
-                context.Response.Headers.RetryAfter = "1";
-                context.Response.Headers.CacheControl = "no-store";
-                await BadRequests.WriteAsync(context, StatusCodes.Status429TooManyRequests, "tenant_memory", "organization memory budget exceeded", null).ConfigureAwait(false);
+                await RejectTenantMemoryAsync(context).ConfigureAwait(false);
             }
         });
         return app;
@@ -101,14 +98,11 @@ internal static class QosExtensions
         }
 
         using var scope = QosContext.Enter(tenant, admission: admission);
-        // Known lengths reserve before decoding; chunked bodies reserve before each bounded read.
         var bodyBytes = context.Request.ContentLength ?? 0;
         using var body = budget.TryReserve(MemoryLane.Foreground, 16 * 1024 + bodyBytes * 3);
         if (body is null)
         {
-            context.Response.Headers.RetryAfter = "1";
-            context.Response.Headers.CacheControl = "no-store";
-            await BadRequests.WriteAsync(context, StatusCodes.Status429TooManyRequests, "tenant_memory", "organization memory budget exceeded", null).ConfigureAwait(false);
+            await RejectTenantMemoryAsync(context).ConfigureAwait(false);
             return;
         }
 
@@ -129,6 +123,14 @@ internal static class QosExtensions
         {
             context.Request.Body = originalBody;
         }
+    }
+
+    private static async Task RejectTenantMemoryAsync(HttpContext context)
+    {
+        context.Response.Clear();
+        context.Response.Headers.RetryAfter = "1";
+        context.Response.Headers.CacheControl = "no-store";
+        await BadRequests.WriteAsync(context, StatusCodes.Status429TooManyRequests, "tenant_memory", "organization memory budget exceeded", null).ConfigureAwait(false);
     }
 
     private readonly union QosTenant(TenantContext, Done, Unavailable);

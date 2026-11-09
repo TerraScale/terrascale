@@ -84,7 +84,6 @@ public sealed class HomeRegionForwardingTests
             descriptor.Claims["scope"] = "databases:read sql:read sql:write";
         });
 
-        // sjc keeps the home-only database's record without a placement here, as project enrollment leaves it.
         var recorded = await sjc.Server.Services.GetRequiredService<IReplicaCatalog>().RecordAsync(
             new ReplicaCatalogEntry(database.Organization, database.Project, database.Id, database.Name, "gru", [], 1), CancellationToken.None);
         await Assert.That(recorded).IsTrue();
@@ -96,7 +95,6 @@ public sealed class HomeRegionForwardingTests
         await Assert.That(await PostgresSql.ExecuteAsync(connection, "INSERT INTO notes VALUES (1, $1)", note)).IsEqualTo(1);
         await Assert.That(await PostgresSql.ScalarAsync(connection, "SELECT body FROM notes")).IsEqualTo(note);
 
-        // The session ran at gru: the home serves the rows, not a local copy at sjc.
         using var viaGru = gru.WithToken(token);
         using var read = await viaGru.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"),
             new { statements = new object[] { new { sql = "SELECT body FROM notes" } } });

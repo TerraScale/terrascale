@@ -43,20 +43,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
         _readiness = readiness;
         _time = time;
         _logger = logger;
-        _snapshot = new PressureBody
-        {
-            Node = options.MachineId,
-            Region = options.Region,
-            ProcessId = _processId,
-            Release = _release,
-            SampledAt = time.GetUtcNow(),
-            MemoryBudgetBytes = options.MemoryBudget,
-            Load = new PressureLoad(0, 0),
-            Listeners = Array.AsReadOnly(ListenerNames.Select(name => new ListenerPressure(name, 0, 0, 0)).ToArray()),
-            TopTenants = [],
-            TopTenantsByStorage = [],
-        };
-        Sample();
+        _snapshot = Sample();
         RegisterMetrics(meters.Create(Telemetry.MeterName));
     }
 
@@ -126,7 +113,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }, stoppingToken));
 
-    private void Sample(bool? localReady = null)
+    private PressureBody Sample(bool? localReady = null)
     {
         var timestamp = Stopwatch.GetTimestamp();
         var seconds = Math.Max(0.000001, Stopwatch.GetElapsedTime(_lastTimestamp, timestamp).TotalSeconds);
@@ -150,15 +137,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             }
 
             tenants = [.. _tenants.OrderByDescending(pair => pair.Value.Count).ThenBy(pair => pair.Key, StringComparer.Ordinal)
-                .Take(10).Select(pair => new TenantPressure(pair.Key, pair.Value.Count / seconds, pair.Value.Plan switch
-                {
-                    PlanTier.Hobby => "hobby",
-                    PlanTier.Starter => "starter",
-                    PlanTier.Pro => "pro",
-                    PlanTier.Team => "team",
-                    PlanTier.Enterprise => "enterprise",
-                    _ => null,
-                }))];
+                .Take(10).Select(pair => new TenantPressure(pair.Key, pair.Value.Count / seconds, pair.Value.Plan?.ToString().ToLowerInvariant()))];
             _tenants.Clear();
             untracked = _untracked;
             _untracked = 0;
@@ -201,7 +180,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
         var writeRate = Math.Max(0, writes - _lastWrites) / seconds;
         _lastWrites = writes;
         var storage = Volatile.Read(ref _storage);
-        Volatile.Write(ref _snapshot, new PressureBody
+        var snapshot = new PressureBody
         {
             Node = _options.MachineId,
             LocalReady = localReady,
@@ -227,7 +206,9 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             DataBytes = storage?.Pressure.PhysicalBytes,
             StorageSampledAt = storage?.SampledAt,
             TopTenantsByStorage = Array.AsReadOnly(storage?.Pressure.TopTenants.Select(tenant => new TenantStoragePressure(tenant.Org, tenant.Bytes)).ToArray() ?? []),
-        });
+        };
+        Volatile.Write(ref _snapshot, snapshot);
+        return snapshot;
     }
     private static double Percentile(long[] buckets)
     {

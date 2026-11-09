@@ -4,8 +4,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Configuration;
 
-// Fly sets the Tigris variables for an attached bucket; ts-orch resolves the master key from OCI Vault and
-// delivers it through TERRABASE_MASTER_KEY_FILE (TS-633, docs/backup.md).
 public sealed class BackupSettings
 {
     internal static string[] Keys => [.. Required, "backup-key-rotation-days", "cloudflare-api-token"];
@@ -31,7 +29,6 @@ public sealed class BackupSettings
 
     public required string SecretKey { get; init; }
 
-    // Purges shape CDN copies on terrascale.tech once the mirror deletes their objects (docs/terrabase/free-reads-cdn.md).
     public string? CloudflareApiToken { get; init; }
 
     public required byte[] MasterKey { get; init; }

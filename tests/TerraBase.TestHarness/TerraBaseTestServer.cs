@@ -59,30 +59,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public HttpClient Client { get; }
     internal InternalCredential Credential { get; }
     public IServiceProvider Services => _factory.Services;
-    public static bool IsDataDirectoryOwned(string dataDirectory)
-    {
-        try
-        {
-            using var attempt = new FileStream(Path.Combine(dataDirectory, ".terrabase.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            return false;
-        }
-        catch (IOException error) when (TursoStorageEngine.IsLockConflict(error))
-        {
-            return true;
-        }
-    }
-
-    public static async Task InitializeDataDirectoryAsync(string dataDirectory)
-    {
-        InitializeProcessTimers();
-        var options = new TerraBaseOptions { DataDirectory = dataDirectory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
-        var services = new ServiceCollection();
-        services.AddTerraBaseEngine(options);
-        services.AddSingleton<INativeTemporaryStorage, TestNativeTemporaryStorage>();
-        services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
-        await using var provider = services.BuildServiceProvider();
-        _ = provider.GetRequiredService<IStorageEngine>();
-    }
 
     public static async Task<TerraBaseTestServer> StartAsync(
         Action<Dictionary<string, string>>? settings = null, Action<IServiceCollection>? services = null, string environmentName = "Development",
@@ -206,70 +182,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
     }
 
-    private const int FirstPort = 10_000;
-    private static readonly int PortCount = EphemeralPortStart() - FirstPort;
-    private static readonly Lock PortGate = new();
-    private static readonly List<FileStream> PortClaims = [];
-    private static int _nextPort = Environment.ProcessId;
-    public static int FreePort()
-    {
-        lock (PortGate)
-        {
-            for (var tried = 0; tried < PortCount; tried++)
-            {
-                var port = FirstPort + (_nextPort++ % PortCount);
-                if (TryClaim(port))
-                {
-                    return port;
-                }
-            }
-        }
-
-        throw new InvalidOperationException("no free port below the ephemeral port range");
-    }
-
-    private static bool TryClaim(int port)
-    {
-        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "terrabase-test-ports")).FullName;
-        FileStream claim;
-        try
-        {
-            claim = new FileStream(Path.Combine(directory, port.ToString(CultureInfo.InvariantCulture)), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        }
-        catch (IOException error) when (TursoStorageEngine.IsLockConflict(error))
-        {
-            return false;
-        }
-
-        try
-        {
-            var ipv6 = Socket.OSSupportsIPv6;
-            using var probe = new Socket(ipv6 ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            if (ipv6)
-            {
-                probe.DualMode = true;
-            }
-
-            probe.Bind(new IPEndPoint(ipv6 ? IPAddress.IPv6Any : IPAddress.Any, port));
-        }
-        catch (SocketException)
-        {
-            claim.Dispose();
-            return false;
-        }
-
-        PortClaims.Add(claim);
-        return true;
-    }
-
-    private static int EphemeralPortStart()
-    {
-        const string range = "/proc/sys/net/ipv4/ip_local_port_range";
-        return File.Exists(range)
-            ? int.Parse(File.ReadAllText(range).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[0], CultureInfo.InvariantCulture)
-            : 49_152;
-    }
-
     public static async Task EventuallyAsync(Func<CancellationToken, Task<bool>> condition, TimeSpan? timeout = null, TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(condition);
@@ -322,12 +234,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             throw;
         }
-    }
-
-    public static void UseProductionQueryBudget(Dictionary<string, string> settings)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-        settings["query-budget-seconds"] = TerraBaseOptions.DefaultQueryBudgetSeconds.ToString(CultureInfo.InvariantCulture);
     }
 
     public static void EnableConnectionDiagnostics(IServiceCollection services) => services.AddLogging(logging => logging

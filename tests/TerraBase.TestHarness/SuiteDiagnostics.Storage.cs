@@ -8,7 +8,6 @@ namespace TerraBase.Testing;
 
 public static partial class SuiteDiagnostics
 {
-    // Weak references cannot keep a timed-out fixture's servers alive after its owner stops observing.
     private static readonly List<WeakReference<StorageObservation>> StorageObservers = [with(6)];
     private static long _lostStorageObservers;
 
@@ -45,14 +44,12 @@ public static partial class SuiteDiagnostics
                 }
                 catch (Exception)
                 {
-                    // A diagnostic callback must never escape the timer or change the observed workload.
                     observation.CaptureFailed();
                 }
             }
         }
     }
 
-    // Disposal waits can cancel before their owners stop. Retain final cleanup until every actual owner has ended.
     internal static async Task CleanupAfterBodyAsync(
         Exception? bodyFailure, Action finalCleanup, params (IAsyncDisposable? Owner, Task Completion)[] owners)
     {
@@ -212,7 +209,6 @@ public static partial class SuiteDiagnostics
                     var host = _hosts[index];
                     if (host.System is null && host.Engine.SystemStore is { } published)
                     {
-                        // The catalog opens lazily. Attach only when its real owner has published the store.
                         host.System = published;
                         if (published.WriteLane.Diagnostics is null)
                         {
@@ -230,7 +226,6 @@ public static partial class SuiteDiagnostics
 
                     var engine = host.Engine;
                     var system = host.System;
-                    // Timing snapshots release the recorder lock before any runner queue lock is taken.
                     var ioTiming = host.Io.Sample();
                     var writerTiming = host.Writer?.Sample();
                     hosts[index] = new(host.Name, engine.Io.Admitted, engine.Io.Running, engine.Io.Queued,
