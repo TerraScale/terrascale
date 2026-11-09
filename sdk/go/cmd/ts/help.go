@@ -16,6 +16,7 @@ var commandSyntax = map[string]string{
 	"projects info": "projects info <name|id>", "projects rename": "projects rename <name|id> <new-name>",
 	"orgs delete": "orgs delete <name|id>", "projects delete": "projects delete <name|id>",
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",
+	"init":    "init [<database>]",
 	"db list": "db list", "db create": "db create <database>", "db delete": "db delete <database>",
 	"db branch create": "db branch create <name> --from <database> [--ttl 7d]",
 	"db branch list":   "db branch list", "db branch delete": "db branch delete <name>",
@@ -108,7 +109,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions":
+			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions", "lang":
 				if !equal {
 					i++
 				}
@@ -219,6 +220,9 @@ func helpOptions(name string) map[string]string {
 		}
 	case name == "db branch":
 		options["-expected-id <ULID>"] = "require the inspected source ID; unsupported servers fail closed; no unguarded fallback"
+	case name == "init":
+		options["-lang <js|go|python|dotnet|rust>"] = "pick the SDK snippet; otherwise detected from the directory's files"
+		options["-yes"] = "create the database and API key without asking"
 	case name == "db delete" || name == "db branch delete":
 		options["-expected-id <ULID>"] = "server-enforced identity match; unsupported servers fail closed; no name-only fallback"
 		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"

@@ -57,6 +57,11 @@ Options go before or after the command and its operands; -- ends options.
                                           usage as JSON
   completion bash | zsh | fish            print a shell completion script
 
+  init [<db>]                            one command to a working setup:
+                                          reuse or create the database, create
+                                          a scoped API key, write .env and print
+                                          an SDK snippet; -lang overrides the
+                                          detected language, -yes skips asking
   db list | create <db> | delete <db>     manage the project's databases
                                           create placement: -home-region <region>,
                                           -replica-regions <a,b> | -all-regions
@@ -199,6 +204,7 @@ var commands = map[string][]int{
 	"context clear":      {0},
 	"context set":        {2, 3},
 	"projects create":    {1},
+	"init":               {0, 1},
 	"usage":              {0, 1},
 	"completion":         {1},
 	"shell":              {1},
@@ -301,6 +307,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	from := fs.String("from", "", "db branch create: source database")
 	ttl := fs.String("ttl", "", "db branch create: lifetime, default 7d")
 	schemaDB := fs.String("database", "", "schema: database name or ID; @ uses saved context")
+	lang := fs.String("lang", "", "init: js, go, python, dotnet or rust")
 	dryRun := fs.Bool("dry-run", false, "schema apply: print DDL without executing")
 	exportFile := fs.String("o", "", "db export: write the SQL dump to a file")
 	force := fs.Bool("force", false, "db export: overwrite the output file")
@@ -359,11 +366,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return err
 		}
 	}
-	var yesSet, scopeSet, keyOptionsSet, placementSet, replicasSet, allRegionsSet, expectedIDSet bool
+	var yesSet, scopeSet, keyOptionsSet, placementSet, replicasSet, allRegionsSet, expectedIDSet, langSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "expected-id":
 			expectedIDSet = true
+		case "lang":
+			langSet = true
 		case "expires", "allow-cidr":
 			keyOptionsSet = true
 		case "home-region":
@@ -419,7 +428,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return consentRequired("backup destination changes require explicit consent: pass -yes; set reads its JSON only from stdin")
 		}
 	}
-	if yesSet && !slices.Contains([]string{"db delete", "db branch delete", "orgs delete", "projects delete", "backup destination", "backup rewind", "functions delete", "keys revoke"}, name) {
+	if langSet && (name != "init" || *lang != "" && initSnippets[*lang].install == "") {
+		return fmt.Errorf("-lang needs ts init and one of js, go, python, dotnet or rust: %w", errUsage)
+	}
+	if yesSet && !slices.Contains([]string{"db delete", "db branch delete", "orgs delete", "projects delete", "backup destination", "backup rewind", "functions delete", "keys revoke", "init"}, name) {
 		return fmt.Errorf("-yes is only accepted for destructive commands: %w", errUsage)
 	}
 	if name == "backup rewind" && !*yes {
@@ -504,7 +516,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return s.dispatch(ctx, name, fn, operands, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out)
 	}
 	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
-		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" {
+		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" || strings.HasPrefix(name, "orgs") || name == "context set" || name == "init" {
 			return fmt.Errorf("%s needs ts auth login first: unset TERRASCALE_API_KEY and run ts auth login", name)
 		}
 		if strings.HasPrefix(name, "schema ") && *schemaDB == "@" {
@@ -619,6 +631,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	s, err := open(ctx, u, token, *org, *project)
 	if err != nil {
 		return err
+	}
+	if name == "init" {
+		database := ""
+		if len(operands) > 0 {
+			database = operands[0]
+		}
+		return runInit(ctx, s, database, *lang, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out, prompt)
 	}
 	if name == "keys create" {
 		return createKey(ctx, s, keyReq, out, prompt)
