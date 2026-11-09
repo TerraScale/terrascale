@@ -7,6 +7,7 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.0.0-1.25277.114" />
     <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.11" />
     <PackageVersion Include="NUlid" Version="1.7.3" />
+    <PackageVersion Include="Dapper" Version="2.1.66" />
     <PackageVersion Include="TUnit" Version="1.72.10" />
   </ItemGroup>
 </Project>
