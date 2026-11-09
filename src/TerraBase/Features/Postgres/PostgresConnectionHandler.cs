@@ -727,7 +727,15 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return null;
             default:
                 var (closed, closedName) = (message.Byte(), message.CString());
-                _ = closed == 'S' ? session.Statements.Remove(closedName) : session.Portals.Remove(closedName);
+                if (closed == 'S')
+                {
+                    session.Statements.Remove(closedName);
+                }
+                else if (session.Portals.Remove(closedName, out var closedPortal))
+                {
+                    ChargePending(closedPortal);
+                }
+
                 output.Empty('3');
                 return null;
         }
@@ -778,6 +786,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return new[] { new PgResult(null, [], null) };
             case PgKind.Discard:
                 session.Statements.Clear();
+                foreach (var discarded in session.Portals.Values)
+                {
+                    ChargePending(discarded);
+                }
+
                 session.Portals.Clear();
                 return new[] { new PgResult(null, [], "DISCARD ALL") };
             case PgKind.Deallocate:
@@ -1056,6 +1069,14 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         public PgColumn[]? Columns { get; set; }
 
         public bool Described { get; set; }
+    }
+
+    private static void ChargePending(Portal portal)
+    {
+        if (portal.Pending is PgResult[] results)
+        {
+            Array.ForEach(results, result => result.ReadCharge?.Accept());
+        }
     }
 
     private sealed record Portal(PgStatement Statement, SqlValue[] Args, short[] Formats)
