@@ -74,6 +74,12 @@ transaction.
   ([platform bootstrap](platform-bootstrap.md)), registers the configured OIDC clients and provisions the first
   signing key. Concurrent replicas are safe: the provider's migrations lock applies each migration once, and the seed
   is create-only, so the losers read the winner's rows. A fresh, empty database comes up fully working.
+- `AuthSchema.Ready` completes once that bootstrap has succeeded. Every hosted worker (the sign-in mail outbox,
+  closures, deletion cleanup, session pruning) and the readiness loop wait for it before their first pass, so nothing
+  touches a table before it exists and `/readyz` stays `not_ready` until then. A failed bootstrap logs a warning naming
+  the step (`schema migration`, `platform seed`, `client registration` or `signing key provisioning`) with the
+  exception's types and frames only, such as `TerraBaseConnection.ConnectWebSocketAsync` when TerraBase refuses the SQL
+  WebSocket, and retries with backoff.
 - Each migration runs in one TerraBase transaction (at most 5 seconds); keep data moves in their own migrations.
 - Readiness requires no pending migration and a synthetic insert, read and delete of a `storage_probes` row.
 

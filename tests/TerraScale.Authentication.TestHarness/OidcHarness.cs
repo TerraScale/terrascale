@@ -249,7 +249,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
         }, configure: configure, runClosureWorker: runClosureWorker);
         try
         {
-            await server.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
+            await server.App.Services.GetRequiredService<AuthSchema>().Ready.WaitAsync(TimeSpan.FromSeconds(30));
             return server;
         }
         catch

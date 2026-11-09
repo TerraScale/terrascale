@@ -6,26 +6,13 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.Observability;
 
-/// <summary>
-/// Checks storage access, the serving issuer's public signing metadata and this replica's signing-key bootstrap. The
-/// check itself never writes identity state. Missing keys fail at once with <see cref="KeyRing.NoSigningKeys"/>, before
-/// waiting on a bootstrap that cannot complete without them.
-/// </summary>
-public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing ring, SigningKeyRotation rotation) : IStorageHealth
+public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing ring) : IStorageHealth
 {
-    /// <inheritdoc />
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
         var storageCheck = storage.CheckAsync(cancellationToken);
-        // The read-only signing check is independent of the synthetic storage write sequence.
         await Task.WhenAll(storageCheck, ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, cancellationToken)).ConfigureAwait(false);
-        var result = await storageCheck.ConfigureAwait(false);
-        if (result.Healthy)
-        {
-            await rotation.Bootstrapped.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        return result;
+        return await storageCheck.ConfigureAwait(false);
     }
 }
 
@@ -38,7 +25,7 @@ public sealed record ReadinessObservation(bool Ready, string? Region, string? Er
 /// turns not ready after <see cref="FailuresBeforeNotReady"/> consecutive failed passes. A result older than fifteen
 /// seconds means the loop is stuck, so readiness fails.
 /// </summary>
-public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger) : BackgroundService
+public sealed class ReadinessProbe(AuthSchema schema, IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
     // The probe's conditional create and delete commit in this region only (local_durable), so a slow peer does not fail it.
@@ -107,6 +94,7 @@ public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, IL
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await schema.Ready.WaitAsync(stoppingToken);
         while (true)
         {
             await this.ProbeAsync(new CancellationTokenSource(ProbeTimeout, clock));

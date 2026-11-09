@@ -32,7 +32,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// persisting an invitation.
 /// </summary>
 public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSettings settings, ProjectAuthSettings projects, PlatformDirectory platform,
-    AuthData data, Passcodes passcodes, Users users, AuthOptions options, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
+    AuthSchema schema, AuthData data, Passcodes passcodes, Users users, AuthOptions options, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
 {
     /// <summary>Accepted but not yet claimed deliveries, plus reservations, allowed per replica before new requests are refused.</summary>
     public const int Capacity = 256;
@@ -130,8 +130,11 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     }
 
     /// <inheritdoc />
-    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(this.DeliverOutboxAsync(), this.DeliverNoticesAsync());
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
+        await Task.WhenAll(this.DeliverOutboxAsync(), this.DeliverNoticesAsync()).ConfigureAwait(false);
+    }
 
     private bool Drained
     {
