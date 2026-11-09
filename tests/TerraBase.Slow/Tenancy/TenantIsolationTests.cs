@@ -9,7 +9,6 @@ using TerraBase.Features.Shapes;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Tenancy;
 

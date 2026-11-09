@@ -41,11 +41,9 @@ internal interface ILocalTransaction : IAsyncDisposable
 
     ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Publishes the transaction to the durable push stream, holds it on a discovered regional partner and commits it.
-    /// A discovered one-node region acknowledges on that node; a region with a partner requires both copies. With
-    /// <paramref name="homeDurable"/>, or when the required partner did not hold it, it answers after the home applied it.
-    /// </summary>
+    // Publishes the transaction to the durable push stream, holds it on a discovered regional partner and commits it.
+    // A discovered one-node region acknowledges on that node; a region with a partner requires both copies. With
+    // homeDurable, or when the required partner did not hold it, it answers after the home applied it.
     ValueTask<LocalCommit> CommitAsync(bool homeDurable, CancellationToken cancellationToken);
 }
 
@@ -103,7 +101,9 @@ internal sealed class HomePush(
 
     public bool TwoNodeAck => LocalAckAvailable && partner.PartnerHealthy;
 
-    public bool LocalAckAvailable => (services.GetService<RegionalOwners>()?.Writer ?? true) && _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
+    private bool RegionWriter => services.GetService<RegionalOwners>()?.Writer ?? true;
+
+    public bool LocalAckAvailable => RegionWriter && _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
         && partner.QuorumHealthy && services.GetService<ILocalWriteClock>() is { Allowed: true };
 
     private IInRegionAck Partner => partner;
@@ -518,7 +518,7 @@ internal sealed class HomePush(
         }
         _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
         {
-            Filter = $"terrabase.push.{options.Region}.*.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}",
+            Filter = PushNames.DatabaseFilter(options.Region, database),
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -530,7 +530,7 @@ internal sealed class HomePush(
             {
                 _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
                 {
-                    Filter = $"terrabase.push.{options.Region}.*.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}",
+                    Filter = PushNames.DatabaseFilter(options.Region, database),
                     Seq = through + 1,
                 }, cancellationToken).ConfigureAwait(false);
             }
@@ -547,7 +547,7 @@ internal sealed class HomePush(
         var backoff = TimeSpan.FromMilliseconds(200);
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (!(services.GetService<RegionalOwners>()?.Writer ?? true))
+            if (!RegionWriter)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(100), time, cancellationToken).ConfigureAwait(false);
                 continue;
@@ -576,7 +576,7 @@ internal sealed class HomePush(
                 await foreach (var message in consumer.ConsumeAsync<byte[]>(opts: new NatsJSConsumeOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken)
                     .ConfigureAwait(false))
                 {
-                    if (!(services.GetService<RegionalOwners>()?.Writer ?? true))
+                    if (!RegionWriter)
                     {
                         await message.NakAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
                         break;
@@ -678,7 +678,7 @@ internal sealed class HomePush(
         HomeApplyResult result;
         while (true)
         {
-            if (!(services.GetService<RegionalOwners>()?.Writer ?? true))
+            if (!RegionWriter)
             {
                 await message.NakAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
                 return;

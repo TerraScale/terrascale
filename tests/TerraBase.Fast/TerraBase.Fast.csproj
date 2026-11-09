@@ -11,4 +11,7 @@
     <PackageReference Include="Npgsql" />
     <PackageReference Include="MagicOnion.Client" />
   </ItemGroup>
+  <ItemGroup>
+    <Using Include="TerraBase.Testing" />
+  </ItemGroup>
 </Project>

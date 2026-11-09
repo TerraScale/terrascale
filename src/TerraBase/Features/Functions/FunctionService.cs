@@ -14,10 +14,8 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>Registers database-scoped customer functions.</summary>
 public static class FunctionsExtensions
 {
-    /// <summary>Registers the always-on function store and runtime.</summary>
     public static IServiceCollection AddTerraBaseFunctions(this IServiceCollection services) =>
         services.AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
             .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());

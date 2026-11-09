@@ -18,11 +18,9 @@ internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosi
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "");
 internal sealed record RegionalDrain(string Target);
 
-/// <summary>
-/// Planned regional ownership transfer. The edge drains first; the old engine is fenced before its final applied
-/// positions are sampled. The candidate imports proven replicas; the regional CAS precedes database lease activation.
-/// An uncommitted preparation leaves database leases untouched; a quorum rollback resumes the old writer.
-/// </summary>
+// Planned regional ownership transfer: the edge drains first; the old engine is fenced before its final applied
+// positions are sampled; the candidate imports proven replicas; the regional CAS precedes database lease activation.
+// An uncommitted preparation leaves database leases untouched; a quorum rollback resumes the old writer.
 internal sealed partial class RegionalHandoff(
     TerraBaseOptions options, RegionalOwners owners, HomeLeaseGate gate, InternalCredential credential,
     IServiceProvider services, ILogger<RegionalHandoff> logger) : BackgroundService
@@ -40,7 +38,7 @@ internal sealed partial class RegionalHandoff(
     private RegionalWriterLease? _writerLease;
     private readonly string _session = Guid.NewGuid().ToString("N");
 
-    internal async Task<RegionalStatus> StatusAsync(CancellationToken cancellationToken, string? region = null) => new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
+    internal async Task<RegionalStatus> StatusAsync(string? region, CancellationToken cancellationToken) => new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
         owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
         await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false), _session);
 
@@ -556,7 +554,7 @@ internal sealed partial class RegionalHandoff(
                 while (after is not null);
             }
 
-            var address = new UriBuilder(Uri.UriSchemeHttp, peer.Address.ToString(), options.InternalPort).Uri;
+            var address = peer.InternalListener(options.InternalPort);
             var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, promoting
                 ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null, transfer.Id), TerraBaseJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
@@ -603,7 +601,7 @@ internal sealed partial class RegionalHandoff(
             // region's edge. Do not stop its old address while an admitted peer still routes there.
             foreach (var observer in nodes.Where(node => node.Name != options.MachineId))
             {
-                var observedAt = new UriBuilder(Uri.UriSchemeHttp, observer.Address.ToString(), options.InternalPort).Uri;
+                var observedAt = observer.InternalListener(options.InternalPort);
                 while (true)
                 {
                     using var seen = await _http.GetAsync(new Uri(observedAt, "/v1/rollout/status?region=" + options.Region), cancellationToken).ConfigureAwait(false);

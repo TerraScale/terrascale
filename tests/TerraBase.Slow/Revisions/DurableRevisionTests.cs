@@ -1,7 +1,6 @@
 using TerraBase.Engine.Revisions;
-using TerraBase.Testing;
 
-namespace TerraBase.Fast.Revisions;
+namespace TerraBase.Slow.Revisions;
 
 public sealed class DurableRevisionTests
 {

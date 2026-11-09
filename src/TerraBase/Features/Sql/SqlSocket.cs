@@ -12,6 +12,10 @@ using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using TerraBase.Configuration;
+using TerraBase.Features.Management;
+using TerraBase.Features.Sql.Routing;
+using TerraBase.Features.UserAuth;
 
 namespace TerraBase.Features.Sql;
 
@@ -57,7 +61,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         }
 
         _session = _services.GetRequiredService<ISqlService>().Open(Database, _canWrite);
-        _session.Prefer(SqlExecuteEndpoint.Preference(context.Request.Headers[SqlExecuteEndpoint.WriteHeader]) ?? Routing.WriteOverride.Auto);
+        _session.Prefer(SqlExecuteEndpoint.Preference(context.Request.Headers[SqlExecuteEndpoint.WriteHeader]) ?? WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))
         {
             await ServeAsync(cancellationToken).ConfigureAwait(false);
@@ -132,7 +136,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         }
 
         context.User = authenticated.Principal;
-        if (await UserAuth.UserAuthExtensions.AdmitSocketAsync(context, _revoked, _watches.Add).ConfigureAwait(false) is { } refused)
+        if (await UserAuthExtensions.AdmitSocketAsync(context, _revoked, _watches.Add).ConfigureAwait(false) is { } refused)
         {
             return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unauthorized, refused.Code + ": " + refused.Message), cancellationToken).ConfigureAwait(false);
         }
@@ -155,11 +159,11 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
                 return await RefuseAsync(request.Id, UnknownDatabase, cancellationToken).ConfigureAwait(false);
         }
 
-        var region = _services.GetRequiredService<Configuration.TerraBaseOptions>().Region;
-        switch (await Management.DatabaseRegions.RecordAsync(context, (string)context.Request.RouteValues["project"]!, (string)context.Request.RouteValues["database"]!)
+        var region = _services.GetRequiredService<TerraBaseOptions>().Region;
+        switch (await DatabaseRegions.RecordAsync(context, (string)context.Request.RouteValues["project"]!, (string)context.Request.RouteValues["database"]!)
             .ConfigureAwait(false))
         {
-            case Management.ManagedDatabase record when !record.PlacedIn(region) && !record.AllRegions && !record.Replicas.Contains(region):
+            case ManagedDatabase record when !record.PlacedIn(region) && !record.AllRegions && !record.Replicas.Contains(region):
                 return await RefuseAsync(request.Id, new SqlError(SqlErrors.WrongRegion,
                     $"the database is served in {string.Join(", ", record.Regions(region))}, not {region}; connect through its home region {record.Home(region)}"),
                     cancellationToken).ConfigureAwait(false);

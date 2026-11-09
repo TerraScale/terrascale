@@ -3,10 +3,8 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>The deletion record a shredded database's key scope keeps: which database, and when its keys were destroyed.</summary>
 internal sealed record ShredRecord(string DatabaseId, DateTimeOffset ShreddedAt);
 
-/// <summary>A deleted database's data keys are destroyed: none of its backup objects or shape chunks can be decrypted.</summary>
 internal sealed class DatabaseShreddedException(DateTimeOffset? shreddedAt)
     : IOException("the database was deleted and its backup data keys destroyed")
 {
@@ -17,7 +15,6 @@ internal static class ShredRecords
 {
     private const int MaxBytes = 4096;
 
-    /// <summary>The deletion record of <paramref name="scope"/>, or <see langword="null"/> when it was never shredded.</summary>
     public static async Task<ShredRecord?> ReadAsync(IObjectStore store, string scope, CancellationToken cancellationToken)
     {
         ShredRecord? record = null;

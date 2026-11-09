@@ -1,17 +1,15 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Features.Management;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
 
-/// <summary>A delete acknowledged with 204 releases the allowance in every region (GitHub #1098).</summary>
+// A delete acknowledged with 204 releases the allowance in every region (GitHub #1098).
 public sealed class CrossRegionDeleteAllowanceTests
 {
     private const string Scopes = "databases:read databases:write";

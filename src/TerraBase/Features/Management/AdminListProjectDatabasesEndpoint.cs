@@ -6,14 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>
-/// <c>GET /admin/projects/{project}/databases</c>: the local page of a project's databases, for a peer region's read
-/// fan-out. Internal listener only, behind the shared peer credential. A project this node does not hold answers an
-/// empty page: the asking region merges the pages of every peer.
-/// </summary>
 internal sealed class AdminListProjectDatabasesEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/admin/projects/{project}/databases");
@@ -30,7 +24,6 @@ internal sealed class AdminListProjectDatabasesEndpoint(IManagementService manag
         Metadata(ListenerMetadata.Internal);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var project = ManagementRoute.Value(HttpContext, "project");

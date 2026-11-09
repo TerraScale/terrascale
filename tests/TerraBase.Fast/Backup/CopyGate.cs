@@ -5,7 +5,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Backup;
 
-/// <summary>Holds one <see cref="IManagementService.CopyDatabaseAsync"/> call — the restore copy — until released.</summary>
 internal sealed class CopyGate
 {
     private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);

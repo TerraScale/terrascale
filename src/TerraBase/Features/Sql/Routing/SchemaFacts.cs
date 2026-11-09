@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
@@ -54,14 +55,14 @@ internal sealed class SchemaFactsCache
         foreach (var row in tables)
         {
             var name = (string)row[1]!;
-            var quoted = "\"" + name.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+            var quoted = SqlScript.Quote(name);
             var info = await QueryAsync(reader, $"PRAGMA table_info({quoted})", cancellationToken).ConfigureAwait(false);
             var (columnName, columnType, columnKey) = (info.Index("name"), info.Index("type"), info.Index("pk"));
             var key = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var integerKey = false;
             foreach (var column in info.Rows)
             {
-                if (Convert.ToInt64(column[columnKey], System.Globalization.CultureInfo.InvariantCulture) > 0)
+                if (Convert.ToInt64(column[columnKey], CultureInfo.InvariantCulture) > 0)
                 {
                     key.Add((string)column[columnName]!);
                     integerKey = string.Equals(column[columnType] as string, "INTEGER", StringComparison.OrdinalIgnoreCase);
@@ -74,13 +75,13 @@ internal sealed class SchemaFactsCache
             var (indexName, indexUnique, indexOrigin) = (indexes.Index("name"), indexes.Index("unique"), indexes.Index("origin"));
             foreach (var index in indexes.Rows)
             {
-                if (Convert.ToInt64(index[indexUnique], System.Globalization.CultureInfo.InvariantCulture) == 0
+                if (Convert.ToInt64(index[indexUnique], CultureInfo.InvariantCulture) == 0
                     || (indexOrigin >= 0 && index[indexOrigin] as string == "pk") || index[indexName] is not string named)
                 {
                     continue;
                 }
 
-                var parts = await QueryAsync(reader, $"PRAGMA index_info(\"{named.Replace("\"", "\"\"", StringComparison.Ordinal)}\")", cancellationToken).ConfigureAwait(false);
+                var parts = await QueryAsync(reader, $"PRAGMA index_info({SqlScript.Quote(named)})", cancellationToken).ConfigureAwait(false);
                 var partName = parts.Index("name");
                 var columns = parts.Rows.Select(part => part[partName] as string).ToList();
                 expression |= columns.Count == 0 || columns.Exists(column => column is null);

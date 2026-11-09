@@ -1,5 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Tenancy;
+using TerraBase.Features.Sql.Routing;
 
 namespace TerraBase.Features.Sql;
 
@@ -72,18 +73,16 @@ internal interface ISqlSession : IAsyncDisposable
 
     ValueTask EndRequestAsync();
 
-    void Prefer(Routing.WriteOverride preference)
+    void Prefer(WriteOverride preference)
     {
     }
 
-    Routing.WriteRoute? LastRoute => null;
+    WriteRoute? LastRoute => null;
 
-    /// <summary>Keeps the row changes of this session's commits for <see cref="Committed"/> (a forwarded write, PIVOT F7).</summary>
     void KeepCommitted()
     {
     }
 
-    /// <summary>The row changes of the commits since <see cref="KeepCommitted"/>, in commit order.</summary>
     IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => [];
 }
 
@@ -91,18 +90,12 @@ internal sealed record SqlTableColumn(string Name, string? DeclType, bool NotNul
 
 internal sealed record SqlTableInfo(string Name, IReadOnlyList<SqlTableColumn> Columns);
 
-/// <summary>The first failed statement of a replica read and its index.</summary>
 internal sealed record ReplicaSqlFailure(SqlError Error, int Statement);
 
-/// <summary>The results of every statement run on a replica, or the first failure.</summary>
 internal readonly union ReplicaSqlOutcome(IReadOnlyList<SqlResult>, ReplicaSqlFailure);
 
 internal interface ISqlService
 {
-    /// <summary>
-    /// Runs read statements on one snapshot of this region's replica of <paramref name="database"/>, under the same limits as
-    /// the home and metered as reads here. The caller refuses writes first; a statement that would write fails read-only.
-    /// </summary>
     ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
         TenantContext database, IReplicaReader reader, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements, CancellationToken cancellationToken);
 

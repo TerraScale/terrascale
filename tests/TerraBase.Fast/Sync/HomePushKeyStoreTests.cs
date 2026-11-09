@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
 using TerraBase.Features.HomePush;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Sync;
 

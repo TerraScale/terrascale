@@ -32,7 +32,6 @@ internal sealed class PeersFile(TerraBaseOptions options)
             && IPAddress.TryParse(address, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork)
         .Select(entry => (entry[0], entry[1], IPAddress.Parse(entry[2])))
         .DistinctBy(peer => peer.Item1);
-
 }
 
 internal sealed record ServingNode(string Name, string Region, IPAddress Address);

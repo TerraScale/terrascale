@@ -4,7 +4,6 @@ using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Sync;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
 

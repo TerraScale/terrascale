@@ -191,12 +191,7 @@ internal sealed partial class TursoStorageTransaction
                 long size = 0;
                 for (var i = 0; i < columns.Count; i++)
                 {
-                    size += TursoBindings.GetValueType(prepared, i) switch
-                    {
-                        TursoValueType.Text or TursoValueType.Blob => Math.Max(0, TursoBindings.GetValueByteCount(prepared, i)),
-                        TursoValueType.Null or TursoValueType.Empty => 0,
-                        _ => 8,
-                    };
+                    size += ValueSize(prepared, i);
                 }
 
                 if (rows.Count == statement.MaxRows || size > statement.MaxBytes - bytes)
@@ -217,14 +212,7 @@ internal sealed partial class TursoStorageTransaction
                 var row = new object?[columns.Count];
                 for (var i = 0; i < row.Length; i++)
                 {
-                    row[i] = TursoBindings.GetValue(prepared, i) switch
-                    {
-                        { ValueType: TursoValueType.Integer } value => value.IntValue,
-                        { ValueType: TursoValueType.Real } value => value.RealValue,
-                        { ValueType: TursoValueType.Text } value => value.StringValue,
-                        { ValueType: TursoValueType.Blob } value => value.BlobValue,
-                        _ => null,
-                    };
+                    row[i] = Value(prepared, i);
                 }
 
                 rows.Add(row);
@@ -300,6 +288,24 @@ internal sealed partial class TursoStorageTransaction
         return columns;
     }
 
+    internal static long ValueSize(TursoStatementHandle prepared, int column) =>
+        TursoBindings.GetValueType(prepared, column) switch
+        {
+            TursoValueType.Text or TursoValueType.Blob => Math.Max(0, TursoBindings.GetValueByteCount(prepared, column)),
+            TursoValueType.Null or TursoValueType.Empty => 0,
+            _ => 8,
+        };
+
+    internal static object? Value(TursoStatementHandle prepared, int column) =>
+        TursoBindings.GetValue(prepared, column) switch
+        {
+            { ValueType: TursoValueType.Integer } value => value.IntValue,
+            { ValueType: TursoValueType.Real } value => value.RealValue,
+            { ValueType: TursoValueType.Text } value => value.StringValue,
+            { ValueType: TursoValueType.Blob } value => value.BlobValue,
+            _ => null,
+        };
+
     internal static long Counter(TursoDatabaseHandle native, string sql)
     {
         var prepared = TursoBindings.PrepareStatement(native, sql);
@@ -348,7 +354,6 @@ internal sealed partial class TursoStorageTransaction
         return new SqlStatementException(failure, reported, ended, error);
     }
 
-    /// <summary>The kind and client-safe message of a failed customer statement.</summary>
     internal static (SqlFailure Failure, string Message) Classify(TursoDatabaseHandle native, TursoException error)
     {
         var message = error.Message;

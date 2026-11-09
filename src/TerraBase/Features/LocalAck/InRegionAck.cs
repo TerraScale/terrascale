@@ -1,8 +1,10 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
+using System.Net.Http.Headers;
 using System.Threading.Channels;
 using TerraBase.Configuration;
 using TerraBase.Features.HomePush;
+using static TerraBase.Features.HomePush.HomePush;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -10,22 +12,15 @@ using ZLogger;
 
 namespace TerraBase.Features.LocalAck;
 
-/// <summary>The discovered regional quorum for local writes (docs/terrabase/in-region-ack.md).</summary>
+// The discovered regional quorum for local writes (docs/terrabase/in-region-ack.md).
 internal interface IInRegionAck
 {
-    /// <summary>Whether this node's in-region partner answered within the last 3 s. A one-node region never has one.</summary>
     bool PartnerHealthy { get; }
 
-    /// <summary>One discovered node needs its own durable push; a region with a partner needs both nodes.</summary>
     bool QuorumHealthy { get; }
 
-    /// <summary>
-    /// Stores the published transaction on the partner and answers true once it is synced there; false when the partner
-    /// did not store it, and the write then waits for the home instead. A discovered one-node region needs no partner copy.
-    /// </summary>
     ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, byte[] payload, CancellationToken cancellationToken);
 
-    /// <summary>Tells the partner that the home holds the database's transactions up to <paramref name="through"/>.</summary>
     void Release(TenantContext database, ulong through);
 }
 
@@ -151,10 +146,6 @@ internal sealed class InRegionAck(
         }
     }
 
-    /// <summary>
-    /// Applies a lost origin's held transactions at their homes, one database at a time in stream order. The home answers a
-    /// transaction it already has from its record, so one the origin's stream also delivers is applied once.
-    /// </summary>
     private async Task FinishAsync(string origin, CancellationToken cancellationToken)
     {
         var stalled = new HashSet<(string, string, string)>();
@@ -195,14 +186,13 @@ internal sealed class InRegionAck(
         {
             var database = new TenantContext(held.Organization!, PlanTier.Hobby, held.Project, held.Database);
             var plain = await crypto.OpenAsync(database, held.Payload!, cancellationToken).ConfigureAwait(false);
-            if (plain is null || !TerraBase.Features.HomePush.HomePush.TryDecode(plain, out var transaction))
+            if (plain is null || !TryDecode(plain, out var transaction))
             {
                 return true; // Shredded or unauthentic: it must never be replayed.
             }
             using var body = Json(JsonSerializer.SerializeToUtf8Bytes(transaction, TerraBaseJsonContext.Default.RegionTransaction));
-            using var response = await Http.PostAsync(
-                new Uri(home.Internal, $"v1/sync/organizations/{held.Organization}/projects/{held.Project}/databases/{held.Database}/apply"),
-                body, cancellationToken).ConfigureAwait(false);
+            using var response = await Http.PostAsync(new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "apply")[1..]), body, cancellationToken)
+                .ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
                 return true;
@@ -239,11 +229,10 @@ internal sealed class InRegionAck(
         }
     }
 
-    // The internal endpoints read a body of known length, so it is sent whole rather than streamed.
     private static ByteArrayContent Json(byte[] json)
     {
         var content = new ByteArrayContent(json);
-        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         return content;
     }
 

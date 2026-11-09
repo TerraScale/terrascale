@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using Turso;
 using Turso.Data.Sqlite;
 using TerraBase.Tenancy;
 using TerraBase.Primitives;
@@ -113,7 +114,7 @@ internal sealed partial class TursoStorageEngine
                 var targetConnection = await Encryption.CreateAsync(temporary, Io, cancellationToken).ConfigureAwait(false);
                 await Io.RunAsync(() =>
                 {
-                    using var source = new global::Turso.TursoConnection(sourceConnection);
+                    using var source = new TursoConnection(sourceConnection);
                     TursoSession.OpenExisting(source, file);
                     using var begin = source.CreateCommand();
                     begin.CommandText = "BEGIN;";

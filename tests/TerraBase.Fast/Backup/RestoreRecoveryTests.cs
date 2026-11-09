@@ -7,7 +7,6 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Fast.Backup;

@@ -1,6 +1,5 @@
 using System.Diagnostics.Metrics;
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -17,7 +16,6 @@ using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Sync;
 

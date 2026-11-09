@@ -6,7 +6,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>DELETE …/projects/{project}</c>: deletes a project without databases, API keys or a customer backup destination.</summary>
 internal sealed class DeleteProjectEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

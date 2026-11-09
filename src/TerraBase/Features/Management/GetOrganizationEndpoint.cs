@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>GET /v1/management/organizations/{organization}</c>: reads an organization.</summary>
 internal sealed class GetOrganizationEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ManagementRoute.Organization);
@@ -23,7 +21,6 @@ internal sealed class GetOrganizationEndpoint(IManagementService management) : E
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await management.GetOrganizationAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), cancellationToken) switch
         {

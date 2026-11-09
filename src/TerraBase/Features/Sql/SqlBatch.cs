@@ -72,28 +72,28 @@ internal static class SqlBatch
         }
 
         var outcome = await RunInAsync(session, commands, charges, cancellationToken).ConfigureAwait(false);
-        if (outcome is SqlBatchFailure)
+        if (outcome is SqlBatchFailure failure)
         {
-            if (!session.IsAutocommit)
-            {
-                _ = await session.ExecuteAsync(Control("ROLLBACK"), cancellationToken).ConfigureAwait(false);
-            }
-
-            return outcome;
+            await RollBackAsync(session, cancellationToken).ConfigureAwait(false);
+            return failure;
         }
 
         if (await session.ExecuteAsync(Control("COMMIT"), cancellationToken).ConfigureAwait(false) is SqlError failed)
         {
-            if (!session.IsAutocommit)
-            {
-                _ = await session.ExecuteAsync(Control("ROLLBACK"), cancellationToken).ConfigureAwait(false);
-            }
-
+            await RollBackAsync(session, cancellationToken).ConfigureAwait(false);
             return new SqlBatchFailure(failed, commands.Count - 1);
         }
 
         charges.ForEach(charge => charge.Accept());
         return outcome;
+    }
+
+    private static async ValueTask RollBackAsync(ISqlSession session, CancellationToken cancellationToken)
+    {
+        if (!session.IsAutocommit)
+        {
+            _ = await session.ExecuteAsync(Control("ROLLBACK"), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static async ValueTask<SqlBatchOutcome> RunInAsync(ISqlSession session, IReadOnlyList<SqlCommand> commands, List<SqlReadCharge> charges,
@@ -112,8 +112,7 @@ internal static class SqlBatch
                         charges.Add(charge);
                     }
 
-                    results.Add(new SqlStatementBody(
-                        [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid));
+                    results.Add(SqlStatementBody.Of(result));
                     break;
             }
         }

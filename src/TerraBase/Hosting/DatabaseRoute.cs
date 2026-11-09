@@ -15,7 +15,6 @@ namespace TerraBase.Hosting;
 
 internal readonly union TenantResult(TenantContext, Validation, NotFound, Unavailable);
 internal readonly union BodyResult(byte[], Validation, PayloadTooLarge, UnsupportedMediaType);
-/// <summary>Route checks every per-database client endpoint shares.</summary>
 internal static class DatabaseRoute
 {
     public const string Template = "/v1/projects/{project}/databases/{database}";

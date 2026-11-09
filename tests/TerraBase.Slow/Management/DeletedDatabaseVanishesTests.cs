@@ -1,17 +1,15 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
 
-/// <summary>A deleted database disappears from every region's listing and the dashboard within seconds (TS-1421).</summary>
+// A deleted database disappears from every region's listing and the dashboard within seconds (TS-1421).
 public sealed class DeletedDatabaseVanishesTests
 {
     private const string Scopes = "databases:read databases:write";
@@ -44,7 +42,6 @@ public sealed class DeletedDatabaseVanishesTests
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync(token));
         }
 
-        // The replica region adopts the home's catalog entry, the state the live repro served the ghost from.
         await sjc.Server.Services.GetRequiredService<RegionReplication>().SyncCatalogsAsync(token);
         var id = string.Empty;
         foreach (var client in new[] { gruToken, sjcToken })
@@ -61,7 +58,6 @@ public sealed class DeletedDatabaseVanishesTests
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync(token));
         }
 
-        // No sweep, no sleep: the delete itself removed the database from every region's answer.
         foreach (var client in new[] { gruToken, sjcToken })
         {
             using var listed = await client.GetAsync(ManagementApi.Uri(path), token);

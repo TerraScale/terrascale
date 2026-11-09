@@ -23,7 +23,7 @@ internal sealed class ClockGuard(
         get
         {
             var reading = Volatile.Read(ref _reading);
-            if (reading is null || _elapsed.GetElapsedTime(reading.At) is var age && age > FreshFor)
+            if (reading is null || _elapsed.GetElapsedTime(reading.At) > FreshFor)
             {
                 return double.PositiveInfinity;
             }

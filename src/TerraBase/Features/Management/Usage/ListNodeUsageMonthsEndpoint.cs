@@ -6,13 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>
-/// <c>GET /v1/internal/usage/months</c>: the units this node served for each named organization in a month, for a peer
-/// region's sum. Internal listener only, behind the shared peer credential.
-/// </summary>
 internal sealed class ListNodeUsageMonthsEndpoint(UsageMeter meter) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(PeerUsage.MonthsPath);
@@ -29,7 +24,6 @@ internal sealed class ListNodeUsageMonthsEndpoint(UsageMeter meter) : EndpointWi
         Metadata(ListenerMetadata.Internal);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var organizations = HttpContext.Request.Query["organization"];

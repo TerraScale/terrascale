@@ -3,24 +3,14 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
 
-/// <summary>One open database. The engine owns its lifetime.</summary>
 public interface IDatabaseStore
 {
-    /// <summary>The organization, project and database identity, with the plan normalized to hobby; null only for TerraBase's own database.</summary>
     TenantContext? Tenant { get; }
 
-    /// <summary>Whether deletion or engine shutdown ended this store's lifetime.</summary>
     bool IsClosed { get; }
 
-    /// <summary>Persisted identity shared by database-scoped handles and versions; stable across reopen, fresh for each new database or copy.</summary>
     Ulid Incarnation { get; }
 
-    /// <summary>
-    /// Starts a transaction. Write transactions are serialized per database; read transactions see
-    /// a consistent snapshot and refuse all mutations (<see cref="InvalidOperationException"/>). Dispose without
-    /// <see cref="IStorageTransaction.CommitAsync"/> to roll back.
-    /// </summary>
-    /// <remarks>The compiler fills <paramref name="file"/> and <paramref name="line"/>: a long writer hold names its caller.</remarks>
     ValueTask<IStorageTransaction> BeginTransactionAsync(
         bool write, CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0);
 
@@ -31,12 +21,6 @@ public interface IDatabaseStore
     ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
         CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0);
 
-    /// <summary>
-    /// Runs <paramref name="work"/> in a write transaction it may share with other writes queued at the same time (group
-    /// commit), and answers once that transaction committed, with its commit result. Kept mutations share the batch's
-    /// marker; nonmutating work has none. When <paramref name="keep"/> refuses the work, its changes roll back and its
-    /// commit result is empty. A commit or marker-read failure is not retried.
-    /// </summary>
     async ValueTask<(T Result, CommitResult Commit)> WriteAsync<T>(
         Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken,
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
@@ -51,12 +35,7 @@ public interface IDatabaseStore
         }
     }
 
-    /// <summary>Counts this process's write commits to this database; read it before a read to wait for later commits.</summary>
     long CommitSequence { get; }
 
-    /// <summary>
-    /// Completes once <see cref="CommitSequence"/> exceeds <paramref name="sequence"/>: right away when a
-    /// write transaction committed since it was read, otherwise at the next one. Callers re-read to see what changed.
-    /// </summary>
     Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken);
 }

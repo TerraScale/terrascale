@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary><c>GET …/databases/{database}/backup-policy</c>: reads the backup policy of a database.</summary>
 internal sealed class GetBackupPolicyEndpoint(IManagementService management, IManagedBackupService backups) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Database + "/backup-policy");
@@ -24,7 +22,6 @@ internal sealed class GetBackupPolicyEndpoint(IManagementService management, IMa
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
         {

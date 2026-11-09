@@ -162,7 +162,7 @@ internal static class SqlSandbox
             empty.Append(sql, copied, tokens[first].Start - copied).Append(visible);
             if (!aliased)
             {
-                var alias = " AS \"" + token.Value.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+                var alias = " AS " + SqlScript.Quote(token.Value);
                 run.Append(alias);
                 empty.Append(alias);
             }

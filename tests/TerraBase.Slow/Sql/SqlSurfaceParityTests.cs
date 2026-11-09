@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Bogus;
 using Npgsql;
-using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Sql;

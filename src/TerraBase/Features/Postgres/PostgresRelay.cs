@@ -12,14 +12,14 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
 {
     internal const string Path = "/v1/internal/postgres";
     internal const string ClientHeader = "X-TerraBase-Postgres-Client";
-    private const int Protocol30 = 196608;
+
     private static ReadOnlySpan<byte> CleartextRequest => [(byte)'R', 0, 0, 0, 8, 0, 0, 0, 3];
 
     internal static byte[] Startup(Dictionary<string, string> parameters, string secret)
     {
         var body = new ArrayBufferWriter<byte>();
         Span<byte> number = stackalloc byte[4];
-        BinaryPrimitives.WriteInt32BigEndian(number, Protocol30);
+        BinaryPrimitives.WriteInt32BigEndian(number, PostgresStatements.ProtocolVersion);
         body.Write(number);
         foreach (var (name, value) in parameters.Where(parameter => !parameter.Key.StartsWith("_pq_.", StringComparison.Ordinal)))
         {

@@ -6,10 +6,6 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService
 {
-    /// <summary>
-    /// One pass of this machine's catalog upkeep: purges, project closures, database expiry, the file audit and retried
-    /// cleanups of deleted databases.
-    /// </summary>
     internal async ValueTask RunMaintenanceAsync(CancellationToken cancellationToken)
     {
         if (!catalogGate.Value.IsOpen)

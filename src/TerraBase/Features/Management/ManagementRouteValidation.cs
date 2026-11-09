@@ -2,10 +2,8 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Validates management route identities after authorization and database-name resolution.</summary>
 public static class ManagementRouteValidation
 {
-    /// <summary>Refuses malformed identities before a management endpoint can read or mutate its resources.</summary>
     public static WebApplication UseTerraBaseManagementRouteValidation(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);

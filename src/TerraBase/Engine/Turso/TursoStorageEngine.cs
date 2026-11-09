@@ -33,6 +33,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal const string LockFileName = ".terrabase.lock";
     private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix, RevisionManifestFile.Suffix, RevisionManifestFile.StagedSuffix];
 
+    private static readonly string[] ReservedRootNames =
+        [LockFileName, .. new[] { SystemName, IntentName }.SelectMany(database => Sidecars.Prepend(string.Empty).Select(suffix => database + FileExtension + suffix))];
+
     private static readonly string[] ScratchDirectories = [".tmp", ".backup", ".import", ".exports"];
     internal DatabaseKeys Encryption { get; }
 
@@ -46,9 +49,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     private readonly List<TaskCompletionSource> _awaitingRelease = [];
 
-    internal int InitializationsAwaitingRelease => _awaitingRelease.Count;
-
-    internal bool CreationHeld => _creation.CurrentCount == 0;
     private readonly CancellationTokenSource _stopping = new();
 
     private const int MaxPendingIntents = 1000;
@@ -101,10 +101,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private long? _probeCompleted;
 
     internal TimeProvider ReadinessClock { get; set; } = TimeProvider.System;
-
-    internal Func<Task>? BeforeReadinessProbe { get; set; }
-
-    internal Task ReadinessProbeTask => Volatile.Read(ref _probe) ?? Task.CompletedTask;
 
     private static readonly StoragePressure UnknownStoragePressure = new(null, []);
     private StoragePressure _storagePressure = UnknownStoragePressure;
@@ -268,11 +264,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     {
         try
         {
-            if (BeforeReadinessProbe is { } beforeProbe)
-            {
-                await beforeProbe().ConfigureAwait(false);
-            }
-
             using var probe = new FileStream(
                 Path.Combine(_dataDirectory, $".ready.{EntityIds.New()}.probe"), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
             return true;
@@ -677,11 +668,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         DeleteIfEmpty(Path.Combine(_dataDirectory, key.Organization));
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
-                    if (existed)
-                    {
-
-                    }
-
                     return existed;
                 }
 
@@ -740,22 +726,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var link = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
-                var reservedRootName = entry.Directory.SequenceEqual(entry.RootDirectory)
-                    && (entry.FileName.SequenceEqual(LockFileName)
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension)
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + "-wal")
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + "-shm")
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + "-journal")
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + DatabaseKeys.Suffix)
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + RevisionManifestFile.Suffix)
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + RevisionManifestFile.StagedSuffix)
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension)
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-wal")
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-shm")
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-journal")
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + DatabaseKeys.Suffix)
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + RevisionManifestFile.Suffix)
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + RevisionManifestFile.StagedSuffix));
+                var reservedRootName = entry.Directory.SequenceEqual(entry.RootDirectory) && IsReservedRootName(ref entry);
                 return reservedRootName
                     ? entry.IsDirectory || link
                     : !entry.IsDirectory || link || CollisionDatabaseIdFromFileName(entry.FileName.ToString()) is not null;
@@ -819,18 +790,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
 
                     var openingToken = created ? CancellationToken.None : cancellationToken;
-                    openingSystem = new TursoDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
-                        RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
-                    {
-                        HostTime = HostTime,
-
-                        QueryBudget = QueryBudget,
-                        Checkpoint = _checkpoint,
-                        Ledger = Ledger,
-                        WriterHeld = _writerHeld,
-                        Transactions = _transactions,
-                        RewriteSteps = _rewriteSteps,
-                    };
+                    openingSystem = CreateSystemStore(path);
                     await openingSystem.BootstrapAsync(openingToken).ConfigureAwait(false);
 
                     _ = await Io.WithAdmissionAsync(async () =>
@@ -1143,10 +1103,14 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private static void CheckLayout(string dataDirectory, FileStream ownership)
     {
         var recorded = ownership.Length > 0;
-        if (recorded && RecordedFormat(ownership) is var format && format != StorageFormat.Id)
+        if (recorded)
         {
-            throw new TerraBaseConfigurationException(
-                $"data directory has storage format {format}; this build writes {StorageFormat.Id}; start with an empty data directory (no automatic migration)");
+            var format = RecordedFormat(ownership);
+            if (format != StorageFormat.Id)
+            {
+                throw new TerraBaseConfigurationException(
+                    $"data directory has storage format {format}; this build writes {StorageFormat.Id}; start with an empty data directory (no automatic migration)");
+            }
         }
 
         var entries = Directory.EnumerateFileSystemEntries(dataDirectory)
@@ -1184,11 +1148,21 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         return error.GetType() == typeof(IOException) && error.HResult is 11 or unchecked((int)0x80070020) or unchecked((int)0x80070021);
     }
 
+    private static bool IsReservedRootName(ref FileSystemEntry entry)
+    {
+        foreach (var reserved in ReservedRootNames)
+        {
+            if (entry.FileName.SequenceEqual(reserved))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsFlatDatabaseFile(string name) =>
-        !string.Equals(name, SystemName + FileExtension, StringComparison.Ordinal)
-        && !Sidecars.Any(sidecar => string.Equals(name, SystemName + FileExtension + sidecar, StringComparison.Ordinal))
-        && !string.Equals(name, IntentName + FileExtension, StringComparison.Ordinal)
-        && !Sidecars.Any(sidecar => string.Equals(name, IntentName + FileExtension + sidecar, StringComparison.Ordinal))
+        !ReservedRootNames.Contains(name)
         && (name.EndsWith(FileExtension, StringComparison.Ordinal)
             || Sidecars.Any(sidecar => name.EndsWith(FileExtension + sidecar, StringComparison.Ordinal)));
 
@@ -1575,11 +1549,20 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         return initialization;
     }
 
-    private async ValueTask<TursoDatabaseStore> InitializeStoreAsync(
-        (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
-    {
-        var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
-        var store = new TursoDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
+    private TursoDatabaseStore CreateSystemStore(string path) =>
+        new(SystemName, path, Pool, Io, _pragmas, null, Time, RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
+        {
+            HostTime = HostTime,
+            QueryBudget = QueryBudget,
+            Checkpoint = _checkpoint,
+            Ledger = Ledger,
+            WriterHeld = _writerHeld,
+            Transactions = _transactions,
+            RewriteSteps = _rewriteSteps,
+        };
+
+    private TursoDatabaseStore CreateTenantStore((string Organization, string Project, string Database) key, string path) =>
+        new(key.Database, path, Pool, Io, _pragmas, new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database), Time,
             RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
         {
             HostTime = HostTime,
@@ -1594,6 +1577,11 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             Revised = RaiseRevised,
             Leases = Leases,
         };
+
+    private async ValueTask<TursoDatabaseStore> InitializeStoreAsync(
+        (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
+    {
+        var store = CreateTenantStore(key, path);
         var published = false;
         var admitted = false;
         try

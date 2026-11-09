@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>GET …/databases/{database}</c>: reads a database.</summary>
 internal sealed class GetManagedDatabaseEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Database);
@@ -23,7 +21,6 @@ internal sealed class GetManagedDatabaseEndpoint(IManagementService management) 
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await management.GetDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), cancellationToken) switch
         {

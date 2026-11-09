@@ -53,10 +53,8 @@ internal static class FileStorageRoute
     }
 }
 
-/// <summary>Registers the always-on file API, logical usage and bounded upload cleanup.</summary>
 public static class FileStorageExtensions
 {
-    /// <summary>Adds project file buckets without feature flags or customer configuration.</summary>
     public static IServiceCollection AddTerraBaseFileStorage(this IServiceCollection services) => services
         .AddSingleton<IFileObjectStore, S3FileObjectStore>()
         .AddSingleton<IFileStorageUsage, FileStorageUsage>()

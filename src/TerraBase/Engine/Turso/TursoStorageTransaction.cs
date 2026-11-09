@@ -68,7 +68,6 @@ internal sealed partial class TursoStorageTransaction(
         var budget = new QueryBudget(store.Time, store.QueryBudget,
             !store.IsSystem && QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null,
             store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null);
-        _queryBudget = budget;
         session.Connection.SetFtsProgressHandler((work, bytes) =>
             cancellationToken.IsCancellationRequested || budget.Native(work, bytes));
 
@@ -268,7 +267,6 @@ internal sealed partial class TursoStorageTransaction(
 
             var result = new CommitResult(offset);
             Committed = result;
-            Follow("the after-commit hook", store.AfterTursoCommit);
             return result;
         }, cancellationToken).ConfigureAwait(false);
 

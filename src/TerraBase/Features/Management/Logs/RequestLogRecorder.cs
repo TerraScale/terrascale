@@ -21,12 +21,10 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     private const int MaxRecordBytes = 4096;
     private const int FlushPageEntries = 32;
     private const int FlushPageBytes = FlushPageEntries * MaxRecordBytes;
-    // Latest decoded records plus one page, overlapping raw pages, saved IDs, a concurrently evicted batch and serialization.
     private const long FlushBytes = (Kept + FlushPageEntries) * (2L * MaxRecordBytes + 2048)
         + 2L * FlushPageBytes + MaxSaved * 128L + Kept * MaxRecordBytes + 128 * 1024;
     private const long ReadBytes = 4 * 1024 * 1024;
     private const string Format = "alpha";
-    // Remote observations reach the catalog after a flush tick plus replication; cursor reads only cover requests this old.
     private static readonly TimeSpan Settle = TimeSpan.FromSeconds(30);
     private readonly Lock _gate = new();
     private readonly SemaphoreSlim _io = new(1, 1);
@@ -51,11 +49,9 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             IMemoryReservation reserved;
             if (entries?.Count == Kept)
             {
-                // The newest request takes the oldest's place and its admission: a busy database allocates no log or lease.
                 reserved = entries.RemoveOldest().Memory;
                 _count--;
             }
-            // Retained server diagnostics belong to the process, even inside the completing request's QoS context.
             else if (_count >= MaxPending || memory.TryReserve(MemoryLane.Foreground, MaxRecordBytes, tenant: null) is not { } admitted)
             {
                 RecordingLimited = true;
@@ -122,7 +118,6 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         {
             DatabaseOwner[] owners;
             int evictions;
-            // Bound losses during unrelated foreground pressure; later ticks can retry what remains.
             lock (_gate)
             {
                 owners = [.. _pending.Keys];
@@ -138,7 +133,6 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
                         if (await FlushOwnerAsync(owner, cancellationToken).ConfigureAwait(false)) { break; }
                     }
                     catch (QosMemoryException) { }
-                    // The failed attempt has released its batch and admission before any lease is discarded.
                     if (evictions-- == 0 || !DiscardOldest()) { return; }
                 }
             }
@@ -146,7 +140,6 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         finally { _io.Release(); }
     }
 
-    // Every retained request between the cursor and the settled boundary is returned, so the boundary is the next cursor.
     private DatabaseRequestLogs Page(DatabaseRequestLogs body, DatabaseRequestLog[] recent, string after)
     {
         var now = time.GetUtcNow();
@@ -175,7 +168,6 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         }
         var saved = await catalog.WriteAsync<bool>(async transaction =>
         {
-            // Deleting a database must not let a delayed observation recreate its state.
             if (await EngineManagementService.DatabaseTenantUncheckedAsync(transaction, owner.OrganizationId, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false) is null) { return true; }
             var kind = Records(owner.DatabaseId);
             var previous = new List<DatabaseRequestLog>(Kept);
@@ -184,14 +176,12 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             RecordPage page;
             do
             {
-                // A page may include an oversized first row; admit its actual bytes before the engine copies it.
                 using var pageAdmission = QosContext.Enter(tenant: null, budget: memory);
                 page = await transaction.ListAsync(kind, after, FlushPageEntries, FlushPageBytes, cancellationToken).ConfigureAwait(false);
                 foreach (var stored in page.Records)
                 {
                     if (savedIds.Count == MaxSaved)
                     {
-                        // Replication can temporarily join several bounded rings. Trim before admitting more.
                         foreach (var id in savedIds.Take(Kept)) { await transaction.DeleteAsync(kind, id, cancellationToken).ConfigureAwait(false); }
                         return false;
                     }
@@ -214,7 +204,6 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         lock (_gate)
         {
             var entries = _pending[owner];
-            // Requests recorded meanwhile are newer than the batch, and evictions take the oldest: the saved ones lead.
             while (entries.Count > 0 && flushed.Contains(entries.Oldest.Id.ToString()))
             {
                 entries.RemoveOldest().Memory.Dispose();
@@ -297,7 +286,6 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         finally { _io.Release(); }
     }
 
-    // A recorded request as plain values; its log, id string included, is built only when it is saved or read.
     private readonly record struct Entry(Ulid Id, DateTimeOffset Time, string Method, string Route, int Status, double LatencyMs, long Operations,
         bool IsQuery, string? RequestId, long Statements, long StatementErrors, IMemoryReservation Memory)
     {
@@ -305,7 +293,6 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             new(Id.ToString(), Time, region, Method, Route, Status, LatencyMs, Operations, IsQuery, RequestId, Statements, StatementErrors);
     }
 
-    // A database's unsaved requests, oldest first, in a circular array of at most Kept entries reused in place.
     private sealed class Ring
     {
         private Entry[] _entries = new Entry[4];

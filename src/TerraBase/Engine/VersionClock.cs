@@ -6,10 +6,8 @@ namespace TerraBase.Engine;
 /// </summary>
 public static class VersionClock
 {
-    /// <summary>Last allocatable local offset and largest accepted system version.</summary>
     public const long MaxVersion = long.MaxValue - (1L << 32);
 
-    /// <summary>Refuses local allocation at terminal capacity.</summary>
     public static void EnsureCanAllocate(long head)
     {
         if (head >= MaxVersion)

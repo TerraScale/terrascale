@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary>PUT a project's customer backup destination.</summary>
 internal sealed class SetBackupDestinationEndpoint(IManagementService management, IProjectBackupDestinations destinations) : Endpoint<ProjectBackupDestinationRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(BackupDestinationRoute.Path);
@@ -26,7 +24,6 @@ internal sealed class SetBackupDestinationEndpoint(IManagementService management
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(ProjectBackupDestinationRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

@@ -29,15 +29,11 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        // A restored catalog cannot authorize deleting files before it has been verified, and a cell's gate opens only once
-        // its peers verified the catalog, after this start: recover then. Skipping it left every abandoned creation's file
-        // on disk and audited none (TS-994). Only intents naming a file here now: no creation starts before the gate opens,
-        // and a peer's creation intent, replicated here, names no local file.
+        // Recovery must run once the gate opens, or abandoned creations stay on disk unaudited (TS-994).
         HashSet<string> local = [.. engine.EnumerateDatabaseFiles(cancellationToken).Select(file => file.Database?.DatabaseId).OfType<string>()];
         _deferredRecovery = RecoverOnceOpenAsync(local);
     }
 
-    // Bounded as the recovery at start is; a stop before the gate opened leaves it to the next start.
     private async Task RecoverOnceOpenAsync(IReadOnlySet<string> local)
     {
         try
@@ -53,10 +49,8 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    // Finishes the cleanup intents (all, or those of `only`) and audits the files, once the catalog is verified.
     private async Task RecoverAsync(IReadOnlySet<string>? only, CancellationToken cancellationToken)
     {
-        // Only the current catalog owns cleanup intents; older formats are refused.
         var (_, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
         var retried = false;
         string? after = null;
@@ -64,7 +58,6 @@ internal sealed partial class EngineManagementService
         {
             while (!retried)
             {
-                // One bounded page at a time; release the catalog connection before deleting storage.
                 var page = await ReadCatalogAsync(transaction => CatalogTables.PendingCleanupsAsync(transaction, after, CatalogPage, cancellationToken), cancellationToken)
                     .ConfigureAwait(false);
                 if (page.Items.Count == 0)
@@ -82,7 +75,6 @@ internal sealed partial class EngineManagementService
                     checkpoint("recovery.intent", storage);
                     if (await FinishDatabaseCleanupAsync(storage, cancellationToken, intent: storage).ConfigureAwait(false) is Unavailable)
                     {
-                        // An unavailable or unsupported catalog cannot authorize an audit against this version either.
                         return;
                     }
 
@@ -90,8 +82,6 @@ internal sealed partial class EngineManagementService
                             await CatalogTables.PendingCleanupAsync(transaction, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null,
                             cancellationToken).ConfigureAwait(false))
                     {
-                        // A still-closing copy or withheld receipt is retried by convergence without spinning during startup;
-                        // the file audit below still runs.
                         retried = true;
                         break;
                     }
@@ -126,7 +116,6 @@ internal sealed partial class EngineManagementService
             : null);
     }
 
-    // A database of the project, or a backup snapshot its organization still tracks there.
     public ValueTask<RegisteredDatabaseResult> RegisteredFileAsync(TenantContext storage, CancellationToken cancellationToken) =>
         !catalogGate.Value.IsOpen ? ValueTask.FromResult<RegisteredDatabaseResult>(UnreadableCatalog) :
         ReadAsync<RegisteredDatabaseResult>(async transaction => await IsRegisteredAsync(transaction, storage, cancellationToken).ConfigureAwait(false),
@@ -145,8 +134,6 @@ internal sealed partial class EngineManagementService
     private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(
         TenantContext storage, CancellationToken cancellationToken, bool abandonedCreation = false, TenantContext? intent = null)
     {
-        // A paged intent can be cleared by registration, or replaced, before recovery reaches it.
-        // Revalidate its identity and registration in one snapshot before authorizing either deletion or conflict.
         var registered = await ReadAsync<CleanupRegistration>(async transaction =>
         {
             if (intent is not null && !SameCleanupIntent(
@@ -164,7 +151,6 @@ internal sealed partial class EngineManagementService
 
         if (registered is Done)
         {
-            // Stale work owns neither the files nor any current intent's engine reservation.
             return new Done();
         }
 
@@ -172,13 +158,9 @@ internal sealed partial class EngineManagementService
         {
             if (abandonedCreation)
             {
-                // Replication can register the prepared copy before its local create is rejected.
                 return await ClearDatabaseCleanupAsync(storage, erasureVerified: false, cancellationToken, intent).ConfigureAwait(false);
             }
 
-            // A peer can publish its creation intent before another peer's registration reaches this snapshot.
-            // Preserve both the live copy and the shared intent. Neither a cleanup nor an absence receipt is justified;
-            // startup's bounded retry and background convergence revisit it after authoritative deletion arrives.
             return new Done();
         }
 
@@ -223,7 +205,6 @@ internal sealed partial class EngineManagementService
 
                 if (!await TryRecordLocalPurgeAbsenceAsync(transaction, storage, erasureVerified, cancellationToken).ConfigureAwait(false))
                 {
-                    // Authority can arrive after the earlier read; retain the intent until verified on retry.
                     return false;
                 }
 
@@ -243,7 +224,6 @@ internal sealed partial class EngineManagementService
         }
         catch
         {
-            // Intent deletion can commit before transaction disposal reports an error.
             await ReleaseUnrecordedIntentAsync(storage).ConfigureAwait(false);
             throw;
         }
@@ -259,7 +239,6 @@ internal sealed partial class EngineManagementService
             static error => error, CancellationToken.None).ConfigureAwait(false);
         if (recorded is bool exists && !exists)
         {
-            // No durable intent remains to retain the destination reservation.
             await engine.CompleteDatabaseIntentAsync(storage, CancellationToken.None).ConfigureAwait(false);
         }
     }

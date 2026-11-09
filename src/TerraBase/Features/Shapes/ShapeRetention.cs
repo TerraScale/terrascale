@@ -4,7 +4,6 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>Local sealed data maintenance; FR-20 supplies stores and invokes one bounded pass at a time.</summary>
 internal interface IShapeRetention
 {
     ValueTask<long> GetFloorAsync(IDatabaseStore store, string handle, CancellationToken cancellationToken);
@@ -16,7 +15,6 @@ internal interface IShapeRetention
     ValueTask<int> DropHandleAsync(IDatabaseStore store, string handle, CancellationToken cancellationToken);
 }
 
-/// <summary>Storage operations kept on the engine's transaction runner, without exposing the native driver to the feature.</summary>
 internal interface IShapeRetentionTransaction
 {
     ValueTask<long> ReadShapeFloorAsync(string handle, CancellationToken cancellationToken);
@@ -58,7 +56,6 @@ internal sealed class ShapeRetention(TimeProvider time, IShapeStorage storage,
         }
         if (onTrimmed is not null)
         {
-            // The floor is read after the trim's writer is disposed; the callback's failures belong to its owner.
             await onTrimmed(store, handle, await GetFloorAsync(store, handle, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
         }
         return deleted;

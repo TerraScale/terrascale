@@ -2,7 +2,6 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
@@ -126,17 +125,11 @@ public sealed class ManagementApiTests
         await Assert.That(keyError.GetProperty("message").GetString())
             .IsEqualTo("This is an API key; exchange it at the token endpoint and send the short-lived access token instead.");
         await Assert.That(keyBody).DoesNotContain(keyShaped);
-        // The internal listener takes only the platform operator, never a ts-auth token.
         await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(onAdmin.Headers.WwwAuthenticate).IsEmpty();
-        // A sign-in token without project_id is not a data credential.
         await Assert.That(noDataAccess.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
-    // Seeds current-format system records after real-server bootstrap.
-    // In a data directory a server of this build already started on: an unprepared directory with files is refused.
-    // Every record of the _system database, as "prefix|id|body" lines in key order.
-    // Every route under one organization from `from` down, addressing the given project and database ids.
     private static async Task<List<HttpStatusCode>> AllStatusesAsync(
         HttpClient client, string organization, string project, string database, Level from = Level.Organization)
     {

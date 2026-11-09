@@ -2,10 +2,6 @@ namespace TerraBase.Features.Backup;
 
 internal readonly record struct BackupLogSummary(long Bytes, long Creates, bool Boundary, long? EndMark);
 
-/// <summary>
-/// Measures the ChangeLog wire grammar while decoding, without retaining strings or row bodies. This is admission
-/// metadata only: engine replay still validates SQL, transaction boundaries, clocks and the exact restore cut.
-/// </summary>
 internal sealed class BackupLogSummaryStream(DateTimeOffset at) : BackupCountingStream
 {
     private enum Part { Kind, Length, Skip, Time }

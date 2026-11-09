@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text.Json;
-using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Shapes;

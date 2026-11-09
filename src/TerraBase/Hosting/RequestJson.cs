@@ -8,10 +8,8 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Hosting;
 
-/// <summary>The boundary validator for client JSON: request bodies deserialize strictly through <see cref="Read{T}"/>.</summary>
 public static class RequestJson
 {
-    /// <summary>The read depth bound for stored JSON.</summary>
     public const int StoredMaxDepth = StrictJson.MaxStoredDepth;
 
     internal static JsonDocumentOptions StoredJsonOptions { get; } = new()
@@ -32,13 +30,8 @@ public static class RequestJson
         TypeInfoResolver = TerraBaseJsonContext.Default.WithAddedModifier(RejectNullElements),
     };
 
-    /// <summary>The rule <see cref="IsText"/> checks, as its failure message.</summary>
     public const string TextRule = "strings must be valid UTF-8 without lone UTF-16 surrogate escapes";
 
-    /// <summary>
-    /// Deserializes a request body: exact member names, no unknown or duplicate members, numbers as numbers and no
-    /// null list elements. Any failure is a 400 with <paramref name="code"/>.
-    /// </summary>
     public static Valid<T> Read<T>(ReadOnlySpan<byte> json, string code) =>
         TryRead<T>(json, out var value, out var rule) ? value : new Validation(rule, code);
 
@@ -58,10 +51,6 @@ public static class RequestJson
         }
     }
 
-    /// <summary>
-    /// Whether every string and member name is valid UTF-8 without lone UTF-16 surrogate escapes. Reading a token alone
-    /// does not validate its text; decoding it does. Malformed JSON passes: the parser that reads it reports it.
-    /// </summary>
     public static bool IsText(ReadOnlySpan<byte> json)
     {
         var reader = new Utf8JsonReader(json);

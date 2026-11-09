@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
@@ -35,9 +36,6 @@ internal sealed partial class TursoDatabaseStore(
         command.CommandText = "SELECT coalesce((SELECT max(change_id) FROM turso_cdc) - (SELECT min(change_id) FROM turso_cdc) + 1, 0);";
         Volatile.Write(ref _retainedCdcRows, (long)command.ExecuteScalar()!);
     }
-
-    internal TursoDatabaseStore(string name, string path, TursoSessionPool pool, TursoIoPool io, string pragmas, DatabaseKeys encryption, TimeProvider? time = null, Action? committed = null)
-        : this(name, path, pool, io, pragmas, null, time, committed, encryption: encryption) { }
 
     private const int SchemaVersion = 1;
 
@@ -164,8 +162,6 @@ internal sealed partial class TursoDatabaseStore(
     internal static readonly TimeSpan DefaultQueryBudget = TimeSpan.FromSeconds(TerraBaseOptions.DefaultQueryBudgetSeconds);
 
     internal TimeSpan QueryBudget { get; init; } = DefaultQueryBudget;
-
-    internal int IdleCount => pool.IdleCountOf(this);
 
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(
         bool write, CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
@@ -460,14 +456,18 @@ internal sealed partial class TursoDatabaseStore(
         }
         finally
         {
-            if (logger is not null && Time.GetElapsedTime(started) is var waited && waited >= SlowWriterWait)
+            if (logger is not null)
             {
-                var holder = Volatile.Read(ref _writerHolder) ?? "nothing recorded";
-                var holderAt = CallSite(Volatile.Read(ref _writerFile), Volatile.Read(ref _writerLine));
-                var writerAt = CallSite(file, line);
-                var held = Time.GetElapsedTime(Volatile.Read(ref _writerTaken));
+                var waited = Time.GetElapsedTime(started);
+                if (waited >= SlowWriterWait)
+                {
+                    var holder = Volatile.Read(ref _writerHolder) ?? "nothing recorded";
+                    var holderAt = CallSite(Volatile.Read(ref _writerFile), Volatile.Read(ref _writerLine));
+                    var writerAt = CallSite(file, line);
+                    var held = Time.GetElapsedTime(Volatile.Read(ref _writerTaken));
 
-                logger.ZLogWarning($"Waited {Math.Round(waited.TotalSeconds, 1):@Waited} s for a database's writer {outcome:@Outcome}: {writer:@Writer} ({writerAt:@WriterAt}) queued behind {holder:@Holder} ({holderAt:@HolderAt}), which had held it for {Math.Round(held.TotalSeconds, 1):@Held} s and was {(WriteLane.Running ? "running a storage call" : "between storage calls"):@State}");
+                    logger.ZLogWarning($"Waited {Math.Round(waited.TotalSeconds, 1):@Waited} s for a database's writer {outcome:@Outcome}: {writer:@Writer} ({writerAt:@WriterAt}) queued behind {holder:@Holder} ({holderAt:@HolderAt}), which had held it for {Math.Round(held.TotalSeconds, 1):@Held} s and was {(WriteLane.Running ? "running a storage call" : "between storage calls"):@State}");
+                }
             }
         }
 
@@ -512,7 +512,8 @@ internal sealed partial class TursoDatabaseStore(
             var held = TimeSpan.Zero;
             var holder = _writerHolder;
             var holderAt = CallSite(_writerFile, _writerLine);
-            if (_holdStarted is var started and not 0)
+            var started = _holdStarted;
+            if (started != 0)
             {
                 _holdStarted = 0;
                 held = Time.GetElapsedTime(started);
@@ -785,11 +786,12 @@ internal sealed partial class TursoDatabaseStore(
 
     private long _fileSeenAt;
     private long _fileSeenEpoch = -1;
+    private const long FileSeenWindow = 1000;
 
     internal bool FilePresent(long epoch)
     {
         var now = Environment.TickCount64;
-        if (Volatile.Read(ref _fileSeenEpoch) == epoch && now - Volatile.Read(ref _fileSeenAt) < 1000)
+        if (Volatile.Read(ref _fileSeenEpoch) == epoch && now - Volatile.Read(ref _fileSeenAt) < FileSeenWindow)
         {
             return true;
         }
@@ -874,14 +876,6 @@ internal sealed partial class TursoDatabaseStore(
     private readonly Lock _queueGate = new();
     private bool _batching;
 
-    private int _batched;
-
-    internal int BatchedWrites => Volatile.Read(ref _batched);
-
-    internal Action? AfterGroupCommit { get; set; }
-
-    internal Action? AfterTursoCommit { get; set; }
-
     internal int Statistics => Volatile.Read(ref _statistics);
 
     internal int QueuedWrites
@@ -963,12 +957,9 @@ internal sealed partial class TursoDatabaseStore(
                     _batching = false;
                     return;
                 }
-
-                _batched = batch.Count;
             }
 
             deferred = await io.WithAdmissionAsync(() => CommitBatchAsync(batch)).ConfigureAwait(false);
-            Volatile.Write(ref _batched, 0);
         }
     }
 
@@ -1052,7 +1043,6 @@ internal sealed partial class TursoDatabaseStore(
                 if (kept.Count > 0)
                 {
                     commit = await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
-                    AfterGroupCommit?.Invoke();
                 }
             }
         }
@@ -1302,7 +1292,7 @@ internal sealed partial class TursoDatabaseStore(
     {
         var version = Convert.ToInt32(
             Scalar(connection, transaction, "PRAGMA user_version;"),
-            System.Globalization.CultureInfo.InvariantCulture);
+            CultureInfo.InvariantCulture);
         return version is 0 or SchemaVersion
             ? version
             : throw new InvalidOperationException(

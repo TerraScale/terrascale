@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Net;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 

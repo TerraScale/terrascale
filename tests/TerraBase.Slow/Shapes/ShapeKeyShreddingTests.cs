@@ -1,7 +1,6 @@
 using System.Buffers.Binary;
 using System.Buffers.Text;
 using System.Net;
-using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -9,7 +8,6 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Shapes;
 

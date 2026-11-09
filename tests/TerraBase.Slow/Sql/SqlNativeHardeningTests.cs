@@ -10,7 +10,6 @@ using TerraBase.Features.Qos;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Slow.Sql;

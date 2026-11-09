@@ -1,8 +1,11 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Data.Common;
 using System.Globalization;
 using System.Text;
 using Turso;
+using Turso.Data.Sqlite;
+using Turso.Raw.Public;
 
 namespace TerraBase.Engine.Turso;
 
@@ -31,11 +34,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     public async ValueTask AcknowledgeAsync(long position, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(position);
-        if (BeforeTrim is { } beforeTrim)
-        {
-            await beforeTrim(cancellationToken).ConfigureAwait(false);
-        }
-
         await _store.WithWriterAsync(writer =>
         {
             if (position > _anchor)
@@ -52,14 +50,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     private Dictionary<long, (string Type, string Name)> _schema = [];
 
     private (long First, long Latest, bool Ordered)? _open;
-
-    internal Func<CancellationToken, Task>? AfterSnapshotPinned { get; set; }
-
-    internal Func<CancellationToken, Task>? BeforeTrim { get; set; }
-
-    internal Func<CancellationToken, Task>? BeforeSnapshotEnd { get; set; }
-
-    internal Func<CancellationToken, Task>? AfterSnapshotBegin { get; set; }
 
     private TursoChangeTap(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, TursoConnection reader, int lineage)
     {
@@ -130,7 +120,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
             return read;
         }).ConfigureAwait(false);
     }
-
     public async ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(destination);
@@ -152,11 +141,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
                 await lane.RunAsync(() => Execute("BEGIN;"), cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    if (AfterSnapshotBegin is { } begun)
-                    {
-                        await begun(cancellationToken).ConfigureAwait(false);
-                    }
-
                     await lane.RunAsync(() => Execute("SELECT count(*) FROM sqlite_schema;"), cancellationToken).ConfigureAwait(false);
                 }
                 catch
@@ -182,11 +166,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
 
             try
             {
-                if (AfterSnapshotPinned is { } pinned)
-                {
-                    await pinned(cancellationToken).ConfigureAwait(false);
-                }
-
                 var targetConnection = await _store.Encryption.CreateAsync(snapshotPath, _io, cancellationToken).ConfigureAwait(false);
                 await _io.RunAsync(() => TursoCopy.Write(_reader, targetConnection, cancellationToken), cancellationToken).ConfigureAwait(false);
             }
@@ -203,11 +182,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     {
         try
         {
-            if (BeforeSnapshotEnd is { } ending)
-            {
-                await ending(CancellationToken.None).ConfigureAwait(false);
-            }
-
             await _io.RunAsync(() => Execute("ROLLBACK;"), CancellationToken.None).ConfigureAwait(false);
         }
         catch
@@ -441,7 +415,7 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     private bool Reset(TursoSession writer) => Reset(writer.Connection);
 
-    private bool Reset(System.Data.Common.DbConnection connection, bool publish = true)
+    private bool Reset(DbConnection connection, bool publish = true)
     {
         using (var newest = connection.CreateCommand())
         {
@@ -692,22 +666,6 @@ internal static class ChangeLog
                 open = kind is Upsert or Delete or Create or Drop;
                 switch (kind)
                 {
-                    case Upsert:
-                        ReadString(segment);
-                        ReadInt64(segment);
-                        ReadBytes(segment);
-                        break;
-                    case Delete:
-                        ReadString(segment);
-                        ReadInt64(segment);
-                        break;
-                    case Create:
-                        ReadString(segment);
-                        break;
-                    case Drop:
-                        ReadString(segment);
-                        ReadString(segment);
-                        break;
                     case Commit when !reached:
                         return new(before, false, previous, "a transaction it needs has no recorded time (its log predates them, or the clock went back within it)");
                     case Commit:
@@ -741,7 +699,8 @@ internal static class ChangeLog
                         before = reached ? before : segment.Position;
                         break;
                     default:
-                        throw new InvalidDataException("a change log record has an unknown kind");
+                        SkipPayload(segment, kind);
+                        break;
                 }
             }
 
@@ -762,35 +721,13 @@ internal static class ChangeLog
             while ((kind = segment.ReadByte()) >= 0)
             {
                 mark = null;
-                switch (kind)
+                if (kind == ReadMark)
                 {
-                    case Upsert:
-                        ReadString(segment);
-                        ReadInt64(segment);
-                        ReadBytes(segment);
-                        break;
-                    case Delete:
-                        ReadString(segment);
-                        ReadInt64(segment);
-                        break;
-                    case Create:
-                        ReadString(segment);
-                        break;
-                    case Drop:
-                        ReadString(segment);
-                        ReadString(segment);
-                        break;
-                    case Commit:
-                        break;
-                    case TimedCommit:
-                        ReadInt64(segment);
-                        ReadInt64(segment);
-                        break;
-                    case ReadMark:
-                        mark = DateTimeOffset.FromUnixTimeMilliseconds(ReadInt64(segment));
-                        break;
-                    default:
-                        throw new InvalidDataException("a change log record has an unknown kind");
+                    mark = DateTimeOffset.FromUnixTimeMilliseconds(ReadInt64(segment));
+                }
+                else
+                {
+                    SkipPayload(segment, kind);
                 }
             }
 
@@ -799,6 +736,40 @@ internal static class ChangeLog
         catch (Exception error) when (error is EndOfStreamException or DecoderFallbackException)
         {
             throw new InvalidDataException("a change log is malformed", error);
+        }
+    }
+
+    private static void SkipPayload(Stream segment, int kind)
+    {
+        switch (kind)
+        {
+            case Upsert:
+                ReadString(segment);
+                ReadInt64(segment);
+                ReadBytes(segment);
+                break;
+            case Delete:
+                ReadString(segment);
+                ReadInt64(segment);
+                break;
+            case Create:
+                ReadString(segment);
+                break;
+            case Drop:
+                ReadString(segment);
+                ReadString(segment);
+                break;
+            case Commit:
+                break;
+            case TimedCommit:
+                ReadInt64(segment);
+                ReadInt64(segment);
+                break;
+            case ReadMark:
+                ReadInt64(segment);
+                break;
+            default:
+                throw new InvalidDataException("a change log record has an unknown kind");
         }
     }
 
@@ -909,7 +880,7 @@ internal static class ChangeLog
 
                 return true;
             }
-            catch (Exception error) when (error is global::Turso.Raw.Public.TursoException or global::Turso.Data.Sqlite.SqliteException or InvalidDataException or EndOfStreamException
+            catch (Exception error) when (error is TursoException or SqliteException or InvalidDataException or EndOfStreamException
                 or DecoderFallbackException)
             {
                 return false;

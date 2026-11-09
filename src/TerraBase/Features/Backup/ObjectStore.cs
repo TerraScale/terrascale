@@ -16,48 +16,29 @@ using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>An object in the bucket.</summary>
-/// <param name="Key">Its key, or empty for an unusable listing entry that still consumes scan budgets.</param>
-/// <param name="Size">Its stored bytes.</param>
 internal readonly record struct StoredObject(string Key, long Size);
 
-/// <summary>The backup bucket: whole objects addressed by key.</summary>
 internal interface IObjectStore
 {
-    /// <summary>
-    /// Uploads <paramref name="content"/> (seekable, read from its position) as <paramref name="key"/>, replacing any object there.
-    /// A file larger than one part uploads in parts and keeps its position.
-    /// </summary>
+    // Content is seekable and read from its position; a file larger than one part uploads in parts and keeps its position.
     Task PutAsync(string key, Stream content, CancellationToken cancellationToken);
 
-    /// <summary>Streams <paramref name="key"/> to <paramref name="read"/>; <see langword="false"/> when it does not exist.</summary>
     Task<bool> ReadAsync(string key, Func<Stream, CancellationToken, Task> read, CancellationToken cancellationToken);
 
-    /// <summary>Lists the objects under <paramref name="prefix"/> in key order, after <paramref name="startAfter"/> when set.</summary>
-    /// <remarks>Unusable entries have an empty key and zero size so raw-item scan budgets still count them.</remarks>
+    // Unusable entries have an empty key and zero size so raw-item scan budgets still count them.
     IAsyncEnumerable<StoredObject> ListAsync(string prefix, string? startAfter, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Deletes <paramref name="key"/>; deleting a missing object succeeds. <see langword="false"/> when the bucket's retention
-    /// rule (an object lock) still protects it.
-    /// </summary>
+    // Deleting a missing object succeeds; false means the bucket's retention rule (an object lock) still protects it.
     Task<bool> DeleteAsync(string key, CancellationToken cancellationToken);
 }
 
-/// <summary>The bucket an operation addressed does not exist: the configured bucket was deleted or never created.</summary>
 internal sealed class ObjectStoreBucketMissingException(string bucket) : IOException($"the backup bucket does not exist: {bucket}")
 {
-    /// <summary>The bucket an operation addressed.</summary>
     public string Bucket => bucket;
 }
 
-/// <summary>
-/// An S3-compatible bucket through the AWS SDK, configured for S3-compatible stores such as Tigris: path-style
-/// addressing, its own signing region, and checksums only where S3 requires them (not every store accepts the newer defaults).
-/// </summary>
 internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 {
-    /// <summary>The named <see cref="HttpClient"/> every request goes through.</summary>
     public const string HttpClientName = "backup-s3";
 
     public const string CustomerHttpClientName = "backup-s3-customer";
@@ -126,7 +107,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         };
     }
 
-    /// <summary>The platform bucket's count of deleted unproven snapshots, shared with the customer buckets' stores.</summary>
     internal Counter<long>? UnprovenDeleted { get; }
 
     internal static Counter<long> BucketMissingCounter(IMeterFactory meters) =>
@@ -168,6 +148,25 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     // Fifteen minutes, plus a minute for each further part (a sustained ~2 MiB/s).
     private static TimeSpan UploadDeadline(long parts) => RequestTimeout + TimeSpan.FromMinutes(parts - 1);
+
+    // Customer requests are untrusted endpoints: every whole operation runs under one wall-clock deadline that also
+    // covers streamed bodies the SDK's response-header timeout does not bound. Platform requests only follow the caller.
+    private CustomerDeadline CustomerStop(CancellationToken cancellationToken) => new(
+        _customer ? new CancellationTokenSource(RequestTimeout, _time) : null, cancellationToken);
+
+    private readonly struct CustomerDeadline(CancellationTokenSource? deadline, CancellationToken cancellationToken) : IDisposable
+    {
+        private readonly CancellationTokenSource? deadlineSource = deadline;
+        private readonly CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline?.Token ?? cancellationToken);
+
+        public CancellationToken Token => linked.Token;
+
+        public void Dispose()
+        {
+            linked.Dispose();
+            deadlineSource?.Dispose();
+        }
+    }
 
     private async Task PutPartsAsync(string key, SafeFileHandle file, long start, long length, int parts, CancellationToken cancellationToken)
     {
@@ -291,10 +290,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         }
     }
 
-    /// <summary>
-    /// Aborts the multipart uploads under <paramref name="prefix"/> initiated more than <see cref="StaleUpload"/> ago: left
-    /// behind when their own abort failed or their node stopped. Best effort: a failure is logged and the next run retries.
-    /// </summary>
     public async Task AbortStaleUploadsAsync(string prefix, CancellationToken cancellationToken)
     {
         var request = new ListMultipartUploadsRequest { BucketName = _bucket, Prefix = prefix };
@@ -347,11 +342,8 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
     public async Task<bool> ReadAsync(string key, Func<Stream, CancellationToken, Task> read, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(read);
-        // The SDK's response-header timeout does not cover streamed bodies. Pass the operation deadline into every
-        // body read, including key retrieval and decoding, so cancellation ends the underlying I/O before returning.
-        using var deadline = _customer ? new CancellationTokenSource(RequestTimeout, _time) : null;
-        using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        cancellationToken = stop?.Token ?? cancellationToken;
+        using var deadline = CustomerStop(cancellationToken);
+        cancellationToken = deadline.Token;
         GetObjectResponse response;
         try
         {
@@ -385,9 +377,8 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     public async IAsyncEnumerable<StoredObject> ListAsync(string prefix, string? startAfter, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        using var deadline = _customer ? new CancellationTokenSource(RequestTimeout, _time) : null;
-        using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        cancellationToken = stop?.Token ?? cancellationToken;
+        using var deadline = CustomerStop(cancellationToken);
+        cancellationToken = deadline.Token;
         // Leave room for metadata after sixfold XML expansion of 1024-byte keys within the customer 2 MiB limit.
         var request = new ListObjectsV2Request { BucketName = _bucket, Prefix = prefix, StartAfter = startAfter, MaxKeys = _customer ? 250 : 1000 };
         if (!_customer && prefix.StartsWith("catalog-anchor/", StringComparison.Ordinal))
@@ -450,9 +441,8 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken)
     {
-        using var deadline = _customer ? new CancellationTokenSource(RequestTimeout, _time) : null;
-        using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        cancellationToken = stop?.Token ?? cancellationToken;
+        using var deadline = CustomerStop(cancellationToken);
+        cancellationToken = deadline.Token;
         try
         {
             await SafeAsync(_s3.DeleteObjectAsync(_bucket, key, cancellationToken)).ConfigureAwait(false);
@@ -488,7 +478,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         return rightRunes.MoveNext() ? -1 : 0;
     }
 
-    /// <summary>The Tigris snapshots of the bucket (<c>X-Tigris-Snapshot</c> on ListBuckets), by version.</summary>
     public async Task<IReadOnlyList<(string Version, DateTimeOffset At)>> ListSnapshotsAsync(CancellationToken cancellationToken)
     {
         var response = await _s3.ListBucketsAsync(Tigris(new ListBucketsRequest(), "X-Tigris-Snapshot", _bucket), cancellationToken).ConfigureAwait(false);
@@ -497,7 +486,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
             new DateTimeOffset(DateTime.SpecifyKind(bucket.CreationDate ?? DateTime.MinValue, DateTimeKind.Utc))))];
     }
 
-    /// <summary>Whether the bucket has Tigris snapshots enabled (HeadBucket's <c>X-Tigris-Enable-Snapshot</c>).</summary>
     public async Task<bool> SnapshotsEnabledAsync(CancellationToken cancellationToken)
     {
         var request = new HeadBucketRequest { BucketName = _bucket };
@@ -521,11 +509,9 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         return enabled == "true";
     }
 
-    /// <summary>Takes a Tigris snapshot of the whole bucket (<c>X-Tigris-Snapshot: true</c> on CreateBucket).</summary>
     public Task TakeSnapshotAsync(CancellationToken cancellationToken) =>
         _s3.PutBucketAsync(Tigris(new PutBucketRequest { BucketName = _bucket }, "X-Tigris-Snapshot", "true"), cancellationToken);
 
-    /// <summary>Deletes one Tigris snapshot (<c>X-Tigris-Snapshot-Version</c> on DeleteBucket).</summary>
     public async Task DeleteSnapshotAsync(string version, CancellationToken cancellationToken)
     {
         // Without the version header this is a bucket delete, which no TerraBase code path may ever issue: a whole-bucket
@@ -539,7 +525,6 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         await _s3.DeleteBucketAsync(Tigris(new DeleteBucketRequest { BucketName = _bucket }, "X-Tigris-Snapshot-Version", version), cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Logs that a bucket-deleting request was refused before it was sent.</summary>
     private static readonly Action<ILogger, Exception?> BucketDeleteRefusal = LoggerMessage.Define(
         LogLevel.Error, new EventId(2, "BucketDeleteRefused"), "A bucket delete was refused: TerraBase never deletes its backup bucket");
 
@@ -691,5 +676,4 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
     }
 }
 
-/// <summary>A bucket-deleting request was refused before it was sent: TerraBase never deletes its backup bucket (P0 2026-11-03).</summary>
 internal sealed class BucketDeleteForbiddenException(string message) : Exception(message);

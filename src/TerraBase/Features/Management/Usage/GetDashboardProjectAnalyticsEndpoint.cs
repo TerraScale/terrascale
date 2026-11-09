@@ -6,10 +6,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>
-/// <c>GET /v1/usage/projects/{project}/analytics</c>: the public project analytics for the dashboard. Served only on the internal
-/// listener, which requires the shared peer credential, as <c>GET /v1/usage/allowances</c> is.
-/// </summary>
 internal sealed class GetDashboardProjectAnalyticsEndpoint(IProjectCatalog catalog, IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     internal const string Actor = "ts-dashboard";

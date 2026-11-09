@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace TerraBase.Features.Replicas;
 
-/// <summary>Counts customer and catalog requests, including direct authenticated service traffic outside the edge.</summary>
 internal sealed class RegionalIngress(InternalCredential credential) : IDisposable
 {
     private readonly Lock _gate = new();

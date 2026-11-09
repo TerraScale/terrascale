@@ -9,18 +9,24 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed record ReplicaHeldNotice(string OrganizationId, string ProjectId, string DatabaseId, string Region, string Revision);
 
+internal static class DatabaseRevisionExtensions
+{
+    extension(DatabaseRevision revision)
+    {
+        public int CompareAcrossIncarnations(DatabaseRevision other)
+        {
+            var incarnation = revision.Incarnation.CompareTo(other.Incarnation);
+            return incarnation != 0 ? incarnation : DatabaseRevision.Compare(revision, other);
+        }
+    }
+}
+
 internal sealed class ReplicaHolds(TerraBaseOptions options, IReplicaCatalog catalog, IDatabaseRevisions revisions, IRegionCatalog regions)
 {
     internal static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     private readonly ConcurrentDictionary<(string Database, string Region), DatabaseRevision> _held = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource> _changed = new(StringComparer.Ordinal);
-
-    internal static int Compare(DatabaseRevision left, DatabaseRevision right)
-    {
-        var incarnation = left.Incarnation.CompareTo(right.Incarnation);
-        return incarnation != 0 ? incarnation : left.Generation != right.Generation ? left.Generation.CompareTo(right.Generation) : left.Frame.CompareTo(right.Frame);
-    }
 
     public void Held(ReplicaHeldNotice notice)
     {
@@ -30,7 +36,7 @@ internal sealed class ReplicaHolds(TerraBaseOptions options, IReplicaCatalog cat
             return;
         }
 
-        _ = _held.AddOrUpdate((notice.DatabaseId, notice.Region), revision, (_, known) => Compare(revision, known) > 0 ? revision : known);
+        _ = _held.AddOrUpdate((notice.DatabaseId, notice.Region), revision, (_, known) => revision.CompareAcrossIncarnations(known) > 0 ? revision : known);
         if (_changed.TryRemove(notice.DatabaseId, out var changed))
         {
             changed.TrySetResult();
@@ -58,7 +64,7 @@ internal sealed class ReplicaHolds(TerraBaseOptions options, IReplicaCatalog cat
         while (true)
         {
             var changed = _changed.GetOrAdd(id, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
-            if (waiting.All(region => _held.TryGetValue((id, region), out var held) && Compare(held, target) >= 0))
+            if (waiting.All(region => _held.TryGetValue((id, region), out var held) && held.CompareAcrossIncarnations(target) >= 0))
             {
                 return true;
             }

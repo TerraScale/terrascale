@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>Lists a function's invocation logs.</summary>
 internal sealed class ListFunctionLogsEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(FunctionRoute.Item + "/logs");
@@ -25,7 +23,6 @@ internal sealed class ListFunctionLogsEndpoint(IManagementService management, IF
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => FunctionRoute.Limit(HttpContext) switch
     {
         Validation error => ValueTask.FromResult(ErrorResponse.From(error)),

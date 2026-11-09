@@ -1,3 +1,5 @@
+using System.Data.Common;
+using System.Globalization;
 using TerraBase.Primitives;
 using Turso;
 using Turso.Data.Sqlite;
@@ -59,15 +61,15 @@ internal static class TursoCopy
             Execute(copy, sql);
         }
 
-        Execute(copy, $"PRAGMA user_version = {Convert.ToInt64(version, System.Globalization.CultureInfo.InvariantCulture)};");
+        Execute(copy, $"PRAGMA user_version = {Convert.ToInt64(version, CultureInfo.InvariantCulture)};");
 
         Execute(copy, "PRAGMA wal_checkpoint(TRUNCATE);");
     }
 
-    internal static void CopyRows(TursoConnection source, System.Data.Common.DbConnection copy, string table, CancellationToken cancellationToken) =>
+    internal static void CopyRows(TursoConnection source, DbConnection copy, string table, CancellationToken cancellationToken) =>
         CopyRows(source, copy, table, long.MaxValue, long.MaxValue, cancellationToken, ownsTransaction: false);
 
-    internal static void CopyRows(TursoConnection source, System.Data.Common.DbConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken, bool ownsTransaction = true, string rowFilter = "")
+    internal static void CopyRows(TursoConnection source, DbConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken, bool ownsTransaction = true, string rowFilter = "")
     {
         var (columns, alias) = TableShape.Read(source, table);
 
@@ -131,7 +133,7 @@ internal static class TursoCopy
         }
     }
 
-    private static void Execute(System.Data.Common.DbConnection connection, string sql)
+    private static void Execute(DbConnection connection, string sql)
     {
         using var command = connection.CreateCommand();
         command.CommandText = sql;

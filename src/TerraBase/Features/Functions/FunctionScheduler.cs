@@ -1,19 +1,17 @@
 using Cronos;
+using TerraBase.Configuration;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using ZLogger;
 
 namespace TerraBase.Features.Functions;
 
-internal sealed class FunctionScheduler(SystemCatalog catalog, FunctionService functions, Configuration.TerraBaseOptions options, TimeProvider time,
+internal sealed class FunctionScheduler(SystemCatalog catalog, FunctionService functions, TerraBaseOptions options, TimeProvider time,
     ILogger<FunctionScheduler> logger) : BackgroundService
 {
     private readonly Dictionary<string, (string Cron, DateTimeOffset Next)> _next = [];
-    private TaskCompletionSource _ticked = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public static bool IsValid(string cron) => Parse(cron) is not null;
-
-    internal Task NextTickAsync() => Volatile.Read(ref _ticked).Task;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -28,14 +26,12 @@ internal sealed class FunctionScheduler(SystemCatalog catalog, FunctionService f
             {
                 logger.ZLogWarning(error, $"Function schedule pass failed");
             }
-
-            Interlocked.Exchange(ref _ticked, new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
         }
     }
 
     private async Task TickAsync(CancellationToken cancellationToken)
     {
-        var schedules = await catalog.ReadAsync<List<FunctionSchedule>?>(async transaction => await SystemCatalog.ListAllAsync(transaction,
+        var schedules = await catalog.ReadAsync<IReadOnlyList<FunctionSchedule>?>(async transaction => await SystemCatalog.ListAllAsync(transaction,
             FunctionService.Schedules, TerraBaseJsonContext.Default.FunctionSchedule, cancellationToken).ConfigureAwait(false),
             static _ => null, cancellationToken).ConfigureAwait(false);
         if (schedules is null)

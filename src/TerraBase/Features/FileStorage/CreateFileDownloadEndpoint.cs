@@ -4,10 +4,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.FileStorage;
 
-/// <summary>CreateFileDownload through the authorized project file API.</summary>
 public sealed class CreateFileDownloadEndpoint(IFileStorage files) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(FileStorageRoute.File + "/download");
@@ -26,7 +24,6 @@ public sealed class CreateFileDownloadEndpoint(IFileStorage files) : EndpointWit
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         FileStorageRoute.RunAsync(HttpContext, () => files.DownloadAsync(FileStorageRoute.BucketId(HttpContext), FileStorageRoute.FileId(HttpContext), cancellationToken), 200);
 }

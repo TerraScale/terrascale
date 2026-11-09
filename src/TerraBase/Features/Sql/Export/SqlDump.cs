@@ -100,7 +100,7 @@ internal static class SqlDump
 
     private static async ValueTask WriteRowidRowsAsync(IStorageTransaction transaction, string table, PipeWriter output, CancellationToken cancellationToken)
     {
-        var quoted = Quote(table);
+        var quoted = SqlScript.Quote(table);
         var after = long.MinValue;
         while (true)
         {
@@ -128,7 +128,7 @@ internal static class SqlDump
 
     private static async ValueTask WriteKeyedRowsAsync(IStorageTransaction transaction, string table, PipeWriter output, CancellationToken cancellationToken)
     {
-        var quoted = Quote(table);
+        var quoted = SqlScript.Quote(table);
         var info = await transaction.ExecuteStatementAsync(SqlSession.Internal(
             "PRAGMA table_info(" + quoted + ")"), cancellationToken).ConfigureAwait(false);
         var columns = new List<string>();
@@ -162,7 +162,7 @@ internal static class SqlDump
             }
         }
 
-        var list = string.Join(", ", keys.Values.Select(Quote));
+        var list = string.Join(", ", keys.Values.Select(SqlScript.Quote));
         var placeholders = string.Join(", ", keys.Values.Select(_ => "?"));
         IReadOnlyList<object?>? after = null;
         while (true)
@@ -184,8 +184,6 @@ internal static class SqlDump
             after = [.. ordinals.Select(ordinal => page.Rows[^1][ordinal])];
         }
     }
-
-    private static string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 
     private static void WriteRow(PipeWriter output, string quoted, object?[] row, int first)
     {

@@ -1,6 +1,5 @@
 namespace TerraBase.Features.Stats;
 
-/// <summary>Closes a statistics window every <see cref="Window"/>; the metrics read the last closed one.</summary>
 internal sealed class StatsService(DatabaseStats stats, TimeProvider time) : BackgroundService
 {
     internal static readonly TimeSpan Window = TimeSpan.FromSeconds(5);

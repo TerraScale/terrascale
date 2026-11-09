@@ -1,10 +1,12 @@
 using System.Buffers;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Clock;
 using TerraBase.Features.Sql;
+using TerraScale.TerraBase.Contracts;
 
 namespace TerraBase.Features.HomeApply;
 
@@ -104,7 +106,7 @@ internal static class ApplySql
     public static async ValueTask<TableShape?> ShapeAsync(IStorageTransaction transaction, string table, CancellationToken cancellationToken)
     {
         var named = await transaction.RunAsync("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = ? COLLATE NOCASE", [table], cancellationToken).ConfigureAwait(false);
-        if (named.Rows is not [[string name]] || TerraScale.TerraBase.Contracts.TerraBaseSqlNames.IsInternalTable(name))
+        if (named.Rows is not [[string name]] || TerraBaseSqlNames.IsInternalTable(name))
         {
             return null;
         }
@@ -200,7 +202,7 @@ internal static class ApplySql
         return bytes <= MaxShownBytes ? json : Json(writer =>
         {
             writer.WriteStartObject();
-            writer.WriteString("sha256", Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(json))));
+            writer.WriteString("sha256", Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(json))));
             writer.WriteNumber("bytes", bytes);
             writer.WriteEndObject();
         });

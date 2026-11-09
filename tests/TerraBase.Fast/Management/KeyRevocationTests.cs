@@ -5,7 +5,6 @@ using Bogus;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
@@ -33,8 +32,6 @@ public sealed class KeyRevocationTests
         api.Issuer.BeforeStatus = () => refreshed.TrySetResult();
         time.Advance(TimeSpan.FromMilliseconds(1500));
         await refreshed.Task.WaitAsync(TestContext.Current!.Execution.CancellationToken);
-        // Join completion of the background answer, then let the original warmup's authority expire without
-        // dispatching another timer. The renewed answer still has enough lifetime to admit the first write.
         using (var joined = await ManagementApi.SqlAsync(client, database, "SELECT 1"))
         {
             await Assert.That(joined.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -43,7 +40,6 @@ public sealed class KeyRevocationTests
         api.Issuer.StatusAvailable = false;
         using var inserted = await ManagementApi.SqlAsync(client, database, "INSERT INTO notes VALUES ('first')");
         await Assert.That(inserted.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        // Background renewal never extends a yes through issuer failure.
         time.AdjustTime(time.GetUtcNow().AddSeconds(2));
         using var refused = await ManagementApi.SqlAsync(client, database, "SELECT 1");
         await ErrorAssert.ErrorAsync(refused, HttpStatusCode.ServiceUnavailable, "auth_unavailable", "API key status cannot be verified right now; retry");
@@ -65,7 +61,6 @@ public sealed class KeyRevocationTests
 
         api.Issuer.RevokeClient(key);
 
-        // Expire the cached authority without dispatching timers; this request must recheck the key itself.
         time.AdjustTime(time.GetUtcNow().AddSeconds(2));
         using var response = await ManagementApi.SqlAsync(client, database, "SELECT 1", TestContext.Current!.Execution.CancellationToken);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -73,7 +68,6 @@ public sealed class KeyRevocationTests
         await Assert.That(response.Headers.WwwAuthenticate.ToString()).Contains(code);
     }
 
-    // A region's first question about a new key may pay a cold cross-region connection: one slow answer must not refuse it.
     [Test]
     public async Task A_new_key_is_admitted_when_the_first_status_answer_is_slow()
     {
@@ -109,7 +103,6 @@ public sealed class KeyRevocationTests
         await using var command = new NpgsqlCommand("SELECT 1", connection);
         await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(1L);
         api.Issuer.RevokeClient(key);
-        // Let the next statement recheck the expired authority before any background watch runs.
         time.AdjustTime(time.GetUtcNow().AddSeconds(2));
         Exception? refused = null;
         try

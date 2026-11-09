@@ -432,11 +432,9 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         }
     }
 
-    /// <summary>Whether a policy grants every end user of the access regardless of ownership.</summary>
     private static bool BucketWide(FileAccessPolicy? policy, ProjectAccess access) =>
         policy is not null && (policy.Public || policy.Roles is { } roles && roles.Any(access.Roles.Contains));
 
-    /// <summary>Whether the rules may grant the access a read or write, by role or by ownership.</summary>
     private static bool Granted(FileAccessRules? rules, ProjectAccess access, bool write) =>
         (write ? rules?.Write : rules?.Read) is { } policy && (BucketWide(policy, access) || policy.Owner && access.Actor.Length > 0);
 }

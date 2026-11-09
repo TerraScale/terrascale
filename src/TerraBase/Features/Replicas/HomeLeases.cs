@@ -31,8 +31,8 @@ internal interface IHomeWriteLease
 
 internal sealed class HomeLeases(
     TerraBaseOptions options, IReplicaCatalog catalog, IReplicaPeers peers, IDatabaseReplicas replicas, DatabaseFences fences, HomeLeaseGate leaseGate,
-    RegionReplication replication, IStorageEngine engine, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger,
-    RegionalOwners? owners = null) : BackgroundService, IHomeWriteLease
+    RegionReplication replication, IStorageEngine engine, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, TimeProvider time,
+    ILogger<HomeLeases> logger, RegionalOwners owners) : BackgroundService, IHomeWriteLease
 {
     internal const string Bucket = "terrabase-homes";
     internal static readonly TimeSpan Ttl = TimeSpan.FromSeconds(10);
@@ -343,7 +343,7 @@ internal sealed class HomeLeases(
             catch (Exception error) when (error is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
             {
                 logger.ZLogWarning($"The home lease bucket is not ready; databases with replicas keep their current home: {error.GetType().Name:@Error}");
-                await Task.Delay(Backoff, TimeProvider.System, stoppingToken).ConfigureAwait(false);
+                await Task.Delay(Backoff, time, stoppingToken).ConfigureAwait(false);
             }
         }
 
@@ -352,10 +352,10 @@ internal sealed class HomeLeases(
 
     private async Task RenewAsync(NatsJSContext js, INatsKVStore kv, CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(RenewEvery, TimeProvider.System);
+        using var timer = new PeriodicTimer(RenewEvery, time);
         do
         {
-            var sent = TimeProvider.System.GetTimestamp();
+            var sent = time.GetTimestamp();
             try
             {
                 var lease = JsonSerializer.SerializeToUtf8Bytes(new NodeLease(options.MachineId, options.Region, _session), TerraBaseJsonContext.Default.NodeLease);
@@ -363,7 +363,7 @@ internal sealed class HomeLeases(
                 _nodeRevision = _nodeRevision is { } revision
                     ? await PublishNodeAsync(js, lease, revision, cancellationToken).ConfigureAwait(false)
                     : await TakeNodeAsync(js, kv, lease, cancellationToken).ConfigureAwait(false);
-                leaseGate.Renewed(sent + (long)((Ttl - Margin).TotalSeconds * TimeProvider.System.TimestampFrequency));
+                leaseGate.Renewed(sent + (long)((Ttl - Margin).TotalSeconds * time.TimestampFrequency));
                 if (fresh)
                 {
                     logger.ZLogInformation($"This node holds a new home lease session");
@@ -417,7 +417,7 @@ internal sealed class HomeLeases(
 
     private async Task ScanAsync(INatsKVStore kv, CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(ScanEvery, TimeProvider.System);
+        using var timer = new PeriodicTimer(ScanEvery, time);
         do
         {
             if (_nodeRevision is not null)
@@ -469,7 +469,7 @@ internal sealed class HomeLeases(
 
     private async Task ConfirmAllAsync(INatsKVStore kv, CancellationToken cancellationToken)
     {
-        if (owners is { Writer: false })
+        if (!owners.Writer)
         {
             return;
         }
@@ -514,7 +514,7 @@ internal sealed class HomeLeases(
 
     private async Task ConfirmAsync(INatsKVStore kv, TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
     {
-        if (owners is { Writer: false })
+        if (!owners.Writer)
         {
             return;
         }
@@ -588,7 +588,7 @@ internal sealed class HomeLeases(
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger.ZLogInformation($"The home lease watch restarts: {error.GetType().Name:@Error}");
-                await Task.Delay(Backoff, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(Backoff, time, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -687,7 +687,7 @@ internal sealed class HomeLeases(
         {
             for (var round = 0; round < ClaimRounds && !cancellationToken.IsCancellationRequested; round++)
             {
-                await Task.Delay(Grace, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(Grace, time, cancellationToken).ConfigureAwait(false);
                 if (lease.Home == options.Region || _kv is null || !_homes.TryGetValue(lease.DatabaseId, out var known) || known.Lease != lease || _nodes.ContainsKey(lease.Node) || !Ready)
                 {
                     return;
@@ -738,7 +738,7 @@ internal sealed class HomeLeases(
         foreach (var answer in await Task.WhenAll(asks).ConfigureAwait(false))
         {
             if (answer is { Revision: { } text } && DatabaseRevision.TryParse(text, out var theirs)
-                && (Compare(theirs, mine) > 0 || Compare(theirs, mine) == 0 && string.CompareOrdinal(answer.Region, options.Region) < 0))
+                && theirs.CompareAcrossIncarnations(mine) is var order && (order > 0 || order == 0 && string.CompareOrdinal(answer.Region, options.Region) < 0))
             {
                 return true;
             }
@@ -753,8 +753,7 @@ internal sealed class HomeLeases(
         timeout.CancelAfter(AskTimeout);
         try
         {
-            using var response = await _http.GetAsync(new Uri(peer.Internal,
-                $"/v1/sync/organizations/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}/held"), timeout.Token).ConfigureAwait(false);
+            using var response = await _http.GetAsync(new Uri(peer.Internal, ReplicaRoutes.DatabasePath(database, "held")), timeout.Token).ConfigureAwait(false);
             return response.StatusCode == HttpStatusCode.OK
                 ? await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.HeldRevisionAnswer, timeout.Token).ConfigureAwait(false)
                 : null;
@@ -763,12 +762,6 @@ internal sealed class HomeLeases(
         {
             return null;
         }
-    }
-
-    internal static int Compare(DatabaseRevision left, DatabaseRevision right)
-    {
-        var incarnation = left.Incarnation.CompareTo(right.Incarnation);
-        return incarnation != 0 ? incarnation : left.Generation != right.Generation ? left.Generation.CompareTo(right.Generation) : left.Frame.CompareTo(right.Frame);
     }
 
     private async Task DemoteAsync(TenantContext database, HomeLease home, CancellationToken cancellationToken)

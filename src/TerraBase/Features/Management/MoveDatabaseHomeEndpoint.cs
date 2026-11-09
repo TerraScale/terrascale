@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -69,7 +70,7 @@ internal sealed class MoveDatabaseHomeEndpoint(IManagementService management, Ho
                     Unavailable error => ErrorResponse.From(error),
                 };
             default:
-                throw new System.Diagnostics.UnreachableException();
+                throw new UnreachableException();
         }
     }
 }

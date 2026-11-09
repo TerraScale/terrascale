@@ -1,14 +1,10 @@
 namespace TerraBase.Features.Management;
 
-/// <summary>Marks project-token management operations, whose database parameter is an immutable ULID or current name.</summary>
 public sealed class ProjectManagementRoute;
 
-/// <summary>The identity and original path from a hidden organization-route alias.</summary>
-/// <param name="OrganizationId">The organization named by the legacy route.</param>
-/// <param name="OriginalPath">The original alias, retained when forwarding to the catalog primary.</param>
 public sealed record LegacyManagementRoute(string OrganizationId, string OriginalPath);
 
-/// <summary>The project hierarchy of the public API (docs/api.md).</summary>
+// The project hierarchy of the public API: docs/api.md.
 internal static class ProjectApiRoute
 {
     public const string Project = "/v1/projects/{project}";

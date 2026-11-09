@@ -4,10 +4,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.FileStorage;
 
-/// <summary>DeleteBucketFile through the authorized project file API.</summary>
 public sealed class DeleteBucketFileEndpoint(IFileStorage files) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(FileStorageRoute.File);
@@ -26,7 +24,6 @@ public sealed class DeleteBucketFileEndpoint(IFileStorage files) : EndpointWitho
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         FileStorageRoute.RunAsync(HttpContext, () => files.DeleteFileAsync(FileStorageRoute.BucketId(HttpContext), FileStorageRoute.FileId(HttpContext), cancellationToken), 204);
 }

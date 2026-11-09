@@ -1,8 +1,6 @@
 using System.Net;
-using System.Net.Http.Json;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Shapes;

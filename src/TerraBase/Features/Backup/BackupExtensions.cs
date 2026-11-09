@@ -6,13 +6,9 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>Registers continuous backup (TS-633).</summary>
+// Continuous backup ships here (TS-633).
 public static class BackupExtensions
 {
-    /// <summary>
-    /// Registers <see cref="IContinuousBackup"/> and <see cref="IPointInTimeRestore"/>: shipping to and restoring from the
-    /// bucket of <see cref="TerraBaseOptions.Backup"/>, or nothing when backup is off.
-    /// </summary>
     public static IServiceCollection AddTerraBaseBackup(this IServiceCollection services, TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -75,7 +71,6 @@ public static class BackupExtensions
         }
     }
 
-    // Backup is off: nothing ships and nothing can be restored.
     private sealed class NoBackup : IContinuousBackup, IPointInTimeRestore, IBackupKeyShredding
     {
         public Task<bool> DestroyAsync(TenantContext database, CancellationToken cancellationToken) => Task.FromResult(true);

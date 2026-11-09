@@ -5,15 +5,9 @@ using Microsoft.CodeAnalysis.Operations;
 
 namespace TerraBase.Analyzers;
 
-/// <summary>
-/// TB0001: a union value is a result, and expected failures are union cases, so dropping one silently ignores a
-/// failure. Reports a call, <c>await</c> or creation used as a statement whose value is a union, or a task of one
-/// (docs/error-handling.md). <c>_ = …</c> discards it explicitly.
-/// </summary>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class DiscardedUnionAnalyzer : DiagnosticAnalyzer
 {
-    /// <summary>The rule.</summary>
     public static readonly DiagnosticDescriptor Rule = new(
         "TB0001",
         "A union result is discarded",
@@ -23,10 +17,8 @@ public sealed class DiscardedUnionAnalyzer : DiagnosticAnalyzer
         isEnabledByDefault: true,
         description: "Expected failures are union cases (docs/error-handling.md); a discarded union ignores them.");
 
-    /// <inheritdoc />
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = [Rule];
 
-    /// <inheritdoc />
     public override void Initialize(AnalysisContext context)
     {
         context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);

@@ -5,11 +5,7 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>
-/// Reads a file's backup back: lists its snapshots, and rebuilds the file in scratch space from a snapshot rolled forward
-/// through its generation's segments. Restores and restore drills both go through here.
-/// </summary>
-internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKeys keys, TerraBaseOptions options, IDiskBudget disk, BackupReadObservation? observation = null)
+internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKeys keys, TerraBaseOptions options, IDiskBudget disk)
 {
     // Segments downloading at once.
     private const int Prefetch = 8;
@@ -18,7 +14,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     private const long MaxSizingKeyBytes = 32L << 20;
     private readonly string _scratch = ContinuousBackup.Scratch(options);
 
-    /// <summary>Every snapshot of <paramref name="file"/> (a <see cref="BackupLayout.File"/> directory), oldest first.</summary>
     public async IAsyncEnumerable<SnapshotKey> SnapshotsAsync(string file, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         await foreach (var item in store.ListAsync(BackupLayout.Snapshots(file), null, cancellationToken).ConfigureAwait(false))
@@ -30,29 +25,10 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         }
     }
 
-    /// <summary>
-    /// Rebuilds <paramref name="file"/> in a new scratch file: <paramref name="snapshot"/> rolled forward through the segments
-    /// read by <paramref name="at"/> and, when <paramref name="until"/> is set, starting before that log position. Returns
-    /// an owned file and the log position it reached; disposal deletes scratch before releasing admission.
-    /// </summary>
-    /// <exception cref="BackupHistoryIncompleteException">A segment or object is missing.</exception>
-    /// <exception cref="InvalidDataException">The backup fails authentication or its integrity check.</exception>
     public Task<RestoredBackup> BuildAsync(
         string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, CancellationToken cancellationToken) =>
         BuildAsync(file, scope, snapshot, at, until, next: null, cancellationToken);
 
-    /// <summary>
-    /// <see cref="BuildAsync(string, string, SnapshotKey, DateTimeOffset, long?, CancellationToken)"/>; without
-    /// <paramref name="until"/>, the generation's history must also be proven complete up to <paramref name="at"/>: the
-    /// snapshot was taken in <paramref name="at"/>'s millisecond, or the segments read after it, replayed only up to the
-    /// transactions that ran before it, reach a transaction committed at or after it, a read mark at or after it, or
-    /// exactly the log <paramref name="next"/>, the generation's following snapshot, holds.
-    /// </summary>
-    /// <exception cref="BackupHistoryIncompleteException">
-    /// A segment is missing, or the history up to the time is unproven; for the system database, any time but a snapshot's.
-    /// </exception>
-    /// <exception cref="RestorePointUnprovenException">The time cannot be placed between two transactions.</exception>
-    /// <exception cref="InvalidDataException">The backup fails authentication or its integrity check.</exception>
     public async Task<RestoredBackup> BuildAsync(
         string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, CancellationToken cancellationToken)
     {
@@ -175,11 +151,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
 
             var reached = new StrongBox<long>(snapshot.Position);
             var segments = SegmentsAsync(scope, snapshot, at, until, next, reached, inventory, sizes, cancellationToken);
-            using var replay = observation?.Enter(BackupReadObservation.Phase.Replay);
-            if (observation is not null)
-            {
-                segments = ObserveSegmentsAsync(segments, replay.GetValueOrDefault(), cancellationToken);
-            }
 
             if (!await engine.RollForwardAsync(restored, segments, cancellationToken)
                 .ConfigureAwait(false))
@@ -197,55 +168,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         }
     }
 
-    private async IAsyncEnumerable<Stream> ObserveSegmentsAsync(IAsyncEnumerable<Stream> segments, BackupReadObservation.Scope replay,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var iterator = segments.GetAsyncEnumerator(cancellationToken);
-        try
-        {
-            while (true)
-            {
-                bool next;
-                replay.Pause();
-                try
-                {
-                    using var wait = observation!.Enter(BackupReadObservation.Phase.ReplayWait);
-                    next = await iterator.MoveNextAsync().ConfigureAwait(false);
-                }
-                finally
-                {
-                    replay.Resume();
-                }
-
-                if (!next)
-                {
-                    yield break;
-                }
-
-                yield return iterator.Current;
-            }
-        }
-        finally
-        {
-            replay.Pause();
-            try
-            {
-                using var wait = observation!.Enter(BackupReadObservation.Phase.ReplayWait);
-                await iterator.DisposeAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                replay.Resume();
-            }
-        }
-    }
-
-    /// <summary>
-    /// When the read that appended the end of the segment <paramref name="key"/> started, if that read reached the newest
-    /// commit (a read mark): every transaction committed before then is in the log up to the segment's end.
-    /// </summary>
-    /// <exception cref="BackupHistoryIncompleteException">The segment is gone.</exception>
-    /// <exception cref="InvalidDataException">The segment fails authentication or is malformed.</exception>
     public async Task<DateTimeOffset?> ReadMarkAsync(string key, string scope, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(_scratch);
@@ -253,7 +175,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         return engine.ReadMark(frames);
     }
 
-    /// <summary>Deletes a file <see cref="BuildAsync(string, string, SnapshotKey, DateTimeOffset, long?, SnapshotKey?, CancellationToken)"/> returned, with any storage engine sidecars.</summary>
     public static void Delete(string path)
     {
         foreach (var leftover in new[] { "", "-journal", "-wal", "-shm", ".key" })
@@ -471,10 +392,8 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
             bool found;
             try
             {
-                found = observation is null
-                    ? await store.ReadAsync(key, (content, readToken) => BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, readToken), readToken),
-                        cancellationToken).ConfigureAwait(false)
-                    : await ReadObservedAsync(key, scope, output, cancellationToken).ConfigureAwait(false);
+                found = await store.ReadAsync(key, (content, readToken) =>
+                    BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, readToken), readToken), cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error) when (attempt < 3 && error is not (OperationCanceledException or DiskCapacityException))
             {
@@ -490,36 +409,12 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
             return;
         }
     }
-
-    private async Task<bool> ReadObservedAsync(string key, string scope, Stream output, CancellationToken cancellationToken)
-    {
-        using var fetch = observation!.Enter(BackupReadObservation.Phase.Fetch);
-        return await store.ReadAsync(key, async (content, readToken) =>
-        {
-            fetch.Pause();
-            try
-            {
-                using var body = observation.Enter(BackupReadObservation.Phase.Body);
-                await BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, readToken), readToken, observation).ConfigureAwait(false);
-            }
-            finally
-            {
-                // Fetch owns store completion and response cleanup outside the body callback.
-                fetch.Resume();
-            }
-        }, cancellationToken).ConfigureAwait(false);
-    }
 }
 
-/// <summary>A backup cannot prove a file's history complete up to the requested time or log position.</summary>
-/// <param name="message">What is missing or unproven.</param>
 internal sealed class BackupHistoryIncompleteException(string message) : Exception(message);
 
-/// <summary>A backup holds a file's history around the requested time but cannot place the time between two transactions.</summary>
-/// <param name="message">Why: a transaction within the time's second, one without recorded times, or times that go back.</param>
 internal sealed class RestorePointUnprovenException(string message) : Exception(message);
 
-/// <summary>A restored database owns its scratch and admission through import or checksum.</summary>
 internal sealed class RestoredBackup(string path, long position, IDisposable claim) : IDisposable
 {
     public string Path { get; } = path;
@@ -531,7 +426,6 @@ internal sealed class RestoredBackup(string path, long position, IDisposable cla
     }
 }
 
-/// <summary>A delete-on-close scratch file releases admission only after its handle closes.</summary>
 internal sealed class BackupScratchStream(string path, IDisposable? claim, long limit = long.MaxValue)
     : FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose)
 {
@@ -576,7 +470,6 @@ internal sealed class BackupScratchStream(string path, IDisposable? claim, long 
     }
 }
 
-/// <summary>Authenticates and measures decoded objects without allocating scratch.</summary>
 internal class BackupCountingStream : Stream
 {
     private long _length;
@@ -598,6 +491,5 @@ internal class BackupCountingStream : Stream
     }
 }
 
-/// <summary>A restore's sizing inventory cannot fit its fixed metadata allowance.</summary>
 internal sealed class BackupInventoryLimitException() : IOException(
     "Backup sizing exceeds 131072 segments or 32 MiB of object names. Restore from a newer snapshot or contact support for backup recovery.");

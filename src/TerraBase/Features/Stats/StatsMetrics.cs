@@ -26,7 +26,6 @@ internal sealed class StatsMetrics
             "Operations per second of the busiest databases in the last window.");
     }
 
-
     private static IEnumerable<Measurement<double>> Ranked(StatsWindow? window, Func<DatabaseWindow, long> amount)
     {
         var busiest = window?.Active.OrderByDescending(amount).Take(TopCount).ToArray() ?? [];

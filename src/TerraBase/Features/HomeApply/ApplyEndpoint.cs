@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -52,7 +53,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         {
             transaction = await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionTransaction, cancellationToken).ConfigureAwait(false);
         }
-        catch (System.Text.Json.JsonException)
+        catch (JsonException)
         {
             transaction = null;
         }

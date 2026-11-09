@@ -14,7 +14,11 @@ internal sealed record SqlStatementBody(
     IReadOnlyList<SqlColumnBody> Columns,
     [property: JsonConverter(typeof(SqlRowsConverter))] IReadOnlyList<IReadOnlyList<SqlValue>> Rows,
     [property: JsonPropertyName("rows_affected")] long RowsAffected,
-    [property: JsonPropertyName("last_insert_rowid")] long? LastInsertRowid);
+    [property: JsonPropertyName("last_insert_rowid")] long? LastInsertRowid)
+{
+    public static SqlStatementBody Of(SqlResult result) => new(
+        [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid);
+}
 
 internal sealed record SqlColumnBody(string Name, string? Decltype);
 
@@ -30,6 +34,8 @@ internal sealed record SqlErrorDetail(
 
 internal static class SqlJson
 {
+    private static readonly IReadOnlyDictionary<string, JsonElement> NoNamed = new Dictionary<string, JsonElement>();
+
     public static Valid<SqlValue> Value(JsonElement value) => value.ValueKind switch
     {
         JsonValueKind.Null => SqlValue.Null,
@@ -75,7 +81,7 @@ internal static class SqlJson
         }
 
         var named = new Dictionary<string, SqlValue>(StringComparer.Ordinal);
-        foreach (var (name, arg) in statement.Named ?? new Dictionary<string, JsonElement>())
+        foreach (var (name, arg) in statement.Named ?? NoNamed)
         {
             switch (Value(arg))
             {
@@ -106,6 +112,9 @@ internal sealed class SqlRowsConverter : JsonConverter<IReadOnlyList<IReadOnlyLi
             {
                 switch (cell.Kind)
                 {
+                    case SqlValueKind.Null:
+                        writer.WriteNullValue();
+                        break;
                     case SqlValueKind.Integer:
                         writer.WriteNumberValue(cell.Integer);
                         break;
@@ -119,9 +128,6 @@ internal sealed class SqlRowsConverter : JsonConverter<IReadOnlyList<IReadOnlyLi
                         writer.WriteStartObject();
                         writer.WriteBase64String("base64", cell.Blob);
                         writer.WriteEndObject();
-                        break;
-                    default:
-                        writer.WriteNullValue();
                         break;
                 }
             }

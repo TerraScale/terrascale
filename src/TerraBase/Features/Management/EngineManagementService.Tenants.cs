@@ -11,9 +11,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>
-/// The catalog as a <see cref="ITenantDirectory"/> for organization API keys and scoped project access tokens.
-/// </summary>
 internal sealed partial class EngineManagementService
 {
     public ValueTask<ResolveProjectDatabaseResult> ResolveProjectDatabaseAsync(string projectId, string database, CancellationToken cancellationToken) =>
@@ -34,36 +31,27 @@ internal sealed partial class EngineManagementService
             Unavailable error => error,
         };
 
-    // Identity entries hold bounded ids; placement entries retain only the product's bounded name and region domain.
     private const int MaxCachedTenants = 4096;
 
-    // Every data request resolves its database here. A lookup stays valid while the catalog has not committed since it
-    // was read, so a point operation reads no catalog row and a long read on the storage threads cannot hold it up.
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, TenantContext Tenant)> _tenants = new();
 
-    // The same validity for the records the placement check reads on every data request (docs/cross-region.md).
+    // The records the placement check reads on every data request keep the validity of docs/cross-region.md.
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, ManagedDatabase? Record)> _records = new();
 
-    // Request admission must not queue catalog reads behind a noisy query while the catalog is unchanged.
     private readonly Lock _planGate = new();
     private readonly Dictionary<string, (Ulid Incarnation, long Sequence, PlanTier Plan)> _plans = [];
 
-    // The same validity, keyed by database id, for the placement and registration checks replication makes on every head,
-    // pull and stream.
     private readonly ConcurrentDictionary<(string Organization, string Project, string DatabaseId), (long Sequence, DatabaseRecordResult Value)> _placements = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string DatabaseId), (long Sequence, RegisteredDatabaseResult Value)> _registrations = new();
 
-    // Serializes insertions so concurrent misses cannot grow a cache past MaxCachedTenants; never held across an await.
     private readonly Lock _cacheInsertion = new();
 
-    // The running catalog read of each missed key at one commit sequence, removed when it ends, so bounded by concurrent requests.
     private readonly Lock _missGate = new();
     private readonly Dictionary<(string Kind, string Organization, string Project, string Database), (long Sequence, Task Read)> _misses = [];
 
     private readonly Counter<long> _cacheLookups = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.catalog.cache_lookups", "{lookup}",
         "Catalog cache lookups, by cache (tenants, records, plans, placements, registrations) and result (hit, miss).");
 
-    // Whether the lookup hit, recorded under the cache's bounded name.
     private bool Looked(string cache, bool hit)
     {
         _cacheLookups.Add(1, new KeyValuePair<string, object?>("cache", cache), new KeyValuePair<string, object?>("result", hit ? "hit" : "miss"));
@@ -107,8 +95,6 @@ internal sealed partial class EngineManagementService
         }
     }
 
-    // Every catalog commit invalidates the caches above, and every request of a fan-out (a thousand shape readers) then misses
-    // together: concurrent misses of one key at one sequence share one read instead of each reading the same rows. The read runs
     private async ValueTask<T> ShareMissAsync<T>(
         string kind, (string, string, string) key, long sequence, Func<CancellationToken, ValueTask<T>> read, CancellationToken cancellationToken)
     {
@@ -149,12 +135,10 @@ internal sealed partial class EngineManagementService
         return await shared.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    // A catalog read of database's identity, reused while the catalog has not committed since the read began.
     private async ValueTask<T> ReadCachedAsync<T>(
         string name, ConcurrentDictionary<(string, string, string), (long Sequence, T Value)> cache, TenantContext database,
         Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, Func<T, bool> admit, CancellationToken cancellationToken)
     {
-        // Taken before the read: a commit racing it leaves the entry stale-tagged, never an older snapshot under a newer tag.
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
         var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
         if (Looked(name, cache.TryGetValue(key, out var cached) && cached.Sequence == sequence))
@@ -172,7 +156,6 @@ internal sealed partial class EngineManagementService
         return value;
     }
 
-    // At most ten 63-character strings, about 2 KiB per entry. Larger remote records are answered without retaining them.
     private static bool Admits((string Name, DatabasePlacement Placement)? record) =>
         record is not { } value || (value.Name.Length <= 63 && TerraBaseOptions.IsRegion(value.Placement.Home)
             && value.Placement.Replicas.Count <= DatabaseRegions.MaxReplicas && value.Placement.Replicas.All(TerraBaseOptions.IsRegion));
@@ -197,10 +180,7 @@ internal sealed partial class EngineManagementService
         };
     }
 
-    // The catalog replicates to every region (docs/terrabase/multi-region-replication.md section 15): a database created
-    // elsewhere and placed in this region gets its local file on its first request or first replicated group, and serves
-    // before its first data arrives. A database placed elsewhere gets none (the placement check answers for it).
-    // Recheck a file created here after initialization: a concurrent deletion may have applied before the file existed.
+    // The catalog replicates to every region (docs/terrabase/multi-region-replication.md section 15).
     private async ValueTask<EnsureLocalDatabaseResult> InitializeLocalAsync(TenantContext tenant, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is not null)
@@ -261,7 +241,6 @@ internal sealed partial class EngineManagementService
         {
             AddedDatabase added => new ProvisionedDatabase(added.Tenant, Created: true),
             QuotaExceeded => throw new UnreachableException(),
-            // The name is taken: the database exists, unless it was deleted again meanwhile.
             Conflict error when error == ManagementErrors.NameTaken => await FindDatabaseAsync(organizationId, projectId, database, cancellationToken).ConfigureAwait(false) switch
             {
                 TenantContext existing => new ProvisionedDatabase(existing, Created: false),
@@ -314,7 +293,6 @@ internal sealed partial class EngineManagementService
             return ManagementErrors.NotFound;
         }
 
-        // Every database id this catalog ever registered keeps its entry, unregistered ones in RetiredDatabases.
         var history = await ReadAsync<AdoptDatabaseResult>(
             async transaction => !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                 ? UnreadableCatalog
@@ -356,7 +334,6 @@ internal sealed partial class EngineManagementService
             };
         }
 
-        // Homed elsewhere: only the record, no file and no backups; a replica here pulls its pages.
         var record = new ManagedDatabase(
             database.DatabaseId, database.ProjectId, name, null, time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
             placement.AllRegions);
@@ -402,7 +379,6 @@ internal sealed partial class EngineManagementService
             if (await CatalogTables.DatabaseAsync(transaction, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is not { } record
                 || placement.Version <= record.PlacementVersion || record.Home(options.Region) == options.Region)
             {
-                // The home region decides its databases' placement; nothing older replaces a newer one.
                 return new PlacementUpdate(Updated: false);
             }
 
@@ -413,7 +389,6 @@ internal sealed partial class EngineManagementService
                 PlacementVersion = placement.Version,
                 AllRegions = placement.AllRegions,
             }, cancellationToken).ConfigureAwait(false);
-            // Backed up where it is served; a removal leaves no tombstone, so the database can come back with its placement.
             if (placement.Home == options.Region)
             {
                 await PutAsync(transaction, EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, DatabaseOwner.Of(database),
@@ -436,7 +411,6 @@ internal sealed partial class EngineManagementService
             return new DatabaseForgotten(Forgotten: false);
         }
 
-        // Never a database at home here: only its home region deletes it.
         async ValueTask<(TenantContext Storage, ManagedDatabase Record)?> ElsewhereAsync(IStorageTransaction transaction)
         {
             return await OrganizationProjectAsync(transaction, database.OrganizationId, database.ProjectId, cancellationToken).ConfigureAwait(false) is { } tenant
@@ -446,7 +420,6 @@ internal sealed partial class EngineManagementService
                     : null;
         }
 
-        // A catalog this build cannot use forgets nothing.
         var found = await ReadAsync<ForgetTargetCheck>(async transaction =>
             !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                 ? UnreadableCatalog
@@ -468,7 +441,7 @@ internal sealed partial class EngineManagementService
             if (!Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, token).ConfigureAwait(false)))
             {
                 disposition = UnreadableCatalog;
-                return false; // The engine callback declines recording the deletion intent.
+                return false;
             }
 
             if (await ElsewhereAsync(transaction).ConfigureAwait(false) is not { } current)
@@ -592,7 +565,6 @@ internal sealed partial class EngineManagementService
 
     private static readonly Conflict CatalogDatabaseDeleted = new("a database deleted here is not brought back", "database_deleted");
 
-    // Unsupported catalogs are never interpreted or migrated.
     private static bool Interprets(string? version) => version == CatalogVersion;
 
     internal static async ValueTask<bool> ScopeExistsUncheckedAsync(
@@ -618,7 +590,6 @@ internal sealed partial class EngineManagementService
             ? project with { DatabaseId = databaseId }
             : null;
 
-    // The tenant of a project of an organization, without a user: API keys act for their organization.
     private static async ValueTask<TenantContext?> OrganizationProjectAsync(
         IStorageTransaction transaction, string organizationId, string projectId, CancellationToken cancellationToken) =>
         await ProjectTenantAsync(

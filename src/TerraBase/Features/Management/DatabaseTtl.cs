@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Hosting;
@@ -41,7 +42,7 @@ internal static class DatabaseTtl
         }
 
         _ = await transaction.PutAsync(Kind, databaseId,
-            EntityPayload.WithoutId(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new DatabaseExpiry(value), TerraBaseJsonContext.Default.DatabaseExpiry), databaseId, nested: true),
+            EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(new DatabaseExpiry(value), TerraBaseJsonContext.Default.DatabaseExpiry), databaseId, nested: true),
             cancellationToken).ConfigureAwait(false);
     }
 

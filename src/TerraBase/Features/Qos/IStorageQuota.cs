@@ -5,38 +5,27 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Qos;
 
-/// <summary>A write admission or a catalog refusal.</summary>
 public readonly union StorageQuotaEntry(StorageQuotaLease, Unavailable);
 
-/// <summary>Lifecycle admissions or a catalog refusal.</summary>
 public readonly union StorageQuotaGroupEntry(StorageQuotaGroupLease, Unavailable);
 
-/// <summary>Measured bytes or unavailable catalog accounting.</summary>
 public readonly union StorageQuotaBytesResult(long, Unavailable);
 
-/// <summary>Accepted growth, a storage quota refusal or unavailable accounting.</summary>
 public readonly union StorageQuotaCheck(Done, QuotaExceeded, Unavailable);
 
-/// <summary>Serializes node-local writes and measures stored bytes across an organization's databases.</summary>
 public interface IStorageQuota
 {
-    /// <summary>Holds organization admission until the caller commits or rolls back; cancellation releases admission.</summary>
     ValueTask<StorageQuotaEntry> EnterAsync(TenantContext database, IDatabaseStore store, CancellationToken cancellationToken);
 
-    /// <summary>Holds up to sixteen organizations through lifecycle publication, acquiring distinct stripes in order.</summary>
     ValueTask<StorageQuotaGroupEntry> EnterOrganizationsAsync(IReadOnlyList<string> organizationIds, CancellationToken cancellationToken);
 
-    /// <summary>Measures an exact staged copy before its catalog registration.</summary>
     ValueTask<long> ReadBytesAsync(TenantContext database, CancellationToken cancellationToken);
 
-    /// <summary>Stored bytes of every organization's registered databases on this node, or why they cannot be read now.</summary>
     ValueTask<OrganizationBytesResult> ReadOrganizationsAsync(CancellationToken cancellationToken);
 }
 
-/// <summary>Stored bytes per organization, or unavailable catalog accounting.</summary>
 public readonly union OrganizationBytesResult(IReadOnlyDictionary<string, long>, Unavailable);
 
-/// <summary>A measured organization write, held through its database commit. It does not reserve durable quota.</summary>
 public sealed class StorageQuotaLease : IDisposable
 {
     private readonly SemaphoreSlim? _gate;
@@ -53,10 +42,8 @@ public sealed class StorageQuotaLease : IDisposable
         _committed = committed;
     }
 
-    /// <summary>Whether this write needs commercial byte accounting.</summary>
     public bool RequiresAccounting => _limit != long.MaxValue;
 
-    /// <summary>Refuses net growth above the limit; reducing and unchanged writes remain available after a downgrade.</summary>
     public async ValueTask<StorageQuotaCheck> CheckAsync(long delta, CancellationToken cancellationToken)
     {
         if (delta <= 0 || _limit == long.MaxValue)
@@ -64,39 +51,18 @@ public sealed class StorageQuotaLease : IDisposable
             return new Done();
         }
 
-        long used;
         try
         {
-            var counted = await _measure(cancellationToken).ConfigureAwait(false);
-            if (counted is not long bytes)
-            {
-                return counted switch
-                {
-                    Unavailable error => error,
-                    long => throw new System.Diagnostics.UnreachableException(),
-                };
-            }
-
-            used = bytes;
+            return StorageQuotaRule.Growth(_limit, delta, await _measure(cancellationToken).ConfigureAwait(false));
         }
         catch (QueryCapacityException)
         {
             return StorageQuota.AccountingUnavailable;
         }
-        if (used > _limit || delta > _limit - used)
-        {
-            return new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
-                $"the organization storage quota would be exceeded: {used / 1_000_000_000m:F2} GB used of {_limit / 1_000_000_000m:F2} GB on this plan; delete data or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing"),
-                "storage_quota");
-        }
-
-        return new Done();
     }
 
-    /// <summary>Updates the bounded usage cache only after the database commit succeeds.</summary>
     public void Committed(long delta) => _committed(delta);
 
-    /// <summary>Releases write admission; safe to call more than once.</summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 0)
@@ -106,7 +72,6 @@ public sealed class StorageQuotaLease : IDisposable
     }
 }
 
-/// <summary>Organization lifecycle gates held through catalog commit or rollback.</summary>
 public sealed class StorageQuotaGroupLease : IDisposable
 {
     private readonly SemaphoreSlim[] _gates;
@@ -122,10 +87,8 @@ public sealed class StorageQuotaGroupLease : IDisposable
         _measure = measure;
     }
 
-    /// <summary>Whether the gated live plan has a byte ceiling; enterprise copies need no accounting scan.</summary>
     public bool RequiresAccounting(string organizationId) => _limits[organizationId] != long.MaxValue;
 
-    /// <summary>Checks net staged growth before taking the system catalog writer; reducing changes remain available.</summary>
     public async ValueTask<StorageQuotaCheck> CheckAsync(string organizationId, long delta, CancellationToken cancellationToken)
     {
         var limit = _limits[organizationId];
@@ -134,36 +97,16 @@ public sealed class StorageQuotaGroupLease : IDisposable
             return new Done();
         }
 
-        long used;
         try
         {
-            var counted = await _measure(organizationId, cancellationToken).ConfigureAwait(false);
-            if (counted is not long bytes)
-            {
-                return counted switch
-                {
-                    Unavailable error => error,
-                    long => throw new System.Diagnostics.UnreachableException(),
-                };
-            }
-
-            used = bytes;
+            return StorageQuotaRule.Growth(limit, delta, await _measure(organizationId, cancellationToken).ConfigureAwait(false));
         }
         catch (QueryCapacityException)
         {
             return StorageQuota.AccountingUnavailable;
         }
-        if (used > limit || delta > limit - used)
-        {
-            return new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
-                $"the organization storage quota would be exceeded: {used / 1_000_000_000m:F2} GB used of {limit / 1_000_000_000m:F2} GB on this plan; delete data or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing"),
-                "storage_quota");
-        }
-
-        return new Done();
     }
 
-    /// <summary>Releases all stripes in reverse acquisition order; safe to call more than once.</summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 0)
@@ -174,4 +117,17 @@ public sealed class StorageQuotaGroupLease : IDisposable
             }
         }
     }
+}
+
+static file class StorageQuotaRule
+{
+    internal static StorageQuotaCheck Growth(long limit, long delta, StorageQuotaBytesResult counted) => counted switch
+    {
+        long used => used > limit || delta > limit - used
+            ? new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
+                $"the organization storage quota would be exceeded: {used / 1_000_000_000m:F2} GB used of {limit / 1_000_000_000m:F2} GB on this plan; delete data or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing"),
+                "storage_quota")
+            : new Done(),
+        Unavailable error => error,
+    };
 }

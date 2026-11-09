@@ -4,62 +4,40 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Configuration;
 
-/// <summary>
-/// Where continuous backup ships to (TS-633, <c>docs/backup.md</c>): the app's Tigris bucket and the master key that wraps
-/// each database's data keys. The Tigris bucket comes from the variables <c>fly storage create</c> sets; ts-orch resolves the
-/// master key from OCI Vault using its instance principal and delivers it through <c>TERRABASE_MASTER_KEY_FILE</c>.
-/// Set the required settings together; none turns backup off.
-/// </summary>
+// Fly sets the Tigris variables for an attached bucket; ts-orch resolves the master key from OCI Vault and
+// delivers it through TERRABASE_MASTER_KEY_FILE (TS-633, docs/backup.md).
 public sealed class BackupSettings
 {
-    /// <summary>Every backup setting.</summary>
     internal static string[] Keys => [.. Required, "backup-key-rotation-days", "cloudflare-api-token"];
 
-    // Required together; the rest are optional.
     private static readonly string[] Required =
     [
         "backup-endpoint", "backup-region", "backup-bucket", "backup-access-key-id", "backup-secret-key", "master-key",
     ];
 
-    /// <summary>The variables Fly sets for a Tigris bucket attached to the app, and the settings they fill.</summary>
     internal static readonly (string Variable, string Key)[] TigrisVariables =
     [
         ("AWS_ENDPOINT_URL_S3", "backup-endpoint"), ("AWS_REGION", "backup-region"), ("BUCKET_NAME", "backup-bucket"),
         ("AWS_ACCESS_KEY_ID", "backup-access-key-id"), ("AWS_SECRET_ACCESS_KEY", "backup-secret-key"),
     ];
 
-    /// <summary>S3-compatible endpoint, for example <c>https://fly.storage.tigris.dev</c>.</summary>
     public required Uri Endpoint { get; init; }
 
-    /// <summary>Signing region of <see cref="Endpoint"/>; Tigris uses <c>auto</c>.</summary>
     public required string Region { get; init; }
 
-    /// <summary>The bucket every object goes to.</summary>
     public required string Bucket { get; init; }
 
-    /// <summary>Access key id of the S3 credential.</summary>
     public required string AccessKeyId { get; init; }
 
-    /// <summary>The secret of the S3 credential.</summary>
     public required string SecretKey { get; init; }
 
-    /// <summary>
-    /// The Cloudflare API token (<c>TERRABASE_CLOUDFLARE_API_TOKEN</c>) that purges an R2 bucket's shape CDN copies on
-    /// <c>terrascale.tech</c> once the mirror deletes their objects (docs/terrabase/free-reads-cdn.md). Required with an R2
-    /// endpoint and refused with any other, so a node never links a CDN it cannot purge.
-    /// </summary>
+    // Purges shape CDN copies on terrascale.tech once the mirror deletes their objects (docs/terrabase/free-reads-cdn.md).
     public string? CloudflareApiToken { get; init; }
 
-    /// <summary>The 256-bit master key that wraps every data key (<c>TERRABASE_MASTER_KEY</c>, base64).</summary>
     public required byte[] MasterKey { get; init; }
 
-    /// <summary>Maximum age of a backup data key before the next upload rotates it; 90 days by default.</summary>
     public int KeyRotationDays { get; init; } = 90;
 
-    /// <summary>
-    /// Days each plan keeps backups: <c>hobby=1,starter=3,pro=7,team=14,enterprise=30</c>, matching the published entitlements.
-    /// Only integration fixtures may replace these values; process settings cannot change a plan's restore window.
-    /// </summary>
     public IReadOnlyDictionary<PlanTier, int> RetentionDays { get; internal set; } = new Dictionary<PlanTier, int>
     {
         [PlanTier.Hobby] = 1,
@@ -69,10 +47,8 @@ public sealed class BackupSettings
         [PlanTier.Enterprise] = 30,
     }.ToFrozenDictionary();
 
-    /// <summary>Names the bucket only: the credentials stay out of logs.</summary>
     public override string ToString() => $"backup to {Bucket}";
 
-    /// <summary>Reads the settings, or <see langword="null"/> when none is set.</summary>
     internal static BackupSettings? Parse(IReadOnlyDictionary<string, string> values)
     {
         if (!Keys.Any(key => key != "master-key" && values.ContainsKey(key)))

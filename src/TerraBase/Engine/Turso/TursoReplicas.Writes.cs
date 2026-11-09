@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using TerraBase.Tenancy;
 using Turso.Raw.Public;
+using Turso.Raw.Public.Value;
 using Turso.Raw.Public.Handles;
 using TerraScale.TerraBase.Contracts;
 using ZLogger;
@@ -25,10 +26,6 @@ internal sealed partial class TursoReplicas
 
         private TursoDatabaseHandle? _writer;
 
-        /// <summary>
-        /// True while the replica may hold local rows its pulled revision does not: set by a local commit, and after a pull
-        /// by whether the overlay re-applied anything. Verification skips such a replica instead of rebuilding it.
-        /// </summary>
         internal bool Local { get; private set; }
 
         public async Task<IReplicaWriter?> BeginWriteAsync(CancellationToken cancellationToken)
@@ -269,7 +266,7 @@ internal sealed partial class TursoReplicas
             }
 
             private static byte[]? Blob(TursoStatementHandle statement, int column) =>
-                TursoBindings.GetValueType(statement, column) == global::Turso.Raw.Public.Value.TursoValueType.Blob ? TursoBindings.GetValue(statement, column).BlobValue : null;
+                TursoBindings.GetValueType(statement, column) == TursoValueType.Blob ? TursoBindings.GetValue(statement, column).BlobValue : null;
         }
     }
 }

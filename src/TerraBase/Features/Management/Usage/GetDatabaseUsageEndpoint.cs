@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary><c>GET …/databases/{database}/usage</c>: reads the storage and operation usage of a database.</summary>
 internal sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsageService usage, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
-    /// <summary>What the read and write counts guarantee, for every usage route.</summary>
     internal const string CountsDescription =
         "Each SQL read statement is one read, however many rows it returns; each committed write statement is one write. "
         + "period sums the series; reads and writes are totals since each database was created. "
@@ -17,7 +15,6 @@ internal sealed class GetDatabaseUsageEndpoint(IManagementService management, IU
         + "(a catalog follower sends its counts to its primary as often), a failed save is retried, and a crash loses the operations "
         + "counted since the last successful save. " + UsageWindow.Description;
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Database + "/usage");
@@ -33,7 +30,6 @@ internal sealed class GetDatabaseUsageEndpoint(IManagementService management, IU
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         UsageWindow.Parse(HttpContext.Request.Query, time.GetUtcNow()) switch
         {

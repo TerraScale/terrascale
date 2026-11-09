@@ -4,7 +4,6 @@ using Microsoft.Extensions.Hosting;
 using TerraBase.Configuration;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
@@ -33,7 +32,6 @@ public sealed class ShapeDeletionTests
         var head = new ShapeObjectHead(owner, new string('a', 64), new string('b', 64), 3, 1,
             "01M6PER7EK2HE3QCYY6MB9QYZ8", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), 0);
         _ = await objects.PutAsync(key, head, new byte[] { 1, 2, 3 }, token);
-        // Poison a large unrelated inventory: the old serial shared scan would inspect it before our handle.
         for (var index = 0; index < 1100; index++)
         {
             s3.SeedObject(false, "v1/shapes/h1-0000000000000000/" + index.ToString("x64", System.Globalization.CultureInfo.InvariantCulture), [9]);

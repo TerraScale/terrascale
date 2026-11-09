@@ -900,7 +900,7 @@ internal sealed partial class TursoReplicas(
 
             // A reader's BEGIN is refused as locked while the replica's writer commits or checkpoints (a local write, an
             // overlay re-apply). Like the primary store's sessions, wait it out in 50 ms steps for up to five seconds.
-            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var started = Stopwatch.GetTimestamp();
             while (true)
             {
                 try
@@ -908,7 +908,7 @@ internal sealed partial class TursoReplicas(
                     Run(native, "BEGIN;");
                     break;
                 }
-                catch (TursoException error) when (Locked(error) && System.Diagnostics.Stopwatch.GetElapsedTime(started) < LockedWait)
+                catch (TursoException error) when (Locked(error) && Stopwatch.GetElapsedTime(started) < LockedWait)
                 {
                     try
                     {
@@ -1118,12 +1118,7 @@ internal sealed partial class TursoReplicas(
                         long size = 0;
                         for (var i = 0; i < columns.Count; i++)
                         {
-                            size += TursoBindings.GetValueType(prepared, i) switch
-                            {
-                                TursoValueType.Text or TursoValueType.Blob => Math.Max(0, TursoBindings.GetValueByteCount(prepared, i)),
-                                TursoValueType.Null or TursoValueType.Empty => 0,
-                                _ => 8,
-                            };
+                            size += TursoStorageTransaction.ValueSize(prepared, i);
                         }
 
                         if (rows.Count == maxRows || size > statement.MaxBytes - bytes)
@@ -1135,14 +1130,7 @@ internal sealed partial class TursoReplicas(
                         var row = new object?[columns.Count];
                         for (var i = 0; i < row.Length; i++)
                         {
-                            row[i] = TursoBindings.GetValue(prepared, i) switch
-                            {
-                                { ValueType: TursoValueType.Integer } value => value.IntValue,
-                                { ValueType: TursoValueType.Real } value => value.RealValue,
-                                { ValueType: TursoValueType.Text } value => value.StringValue,
-                                { ValueType: TursoValueType.Blob } value => value.BlobValue,
-                                _ => null,
-                            };
+                            row[i] = TursoStorageTransaction.Value(prepared, i);
                         }
 
                         rows.Add(row);

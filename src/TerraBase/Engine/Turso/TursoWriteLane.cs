@@ -1,10 +1,5 @@
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// One database's write thread: its write transactions run their Turso calls here, apart from the shared read pool,
-/// so a long read (a <c>runSql</c>, a branch copy) never holds up the database's writes. The thread starts with the
-/// first call and exits after it has been idle for <see cref="IdleTimeout"/>, so only databases being written hold one.
-/// </summary>
 internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRunner
 {
     internal static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(10);
@@ -25,15 +20,8 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
     // The lane a group commit loop's flow stays on (Resident): its calls to that lane resume on the lane's thread and run there inline.
     private static readonly AsyncLocal<TursoWriteLane?> ResidentFlow = new();
 
-    /// <summary>
-    /// Lets the calling flow, a database's group commit loop, which holds its writer, stay on the lane's thread: each call
-    /// resumes the flow inline on that thread, and a call made from that thread runs at once instead of queueing behind
-    /// itself. A batch then pays one thread hop instead of two per storage call. Only for a flow that holds the writer for
-    /// all its calls, so no other transaction's call can be queued behind it, and that never blocks the thread.
-    /// </summary>
     internal void Resident() => ResidentFlow.Value = this;
 
-    /// <summary>Calls waiting for the thread, for tests.</summary>
     internal int Queued
     {
         get
@@ -45,7 +33,6 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
         }
     }
 
-    /// <summary>Whether a call is running, for tests.</summary>
     internal bool Running => Volatile.Read(ref _executing) > 0;
 
     public override Task<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken)

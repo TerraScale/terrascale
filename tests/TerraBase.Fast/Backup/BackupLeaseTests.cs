@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -7,7 +6,6 @@ using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
-using TerraBase.Testing;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Fast.Backup;
@@ -84,7 +82,6 @@ public sealed class BackupLeaseTests
         return [.. leases.Where(lease => lease.BackupId == backupId)];
     }
 
-    /// <summary>Rewrites the backup's completion, and its retention index entry, to two days before the frozen clock, so the next retention pass wants it gone.</summary>
     private static async ValueTask AgePastRetentionAsync(SqlBackupHost host, SystemCatalog catalog, string backupId, CancellationToken cancellationToken)
     {
         var record = await RecordAsync(catalog, host, backupId, cancellationToken);

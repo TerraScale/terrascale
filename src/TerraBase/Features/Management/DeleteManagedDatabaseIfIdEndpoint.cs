@@ -9,7 +9,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Deletes only the immutable database identity the caller inspected.</summary>
 internal sealed class DeleteManagedDatabaseIfIdEndpoint(IManagementService management, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

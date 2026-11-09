@@ -5,16 +5,14 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>Deletes a function and its logs.</summary>
 internal sealed class DeleteFunctionEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(FunctionRoute.Item);
         Name("deleteFunction");
         Summary("Deletes a function and its logs");
-        Description(FunctionRoute.Description + "");
+        Description(FunctionRoute.Description);
         Tags("Functions");
         Produces(StatusCodes.Status204NoContent);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -24,7 +22,6 @@ internal sealed class DeleteFunctionEndpoint(IManagementService management, IFun
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         FunctionRoute.RunAsync(HttpContext, management, (tenant, name) => functions.DeleteAsync(tenant, name, cancellationToken), cancellationToken);
 }

@@ -4,17 +4,13 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Engine;
 
-/// <summary>Node-wide admission for bulk disk allocations, including retained import sources.</summary>
 public interface IDiskBudget
 {
-    /// <summary>Reserves before allocating. Existing bytes are conservatively counted again until release.</summary>
     IDisposable Reserve(long bytes);
 
-    /// <summary>Recovers a retained allocation at startup without refusing service on a full volume.</summary>
     IDisposable Recover(long bytes);
 }
 
-/// <summary>Bulk admission leaves a GiB outside estimated claims for foreground and platform metadata writes.</summary>
 internal sealed class DiskBudget : IDiskBudget
 {
     internal const long Headroom = 1L << 30;
@@ -81,6 +77,5 @@ internal sealed class DiskBudget : IDiskBudget
     }
 }
 
-/// <summary>The node cannot safely start bulk work; callers can retry after other jobs finish or capacity is freed.</summary>
 public sealed class DiskCapacityException(long required, long available)
     : Exception($"Bulk work needs {required} bytes; {available} bytes are available after reservations and protected write headroom. Retry after active jobs finish or free data-volume capacity.");

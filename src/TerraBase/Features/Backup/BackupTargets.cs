@@ -5,7 +5,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>A fixed set of destinations for a generation or restore; a caller owns customer resources.</summary>
 internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys keys, BackupReader reader, IReadOnlyList<IObjectStore> retentionStores, bool includesPlatform, IDisposable? customer = null) : IDisposable
 {
     public string Revision { get; } = revision;
@@ -25,7 +24,6 @@ internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys
     }
 }
 
-/// <summary>Creates a fixed generation destination from current project configuration, with no credential cache.</summary>
 internal sealed class BackupTargets(
     IObjectStore platform, DataKeys platformKeys, BackupReader platformReader, IProjectBackupDestinations destinations,
     IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger,

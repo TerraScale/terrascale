@@ -7,7 +7,6 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Clock;
 using TerraBase.Hosting;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Clock;
 

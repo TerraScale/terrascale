@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Shapes;
@@ -45,7 +46,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             RetireShapeTable(table, null);
             var upsert = Command("INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($key, 0, $since, $body, $cookie);");
             upsert.Parameters.AddWithValue("$key", ShapeTablePrefix + table);
-            upsert.Parameters.AddWithValue("$body", System.Text.Encoding.UTF8.GetBytes(generation + "\n" + state.Sql));
+            upsert.Parameters.AddWithValue("$body", Encoding.UTF8.GetBytes(generation + "\n" + state.Sql));
             upsert.Parameters.AddWithValue("$since", since);
             upsert.Parameters.AddWithValue("$cookie", cookie);
             upsert.ExecuteNonQuery();

@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>Deploys or replaces a function.</summary>
 internal sealed class DeployFunctionEndpoint(IManagementService management, IFunctions functions) : Endpoint<DeployFunctionRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(FunctionRoute.Item);
@@ -25,7 +23,6 @@ internal sealed class DeployFunctionEndpoint(IManagementService management, IFun
         RequireAuthorization(ApiKeyScopes.SqlRead, ApiKeyScopes.SqlWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(DeployFunctionRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

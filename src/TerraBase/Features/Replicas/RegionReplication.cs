@@ -17,18 +17,14 @@ using ZLogger;
 
 namespace TerraBase.Features.Replicas;
 
-/// <summary>
-/// Region replicas (docs/terrabase/region-replicas.md). As a home, this node announces every newer revision of a database with
-/// replica regions on NATS. As a replica region, it records the databases other regions' homes place here, keeps a replica of
-/// each and pulls it whenever its home announces a revision, after a NATS reconnect, after a failed pull and on a
-/// <see cref="Sweep"/> when no changed revision has been applied recently. Star topology: every replica pulls from its home, page mode only, never pushing.
-/// </summary>
+// Star topology: every replica pulls from its home, page mode only, never pushing. Pulls run on each home's revision
+// notice, after a NATS reconnect, after a failed pull and on the sweep when no changed revision was applied recently
+// (docs/terrabase/region-replicas.md).
 internal sealed class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
-    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners? owners = null) : BackgroundService
+    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners) : BackgroundService
 {
-    /// <summary>How often every replica pulls and every home's catalog is read again without a notice.</summary>
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
 
     internal static readonly TimeSpan VerifyEvery = TimeSpan.FromMinutes(10);
@@ -75,7 +71,6 @@ internal sealed class RegionReplication(
 
     private string Region => options.Region;
 
-    /// <summary>The open followers' databases, for tests and diagnostics.</summary>
     internal IReadOnlyCollection<TenantContext> Following => [.. _followers.Values.Select(follower => follower.Database)];
 
     public override async Task StartAsync(CancellationToken cancellationToken)
@@ -145,7 +140,6 @@ internal sealed class RegionReplication(
         base.Dispose();
     }
 
-    /// <summary>Reads every home's catalog once and reconciles this region's replicas with it.</summary>
     internal async Task SyncCatalogsAsync(CancellationToken cancellationToken)
     {
         try
@@ -157,7 +151,7 @@ internal sealed class RegionReplication(
             logger.ZLogWarning($"The peers file could not be read; replicas keep the regions they know: {error.GetType().Name:@Error}");
         }
 
-        if (owners is { Writer: true })
+        if (owners.Writer)
         {
             foreach (var (key, follower) in _followers.Where(entry => entry.Value.Home.Region == options.Region).ToArray())
             {
@@ -178,7 +172,6 @@ internal sealed class RegionReplication(
         }
     }
 
-    /// <summary>Has the replica of <paramref name="database"/> pull soon, as a revision notice would: a session here just wrote at its home.</summary>
     internal void PullSoon(TenantContext database)
     {
         if (database.ProjectId is { } project && database.DatabaseId is { } id
@@ -188,7 +181,6 @@ internal sealed class RegionReplication(
         }
     }
 
-    /// <summary>Pulls every replica now, waiting for the pulls.</summary>
     internal async Task PullAllAsync(CancellationToken cancellationToken) =>
         await Task.WhenAll(_followers.Values.Select(follower => follower.PullNowAsync(cancellationToken))).ConfigureAwait(false);
 
@@ -240,7 +232,7 @@ internal sealed class RegionReplication(
                 try
                 {
                     if (await catalog.FindAsync(revised.Database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-                        || placement.Home != options.Region || !(owners?.Writer ?? true))
+                        || placement.Home != options.Region || !owners.Writer)
                     {
                         _ = _published.TryRemove(key, out _);
                         continue;
@@ -351,7 +343,7 @@ internal sealed class RegionReplication(
 
     private void Notice(string subject, byte[]? data)
     {
-        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _] || replica != options.Region || (home == options.Region && (owners?.Writer ?? true)) || data is null
+        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _] || replica != options.Region || (home == options.Region && owners.Writer) || data is null
             || !RevisionPush.TryRead(data, out var notice, out var answer) || notice is null)
         {
             return;
@@ -640,11 +632,10 @@ internal sealed class RegionReplication(
         }
     }
 
-    // A database the home no longer lists here: deleted there, or placed elsewhere now.
     private async Task ResolveMissingAsync(ReplicaPeer home, TenantContext database, CancellationToken cancellationToken)
     {
         var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
-        var address = new Uri(home.Internal, $"/v1/sync/organizations/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}/placement");
+        var address = new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "placement"));
         using var response = await _http.GetAsync(address, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
@@ -683,7 +674,6 @@ internal sealed class RegionReplication(
         _ = await replicas.DeleteAsync(database, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>One replica: opens it, then pulls once per batch of signals, retrying failed pulls with backoff.</summary>
     private sealed class Follower : IDisposable
     {
         private readonly RegionReplication _owner;
@@ -715,8 +705,7 @@ internal sealed class RegionReplication(
             _owner = owner;
             Database = database;
             _home = home;
-            _source = new Uri(_home.Internal,
-                $"/v1/sync/organizations/{Database.OrganizationId}/projects/{Database.ProjectId}/databases/{Database.DatabaseId}");
+            _source = new Uri(_home.Internal, ReplicaRoutes.DatabasePath(Database));
             _started = owner.Time.GetUtcNow();
             _nextVerify = _started + TimeSpan.FromSeconds(Random.Shared.Next(5, 60));
         }

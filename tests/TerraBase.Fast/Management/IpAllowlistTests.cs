@@ -1,16 +1,10 @@
 using System.Net;
 using System.Text.Json;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 using static TerraBase.Testing.ManagementApi;
 
 namespace TerraBase.Fast.Management;
 
-/// <summary>
-/// API key IP allowlists (<c>key_cidrs</c>, <c>project_cidrs</c> on ts-auth's token): a request from outside any list the
-/// token carries answers 403 ip_not_allowed, over HTTP and on the Postgres wire, where the edge names the client with a
-/// PROXY protocol v2 header.
-/// </summary>
 public sealed class IpAllowlistTests
 {
     [Test]
@@ -51,10 +45,8 @@ public sealed class IpAllowlistTests
         await Assert.That((await GetAsync("127.0.0.0/8", "0.0.0.0/0 ::/0")).Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await GetAsync("203.0.113.0/24", null)).IsEqualTo((HttpStatusCode.Forbidden, "ip_not_allowed"));
         await Assert.That(await GetAsync(null, "198.51.100.7/32")).IsEqualTo((HttpStatusCode.Forbidden, "ip_not_allowed"));
-        // The edge (a loopback peer here) names the client in the rightmost X-Forwarded-For hop.
         await Assert.That((await GetAsync("203.0.113.0/24", null, "198.51.100.1, 203.0.113.9")).Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await GetAsync("203.0.113.0/24", "198.51.100.0/24", "203.0.113.9")).IsEqualTo((HttpStatusCode.Forbidden, "ip_not_allowed"));
-        // A malformed list fails authentication instead of allowing every address.
         await Assert.That((await GetAsync("not-a-cidr", null)).Status).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 }

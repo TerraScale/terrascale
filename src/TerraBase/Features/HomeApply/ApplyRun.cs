@@ -1,4 +1,5 @@
 using System.Text.Json;
+using TerraScale.TerraBase.Contracts;
 using TerraBase.Engine;
 using TerraBase.Features.Clock;
 
@@ -294,7 +295,7 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
         var tables = await transaction.RunAsync("SELECT name FROM sqlite_schema WHERE type = 'table'", cancellationToken).ConfigureAwait(false);
         foreach (var row in tables.Rows)
         {
-            if (row[0] is not string table || TerraScale.TerraBase.Contracts.TerraBaseSqlNames.IsInternalTable(table))
+            if (row[0] is not string table || TerraBaseSqlNames.IsInternalTable(table))
             {
                 continue;
             }

@@ -27,6 +27,6 @@ internal sealed class RegionalStatusEndpoint(RegionalHandoff handoff) : Endpoint
         {
             return TypedResults.BadRequest();
         }
-        return TypedResults.Json(await handoff.StatusAsync(cancellationToken, region.Length > 0 ? region : null).ConfigureAwait(false), TerraBaseJsonContext.Default.RegionalStatus);
+        return TypedResults.Json(await handoff.StatusAsync(region.Length > 0 ? region : null, cancellationToken).ConfigureAwait(false), TerraBaseJsonContext.Default.RegionalStatus);
     }
 }

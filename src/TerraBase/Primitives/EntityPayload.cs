@@ -7,7 +7,6 @@ using TerraBase.Engine;
 
 namespace TerraBase.Primitives;
 
-/// <summary>Entity identity lives in the record key; typed responses restore it from that key.</summary>
 internal static class EntityPayload
 {
     private static readonly JsonDocumentOptions StoredOptions = new() { MaxDepth = StrictJson.MaxStoredDepth };

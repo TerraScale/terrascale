@@ -11,7 +11,6 @@ using TerraScale.TerraBase.Contracts.Management;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Placement and successful page pulls observed by this database's home.</summary>
 internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, IDatabaseRevisions revisions, IRegionCatalog regions, IReplicaStatus status,
     TerraBaseOptions options, TimeProvider time) : EndpointWithoutRequest<IResult>
 {

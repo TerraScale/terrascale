@@ -7,10 +7,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-/// <summary>
-/// <c>GET /v1/sync/regions/{region}/databases</c>: the databases homed on this node that <c>{region}</c> holds replicas of. Internal
-/// listener only, behind the peer credential.
-/// </summary>
 internal sealed class ReplicaCatalogEndpoint(IReplicaCatalog catalog, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
     private const int PageSize = 100;

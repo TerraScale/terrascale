@@ -1,18 +1,13 @@
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>
-/// <c>PUT /admin/organizations/{organization}/plan</c>: sets the plan of the memberless storage organization whose id is the
-/// ts-auth organization id, before or after its first database enrolls. Served only on the internal administrative listener,
-/// as <c>PUT /admin/projects/{project}/plan</c> is.
-/// </summary>
 internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put("/admin/organizations/{organization}/plan");
@@ -27,7 +22,6 @@ internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -40,7 +34,7 @@ internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog
         return ManagementRoute.CheckPlan(request) switch
         {
             Validation error => ErrorResponse.From(error),
-            TerraBase.Tenancy.PlanTier plan => await catalog.SetStoragePlanAsync(organization, plan, cancellationToken).ConfigureAwait(false) switch
+            PlanTier plan => await catalog.SetStoragePlanAsync(organization, plan, cancellationToken).ConfigureAwait(false) switch
             {
                 Organization value => await fanout.PublishAsync(HttpContext, value.Id, plan, cancellationToken).ConfigureAwait(false) is { } error
                     ? ErrorResponse.From(error) : TypedResults.Ok(value),

@@ -181,9 +181,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         }
     }
 
-    /// <summary>Admits one transaction or engine operation (create, copy, first open); <see cref="Release"/> it when it ends.</summary>
-    /// <exception cref="StorageBusyException">The pool already admitted <c>storage-queue</c> transactions.</exception>
-    /// <exception cref="ObjectDisposedException">The engine is shutting down.</exception>
     public void Admit()
     {
         var admitted = Interlocked.Increment(ref _admitted);
@@ -216,26 +213,21 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         }
     }
 
-    /// <summary>Counts a refusal and returns the exception that answers it with 503.</summary>
     public StorageBusyException Busy()
     {
         _rejected.Add(1);
         return new StorageBusyException();
     }
 
-    /// <summary>Admitted transactions and maintenance calls, for tests.</summary>
     internal int AdmissionCapacity { get; }
     internal int WorkerCount => _threads.Length;
 
     internal int Admitted => Volatile.Read(ref _admitted);
 
-    /// <summary>Calls running on the threads, for tests.</summary>
     internal int Running => Volatile.Read(ref _running);
 
-    /// <summary>New admissions are refused once shutdown starts.</summary>
     internal bool Closed => Volatile.Read(ref _closed) != 0;
 
-    /// <summary>Calls waiting for a worker, for tests.</summary>
     internal int Queued
     {
         get
@@ -247,7 +239,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         }
     }
 
-    /// <summary>Runs <paramref name="call"/> on a pool thread; the caller must hold an admission.</summary>
     public override async Task<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -340,15 +331,11 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Admits nothing more, lets admitted transactions finish (their calls still run), then stops the threads.
-    /// </summary>
     public ValueTask DisposeAsync()
     {
         return new(_disposal.Value);
     }
 
-    /// <summary>Refuses new admissions; admitted operations can keep submitting work until fully released.</summary>
     internal Task DrainAdmissionsAsync()
     {
         Interlocked.Exchange(ref _closed, 1);

@@ -4,19 +4,12 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Permanent customer deletion authority; deadlines never move when cleanup retries.</summary>
 internal sealed record DatabasePurgeRecord(
     TenantContext Database, DateTimeOffset RequestedAt, DateTimeOffset ActiveDueAt, DateTimeOffset BackupDueAt,
     DateTimeOffset? BackupVerifiedAt, string[] ExpectedHolders, int FormatVersion = 1);
 
-/// <summary>
-/// A node's own verified absence, kept separately so peers cannot replace each other's receipts. <paramref name="Authority"/>
-/// is the <see cref="DatabasePurgeRecord.RequestedAt"/> the node read from the purge it verified, so a receipt binds to that
-/// authority causally; <paramref name="VerifiedAt"/> is the holder's own clock, informational only and never compared.
-/// </summary>
 internal sealed record DatabasePurgeReceipt(TenantContext Database, string MachineId, DateTimeOffset VerifiedAt, int FormatVersion = 1, DateTimeOffset? Authority = null)
 {
-    /// <summary>Whether this receipt was issued for exactly <paramref name="record"/> by <paramref name="holder"/>.</summary>
     public bool Binds(DatabasePurgeRecord record, string holder) =>
         FormatVersion == 1 && MachineId == holder && DatabasePurge.SameDatabase(Database, record.Database) && Authority == record.RequestedAt;
 }
@@ -53,7 +46,6 @@ internal static class DatabasePurge
         return true;
     }
 
-    /// <summary>The expected holders with no receipt bound to <paramref name="record"/>: whom an erasure waits on.</summary>
     public static async ValueTask<string[]> UnacknowledgedHoldersAsync(IStorageTransaction transaction, DatabasePurgeRecord record, CancellationToken cancellationToken)
     {
         List<string> missing = [];

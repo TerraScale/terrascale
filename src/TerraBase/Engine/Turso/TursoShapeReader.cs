@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraBase.Errors;
@@ -152,7 +153,7 @@ internal sealed partial class TursoShapeReader(
             return null;
         }
 
-        var body = System.Text.Encoding.UTF8.GetString(TursoSession.Bytes(reader, 0));
+        var body = Encoding.UTF8.GetString(TursoSession.Bytes(reader, 0));
         var split = body.IndexOf('\n', StringComparison.Ordinal);
         return split == 26 && EntityIds.IsValid(body[..split])
             ? (body[(split + 1)..], body[..split], reader.GetInt64(1), reader.GetInt64(2))
@@ -408,11 +409,6 @@ internal sealed partial class TursoShapeReader(
         return new ShapeBody(body, ShapeNumber(covered), fresh && covered == head, retained);
     }
 
-    /// <summary>
-    /// Projects the region's pending local transactions through the shape (PIVOT F7). Transactions the pages already settle
-    /// (a <c>_ts_applied</c> row, or for a forwarded write a head past its commit) are returned as held. A row a pending local transaction inserted is keyed
-    /// <c>~&lt;transaction&gt;.&lt;row id&gt;</c> until the home confirms it, so it never collides with a home row id.
-    /// </summary>
     internal ShapeProvisional ReadProvisional(ShapeSealDefinition shape, IReadOnlyList<ProvisionalTransaction> pending, IMemoryBudget memory, CancellationToken cancellationToken)
     {
         var held = new HashSet<string>(StringComparer.Ordinal);
@@ -597,7 +593,7 @@ internal sealed partial class TursoShapeReader(
         }
 
         changes.Write("{\"offset\":\""u8);
-        changes.Write(System.Text.Encoding.ASCII.GetBytes(ShapeNumber(offset)));
+        changes.Write(Encoding.ASCII.GetBytes(ShapeNumber(offset)));
         changes.Write("\",\"ops\":["u8);
         changes.Write(commit.WrittenSpan);
         changes.Write("]"u8);
@@ -605,7 +601,6 @@ internal sealed partial class TursoShapeReader(
         changes.Write("}"u8);
     }
 
-    /// <summary>The region transactions one home commit settles: its <c>_ts_applied</c> inserts (PIVOT F7).</summary>
     private sealed class ShapeSettled
     {
         private readonly List<string> _confirmed = [];

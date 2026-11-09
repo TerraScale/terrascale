@@ -7,7 +7,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-// Deletion is off the write hot path. All nodes, including hold partners, must evict before204.
+// Deletion is off the write hot path. All nodes, including hold partners, must evict before 204.
 // An unavailable peer keeps deletion pending; its restart has empty caches and cold reads fail closed.
 internal sealed class KeyRevocationPeers(TerraBaseOptions options, InternalCredential credential, KeyRevocationLocal local) : IDisposable
 {
@@ -31,7 +31,7 @@ internal sealed class KeyRevocationPeers(TerraBaseOptions options, InternalCrede
         await Parallel.ForEachAsync(nodes.Where(node => node.Name != options.MachineId),
             new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = token }, async (node, cancellationToken) =>
             {
-                var address = new UriBuilder(Uri.UriSchemeHttp, node.Address.ToString(), options.InternalPort).Uri;
+                var address = node.InternalListener(options.InternalPort);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
                     HttpClient = _http,

@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary><c>POST …/databases/{database}/backups</c>: backs a database up now.</summary>
 internal sealed class CreateBackupEndpoint(IManagementService management, IManagedBackupService backups) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ProjectApiRoute.Database + "/backups");
@@ -25,7 +23,6 @@ internal sealed class CreateBackupEndpoint(IManagementService management, IManag
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await ManagementRoute.CheckWritableDatabaseAsync(HttpContext, management, cancellationToken) switch
         {

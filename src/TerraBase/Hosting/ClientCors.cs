@@ -1,6 +1,5 @@
 namespace TerraBase.Hosting;
 
-/// <summary>Bearer-only browser access to the public SQL and shape API.</summary>
 internal static class ClientCors
 {
     private const string Policy = "data-api";

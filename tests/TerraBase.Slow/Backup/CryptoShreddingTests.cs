@@ -6,11 +6,10 @@ using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
-namespace TerraBase.Fast.Backup;
+namespace TerraBase.Slow.Backup;
 
-/// <summary>Deleting a database or erasing an account destroys its backup data keys (docs/terrabase/crypto-shredding.md).</summary>
+// Deleting a database or erasing an account destroys its backup data keys (docs/terrabase/crypto-shredding.md).
 public sealed class CryptoShreddingTests
 {
     [Test]

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using TerraBase.Tenancy;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Hosting;
@@ -25,7 +26,7 @@ internal sealed partial class EngineManagementService
 
     internal static string State(string organizationId) => $"organizations/{organizationId}/state";
 
-    private static string PlanName(TerraBase.Tenancy.PlanTier plan) => plan.ToString().ToLowerInvariant();
+    private static string PlanName(PlanTier plan) => plan.ToString().ToLowerInvariant();
 
     private static async ValueTask<AuthorizedOrganization> AuthorizeAsync(
         IStorageTransaction transaction, string userId, string organizationId, bool allowProject, CancellationToken cancellationToken)

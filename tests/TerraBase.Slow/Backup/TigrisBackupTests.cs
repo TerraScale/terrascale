@@ -9,7 +9,6 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Backup;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Backup;
 

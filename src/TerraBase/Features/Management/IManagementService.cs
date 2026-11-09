@@ -32,24 +32,20 @@ public readonly union ListOrganizationsResult(ManagementPage<Organization>, Unav
 
 public readonly union GetOrganizationResult(Organization, NotFound, Unavailable);
 
-/// <summary>The organization with its new plan, or why not.</summary>
 public readonly union SetPlanResult(Organization, NotFound, Forbidden, Unavailable);
 
 public readonly union DeleteOrganizationResult(Done, NotFound, Forbidden, Conflict, Unavailable);
 
-/// <summary>The created project, or why not: its name or a client-chosen id is taken.</summary>
 public readonly union CreateProjectResult(Project, NotFound, Forbidden, Conflict, Unavailable);
 
 public readonly union ListProjectsResult(ManagementPage<Project>, NotFound, Unavailable);
 
 public readonly union GetProjectResult(Project, NotFound, Unavailable);
 
-/// <summary>Whether the project was deleted: it may still have databases or API keys.</summary>
 public readonly union DeleteProjectResult(Done, NotFound, Forbidden, Conflict, Unavailable);
 
 public readonly union CreateDatabaseResult(ManagedDatabase, NotFound, Forbidden, Conflict, Unavailable);
 
-/// <summary>The live databases this region homes for an organization, or why the catalog could not be read.</summary>
 public readonly union HomeDatabaseCountResult(long, Unavailable);
 
 public readonly union SetDatabaseRegionsResult(ManagedDatabase, NotFound, Forbidden, Conflict, Unavailable);
@@ -58,7 +54,6 @@ public readonly union FindDatabaseRecordResult(ManagedDatabase, NotFound, Unavai
 
 public readonly union ListDatabasesResult(ManagementPage<ManagedDatabase>, NotFound, Unavailable);
 
-/// <summary>The project's local database page, for the internal peer listener's fan-out.</summary>
 public readonly union ListProjectDatabasesResult(ManagementPage<ManagedDatabase>, Unavailable);
 public readonly union GetDatabaseResult(ManagedDatabase, NotFound, Unavailable);
 
@@ -74,17 +69,12 @@ public readonly union BranchDatabaseResult(ManagedDatabase, NotFound, Forbidden,
 
 public readonly union CopyDatabaseResult(ManagedDatabase, NotFound, Forbidden, Conflict, QuotaExceeded, Unavailable);
 
-/// <summary>The restore precheck passed, or the typed error its registration would return.</summary>
 public readonly union RestorePrecheckResult(Done, NotFound, Forbidden, Conflict, Unavailable);
 
 public sealed record ManagementPage<T>(IReadOnlyList<T> Items, string? Next);
 
 internal interface IManagementService
 {
-    /// <summary>
-    /// The name and allowance checks a restore into a new database makes before any replay work, refused with the same
-    /// errors its registration returns; the registration re-checks when it commits (races).
-    /// </summary>
     ValueTask<RestorePrecheckResult> PrecheckRestoreAsync(
         string userId, string organizationId, string projectId, string? name, CancellationToken cancellationToken);
 
@@ -103,7 +93,6 @@ internal interface IManagementService
 
     ValueTask<DeleteOrganizationResult> DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken);
 
-    /// <summary>Creates a project in an organization.</summary>
     ValueTask<CreateProjectResult> CreateProjectAsync(string userId, string organizationId, string name, CancellationToken cancellationToken);
 
     ValueTask<ListProjectsResult> ListProjectsAsync(
@@ -111,7 +100,6 @@ internal interface IManagementService
 
     ValueTask<GetProjectResult> GetProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
-    /// <summary>Deletes a project that has no databases, API keys or customer backup destination.</summary>
     ValueTask<DeleteProjectResult> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     ValueTask<CreateDatabaseResult> CreateDatabaseAsync(
@@ -130,7 +118,6 @@ internal interface IManagementService
 
     ValueTask<FindDatabaseRecordResult> FindDatabaseRecordAsync(string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
-    /// <summary>The project's local database page without user membership checks, for the internal peer listener.</summary>
     ValueTask<ListProjectDatabasesResult> ListProjectDatabasesAsync(
         string projectId, string? after, int limit, CancellationToken cancellationToken);
 
