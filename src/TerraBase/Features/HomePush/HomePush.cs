@@ -103,7 +103,9 @@ internal sealed class HomePush(
 
     public bool TwoNodeAck => LocalAckAvailable && partner.PartnerHealthy;
 
-    public bool LocalAckAvailable => (services.GetService<RegionalOwners>()?.Writer ?? true) && _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
+    private bool RegionWriter => services.GetService<RegionalOwners>()?.Writer ?? true;
+
+    public bool LocalAckAvailable => RegionWriter && _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
         && partner.QuorumHealthy && services.GetService<ILocalWriteClock>() is { Allowed: true };
 
     private IInRegionAck Partner => partner;
@@ -518,7 +520,7 @@ internal sealed class HomePush(
         }
         _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
         {
-            Filter = $"terrabase.push.{options.Region}.*.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}",
+            Filter = PushNames.DatabaseFilter(options.Region, database),
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -530,7 +532,7 @@ internal sealed class HomePush(
             {
                 _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
                 {
-                    Filter = $"terrabase.push.{options.Region}.*.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}",
+                    Filter = PushNames.DatabaseFilter(options.Region, database),
                     Seq = through + 1,
                 }, cancellationToken).ConfigureAwait(false);
             }
@@ -547,7 +549,7 @@ internal sealed class HomePush(
         var backoff = TimeSpan.FromMilliseconds(200);
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (!(services.GetService<RegionalOwners>()?.Writer ?? true))
+            if (!RegionWriter)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(100), time, cancellationToken).ConfigureAwait(false);
                 continue;
@@ -576,7 +578,7 @@ internal sealed class HomePush(
                 await foreach (var message in consumer.ConsumeAsync<byte[]>(opts: new NatsJSConsumeOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken)
                     .ConfigureAwait(false))
                 {
-                    if (!(services.GetService<RegionalOwners>()?.Writer ?? true))
+                    if (!RegionWriter)
                     {
                         await message.NakAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
                         break;
@@ -678,7 +680,7 @@ internal sealed class HomePush(
         HomeApplyResult result;
         while (true)
         {
-            if (!(services.GetService<RegionalOwners>()?.Writer ?? true))
+            if (!RegionWriter)
             {
                 await message.NakAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
                 return;
