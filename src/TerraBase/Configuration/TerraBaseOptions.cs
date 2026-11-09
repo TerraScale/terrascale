@@ -1,6 +1,8 @@
+using System.Collections;
 using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Security;
 
 namespace TerraBase.Configuration;
 
@@ -133,7 +135,7 @@ public sealed record TerraBaseOptions
 
     public static void ReadSecretFiles()
     {
-        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
         {
             if (entry.Key is string key && key.EndsWith("_FILE", StringComparison.Ordinal) && entry.Value is string { Length: > 0 } path
                 && key[..^"_FILE".Length] is var name
@@ -227,7 +229,7 @@ public sealed record TerraBaseOptions
         {
             dataDirectory = Path.GetFullPath(dataDirectory);
         }
-        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException or System.Security.SecurityException)
+        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException or SecurityException)
         {
             throw new TerraBaseConfigurationException("data-directory must be a valid path");
         }

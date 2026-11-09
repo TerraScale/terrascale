@@ -1,3 +1,5 @@
+using System.Net.Http.Headers;
+using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Configuration;
@@ -50,7 +52,7 @@ internal sealed class InternalCredential
         return CryptographicOperations.FixedTimeEquals(_bytes, Encoding.ASCII.GetBytes(value));
     }
 
-    internal void Sign(System.Net.Http.Headers.HttpRequestHeaders headers)
+    internal void Sign(HttpRequestHeaders headers)
     {
         if (CorrelationKey is not null)
         {
@@ -59,7 +61,7 @@ internal sealed class InternalCredential
     }
 
     /// <summary>Signs a WebSocket upgrade to a peer with the peer credential.</summary>
-    internal void Sign(System.Net.WebSockets.ClientWebSocketOptions options)
+    internal void Sign(ClientWebSocketOptions options)
     {
         if (CorrelationKey is not null)
         {

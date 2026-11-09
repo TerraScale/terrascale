@@ -3,6 +3,7 @@ using TerraBase.Configuration;
 using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TursoStorageFormat = TerraBase.Engine.Turso.StorageFormat;
 
 namespace TerraBase.Features.Health;
 
@@ -21,7 +22,7 @@ public sealed record StatusBody(
     /// <param name="bucket">The missing backup bucket, while its catalog anchor cannot be read or written; internal listener only.</param>
     public static StatusBody For(HttpContext context, string status, TerraBaseOptions options, string? bucket = null) =>
         Listeners.ArrivedOn(context) == TerraBaseListener.Internal
-            ? new(status, ServiceVersion.Value, options.Region, Engine.Turso.StorageFormat.Id, ServiceVersion.Revision, options.MachineId, bucket)
+            ? new(status, ServiceVersion.Value, options.Region, TursoStorageFormat.Id, ServiceVersion.Revision, options.MachineId, bucket)
             : new(status, ServiceVersion.Value, options.Region);
 }
 public sealed class HealthzEndpoint(TerraBaseOptions options, ICatalogGate catalog) : EndpointWithoutRequest<IResult>
