@@ -34,17 +34,23 @@ public sealed class ScopedKeyTests(TerraBaseFixture fixture)
         await Assert.That(body.GetProperty("project_id").GetString()).IsEqualTo(project);
         await Assert.That(body.GetProperty("expires_at").GetDateTimeOffset()).IsLessThanOrEqualTo(DateTimeOffset.UtcNow.AddSeconds(601));
 
+        var otherDatabase = oidc.CreateDatabaseIdAsync(oidc.UniqueName("other"));
+        var readerTask = oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "reader", scopes = ReadOnly, database }, HttpStatusCode.Created);
         using var exchanged = await oidc.ApiKeyTokenAsync(body.GetProperty("key").GetString()!);
         var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(exchanged)).GetProperty("access_token").GetString()!, Audience);
         await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
         await Assert.That(access.GetClaim("database").Value).IsEqualTo(database);
         await Assert.That(access.GetClaim("scope").Value).IsEqualTo("sql:read");
 
-        var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "reader", scopes = ReadOnly, database }, HttpStatusCode.Created);
+        var created = await readerTask;
         var reader = created.GetProperty("key").GetString()!;
-        using var widened = await MintAsync(oidc.Client, reader, new { database, access = "read_write" });
-        using var elsewhere = await MintAsync(oidc.Client, reader, new { database = await oidc.CreateDatabaseIdAsync(oidc.UniqueName("other")), access = "read" });
-        using var child = await MintAsync(oidc.Client, reader, new { database, access = "read" });
+        var widenedTask = MintAsync(oidc.Client, reader, new { database, access = "read_write" });
+        var elsewhereTask = MintAsync(oidc.Client, reader, new { database = await otherDatabase, access = "read" });
+        var childTask = MintAsync(oidc.Client, reader, new { database, access = "read" });
+        await Task.WhenAll(widenedTask, elsewhereTask, childTask);
+        using var widened = await widenedTask;
+        using var elsewhere = await elsewhereTask;
+        using var child = await childTask;
         var childKey = (await child.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!;
         using var grandchild = await MintAsync(oidc.Client, childKey, new { database, access = "read" });
         await Assert.That(widened.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
