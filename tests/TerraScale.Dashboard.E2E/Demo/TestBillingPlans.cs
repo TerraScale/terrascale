@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
@@ -12,6 +13,7 @@ namespace TerraScale.Dashboard.E2E.Demo
     // through the official Stripe SDK and validate actual provider-shaped facts.
     sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessageHandler
     {
+
         private int cancellationCalls;
         public int CancellationCalls => Volatile.Read(ref cancellationCalls);
         private readonly HttpMessageInvoker vendor = new(underlying, false);
@@ -407,7 +409,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     var subscription = await SubscriptionAsync(form.GetValueOrDefault("from_subscription").ToString(), cancellationToken);
                     mutations.Enqueue((subscription["customer"]!.GetValue<string>(), path));
                     var id = "sub_sched_" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))[..24];
-                    if (!schedules.ContainsKey(id))
+                    if (!schedules.TryGetValue(id, out _))
                     {
                         if (subscription["schedule"] is not null)
                         {
@@ -448,8 +450,8 @@ namespace TerraScale.Dashboard.E2E.Demo
                         throw new HttpRequestException("Unexpected subscription schedule serialization.");
                     }
 
-                    var start = long.Parse(form["phases[0][start_date]"].ToString()); var renewal = long.Parse(form["phases[0][end_date]"].ToString());
-                    if (form.ContainsKey("phases[1][start_date]") && long.Parse(form["phases[1][start_date]"].ToString()) != renewal)
+                    var start = long.Parse(form["phases[0][start_date]"].ToString(), CultureInfo.InvariantCulture); var renewal = long.Parse(form["phases[0][end_date]"].ToString(), CultureInfo.InvariantCulture);
+                    if (form.TryGetValue("phases[1][start_date]", out var secondPhase) && long.Parse(secondPhase.ToString(), CultureInfo.InvariantCulture) != renewal)
                     {
                         throw new HttpRequestException("Plan phases do not meet at renewal.");
                     }

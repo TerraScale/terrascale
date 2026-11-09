@@ -11,6 +11,8 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
 {
     public sealed class InvoiceFactsJourneyTests
     {
+    private static readonly string[] TwoDashHosts = ["dash.terrascale.tech", "dash.terrascale.tech"];
+    private static readonly string[] ThreeDashHosts = ["dash.terrascale.tech", "dash.terrascale.tech", "dash.terrascale.tech"];
         [Test]
         [Arguments("usd", 1234L, 234L, "$12.34", "$2.34")]
         [Arguments("jpy", 1500L, 500L, "JPY 1500", "JPY 500")]
@@ -32,11 +34,11 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
             var suffix = Guid.NewGuid().ToString("N");
             await BillingPlanJourneyTests.SignUpPaidAsync(client, "invoice-" + suffix + "@example.test", "E2E-invoice-" + suffix, suffix);
-            await Assert.That(wire.ReturnHosts).IsEquivalentTo(new[] { "dash.terrascale.tech", "dash.terrascale.tech" });
+            await Assert.That(wire.ReturnHosts).IsEquivalentTo(TwoDashHosts);
             using var portal = await client.GetAsync("/billing/portal?return=https%3A%2F%2Fattacker.invalid");
             await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(wire.PortalReturn).IsEqualTo("https://dash.terrascale.tech/billing");
-            await Assert.That(wire.ReturnHosts).IsEquivalentTo(new[] { "dash.terrascale.tech", "dash.terrascale.tech", "dash.terrascale.tech" });
+            await Assert.That(wire.ReturnHosts).IsEquivalentTo(ThreeDashHosts);
             await Assert.That(wire.ReturnSchemes.All(scheme => scheme == "https")).IsTrue();
             var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
             var vendorCalls = wire.StripeCalls;

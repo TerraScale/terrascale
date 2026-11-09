@@ -24,6 +24,7 @@ namespace TerraScale.Dashboard.E2E
     // TsAuthGateway, official SDK, signed identity/access tokens and persistent sessions.
     public sealed class AuthProviderScenario : IAsyncDisposable
     {
+
         private WebApplication? producer;
         private WebApplication? first;
         private WebApplication? second;
@@ -162,7 +163,7 @@ namespace TerraScale.Dashboard.E2E
                 application.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Home.IHomeMeasurements, TerraScale.Dashboard.Features.Home.TerraBaseHomeMeasurements>());
             }
 
-            provider.Ownership?.Configure(application);
+            if (provider.Ownership is not null) { OwnershipSdkProtocol.Configure(application); }
         }
 
         // Invoke the production command entry and complete graph, with only its
@@ -309,6 +310,13 @@ namespace TerraScale.Dashboard.E2E
 
         private sealed class ScenarioProvider(ScenarioClock clock, TestState state, TestWorkspace workspace, ConcurrentQueue<string> cliRequests) : IDisposable
         {
+        private static readonly string[] ResponseTypes = ["code"];
+        private static readonly string[] GrantTypes = ["authorization_code", "refresh_token"];
+        private static readonly string[] CodeChallengeMethods = ["S256"];
+        private static readonly string[] SubjectTypes = ["public"];
+        private static readonly string[] IdTokenSigningAlgs = ["ES256"];
+        private static readonly string[] TokenEndpointAuthMethods = ["client_secret_post", "client_secret_basic"];
+        private static readonly string[] Scopes = ["openid", "email", "profile", "offline_access"];
             // ts-auth 6bb896bb: one global issuer, {PublicOrigin}/{tenant}, served from every region.
             private const string Issuer = "https://auth.terrascale.tech/terrascale";
             private const string ClientId = "01M4EQ2FRJ8S8B29E8TQVWNW4J";
@@ -903,13 +911,13 @@ namespace TerraScale.Dashboard.E2E
                     jwks_uri = CurrentIssuer + "/.well-known/jwks.json",
                     revocation_endpoint = CurrentIssuer + "/oauth/revoke",
                     end_session_endpoint = CurrentIssuer + "/oauth/logout",
-                    response_types_supported = new[] { "code" },
-                    grant_types_supported = new[] { "authorization_code", "refresh_token" },
-                    code_challenge_methods_supported = new[] { "S256" },
-                    subject_types_supported = new[] { "public" },
-                    id_token_signing_alg_values_supported = new[] { "ES256" },
-                    token_endpoint_auth_methods_supported = new[] { "client_secret_post", "client_secret_basic" },
-                    scopes_supported = new[] { "openid", "email", "profile", "offline_access" }
+                    response_types_supported = ResponseTypes,
+                    grant_types_supported = GrantTypes,
+                    code_challenge_methods_supported = CodeChallengeMethods,
+                    subject_types_supported = SubjectTypes,
+                    id_token_signing_alg_values_supported = IdTokenSigningAlgs,
+                    token_endpoint_auth_methods_supported = TokenEndpointAuthMethods,
+                    scopes_supported = Scopes
                 });
             }
 

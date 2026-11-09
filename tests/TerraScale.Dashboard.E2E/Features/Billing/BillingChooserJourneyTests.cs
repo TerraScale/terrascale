@@ -10,6 +10,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
     [ClassDataSource<DashboardE2EFixture>]
     public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
     {
+
         [Test]
         public async Task AnnualSubscriptionOpensBillingAndChooserOnAnnualWithItsPlanCurrent()
         {
@@ -19,7 +20,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var html = WebUtility.HtmlDecode(await client.GetStringAsync("/organization?tab=billing"));
             var chooser = Regex.Match(html, "<dialog id=\"change-billing-plan\".*?</dialog>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Value;
             await Assert.That(Regex.IsMatch(chooser, "<input[^>]*name=\"plan\"[^>]*value=\"starter\"[^>]*checked", RegexOptions.CultureInvariant)).IsTrue();
-            await Assert.That(Regex.Matches(html, "class=\"ts-plan ts-plan-current\"").Count).IsEqualTo(1);
+            await Assert.That(Regex.Count(html, "class=\"ts-plan ts-plan-current\"")).IsEqualTo(1);
             await Assert.That(html).Contains("aria-labelledby=\"plan-starter\" aria-current=\"true\"");
             await AssertComparisonAsync(html);
             var free = PlanCard(html, "free");
@@ -54,7 +55,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         {
             using var published = JsonDocument.Parse(PlanCatalog.PublishedJson);
             var plans = published.RootElement.GetProperty("plans").EnumerateArray().ToArray();
-            await Assert.That(Regex.Matches(html, "<article[^>]*aria-labelledby=\"plan-", RegexOptions.CultureInvariant).Count).IsEqualTo(5);
+            await Assert.That(Regex.Count(html, "<article[^>]*aria-labelledby=\"plan-", RegexOptions.CultureInvariant)).IsEqualTo(5);
             foreach (var plan in plans)
             {
                 var card = PlanCard(html, plan.GetProperty("id").GetString()!);

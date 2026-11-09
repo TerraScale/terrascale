@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.E2E.Platform
     [Category("Slow")]
     public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
     {
+    private static readonly string[] RegionsGruSjc = ["GRU", "SJC"];
         [Test]
         public async Task DatabaseProfileBillingAndDatastarDesktopAndMobile()
         {
@@ -164,7 +165,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                         await SubmitAsync("#create-organization form", "Continue to checkout");
                         await page.GetByRole(AriaRole.Heading, new() { Name = "Create the first project", Exact = true }).WaitForAsync();
                         await page.Locator("#create-organization input[name=\"name\"]").FillAsync("Production");
-                        await page.Locator("#create-organization select[name=\"regions\"]").SelectOptionAsync(new[] { "GRU", "SJC" });
+                        await page.Locator("#create-organization select[name=\"regions\"]").SelectOptionAsync(RegionsGruSjc);
                         await page.Locator("#create-organization select[name=\"region\"]").SelectOptionAsync("GRU");
                         await page.Locator("#create-organization select[name=\"backupRegion\"]").SelectOptionAsync("SJC");
                         await SubmitAsync("#create-organization form", "Create project");

@@ -10,6 +10,8 @@ namespace TerraScale.Dashboard.E2E
     internal sealed class TestInitializerDiagnostics : IDisposable
     {
         private static readonly HttpContextAccessor Current = new();
+        private static readonly Action<ILogger, string, string, string, Exception?> InitializerFailure =
+            LoggerMessage.Define<string, string, string>(LogLevel.Error, new EventId(1), "Test initializer {InitializerType}: root {RootType}; stack {RootStack}");
         private ILogger? logger;
         private int remaining = 4;
 
@@ -38,8 +40,7 @@ namespace TerraScale.Dashboard.E2E
                     return;
                 }
                 var root = initializer.GetBaseException();
-                logger.LogError("Test initializer {InitializerType}: root {RootType}; stack {RootStack}",
-                    Bound(initializer.TypeName, 256), Bound(root.GetType().FullName, 256), Bound(root.StackTrace, 2048));
+                InitializerFailure(logger, Bound(initializer.TypeName, 256), Bound(root.GetType().FullName, 256), Bound(root.StackTrace, 2048), null);
             }
             catch (Exception) { /* Diagnostics must never alter the request outcome. */ }
         }

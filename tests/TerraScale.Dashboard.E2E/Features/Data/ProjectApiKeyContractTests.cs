@@ -12,6 +12,9 @@ namespace TerraScale.Dashboard.E2E.Features.Data
     [ClassDataSource<DashboardRootFixture>]
     public sealed class ProjectApiKeyContractTests(DashboardRootFixture fixture)
     {
+    private static readonly string[] SqlScopes = ["sql:read", "sql:write"];
+    private static readonly string[] SetCidrs = ["203.0.113.0/24", "198.51.100.7", "2001:db8::/48"];
+    private static readonly string[] NormalizedCidrs = ["203.0.113.0/24", "198.51.100.7/32", "2001:db8::/48"];
         private const string OrganizationId = "01JA0000000000000000000002";
         private const string ProjectId = "01JA0000000000000000000001";
         private const string KeyId = "01JA0000000000000000000003";
@@ -32,7 +35,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That(created.Key.AllowedCidrs).IsEquivalentTo(Array.Empty<string>());
             await Assert.That(request.RootElement.GetProperty("database").GetString()).IsEqualTo(DatabaseId);
             await Assert.That(request.RootElement.GetProperty("scopes").EnumerateArray().Select(item => item.GetString()!))
-                .IsEquivalentTo(new[] { "sql:read", "sql:write" });
+                .IsEquivalentTo(SqlScopes);
             await Assert.That(created.Secret).IsEqualTo(KeyId + "_synthetic-secret");
             await Assert.That(created.Key.LastFour).IsEqualTo("");
             await Assert.That(ApiKeyService.Metadata(created.Key).DatabaseName).IsEqualTo("app");
@@ -239,15 +242,15 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             var ownerSecret = await HttpJourney.CreatePatAsync(client, "TUnit project cidrs owner", account.Password);
             var scope = new { organizationId, projectId };
             var set = (await HttpJourney.McpAsync(client, ownerSecret, "tools/call", new
-            { name = "set_project_allowed_cidrs", arguments = new { allowedCidrs = new[] { "203.0.113.0/24", "198.51.100.7", "2001:db8::/48" }, organizationId, projectId } }))
+            { name = "set_project_allowed_cidrs", arguments = new { allowedCidrs = SetCidrs, organizationId, projectId } }))
                 .GetProperty("result").GetProperty("structuredContent").GetProperty("allowedCidrs");
             await Assert.That(set.EnumerateArray().Select(item => item.GetString()!))
-                .IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7/32", "2001:db8::/48" }, CollectionOrdering.Matching);
+                .IsEquivalentTo(NormalizedCidrs, CollectionOrdering.Matching);
             var read = (await HttpJourney.McpAsync(client, ownerSecret, "tools/call", new
             { name = "get_project_allowed_cidrs", arguments = scope }))
                 .GetProperty("result").GetProperty("structuredContent").GetProperty("allowedCidrs");
             await Assert.That(read.EnumerateArray().Select(item => item.GetString()!))
-                .IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7/32", "2001:db8::/48" }, CollectionOrdering.Matching);
+                .IsEquivalentTo(NormalizedCidrs, CollectionOrdering.Matching);
 
             var suffix = Guid.NewGuid().ToString("N")[..8];
             var email = "cidr-member-" + suffix + "@example.test";
@@ -396,8 +399,8 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 ["sql:read", "sql:write"], 0, ApiKeyService.ParseCidrs("203.0.113.0/24\n198.51.100.7, 2001:db8::/48"), CancellationToken.None, "synthetic-proof");
             using var request = JsonDocument.Parse(wire.Body!);
             await Assert.That(request.RootElement.GetProperty("allowed_cidrs").EnumerateArray().Select(item => item.GetString()!))
-                .IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7", "2001:db8::/48" }, CollectionOrdering.Matching);
-            await Assert.That(created.Key.AllowedCidrs!).IsEquivalentTo(new[] { "203.0.113.0/24", "198.51.100.7/32", "2001:db8::/48" }, CollectionOrdering.Matching);
+                .IsEquivalentTo(SetCidrs, CollectionOrdering.Matching);
+            await Assert.That(created.Key.AllowedCidrs!).IsEquivalentTo(NormalizedCidrs, CollectionOrdering.Matching);
             await Assert.That(ApiKeyService.CredentialMetadata(created.Key).AllowedCidrs!).IsEquivalentTo(created.Key.AllowedCidrs!);
         }
 
@@ -436,7 +439,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             public string? Path { get; private set; }
             public List<HttpMethod> Methods { get; } = [];
             private bool Deleted { get; set; }
-            public string[] AllIds =>
+            public static string[] AllIds =>
             [
                 KeyId,
                 "01JA00000000000000000000A0",

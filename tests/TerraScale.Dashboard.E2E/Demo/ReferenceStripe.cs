@@ -10,9 +10,10 @@ namespace TerraScale.Dashboard.E2E
     // InvoiceService still serializes requests and parses all provider responses.
     internal sealed class ReferenceStripeTransport(IHttpClientFactory original) : HttpMessageHandler
     {
+
         internal const string CustomerId = "cus_go_reference_labs";
         private readonly HttpClient fallback = original.CreateClient("platform");
-        private static readonly IReadOnlyList<SourceInvoice> invoices = Invoices();
+        private static readonly List<SourceInvoice> invoices = Invoices();
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -139,7 +140,7 @@ namespace TerraScale.Dashboard.E2E
             { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json") };
         }
 
-        private static IReadOnlyList<SourceInvoice> Invoices()
+        private static List<SourceInvoice> Invoices()
         {
             // internal/app/demo_fixture.go:marioInvoices, including historical
             // amounts, exact periods, original invoice IDs and its void invoice.

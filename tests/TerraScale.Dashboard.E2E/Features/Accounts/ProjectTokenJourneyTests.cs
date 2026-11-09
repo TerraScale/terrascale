@@ -193,7 +193,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
         private sealed class Recorder
         {
             private readonly ConcurrentQueue<(string Path, string Token)> bearers = new();
-            public IReadOnlyList<(string Path, string Token)> Bearers => bearers.ToArray();
+            public (string Path, string Token)[] Bearers => bearers.ToArray();
             public HttpResponseMessage Handle(HttpRequestMessage request)
             {
                 if (request.Headers.Authorization is { Scheme: "Bearer", Parameter: { } token })
@@ -208,6 +208,13 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
         // ts-auth's issuer, JWKS and RFC 8693 exchange (terrascale e30ffdc2 PlatformGrants.cs).
         private sealed class Issuer(Func<string, (string UserId, string Email)?> resolve)
         {
+        private static readonly string[] ResponseTypes = ["code"];
+        private static readonly string[] GrantTypes = ["authorization_code", "refresh_token"];
+        private static readonly string[] CodeChallengeMethods = ["S256"];
+        private static readonly string[] SubjectTypes = ["public"];
+        private static readonly string[] IdTokenSigningAlgs = ["ES256"];
+        private static readonly string[] TokenEndpointAuthMethods = ["client_secret_basic"];
+        private static readonly string[] Scopes = ["openid", "email", "profile", "offline_access"];
             private const string Origin = "https://auth.terrascale.tech/terrascale";
             private const string ClientId = "01M4EQ2FRJ8S8B29E8TQVWNW4J";
             private readonly ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -252,13 +259,13 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                             jwks_uri = Origin + "/.well-known/jwks.json",
                             revocation_endpoint = Origin + "/oauth/revoke",
                             end_session_endpoint = Origin + "/oauth/logout",
-                            response_types_supported = new[] { "code" },
-                            grant_types_supported = new[] { "authorization_code", "refresh_token" },
-                            code_challenge_methods_supported = new[] { "S256" },
-                            subject_types_supported = new[] { "public" },
-                            id_token_signing_alg_values_supported = new[] { "ES256" },
-                            token_endpoint_auth_methods_supported = new[] { "client_secret_basic" },
-                            scopes_supported = new[] { "openid", "email", "profile", "offline_access" }
+                            response_types_supported = ResponseTypes,
+                            grant_types_supported = GrantTypes,
+                            code_challenge_methods_supported = CodeChallengeMethods,
+                            subject_types_supported = SubjectTypes,
+                            id_token_signing_alg_values_supported = IdTokenSigningAlgs,
+                            token_endpoint_auth_methods_supported = TokenEndpointAuthMethods,
+                            scopes_supported = Scopes
                         });
                     case "/terrascale/.well-known/jwks.json":
                         var point = key.ExportParameters(false).Q;

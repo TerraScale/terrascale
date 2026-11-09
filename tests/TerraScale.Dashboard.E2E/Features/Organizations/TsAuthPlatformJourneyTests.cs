@@ -22,6 +22,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
     // and TerraScale.DotNet 0.0.12's Named, InvitationLookup and AcceptedInvitation DTOs.
     public sealed partial class TsAuthPlatformJourneyTests
     {
+    private static readonly string[] ViewerRoleBody = ["{\"role\":\"viewer\"}"];
         [Test]
         [Arguments("viewer")]
         [Arguments("member")]
@@ -461,7 +462,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
             await Assert.That(platform.Producer.Role(business, member.Subject)).IsEqualTo("viewer");
             await Assert.That(platform.Producer.Bodies("PUT", "/v1/terrascale/organizations/" + business + "/members/" + member.Subject + "/role"))
-                .IsEquivalentTo(new[] { "{\"role\":\"viewer\"}" });
+                .IsEquivalentTo(ViewerRoleBody);
 
             // ts-auth looks an invitation up only for a signed-in holder of its token.
             using (var anonymous = platform.Client())
@@ -577,12 +578,12 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
         private static async Task<JsonElement> Me(HttpClient client)
         {
-            return JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me")).RootElement.Clone();
+            return JsonElement.Parse(await client.GetStringAsync("/api/v1/auth/me"));
         }
 
         private static async Task<JsonElement> Context(HttpClient client)
         {
-            return JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/context")).RootElement.Clone();
+            return JsonElement.Parse(await client.GetStringAsync("/api/v1/dashboard/context"));
         }
 
         private sealed record Principal(string Subject, string Email, string Password);
@@ -717,7 +718,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return AccountService.IsDeletionFence((await state!.GetAsync(AccountService.OrganizationsTable, key, default))!);
             }
 
-            public Task PlanAsync(string organizationId, string planId)
+            public Task<OrganizationRecord> PlanAsync(string organizationId, string planId)
             {
                 return ProjectionAsync(organizationId, organization => organization.PlanId = planId);
             }
@@ -853,7 +854,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 return plans.Count(path => path == "/admin/organizations/" + org + "/plan");
             }
 
-            public IReadOnlyList<string> Bodies(string method, string path)
+            public string[] Bodies(string method, string path)
             {
                 return calls.Where(call => call.Method == method && call.Path == path).Select(call => call.Body).ToArray();
             }
@@ -907,7 +908,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
                 }
             }
             public void AddCollaborator(string organizationId, string userId, string? projectId = null, string role = "viewer")
-            { lock (gate) { var org = Find(organizationId)!; if (!org.Collaborators.ContainsKey(userId)) { org.Collaborators[userId] = []; } if (projectId is not null) { org.Collaborators[userId][projectId] = role; } } }
+            { lock (gate) { var org = Find(organizationId)!; if (!org.Collaborators.TryGetValue(userId, out var grants)) { grants = []; org.Collaborators[userId] = grants; } if (projectId is not null) { grants[projectId] = role; } } }
             public void RemoveGrant(string org, string user, string project)
             {
                 lock (gate)

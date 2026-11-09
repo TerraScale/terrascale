@@ -216,11 +216,11 @@ namespace TerraScale.Dashboard.E2E
         private sealed record CapturedMember(string Id, string Name, string Email, string Role, DateOnly JoinedOn);
         private sealed record CapturedInvitation(string Id, string Email, string Role, string Status, DateTimeOffset ExpiresAt);
 
-        private static IReadOnlyDictionary<string, IReadOnlyList<CapturedInvitation>> ReadCapturedInvitations(JsonElement persona,
-            IReadOnlyList<JsonElement> organizations)
+        private static Dictionary<string, IReadOnlyList<CapturedInvitation>> ReadCapturedInvitations(JsonElement persona,
+            JsonElement[] organizations)
         {
             if (!persona.TryGetProperty("invitations", out var inventory) || inventory.ValueKind != JsonValueKind.Array ||
-                inventory.GetArrayLength() != organizations.Count)
+                inventory.GetArrayLength() != organizations.Length)
             {
                 throw new InvalidDataException("Capture the actual source invitation inventory for every organization before comparing applications.");
             }
@@ -280,11 +280,11 @@ namespace TerraScale.Dashboard.E2E
             }, StringComparer.Ordinal);
         }
 
-        private static IReadOnlyDictionary<string, IReadOnlyList<CapturedMember>> ReadCapturedMembers(JsonElement persona,
-            ReferencePrincipal principal, IReadOnlyList<JsonElement> organizations)
+        private static Dictionary<string, IReadOnlyList<CapturedMember>> ReadCapturedMembers(JsonElement persona,
+            ReferencePrincipal principal, JsonElement[] organizations)
         {
             if (!persona.TryGetProperty("members", out var inventory) || inventory.ValueKind != JsonValueKind.Array ||
-                inventory.GetArrayLength() != organizations.Count)
+                inventory.GetArrayLength() != organizations.Length)
             {
                 throw new InvalidDataException("The source manifest must contain the actual authenticated membership inventory for every organization.");
             }

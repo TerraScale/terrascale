@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Playwright;
@@ -49,7 +50,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(await page.Locator("#billing-invoice-summary").InnerTextAsync()).Contains("Multiple currencies");
             await Assert.That((await page.Locator(".ts-plan-features").AllInnerTextsAsync()).All(text => !text.Contains("free trial", StringComparison.Ordinal))).IsTrue();
             await page.Locator("#invoice-status").SelectOptionAsync("paid");
-            await page.Locator("#invoice-issued").SelectOptionAsync(DateTimeOffset.UtcNow.Year.ToString());
+            await page.Locator("#invoice-issued").SelectOptionAsync(DateTimeOffset.UtcNow.Year.ToString(CultureInfo.InvariantCulture));
             var applied = await page.RunAndWaitForResponseAsync(() => page.GetByRole(AriaRole.Search, new() { Name = "Filter payment history" })
                 .GetByRole(AriaRole.Button, new() { Name = "Apply", Exact = true }).ClickAsync(),
                 response => response.Request.Method == "GET" && new Uri(response.Url).AbsolutePath == "/organization");
@@ -107,7 +108,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var listing = await ToolAsync("list_invoices", new { page = 2 });
             await Assert.That(listing.GetProperty("pageCount").GetInt32()).IsEqualTo(3);
             await Assert.That(listing.GetProperty("total").GetInt32()).IsEqualTo(24);
-            var paid = await ToolAsync("list_invoices", new { status = "paid", issued = DateTimeOffset.UtcNow.Year.ToString(), page = 999 });
+            var paid = await ToolAsync("list_invoices", new { status = "paid", issued = DateTimeOffset.UtcNow.Year.ToString(CultureInfo.InvariantCulture), page = 999 });
             await Assert.That(paid.GetProperty("page").GetInt32()).IsEqualTo(2);
             await Assert.That(paid.GetProperty("invoices").GetArrayLength()).IsEqualTo(2);
             var invalid = await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "list_invoices", arguments = new { status = "draft" } });

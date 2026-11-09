@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -143,7 +144,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var contentLength = Regex.Match(head.ToString(), "Content-Length: (\\d+)", RegexOptions.IgnoreCase);
             if (contentLength.Success)
             {
-                await stream.ReadExactlyAsync(new byte[int.Parse(contentLength.Groups[1].Value)]);
+                await stream.ReadExactlyAsync(new byte[int.Parse(contentLength.Groups[1].Value, CultureInfo.InvariantCulture)]);
             }
             else if (head.ToString().Contains("Transfer-Encoding: chunked", StringComparison.OrdinalIgnoreCase))
             {
@@ -156,7 +157,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                         await stream.ReadExactlyAsync(one);
                         line.Append((char)one[0]);
                     }
-                    var size = int.Parse(line.ToString().Trim().Split(';')[0], System.Globalization.NumberStyles.HexNumber);
+                    var size = int.Parse(line.ToString().Trim().Split(';')[0], System.Globalization.NumberStyles.HexNumber, CultureInfo.InvariantCulture);
                     await stream.ReadExactlyAsync(new byte[size + 2]);
                     if (size == 0)
                     {

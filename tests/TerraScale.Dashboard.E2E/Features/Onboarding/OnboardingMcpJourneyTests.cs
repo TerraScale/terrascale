@@ -6,6 +6,7 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
     [ClassDataSource<DashboardRootFixture>]
     public sealed class OnboardingMcpJourneyTests(DashboardRootFixture fixture)
     {
+    private static readonly string[] BillingIntervals = ["month", "year"];
         [Test]
         public async Task NativePatCompletesFreeOnboardingAcrossRunningReplicas()
         {
@@ -26,7 +27,7 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
                 offered.Skip(1).All(plan =>
                 plan.GetProperty("priceCents").GetInt64() > 0 &&
                 plan.GetProperty("annualPriceCents").GetInt64() == plan.GetProperty("priceCents").GetInt64() * 10 &&
-                plan.GetProperty("billingIntervals").EnumerateArray().Select(interval => interval.GetString()).SequenceEqual(new[] { "month", "year" }) &&
+                plan.GetProperty("billingIntervals").EnumerateArray().Select(interval => interval.GetString()).SequenceEqual(BillingIntervals) &&
                 plan.GetProperty("price").GetString()!.EndsWith(" / month", StringComparison.Ordinal)),
                 "The payment step offers Free first at $0.00, then the three paid onboarding plans with their published monthly and yearly prices");
             await SafeError(replica, secret, new { step = "project", name = "Premature", region = "GRU" }, "Complete the current setup step first.");
@@ -74,7 +75,7 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
             Check(login.StatusCode == HttpStatusCode.SeeOther, "Hosted sign-up starts a native account at onboarding");
             await SaveAsync(new() { ["step"] = "account-information", ["displayName"] = "Free default" });
             var html = await PageAsync();
-            var cards = System.Text.RegularExpressions.Regex.Matches(html, "class=\"ts-onboarding-plan\"").Count;
+            var cards = System.Text.RegularExpressions.Regex.Count(html, "class=\"ts-onboarding-plan\"");
             var firstCardStart = html.IndexOf("ts-onboarding-plan\"", StringComparison.Ordinal);
             var firstCard = html[firstCardStart..html.IndexOf("</label>", firstCardStart, StringComparison.Ordinal)];
             Check(cards == 4 && firstCard.Contains("value=\"free\"", StringComparison.Ordinal) && firstCard.Contains("checked=\"checked\"", StringComparison.Ordinal),

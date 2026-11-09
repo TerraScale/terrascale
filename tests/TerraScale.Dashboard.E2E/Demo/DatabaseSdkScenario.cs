@@ -36,6 +36,7 @@ namespace TerraScale.Dashboard.E2E
     // remain only for workspace/backup callers not yet moved. This fixture does not qualify a live deployment.
     public sealed class DatabaseSdkScenario : IAsyncDisposable
     {
+        private static readonly string[] DatabaseReadScope = ["databases:read"];
         private WebApplication? producer;
         private readonly string peersFile = Path.Combine(Path.GetTempPath(), "dashboard-rpc-peers-" + Guid.NewGuid().ToString("N"));
         private WebApplication? first;
@@ -51,7 +52,7 @@ namespace TerraScale.Dashboard.E2E
         public TestWorkspace Workspace => protocol.Workspace;
 
         // A live session of a signed-in principal of the test auth registry.
-        public SessionRecord Session(string userId, string email)
+        public static SessionRecord Session(string userId, string email)
         {
             return new(userId, email, email, "test-access-" + email, null, DateTimeOffset.UtcNow.AddHours(1));
         }
@@ -233,17 +234,17 @@ namespace TerraScale.Dashboard.E2E
                 ((ProjectCounter)(object)proxy).count = count;
                 return proxy;
             }
-            protected override object? Invoke(MethodInfo? method, object?[]? args)
+            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
             {
                 try
                 {
-                    var result = method!.Invoke(inner, args);
-                    count(method.Name, 0);
+                    var result = targetMethod!.Invoke(inner, args);
+                    count(targetMethod.Name, 0);
                     return result;
                 }
                 catch (TargetInvocationException error) when (error.InnerException is { } thrown)
                 {
-                    count(method!.Name, (thrown as AccountAccessException)?.StatusCode ?? 500);
+                    count(targetMethod!.Name, (thrown as AccountAccessException)?.StatusCode ?? 500);
                     ExceptionDispatchInfo.Throw(thrown);
                     throw;
                 }
@@ -403,6 +404,11 @@ namespace TerraScale.Dashboard.E2E
 
         private sealed class DatabaseProducer
         {
+        private static readonly string[] BackupPolicyFields = ["fullBackupCron", "retentionDays"];
+        private static readonly string[] TtlField = ["ttlSeconds"];
+        private static readonly string[] NameField = ["name"];
+        private static readonly string[] HomeRegionField = ["homeRegion"];
+        private static readonly string[] DestinationFields = ["accessKeyId", "bucket", "endpoint", "mode", "region", "secretKey"];
             // The current producer creates canonical ULIDs. Keep those actual IDs
             // on both SDK boundaries instead of converting fixture UUIDs.
             private readonly TerraScaleIdGenerator ids = new();
@@ -516,7 +522,7 @@ namespace TerraScale.Dashboard.E2E
                         Require(CanonicalProject(grant!.Value.OrganizationId, projectId), "Project replication bearer organization matches the canonical project");
                         if (path.EndsWith("/point-in-time", StringComparison.Ordinal))
                         {
-                            Require(grant.Value.Scopes.SequenceEqual(new[] { "databases:read" }), "PITR window uses only database read authority");
+                            Require(grant.Value.Scopes.SequenceEqual(DatabaseReadScope), "PITR window uses only database read authority");
                         }
 
                         if (http.Request.Method == "POST")
@@ -868,7 +874,7 @@ namespace TerraScale.Dashboard.E2E
                     Require(http.Request.Method == "PUT", "Producer full policy uses PUT");
                     var body = await JsonAsync(http);
                     Require(body.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal)
-                        .SequenceEqual(new[] { "fullBackupCron", "retentionDays" }), "Producer accepts no invented incremental policy field");
+                        .SequenceEqual(BackupPolicyFields), "Producer accepts no invented incremental policy field");
                     var cron = body.GetProperty("fullBackupCron").GetString();
                     var days = body.GetProperty("retentionDays").GetInt32();
                     if (days is < 1 or > 35 || !string.IsNullOrWhiteSpace(cron) && !CronExpression.TryParse(cron.Trim(), CronFormat.Standard, out _))
@@ -1152,7 +1158,7 @@ namespace TerraScale.Dashboard.E2E
                         if (method == "PUT")
                         {
                             var ttl = await JsonAsync(http);
-                            Require(ttl.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "ttlSeconds" }), "TTL update body");
+                            Require(ttl.EnumerateObject().Select(field => field.Name).SequenceEqual(TtlField), "TTL update body");
                             expiry = Expiry(ttl);
                         }
                         lock (gate)
@@ -1173,7 +1179,7 @@ namespace TerraScale.Dashboard.E2E
                         }
 
                         var body = await JsonAsync(http);
-                        if (body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "name" }))
+                        if (body.EnumerateObject().Select(field => field.Name).SequenceEqual(NameField))
                         {
                             var name = body.GetProperty("name").GetString()!;
                             if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"\A(?!(?:con|prn|aux|nul|com[0-9]|lpt[0-9])\z)[a-z][a-z0-9_-]{0,62}\z"))
@@ -1216,7 +1222,7 @@ namespace TerraScale.Dashboard.E2E
                         }
 
                         var move = await JsonAsync(http);
-                        Require(move.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "homeRegion" }), "The move body names only the new home region");
+                        Require(move.EnumerateObject().Select(field => field.Name).SequenceEqual(HomeRegionField), "The move body names only the new home region");
                         var target = move.GetProperty("homeRegion").GetString()!;
                         if (target == current.HomeRegion)
                         {
@@ -1335,7 +1341,7 @@ namespace TerraScale.Dashboard.E2E
                 Require(http.Request.Method == "PUT", "Backup destination uses PUT");
                 var body = await JsonAsync(http);
                 Require(body.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal)
-                    .SequenceEqual(new[] { "accessKeyId", "bucket", "endpoint", "mode", "region", "secretKey" }) && body.GetProperty("mode").GetString() == "both",
+                    .SequenceEqual(DestinationFields) && body.GetProperty("mode").GetString() == "both",
                     "The destination sends the documented fields and keeps platform backups");
                 lock (gate)
                 {
@@ -1375,7 +1381,7 @@ namespace TerraScale.Dashboard.E2E
             }
 
             // I2 ManagedDatabaseBody: camelCase, answering region and complete placement.
-            private DateTimeOffset? Expiry(JsonElement request)
+            private static DateTimeOffset? Expiry(JsonElement request)
             {
                 if (!request.TryGetProperty("ttlSeconds", out var ttl)) { return null; }
                 var seconds = ttl.GetInt64();
@@ -1400,7 +1406,7 @@ namespace TerraScale.Dashboard.E2E
                 };
             }
 
-            private void Require(bool condition, string message)
+            private static void Require(bool condition, string message)
             {
                 if (!condition)
                 {

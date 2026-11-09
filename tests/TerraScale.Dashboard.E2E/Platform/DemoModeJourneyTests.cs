@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.E2E.Platform
         private FixtureProcess StartFixture()
         {
             var start = new ProcessStartInfo("dotnet") { WorkingDirectory = fixture.Root, RedirectStandardOutput = true, RedirectStandardError = true };
-            start.ArgumentList.Add(typeof(DemoModeJourneyTests).Assembly.Location);
+            start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(DemoModeJourneyTests).Assembly.GetName().Name + ".dll"));
             start.ArgumentList.Add("--dashboard-fixture-host");
             start.ArgumentList.Add(Path.Combine(fixture.Root, "src", "TerraScale.Dashboard"));
             start.ArgumentList.Add("0");
@@ -91,7 +91,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                     using var response = await client.GetAsync("/health/ready");
                     if (response.StatusCode == HttpStatusCode.OK)
                     {
-                        return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.Clone();
+                        return JsonElement.Parse(await response.Content.ReadAsStringAsync());
                     }
                 }
                 catch (HttpRequestException) { }

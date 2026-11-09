@@ -8,6 +8,7 @@ namespace TerraScale.Dashboard.E2E.Demo
     // Each project starts with the same synthetic tenant. Pages hold three records so journeys exercise paging.
     sealed class TestAuthentication : ITsAuthProjects
     {
+        private static readonly string[] ProviderKeys = ["google", "github", "apple", "oidc"];
         public IAuthStepUpGateway? StepUp { get; set; }
         private int createdClients;
         public int CreatedClients => Volatile.Read(ref createdClients);
@@ -72,7 +73,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             return Task.FromResult(Locked(tenant, () => new TsAuthProjectSettings(projectId, "https://auth.terrascale.tech/" + projectId,
                 "https://auth.terrascale.tech/" + projectId + "/.well-known/openid-configuration", "https://auth.terrascale.tech/ui/" + projectId + "/sign-in",
                 tenant.Methods, tenant.Branding, new(tenant.Users.Count, tenant.Clients.Count),
-                new[] { "google", "github", "apple", "oidc" }.Select(key => tenant.Providers.TryGetValue(key, out var set)
+                ProviderKeys.Select(key => tenant.Providers.TryGetValue(key, out var set)
                     ? new TsAuthProjectProvider(key, true, set.ClientId, set.Issuer, set.TeamId, set.KeyId, Callback(projectId, key))
                     : new TsAuthProjectProvider(key, false, null, null, null, null, Callback(projectId, key))).ToArray(), tenant.Configuration)));
         }
