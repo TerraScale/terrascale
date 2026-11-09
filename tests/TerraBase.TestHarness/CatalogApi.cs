@@ -14,7 +14,7 @@ internal static class CatalogApi
             plan.EnsureSuccessStatusCode();
         }
         var project = await CreateResourceAsync(client, user, root + "/projects", new { name = "fixture" }, cancellationToken);
-        var database = await CreateResourceAsync(client, user, root + $"/projects/{project}/databases", new { name, replicaRegions = replicas }, cancellationToken);
+        var database = await CreateResourceAsync(client, user, $"/v1/projects/{project}/databases", new { name, replicaRegions = replicas }, cancellationToken);
         return new ManagedDatabaseRef(organization, project, database, name);
     }
 
