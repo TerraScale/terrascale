@@ -53,8 +53,9 @@ paths:
       tags: [Security]
       summary: Consume a dashboard step-up proof
       description: |
-        Accepts only ts-dashboard create_pat or delete_account. Atomically consumes the approved,
+        Accepts ts-dashboard create_pat, ts-auth change_plan, or ts-dashboard delete_account. Atomically consumes the approved,
         unexpired proof for the authenticated account and current authentication state before side effects.
+        change_plan consumes only a proof bound to its own organization and returns 204.
         Deletion requires a canonical random 32-byte unpadded base64url operation_receipt. Its response
         releases operation_grant only after commit and a final expiry check. Persist both capabilities
         privately before side effects. Auth DELETE continuation requires the exact receipt and grant

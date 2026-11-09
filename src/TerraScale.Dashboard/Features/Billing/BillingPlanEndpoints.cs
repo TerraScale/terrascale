@@ -67,6 +67,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     return await StepUpFlow.StartAsync(http, context, "change_plan", "ts-auth");
                 }
 
+                await StepUpFlow.ConsumeAsync(http, context, intent);
                 var outcome = operation == "undo" ? await billing.UndoPlanChangeAsync(context, http.RequestAborted)
                     : await billing.ChangePlanAsync(context, form["plan"].ToString(), form["interval"].ToString(), http.RequestAborted);
                 return HttpRedirects.SeeOther("/organization?tab=billing" + (outcome == "current" ? "" : "&billing=" + outcome));

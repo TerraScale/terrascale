@@ -12,7 +12,6 @@ public sealed class BillingPlanStepUpJourneyTests
         await BillingPlanJourneyTests.SignUpPaidAsync(scenario.Client, "plan-stepup-" + suffix + "@example.test", "E2E-stepup-" + suffix, suffix, "monthly");
         var baseline = await scenario.SubscriptionMutationsAsync();
         var change = new Dictionary<string, string> { ["_csrf"] = await HttpJourney.CsrfAsync(scenario.Client, "/organization?tab=billing"), ["plan"] = "free", ["interval"] = "monthly" };
-
         using (var unconfirmed = await scenario.PostAsync("/billing/change", change))
         {
             await Assert.That(unconfirmed.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
@@ -37,6 +36,27 @@ public sealed class BillingPlanStepUpJourneyTests
         await Assert.That(confirmedUndo.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(confirmedUndo.Headers.Location!.OriginalString.StartsWith("/organization?tab=billing&billing=undone", StringComparison.Ordinal)).IsTrue();
         await Assert.That(await scenario.SubscriptionMutationsAsync()).IsEqualTo(baseline + 2);
+    }
+
+    [Test]
+    public async Task UnapprovedResumeChangesNothing()
+    {
+        await using var scenario = await Scenario.StartAsync();
+        var suffix = Guid.NewGuid().ToString()[..8];
+        await BillingPlanJourneyTests.SignUpPaidAsync(scenario.Client, "plan-unapproved-" + suffix + "@example.test", "E2E-stepup-" + suffix, suffix, "monthly");
+        var baseline = await scenario.SubscriptionMutationsAsync();
+        var change = new Dictionary<string, string> { ["_csrf"] = await HttpJourney.CsrfAsync(scenario.Client, "/organization?tab=billing"), ["plan"] = "free", ["interval"] = "monthly" };
+
+        using (var started = await scenario.PostAsync("/billing/change", change))
+        {
+            await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            await Assert.That(started.Headers.Location!.AbsolutePath.StartsWith("/ui/terrascale/step-up/", StringComparison.Ordinal)).IsTrue();
+        }
+
+        using var resumed = await scenario.Client.GetAsync("/auth/step-up/callback");
+        await Assert.That(resumed.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(await resumed.Content.ReadAsStringAsync()).Contains("Confirm this action from the dashboard");
+        await Assert.That(await scenario.SubscriptionMutationsAsync()).IsEqualTo(baseline).Because("a resume without an approved proof never reaches the provider");
     }
 
     private sealed class Scenario : IAsyncDisposable
