@@ -13,6 +13,8 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
     [ClassDataSource<DashboardRootFixture>]
     public sealed class BackupJourneyTests(DashboardRootFixture fixture)
     {
+        private static readonly string[] BackupFields = ["createdAt", "id", "sizeBytes", "status"];
+        private static readonly string[] PolicyInputs = ["databaseId", "fullBackupCron", "retentionDays"];
         private sealed class RestoreTransportFailure(IHttpClientFactory original, Action refused) : HttpMessageHandler, IHttpClientFactory
         {
             public HttpClient CreateClient(string name)
@@ -61,7 +63,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             }
 
             var policySchema = tools.EnumerateArray().Single(tool => tool.GetProperty("name").GetString() == "set_backup_policy").GetProperty("inputSchema");
-            Check(new[] { "databaseId", "fullBackupCron", "retentionDays" }.All(name =>
+            Check(PolicyInputs.All(name =>
                 policySchema.GetProperty("required").EnumerateArray().Any(field => field.GetString() == name)), "Required policy inputs remain explicit");
             Check(!policySchema.GetProperty("required").EnumerateArray().Any(field => field.GetString() == "incrementalBackupCron"),
                 "Clients do not have to supply an unsupported incremental schedule");
@@ -76,7 +78,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             Check(created.StatusCode == HttpStatusCode.Created, "Native creation waits for a completed producer backup");
             var first = await JsonAsync(created); var backupId = first.GetProperty("id").GetString()!;
             Check(TerraScaleIds.IsValid(backupId) && first.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal)
-                .SequenceEqual(new[] { "createdAt", "id", "sizeBytes", "status" }) && first.GetProperty("status").GetString() == "ready", "Native backup has the exact original public shape, without raw provider scope metadata");
+                .SequenceEqual(BackupFields) && first.GetProperty("status").GetString() == "ready", "Native backup has the exact original public shape, without raw provider scope metadata");
             await SqlAsync(replica, await HttpJourney.CsrfAsync(replica, "/databases"), id, "UPDATE users SET score = 2");
             var second = await CallAsync(replica, secret, "create_backup", new { databaseId = id });
             var listing = await CallAsync(client, secret, "list_backups", new { databaseId = id });

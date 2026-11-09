@@ -18,6 +18,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
     [ClassDataSource<DashboardRootFixture>]
     public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
     {
+    private static readonly string[] AttackerRedirectUris = ["http://attacker.example/callback"];
         private const string Callback = "http://127.0.0.1:33418/callback";
 
         [Test]
@@ -47,7 +48,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             await Assert.That(server.GetProperty("issuer").GetString()).IsEqualTo(origin);
             await Assert.That(server.GetProperty("code_challenge_methods_supported")[0].GetString()).IsEqualTo("S256");
 
-            using (var unsafeRedirect = await browser.PostAsJsonAsync("/oauth/register", new { redirect_uris = new[] { "http://attacker.example/callback" } }))
+            using (var unsafeRedirect = await browser.PostAsJsonAsync("/oauth/register", new { redirect_uris = AttackerRedirectUris }))
             {
                 await Assert.That(unsafeRedirect.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             }

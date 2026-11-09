@@ -8,6 +8,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases;
 [ClassDataSource<DashboardRootFixture>]
 public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
 {
+private static readonly string[] ConflictColumns = ["id", "kind", "table_name", "row_key", "column_name", "winner_value", "loser_value", "winner_region", "winner_node", "winner_hlc", "winner_transaction_id", "winner_state", "loser_region", "loser_node", "loser_hlc", "loser_transaction_id", "loser_state", "message", "created_at"];
+private static readonly string[] SqlReadScope = ["sql:read"];
     [Test]
     public async Task ConflictsUseReadAuthorityAndKeepFiltersAndTransactionOutcome()
     {
@@ -21,9 +23,9 @@ public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
             http.Request.Body.Position = 0;
             var sql = body.RootElement.GetProperty("statements")[0].GetProperty("sql").GetString()!;
             if (!sql.Contains("terrascale.conflicts", StringComparison.Ordinal)) { return null; }
-            await Assert.That(auth.ResolveProjectToken(http.Request.Headers.Authorization.ToString()[7..])!.Value.Scopes.SequenceEqual(["sql:read"])).IsTrue();
+            await Assert.That(auth.ResolveProjectToken(http.Request.Headers.Authorization.ToString()[7..])!.Value.Scopes.SequenceEqual(SqlReadScope)).IsTrue();
             lock (statements) { statements.Add(sql); }
-            var columns = new[] { "id", "kind", "table_name", "row_key", "column_name", "winner_value", "loser_value", "winner_region", "winner_node", "winner_hlc", "winner_transaction_id", "winner_state", "loser_region", "loser_node", "loser_hlc", "loser_transaction_id", "loser_state", "message", "created_at" };
+            var columns = ConflictColumns;
             var result = SqlCatalogJourneyTests.Result(columns,
                 [new object?[] { "01M4EQ00000000000000000002", "superseded", "orders'archive", "{\"id\":\"order-1\"}", "amount", "9", "7", "gru", "gru-1", "019a50c1e2f3.00000001:gru-1", "01M4EP00000000000000000003", "confirmed", "sjc", "sjc-1", "019a50c1e2f3.00000000:sjc-1", "01M4EP00000000000000000002", "superseded", "A greater column HLC won.", "2026-11-04T12:00:00.000Z" },
                 new object?[] { "01M4EQ00000000000000000001", "foreign_key", "orders'archive", "{\"id\":\"order-2\"}", null, "null", "[{\"op\":\"delete\",\"table\":\"orders'archive\",\"key\":{\"id\":\"order-2\"}}]", null, null, null, null, null, "fra", "fra-1", "019a50c1e2f2.00000000:fra-1", "01M4EP00000000000000000001", "reverted", "A foreign key would be broken.", "2026-11-04T11:00:00.000Z" }]);

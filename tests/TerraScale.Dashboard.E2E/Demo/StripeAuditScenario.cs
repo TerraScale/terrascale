@@ -33,12 +33,13 @@ namespace TerraScale.Dashboard.E2E
         private readonly ConcurrentQueue<string> priceFacts = [];
         private readonly ConcurrentQueue<string> failures = [];
         private readonly Task accepting;
-        public string ApiVersion => StripeConfiguration.ApiVersion;
+        public static string ApiVersion => StripeConfiguration.ApiVersion;
         public string Secret => $"{(restricted ? "rk" : "sk")}_{mode}_STRIPE_AUDIT_PRIVATE";
         public IReadOnlyList<Request> Requests => requests.ToArray();
         public IReadOnlyList<string> PriceFacts => priceFacts.ToArray();
         public IReadOnlyList<string> Failures => failures.ToArray();
-        public int Connects;
+        private int connects;
+        public int Connects => connects;
 
         private static readonly string[] Events =
         [
@@ -91,7 +92,7 @@ namespace TerraScale.Dashboard.E2E
         {
             var start = new ProcessStartInfo("dotnet")
             { WorkingDirectory = root, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-            start.ArgumentList.Add(typeof(StripeAuditScenario).Assembly.Location);
+            start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(StripeAuditScenario).Assembly.GetName().Name + ".dll"));
             start.ArgumentList.Add("--stripe-audit-test-host"); start.ArgumentList.Add(Proxy); start.ArgumentList.Add(CaPath);
             foreach (var argument in arguments ?? [])
             {
@@ -156,7 +157,7 @@ namespace TerraScale.Dashboard.E2E
                         throw new InvalidDataException("The audit proxy accepts only the Stripe TLS endpoint.");
                     }
 
-                    Interlocked.Increment(ref Connects);
+                    Interlocked.Increment(ref connects);
                     await tcp.WriteAsync("HTTP/1.1 200 Connection established\r\n\r\n"u8.ToArray(), deadline.Token);
                     using var tls = new SslStream(tcp, leaveInnerStreamOpen: true);
                     await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions

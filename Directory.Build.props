@@ -6,7 +6,6 @@
     <IsTerraBaseArea Condition="$(ProjectFolder.StartsWith('src/TerraBase')) or $(ProjectFolder.StartsWith('tests/TerraBase'))">true</IsTerraBaseArea>
     <IsLibsArea Condition="$(ProjectFolder.Contains('TerraScale.Endpoints')) or $(ProjectFolder.Contains('TerraScale.Logging'))">true</IsLibsArea>
     <IsDashboardArea Condition="$(ProjectFolder.StartsWith('src/TerraScale.Dashboard')) or $(ProjectFolder.StartsWith('tests/TerraScale.Dashboard'))">true</IsDashboardArea>
-    <IsDashboardTestArea Condition="$(ProjectFolder.StartsWith('tests/TerraScale.Dashboard'))">true</IsDashboardTestArea>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -52,13 +51,5 @@
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <!-- Services consume the SDK source from the same monorepo revision. -->
     <TsDotnetRoot Condition="'$(TsDotnetRoot)' == ''">$(MSBuildThisFileDirectory)sdk/dotnet</TsDotnetRoot>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(IsDashboardTestArea)' == 'true'">
-    <AnalysisLevel>10.0</AnalysisLevel>
-    <AnalysisMode>Default</AnalysisMode>
-    <WarningLevel>10</WarningLevel>
-    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
   </PropertyGroup>
 </Project>

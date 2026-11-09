@@ -8,6 +8,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
     [Category("Slow")]
     public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixture)
     {
+    private static readonly string[] OrganizationIdentities = ["Name", "Slug", "OwnerUserId", "Members", "PendingOwnerUserId", "PendingOwnerExpiresAt", "Invitations", "CreatedAt"];
         private const string CapAlert = "Internal spending cap reached: estimated bill $124.40, cap $120.00. Report only; services remain active.";
         private const string MissingUsage = "Every project's monthly usage is required to compute the internal bill and evaluate its cap.";
         private const string InvalidAmount = "The internal bill exceeds the supported amount or has invalid reporting rates.";
@@ -15,7 +16,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         private static async Task BillingStateOnlyAsync(JsonElement observed, string organization, string[] projects, JsonElement reservations)
         {
             var stored = Organization(observed, organization);
-            await CheckAsync(new[] { "Name", "Slug", "OwnerUserId", "Members", "PendingOwnerUserId", "PendingOwnerExpiresAt", "Invitations", "CreatedAt" }
+            await CheckAsync(OrganizationIdentities
                 .All(field => !stored.TryGetProperty(field, out _)),
                 "Configuration and alert writes retain no ts-auth organization or member identities");
             await CheckAsync(JsonElement.DeepEquals(stored.GetProperty("InvitationReservations"), reservations),

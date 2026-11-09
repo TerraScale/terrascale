@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
     [ClassDataSource<DashboardRootFixture>]
     public sealed class SqlCatalogJourneyTests(DashboardRootFixture fixture)
     {
+    private static readonly string[] SqlReadScope = ["sql:read"];
         [Test]
         [Arguments("ok")]
         [Arguments("denied")]
@@ -31,7 +32,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 if (!listing && !statements[0].StartsWith("PRAGMA table_info(", StringComparison.Ordinal))
                 { Interlocked.Increment(ref executions); return Results.Json(new { results = new[] { new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), rows_affected = 1 } } }); }
                 if (http.Request.Method != "POST" || http.Request.QueryString.HasValue || http.Request.Headers[TerraScale.TerraBase.Contracts.TerraBaseRpc.PeerCredentialHeader] != TestIdentity.PeerSecret ||
-                    !auth.ResolveProjectToken(http.Request.Headers.Authorization.ToString()[7..])!.Value.Scopes.SequenceEqual(new[] { "sql:read" }))
+                    !auth.ResolveProjectToken(http.Request.Headers.Authorization.ToString()[7..])!.Value.Scopes.SequenceEqual(SqlReadScope))
                 {
                     throw new InvalidOperationException("SQL metadata changed its current-user read authority or region.");
                 }

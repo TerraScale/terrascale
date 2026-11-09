@@ -15,6 +15,7 @@ namespace TerraScale.Dashboard.E2E.Demo
     sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,
         Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> resolveProjectToken, TestAuthApiKeys apiKeys) : HttpMessageHandler
     {
+
         private readonly HttpMessageInvoker vendor = new(stripe, false);
         private readonly ConcurrentDictionary<string, string> scenarios = new();
         private readonly ConcurrentDictionary<string, int> policies = new();
@@ -365,15 +366,15 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
 
             var granularity = query.GetValueOrDefault("granularity").ToString() is { Length: > 0 } requested ? requested : "hour";
-            if (granularity is not ("hour" or "day") || !query.ContainsKey("from"))
+            if (granularity is not ("hour" or "day") || !query.TryGetValue("from", out var fromValue))
             {
                 return Json(new { error = new { code = "invalid_query", message = "granularity is hour or day; from is required here" } }, HttpStatusCode.BadRequest);
             }
 
             var step = granularity == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
-            var from = new DateTimeOffset(DateTimeOffset.Parse(query["from"].ToString(), CultureInfo.InvariantCulture).UtcTicks / step * step, TimeSpan.Zero);
+            var from = new DateTimeOffset(DateTimeOffset.Parse(fromValue.ToString(), CultureInfo.InvariantCulture).UtcTicks / step * step, TimeSpan.Zero);
             // As TerraBase's UsageWindow: to defaults to now.
-            var end = query.ContainsKey("to") ? DateTimeOffset.Parse(query["to"].ToString(), CultureInfo.InvariantCulture) : DateTimeOffset.UtcNow;
+            var end = query.TryGetValue("to", out var toValue) ? DateTimeOffset.Parse(toValue.ToString(), CultureInfo.InvariantCulture) : DateTimeOffset.UtcNow;
             var to = new DateTimeOffset((end.UtcTicks + step - 1) / step * step, TimeSpan.Zero);
             var buckets = (int)((to - from).Ticks / step);
             var reads = scenario == "negative" ? -1 : scenario == "overflow" ? long.MaxValue : scenario == "zero" ? 0 : 12;

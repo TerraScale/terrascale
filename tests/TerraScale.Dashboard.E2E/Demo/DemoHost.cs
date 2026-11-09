@@ -23,8 +23,14 @@ using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.E2E.Demo
 {
-    public sealed class DemoEnvironment
+    public sealed class DemoEnvironment : IDisposable
     {
+    public void Dispose()
+    {
+        stripe.Dispose();
+        billingPlans.Dispose();
+        reporting.Dispose();
+    }
         private readonly TestState state = new();
         private readonly TestAuth auth;
         private readonly TestIdentity identity = new();
@@ -524,8 +530,8 @@ namespace TerraScale.Dashboard.E2E.Demo
             }
         }
 
-        public readonly object Gate = new();
-        public readonly Dictionary<string, OrganizationRecord> Organizations = [];
+        public object Gate { get; } = new();
+        public Dictionary<string, OrganizationRecord> Organizations { get; } = [];
         private readonly Dictionary<string, (string OrganizationId, InvitationRecord Invitation)> invitations = [];
         private readonly Dictionary<string, IReadOnlyList<TsAuthPlatformInvitation>> capturedInvitations = [];
         private readonly Dictionary<string, List<TsAuthPlatformAuditEvent>> audit = [];
@@ -665,12 +671,12 @@ namespace TerraScale.Dashboard.E2E.Demo
             return new(project.Id, org.Id, project.Name, null, projectCreators.GetValueOrDefault(project.Id, org.OwnerUserId), project.CreatedAt, ProjectRole(userId, org.Id, project.Id), []);
         }
 
-        private TsAuthPlatformInvitation Wire(InvitationRecord invitation, string invitedBy)
+        private static TsAuthPlatformInvitation Wire(InvitationRecord invitation, string invitedBy)
         {
             return new(invitation.Id, invitation.Email, invitation.Role, null, invitedBy, invitation.CreatedAt, invitation.ExpiresAt, invitation.ExpiresAt <= DateTimeOffset.UtcNow && invitation.Status == "pending" ? "expired" : invitation.Status);
         }
 
-        private void LastOwner(OrganizationRecord org, string userId)
+        private static void LastOwner(OrganizationRecord org, string userId)
         {
             if (org.Members.Values.Count(member => member.Role == "owner" && member.Status == "active") == 1 && org.Members.GetValueOrDefault(userId)?.Role == "owner")
             {
@@ -1274,7 +1280,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
                 const string prefix = "metadata['organization_id']:'";
                 var filter = query.GetValueOrDefault("query").ToString();
-                if (!filter.StartsWith(prefix, StringComparison.Ordinal) || !filter.EndsWith("'", StringComparison.Ordinal))
+                if (!filter.StartsWith(prefix, StringComparison.Ordinal) || !filter.EndsWith('\''))
                 {
                     throw new HttpRequestException("Customer cleanup search must bind organization metadata.");
                 }
@@ -1481,7 +1487,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                     items = new { @object = "list", data = new[] { new { id = "si_demo", @object = "subscription_item", quantity = 1, current_period_end = (plan.TrialDays > 0 ? DateTimeOffset.UtcNow.AddDays(plan.TrialDays) : checkout.Metadata["interval"] == "annual" ? DateTimeOffset.UtcNow.AddYears(1) : DateTimeOffset.UtcNow.AddMonths(1)).ToUnixTimeSeconds(), price = Price(plan, checkout.Metadata["interval"]) } } }
                 };
                 invoices.TryAdd(checkout.CustomerId, Enumerable.Range(0, 24).Select(index => new Invoice("in_" + checkout.CustomerId + "_" + index,
-                    "INV-" + index.ToString("D2"), index % 2 == 0 ? "open" : "paid", 500 + index,
+                    "INV-" + index.ToString("D2", CultureInfo.InvariantCulture), index % 2 == 0 ? "open" : "paid", 500 + index,
                     index == 2 ? "eur" : "usd", DateTimeOffset.UtcNow.AddDays(1 - index),
                     index == 0 ? "http://invoice.test/unsafe" : "https://invoice.test/" + index,
                     index == 0 ? "https://user:password@invoice.test/unsafe.pdf" : "https://invoice.test/" + index + ".pdf")).ToArray());

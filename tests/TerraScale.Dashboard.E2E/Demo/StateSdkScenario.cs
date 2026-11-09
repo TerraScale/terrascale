@@ -330,7 +330,7 @@ namespace TerraScale.Dashboard.E2E
             }
         }
 
-        private sealed class StateProducer
+        private sealed class StateProducer : IDisposable
         {
             public const string Project = "00000000000000000000000005";
             private readonly object gate = new();
@@ -358,6 +358,7 @@ namespace TerraScale.Dashboard.E2E
             private string mode = "";
             public string Mode { get { lock (gate) { return mode; } } }
             public void Release() { ReleaseRegistrationCompletion(); planGate?.TrySetResult(); tableGate?.TrySetResult(); rowGate?.TrySetResult(); engine.Dispose(); }
+            public void Dispose() { Release(); }
 
             public async Task<IResult> DispatchAsync(HttpContext http)
             {

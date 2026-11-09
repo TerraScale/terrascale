@@ -8,6 +8,13 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
     [ClassDataSource<DashboardRootFixture>]
     public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixture)
     {
+    private static readonly string[] CatalogGruSjc = ["gru", "sjc"];
+    private static readonly string[] CatalogGruFraSfo = ["gru", "fra", "sfo"];
+    private static readonly string[] CatalogGruFraSjc = ["gru", "fra", "sjc"];
+    private static readonly string[] RegionsGru = ["GRU"];
+    private static readonly string[] RegionsGruSjc = ["GRU", "SJC"];
+    private static readonly string[] RegionsGruFraSjc = ["GRU", "FRA", "SJC"];
+    private static readonly string[] RegionsSjcFraGru = ["SJC", "FRA", "GRU"];
         // A fresh workspace's empty Databases page carries the create control, and the Overview CTAs open its dialog directly.
         [Test]
         public async Task EmptyDatabasesPageCreatesThroughTheDialogAndTheOverviewLinksOpenIt()
@@ -16,7 +23,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
-            using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "sjc" } }))
+            using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = CatalogGruSjc }))
             {
                 await Assert.That(region.IsSuccessStatusCode).IsTrue();
             }
@@ -70,7 +77,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
-            using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "fra", "sfo" } }))
+            using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = CatalogGruFraSfo }))
             {
                 await Assert.That(region.IsSuccessStatusCode).IsTrue();
             }
@@ -102,7 +109,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 databaseId = body.RootElement.GetProperty("id").GetString()!;
                 await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("GRU");
                 await Assert.That(body.RootElement.GetProperty("allRegions").GetBoolean()).IsFalse();
-                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU" });
+                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(RegionsGru);
             }
 
             using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "orders" }))
@@ -137,7 +144,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
-            using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = new[] { "gru", "fra", "sjc" } }))
+            using (var region = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = CatalogGruFraSjc }))
             {
                 await Assert.That(region.IsSuccessStatusCode).IsTrue();
             }
@@ -150,7 +157,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
                 using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
                 databaseId = body.RootElement.GetProperty("id").GetString()!;
-                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "SJC" });
+                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(RegionsGruSjc);
             }
 
             using (var placed = await client.PostAsync("/api/v1/dashboard/databases/placement", new FormUrlEncodedContent(
@@ -158,7 +165,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             {
                 await Assert.That(placed.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await placed.Content.ReadAsStringAsync());
                 using var body = JsonDocument.Parse(await placed.Content.ReadAsStringAsync());
-                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "GRU", "FRA", "SJC" });
+                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(RegionsGruFraSjc);
             }
 
             using (var moved = await client.PostAsync("/api/v1/dashboard/databases/move-home", new FormUrlEncodedContent(
@@ -167,7 +174,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 await Assert.That(moved.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await moved.Content.ReadAsStringAsync());
                 using var body = JsonDocument.Parse(await moved.Content.ReadAsStringAsync());
                 await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("SJC");
-                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(new[] { "SJC", "FRA", "GRU" });
+                await Assert.That(body.RootElement.GetProperty("regions").EnumerateArray().Select(value => value.GetString()!).ToArray()).IsEquivalentTo(RegionsSjcFraGru);
             }
 
             var page = WebUtility.HtmlDecode(await client.GetStringAsync(DatabaseService.Path(databaseId, "replication")));

@@ -17,6 +17,7 @@ namespace TerraScale.Dashboard.E2E
     // the official SDK over HTTP. Every call is authorized by the caller's own active sign-in bearer.
     sealed class OwnershipSdkProtocol(TestWorkspace workspace, Func<string, (string UserId, string Email)?> resolveActiveBearer)
     {
+
         private static readonly JsonSerializerOptions Wire = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
         private readonly ConcurrentQueue<string> failures = new();
         private readonly ConcurrentQueue<Request> requests = new();
@@ -28,7 +29,7 @@ namespace TerraScale.Dashboard.E2E
         private int transferConfirms;
         private int transferCancels;
 
-        public void Configure(WebApplicationBuilder builder)
+        public static void Configure(WebApplicationBuilder builder)
         {
             builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(services => services.GetRequiredService<TsAuthGateway>()));
             builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess, TsOrganizationAccess>());

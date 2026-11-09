@@ -7,6 +7,7 @@ namespace TerraScale.Dashboard.E2E.Platform
     [ClassDataSource<DashboardE2EFixture>]
     public sealed class IntegrationContractJourneyTests(DashboardE2EFixture fixture)
     {
+    private static readonly string[] CredentialParameters = ["limit", "after"];
         [Test]
         public async Task ServedOpenApiMatchesCommittedContractAndAuthenticatedResponses()
         {
@@ -31,7 +32,7 @@ namespace TerraScale.Dashboard.E2E.Platform
 
             var credentials = paths.GetProperty("/api/v1/dashboard/credentials").GetProperty("get");
             await Assert.That(credentials.GetProperty("parameters").EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!))
-                .IsEquivalentTo(new[] { "limit", "after" });
+                .IsEquivalentTo(CredentialParameters);
             await Assert.That(credentials.GetProperty("responses").GetProperty("422").GetProperty("content").TryGetProperty("application/problem+json", out _)).IsTrue();
             foreach (var route in new[] { "switch-organization", "switch-project" })
             {

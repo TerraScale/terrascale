@@ -4,7 +4,7 @@ using TerraScale.Dashboard.Features.Notifications;
 namespace TerraScale.Dashboard.E2E.Demo
 {
     // Test hosts never reach the production allowance snapshot or send product mail.
-    sealed class TestAllowanceNotifications(TimeProvider clock) : IAllowanceNotificationBackend
+    sealed class TestAllowanceNotifications(TimeProvider clock) : IAllowanceNotificationBackend, IDisposable
     {
         private readonly object gate = new();
         private readonly SemaphoreSlim reads = new(0);
@@ -35,6 +35,11 @@ namespace TerraScale.Dashboard.E2E.Demo
             {
                 observation = null;
             }
+        }
+
+        public void Dispose()
+        {
+            reads.Dispose();
         }
 
         internal Task WaitForReadAsync(CancellationToken cancellationToken)
