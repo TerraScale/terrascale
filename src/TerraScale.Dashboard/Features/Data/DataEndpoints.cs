@@ -11,7 +11,6 @@ namespace TerraScale.Dashboard.Features.Data
         {
             if (action != "saved-queries/delete" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sqlBodyLimit)
             {
-                // URL encoding can expand each SQL/history byte to three bytes; validation limits decoded SQL.
                 sqlBodyLimit.MaxRequestBodySize = 3 * (16 * 1024 + 4 * 1024) + 4096;
             }
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
@@ -43,7 +42,6 @@ namespace TerraScale.Dashboard.Features.Data
                 {
                     var diagnostics = SqlValidation.Diagnostics(form["sql"].ToString());
                     var invalid = diagnostics.Any(item => item.Severity == "error");
-                    // An empty editor shows no analysis, so a submitted check of it answers with the reason.
                     return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, data, saved,
                         formError: form["sql"].ToString().Trim().Length == 0 ? SqlValidation.Error("") : "",
                         sql: form["sql"].ToString(), sqlChecked: !invalid, status: invalid ? 422 : 200) : Results.Json(diagnostics);

@@ -28,7 +28,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
             {
                 var action = form["action"].ToString().Trim().ToLowerInvariant();
                 var answered = await invitations.RespondAsync(session, token, action, http.RequestAborted);
-                // Invitation destinations come from the verified offer, never caller-supplied workspace query parameters.
                 http.Response.Headers.Location = action == "decline" ? "/databases?invitation=declined" : answered.Project is { } project
                     ? "/databases?organizationId=" + answered.Organization.Id + "&projectId=" + project.Id
                     : "/organization?tab=members&invitation=accepted";

@@ -78,12 +78,10 @@ namespace TerraScale.Dashboard.Features.Databases
             {
                 return AccountEndpoints.LoginRedirect(http);
             }
-            // The delete dialog moved to the danger tab; keep old overview links working.
             if (section == "overview" && http.Request.Query["delete"] == "1")
             {
                 return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
             }
-            // Refresh placement before routing the observations call to its home.
             if (section == "replication")
             {
                 await databases.SyncAsync(context, http.RequestAborted);

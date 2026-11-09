@@ -20,7 +20,6 @@ namespace TerraScale.Dashboard.Features.Accounts
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var http = HttpContext;
-            // Who is signed in stays readable while the selected organization requires two-factor.
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null)
             {
