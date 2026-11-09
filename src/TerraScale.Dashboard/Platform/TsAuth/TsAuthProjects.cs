@@ -101,6 +101,22 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 Json.TsAuthProjectOAuthClient, TsAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, MaxRequestBytes, cancellationToken, TsAuthPlatformClient.Proof(stepUpProof));
         }
 
+        public Task<TsAuthProjectOAuthClient> UpdateClientAsync(
+            string accessToken, string projectId, string clientId, TsAuthProjectClientUpdate request, string stepUpProof, CancellationToken cancellationToken = default)
+        {
+            return client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, "/clients/" + Id(clientId)),
+                request ?? throw new ArgumentNullException(nameof(request)), Json.TsAuthProjectClientUpdate,
+                Json.TsAuthProjectOAuthClient, TsAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken, TsAuthPlatformClient.Proof(stepUpProof));
+        }
+
+        public Task<TsAuthProjectClientSecret> RotateClientSecretAsync(
+            string accessToken, string projectId, string clientId, string stepUpProof, CancellationToken cancellationToken = default)
+        {
+            return client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/clients/" + Id(clientId) + "/secret/rotate"),
+                new TsAuthProjectRotateClient(), Json.TsAuthProjectRotateClient,
+                Json.TsAuthProjectClientSecret, TsAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken, TsAuthPlatformClient.Proof(stepUpProof));
+        }
+
         public Task DeleteClientAsync(
             string accessToken, string projectId, string clientId, CancellationToken cancellationToken = default)
         {

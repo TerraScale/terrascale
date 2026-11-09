@@ -159,6 +159,8 @@ namespace TerraScale.Dashboard.Features.Auth
                     "create_api_key" => await CreateDashboardCredentialEndpoint.CreateAsync(http, "api-key", sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "rotate_api_key" => await RotateDashboardCredentialEndpoint.RotateAsync(http, sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "create_oauth_client" => await AuthenticationConsole.PostAsync(http, "clients", sessions, accounts, services.GetRequiredService<ITsAuthProjects>()),
+                    "update_oauth_client" or "rotate_oauth_client" => await AuthenticationConsole.PostAsync(http,
+                        intent.Path.Replace("/api/v1/auth-management/", "", StringComparison.Ordinal), sessions, accounts, services.GetRequiredService<ITsAuthProjects>()),
                     "delete_organization" => await OrganizationEndpoints.LifecycleAsync(http, sessions, accounts,
                         services.GetRequiredService<OrganizationLifecycleService>(), services.GetRequiredService<IWorkspacePlacement>(), "delete"),
                     "start_ownership_transfer" => await OrganizationEndpoints.AccessMutationAsync(http, sessions, accounts,

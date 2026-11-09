@@ -120,4 +120,22 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("name")] string? Name,
         [property: JsonPropertyName("type")] string? Type,
         [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris);
+
+    public sealed record TsAuthProjectClientUpdate(
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris);
+
+    public sealed record TsAuthProjectRotateClient(
+        [property: JsonPropertyName("grace_seconds")] int? GraceSeconds = null);
+
+    public sealed record TsAuthProjectClientSecret(
+        [property: JsonPropertyName("client_id")] string ClientId,
+        [property: JsonPropertyName("client_secret")] string ClientSecret,
+        [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt)
+    {
+        public override string ToString()
+        {
+            return "TsAuthProjectClientSecret { sensitive fields redacted }";
+        }
+    }
 }
