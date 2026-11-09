@@ -228,7 +228,8 @@ public abstract class AuthorizeEndpoint(Sessions sessions, ProjectAuthSettings s
 
             var next = $"/{tenant}/oauth/authorize{QueryString.Create(resume)}";
             var notice = live is null && this.HttpContext.Request.Cookies.ContainsKey(cookie) ? "&notice=credential_changed" : string.Empty;
-            return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(next)}{notice}");
+            var locales = request.UiLocales is { Length: > 0 } requested ? "&ui_locales=" + Uri.EscapeDataString(requested) : string.Empty;
+            return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(next)}{notice}{locales}");
         }
 
         return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId));

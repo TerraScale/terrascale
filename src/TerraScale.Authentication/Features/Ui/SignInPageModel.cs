@@ -94,6 +94,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     public string Locale { get; init; } = AuthEmails.English;
 
+    public string? UiLocales { get; init; }
+
     public HostedPageCopy Copy => HostedCopies.For(this.Locale);
 
     public string Sub(string format) => format.Replace("{email}", System.Net.WebUtility.HtmlEncode(this.Email ?? string.Empty));
@@ -207,8 +209,21 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The brand name the page shows.</summary>
     public string Brand => this.Theme.Name ?? HostedLayoutModel.DefaultName;
 
-    /// <summary><paramref name="path"/> under this issuer's hosted pages, carrying <see cref="Next"/>.</summary>
-    public string Link(string path) => $"/ui/{this.Slug}/{path}" + (this.Next is null ? string.Empty : "?next=" + Uri.EscapeDataString(this.Next));
+    public string Link(string path)
+    {
+        List<string> query = [];
+        if (this.Next is { } next)
+        {
+            query.Add("next=" + Uri.EscapeDataString(next));
+        }
+
+        if (this.UiLocales is { } uiLocales)
+        {
+            query.Add("ui_locales=" + Uri.EscapeDataString(uiLocales));
+        }
+
+        return $"/ui/{this.Slug}/{path}" + (query.Count == 0 ? string.Empty : "?" + string.Join("&", query));
+    }
 
     /// <summary>Renders the page with the hosted-page security headers and a fresh nonce.</summary>
     public static IResult Render(HttpContext context, SignInPageModel model, int statusCode = StatusCodes.Status200OK)
@@ -217,7 +232,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         ArgumentNullException.ThrowIfNull(model);
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        var page = SignInPage.Create(model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request.Headers.AcceptLanguage) });
+        var uiLocales = context.Request.Query["ui_locales"].ToString();
+        var page = SignInPage.Create(model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = uiLocales.Length == 0 ? null : uiLocales });
         page.StatusCode = statusCode;
         return page;
     }
