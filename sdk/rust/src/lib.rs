@@ -2,6 +2,7 @@
 //! PostgreSQL SQL support and security single-writer admission remain unqualified.
 
 pub mod auth_idp;
+pub mod auth_projects;
 pub mod client;
 pub mod config;
 pub mod error;
@@ -13,6 +14,7 @@ pub mod transport;
 pub mod v1;
 
 pub use auth_idp::AuthIdpClient;
+pub use auth_projects::ProjectsClient;
 pub use client::TerraScaleClient;
 pub use config::{ClientConfig, ClientConfigBuilder};
 pub use error::{Error, ErrorKind, Result};
