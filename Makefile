@@ -6,11 +6,7 @@ CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
 # Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
-# A filtered run that selects nothing fails instead of silently running the whole suite.
 TEST_ARGS ?=
-# Named tests, e.g. TESTS="TerraScale.Endpoints.Tests.BindingTests.GetBindsRouteAndQueryIntoTheRequest".
-# Each name runs as one exact class/method filter that fails unless it selects exactly that test;
-# mutually exclusive with TEST_ARGS. Applies to the *-test-fast and *-test-slow targets.
 TESTS ?=
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=

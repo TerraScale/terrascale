@@ -37,7 +37,7 @@ Run them from the repository root. Locally, prefix each with `nice -n 19`.
 | `make build` | Build the solution |
 | `make test-fast` | Run the blocking integration suites |
 | `make test-slow` | Run the non-blocking integration suites |
-| `make <target> TESTS="Ns.Class.Test_name ..."` | Run only the named tests; each name must select exactly one test or the run fails |
+| `make <target> TESTS="Ns.Class.Test_name ..."` | Run only the named tests (all cases of each, including parameterized ones); a name that selects nothing fails the run |
 | `make <target> TEST_ARGS="--treenode-filter ..."` | Pass extra TUnit runner arguments; a filtered run that selects nothing fails |
 | `make check` | Formatting, build and the Fast suite; CI is the gate, so running it locally is optional |
 | `make dev` | Run TerraBase and ts-auth locally under Aspire (see below) |

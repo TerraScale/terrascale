@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Run a TUnit project with safe filter arguments: named tests must select exactly one test each."""
-
 import os
 import re
 import shlex
