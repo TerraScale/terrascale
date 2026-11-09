@@ -58,7 +58,7 @@ A project's sign-in and sign-up pages show "Continue with …" for each configur
    401 with no session. Success sets the project's session cookie and continues to `next` like the other hosted methods.
 
 A signed-in user connects a provider on the hosted security page (`/ui/{project}/security`): the connect is a
-same-origin form post from a session opened in the last 15 minutes, the authorization carries a state sealed to that
+same-origin form post from a session opened in the last 10 minutes, the authorization carries a state sealed to that
 account, that session and its authentication state for 10 minutes, and the callback binds the identity to that one
 account — never by email, never to another account, and not when any account in the project already owns the
 identity (the page says the provider account is already connected). Disconnecting a provider on the same page

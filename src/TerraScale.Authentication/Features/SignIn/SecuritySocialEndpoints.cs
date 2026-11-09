@@ -17,7 +17,7 @@ public sealed class SocialConnectEndpoint(SocialSignIn social, Sessions sessions
         Post("/ui/{slug}/security/social/connect");
         Name("ui_security_social_connect");
         Summary("Connect a sign-in provider");
-        Description("Same-origin form post with provider from a live session opened in the last 15 minutes; an older session is asked to sign in again. Redirects to the project's configured provider with a state bound to this account, session and authentication state, sealed into the encrypted 10-minute social cookie. The callback links the identity only to this account, refuses one owned by any account in the project, and returns to the security page; it never signs an account in and never links by email. A provider the project did not configure, and the platform's pages, answer 404. Shares the hosted IP budget (429 with Retry-After).");
+        Description("Same-origin form post with provider from a live session opened in the last 10 minutes; an older session is asked to sign in again. Redirects to the project's configured provider with a state bound to this account, session and authentication state, sealed into the encrypted 10-minute social cookie. The callback links the identity only to this account, refuses one owned by any account in the project, and returns to the security page; it never signs an account in and never links by email. A provider the project did not configure, and the platform's pages, answer 404. Shares the hosted IP budget (429 with Retry-After).");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces(StatusCodes.Status302Found);
@@ -52,7 +52,7 @@ public sealed class SocialConnectEndpoint(SocialSignIn social, Sessions sessions
         }
 
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        if (!SecurityFlow.Recent(this.HttpContext, live.Session))
+        if (!SecurityFlow.Recent(this.HttpContext, live.Session, SecurityFlow.FactorEnrollmentWindow))
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Reauthenticate, tenant, Next: SignInFlow.SecurityPath(tenant))
             { Account = live.User.Email }, StatusCodes.Status401Unauthorized);
@@ -89,7 +89,7 @@ public sealed class SocialUnlinkEndpoint(Sessions sessions, Users users, AuthOpt
         Post("/ui/{slug}/security/social/unlink");
         Name("ui_security_social_unlink");
         Summary("Disconnect a sign-in provider");
-        Description("Same-origin form post with provider from a live session opened in the last 15 minutes. Success releases the provider's identities from the account, revokes every prior session and token, opens a fresh session for this browser and returns to the security page. A provider the account does not have redirects back without a change.");
+        Description("Same-origin form post with provider from a live session opened in the last 10 minutes. Success releases the provider's identities from the account, revokes every prior session and token, opens a fresh session for this browser and returns to the security page. A provider the account does not have redirects back without a change.");
         Tags("Security");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
@@ -113,7 +113,7 @@ public sealed class SocialUnlinkEndpoint(Sessions sessions, Users users, AuthOpt
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
         var provider = this.HttpContext.Request.Form["provider"].ToString();
-        if (!SecurityFlow.Recent(this.HttpContext, live.Session))
+        if (!SecurityFlow.Recent(this.HttpContext, live.Session, SecurityFlow.FactorEnrollmentWindow))
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Reauthenticate, tenant, Next: SignInFlow.SecurityPath(tenant))
             { Account = live.User.Email }, StatusCodes.Status401Unauthorized);
