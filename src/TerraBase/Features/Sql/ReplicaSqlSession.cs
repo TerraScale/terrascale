@@ -50,9 +50,10 @@ internal sealed class ReplicaSqlSession(
             return await HomeAsync(command, admit, cancellationToken).ConfigureAwait(false);
         }
 
-        if (SqlScript.Classify(command.Sql) is not SqlStatementPlan plan)
+        var planned = SqlScript.Classify(command.Sql);
+        if (planned is not SqlStatementPlan plan)
         {
-            return SqlScript.Classify(command.Sql) is SqlError refused ? refused : SqlErrors.Error("the statement cannot be run");
+            return planned is SqlError refused ? refused : SqlErrors.Error("the statement cannot be run");
         }
 
         if (_readOnlyTransaction)
@@ -141,9 +142,10 @@ internal sealed class ReplicaSqlSession(
             return await DescribeAtHomeAsync(command, cancellationToken).ConfigureAwait(false);
         }
 
-        if (SqlScript.Classify(command.Sql) is not SqlStatementPlan plan)
+        var planned = SqlScript.Classify(command.Sql);
+        if (planned is not SqlStatementPlan plan)
         {
-            return SqlScript.Classify(command.Sql) is SqlError refused ? refused : SqlErrors.Error("the statement cannot be described");
+            return planned is SqlError refused ? refused : SqlErrors.Error("the statement cannot be described");
         }
 
         if (plan.Kind is not (SqlStatementKind.Read or SqlStatementKind.Write))

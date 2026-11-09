@@ -14,7 +14,11 @@ internal sealed record SqlStatementBody(
     IReadOnlyList<SqlColumnBody> Columns,
     [property: JsonConverter(typeof(SqlRowsConverter))] IReadOnlyList<IReadOnlyList<SqlValue>> Rows,
     [property: JsonPropertyName("rows_affected")] long RowsAffected,
-    [property: JsonPropertyName("last_insert_rowid")] long? LastInsertRowid);
+    [property: JsonPropertyName("last_insert_rowid")] long? LastInsertRowid)
+{
+    public static SqlStatementBody Of(SqlResult result) => new(
+        [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid);
+}
 
 internal sealed record SqlColumnBody(string Name, string? Decltype);
 

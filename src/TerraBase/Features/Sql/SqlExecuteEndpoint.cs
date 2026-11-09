@@ -233,8 +233,7 @@ internal sealed class SqlExecuteEndpoint(
         {
             return await sql.ExecuteOnReplicaAsync(database, reader, statements, cancellationToken) switch
             {
-                IReadOnlyList<SqlResult> results => TypedResults.Json(new SqlExecuteBody([.. results.Select(result => new SqlStatementBody(
-                    [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid))]),
+                IReadOnlyList<SqlResult> results => TypedResults.Json(new SqlExecuteBody([.. results.Select(SqlStatementBody.Of)]),
                     TerraBaseJsonContext.Default.SqlExecuteBody),
                 ReplicaSqlFailure failed => Error(new SqlBatchFailure(failed.Error, failed.Statement)),
             };
@@ -320,8 +319,7 @@ internal sealed class SqlExecuteEndpoint(
                 return Error(new SqlBatchFailure(Reverted(reverted), 0));
             }
 
-            return TypedResults.Json(new SqlExecuteBody([.. results.Select(result => new SqlStatementBody(
-                [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid))]),
+            return TypedResults.Json(new SqlExecuteBody([.. results.Select(SqlStatementBody.Of)]),
                 TerraBaseJsonContext.Default.SqlExecuteBody);
         }
     }
