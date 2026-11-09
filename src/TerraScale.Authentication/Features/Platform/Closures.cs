@@ -275,7 +275,7 @@ public sealed class Closures(
 }
 
 /// <summary>Resumes pending closures at startup and every two seconds, so a crash or restart never strands an intent.</summary>
-public sealed class ClosureWorker(Closures closures, PlatformDirectory directory, AccountDeletion accounts, TimeProvider clock, ILogger<ClosureWorker> logger) : BackgroundService
+public sealed class ClosureWorker(AuthSchema schema, Closures closures, PlatformDirectory directory, AccountDeletion accounts, TimeProvider clock, ILogger<ClosureWorker> logger) : BackgroundService
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
@@ -342,6 +342,7 @@ public sealed class ClosureWorker(Closures closures, PlatformDirectory directory
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(Interval, clock);
         try
         {

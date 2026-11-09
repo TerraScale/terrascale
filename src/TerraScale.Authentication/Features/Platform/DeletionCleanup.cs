@@ -8,7 +8,7 @@ using ZLogger;
 namespace TerraScale.Authentication.Features.Platform;
 
 public sealed class DeletionCleanup(
-    AuthData data, TimeProvider clock, ILogger<DeletionCleanup> logger) : BackgroundService
+    AuthSchema schema, AuthData data, TimeProvider clock, ILogger<DeletionCleanup> logger) : BackgroundService
 {
     private const int BatchSize = 20;
     private const int RecordBudget = 100;
@@ -126,6 +126,7 @@ public sealed class DeletionCleanup(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(Interval, clock);
         try
         {

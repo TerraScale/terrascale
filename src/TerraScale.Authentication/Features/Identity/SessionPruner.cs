@@ -1,6 +1,7 @@
 using ZLogger;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Identity;
 
@@ -8,7 +9,7 @@ namespace TerraScale.Authentication.Features.Identity;
 /// Deletes dead sessions and spent code records every ten minutes on every replica. Deletes are version-conditional,
 /// so concurrent passes are safe; a failed pass is retried at the next tick, and dead records grant nothing while they wait.
 /// </summary>
-public sealed class SessionPruner(Sessions sessions, Passcodes passcodes, StepUpProofs proofs, OidcTokenStore oidcTokens, OidcAuthorizationStore oidcAuthorizations, ILogger<SessionPruner> logger) : BackgroundService
+public sealed class SessionPruner(AuthSchema schema, Sessions sessions, Passcodes passcodes, StepUpProofs proofs, OidcTokenStore oidcTokens, OidcAuthorizationStore oidcAuthorizations, ILogger<SessionPruner> logger) : BackgroundService
 {
     private const int BatchSize = 500;
 
@@ -17,6 +18,7 @@ public sealed class SessionPruner(Sessions sessions, Passcodes passcodes, StepUp
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
         using var timer = new PeriodicTimer(Interval);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {

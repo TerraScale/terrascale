@@ -1,9 +1,9 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 
@@ -23,7 +23,7 @@ public sealed class RelationalStorageTests(TerraBaseFixture fixture)
             services: services => fixture.UseStorage(services, tenant))).ToArray();
         await using var first = await starting[0];
         await using var second = await starting[1];
-        await Task.WhenAll(first.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped, second.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped)
+        await Task.WhenAll(first.App.Services.GetRequiredService<AuthSchema>().Ready, second.App.Services.GetRequiredService<AuthSchema>().Ready)
             .WaitAsync(TimeSpan.FromSeconds(8));
 
         await using var db = database.Context();
@@ -37,6 +37,22 @@ public sealed class RelationalStorageTests(TerraBaseFixture fixture)
         var owner = await db.Users.SingleAsync();
         await Assert.That(owner.Email).IsEqualTo(AuthTestServer.BootstrapOwnerEmail);
         await Assert.That((await db.Memberships.SingleAsync()).Role).IsEqualTo(Roles.Owner);
+    }
+
+    [Test]
+    public async Task Background_workers_wait_for_the_schema_so_startup_on_an_empty_database_logs_no_warning()
+    {
+        var (tenant, _) = await fixture.CreateDatabaseAsync(provision: false);
+        var logs = new CapturingLogs();
+
+        await using var server = await AuthTestServer.StartAsync(services: services =>
+        {
+            services.AddSingleton<ILoggerProvider>(logs);
+            fixture.UseStorage(services, tenant);
+        });
+        await server.App.Services.GetRequiredService<AuthSchema>().Ready.WaitAsync(TimeSpan.FromSeconds(8));
+
+        await Assert.That(logs.AtLeast(LogLevel.Warning)).IsEmpty();
     }
 
     [Test]

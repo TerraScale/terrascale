@@ -9,10 +9,12 @@ namespace TerraScale.Authentication.Tests;
 /// </summary>
 public sealed class CapturingLogs : ILoggerProvider
 {
-    private readonly ConcurrentQueue<string> lines = new();
+    private readonly ConcurrentQueue<(LogLevel Level, string Line)> lines = new();
 
     /// <summary>Everything logged so far.</summary>
-    public string Text => string.Join('\n', this.lines);
+    public string Text => string.Join('\n', this.lines.Select(entry => entry.Line));
+
+    public IReadOnlyList<string> AtLeast(LogLevel level) => [.. this.lines.Where(entry => entry.Level >= level).Select(entry => entry.Line)];
 
     /// <inheritdoc />
     public ILogger CreateLogger(string categoryName) => new Logger(this.lines, categoryName);
@@ -22,18 +24,18 @@ public sealed class CapturingLogs : ILoggerProvider
     {
     }
 
-    private sealed class Logger(ConcurrentQueue<string> lines, string category) : ILogger
+    private sealed class Logger(ConcurrentQueue<(LogLevel Level, string Line)> lines, string category) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull
         {
-            lines.Enqueue($"{category} scope {state}");
+            lines.Enqueue((LogLevel.Trace, $"{category} scope {state}"));
             return null;
         }
 
         public bool IsEnabled(LogLevel logLevel) => true;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            lines.Enqueue($"{category} {formatter(state, exception)} {exception}");
+            lines.Enqueue((logLevel, $"{logLevel} {category} {formatter(state, exception)} {exception}"));
     }
 }
