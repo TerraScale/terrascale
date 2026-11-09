@@ -148,7 +148,7 @@ namespace TerraScale.Dashboard.Features.Billing
             catch (Exception error) when (error is StripeException or TerraBaseException or HttpRequestException or IOException ||
                                           error is OperationCanceledException && !Cancellation.IsCancellationRequested)
             {
-                logger.BillingMCPToolFailed(error.GetType().Name, BillingPlanEndpoints.Describe(error));
+                logger.BillingMCPToolFailed(error.GetType().Name, BillingMutations.Describe(error));
                 throw new AccountAccessException("Stripe could not complete this billing change. Reload billing and try again.", 502);
             }
         }

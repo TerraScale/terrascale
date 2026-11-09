@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
+using TerraScale.Dashboard.Features.Billing.Webhooks;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Backups;
@@ -107,6 +108,7 @@ namespace TerraScale.Dashboard
             builder.Services.AddSingleton<IProfileTokens>(services => services.GetRequiredService<AccessTokens>());
             builder.Services.AddDashboardMcp();
             builder.Services.AddDashboardContracts();
+            builder.Services.AddTransient<DevelopmentEventsEndpoint>();
             builder.Services.AddTerraScaleEndpoints(
             [
                 EndpointRegistration.Create<DatabaseTtlEndpoint>(),
@@ -174,6 +176,20 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<DashboardIdentityEndpoint>(),
                 EndpointRegistration.Create<SwitchOrganizationEndpoint>(),
                 EndpointRegistration.Create<SwitchProjectEndpoint>(),
+                EndpointRegistration.Create<BillingRedirectEndpoint>(),
+                EndpointRegistration.Create<CheckoutStartEndpoint>(),
+                EndpointRegistration.Create<BillingPortalEndpoint>(),
+                EndpointRegistration.Create<BillingChangeEndpoint>(),
+                EndpointRegistration.Create<BillingChangeUndoEndpoint>(),
+                EndpointRegistration.Create<BillingCheckoutCancelEndpoint>(),
+                EndpointRegistration.Create<CheckoutSessionCancelEndpoint>(),
+                EndpointRegistration.Create<BillingCheckoutReturnEndpoint>(),
+                EndpointRegistration.Create<SetAuditRetentionEndpoint>(),
+                EndpointRegistration.Create<SettingsDeleteProjectEndpoint>(),
+                EndpointRegistration.Create<SetBackupPolicyEndpoint>(),
+                EndpointRegistration.Create<CreateSettingsBackupEndpoint>(),
+                EndpointRegistration.Create<StripeWebhookEndpoint>(),
+                EndpointRegistration.Create<AuthStripeWebhookEndpoint>(),
                 EndpointRegistration.Create<DatabasesPageEndpoint>(),
                 EndpointRegistration.Create<ListDatabasesApiEndpoint>(),
                 EndpointRegistration.Create<DatabaseOverviewEndpoint>(),
@@ -448,11 +464,11 @@ namespace TerraScale.Dashboard
                 context.Request.Path.StartsWithSegments("/readyz") || context.Request.Path.StartsWithSegments("/health")
                 ? next(context) : throw new IOException("Dashboard state is initializing."));
             app.MapDatabaseFeatures();
-            app.MapSettings();
-            app.MapBilling();
-            app.MapBillingPlanChanges();
             app.MapDashboardMcp();
-            app.MapDevelopmentUpdates();
+            if (app.Environment.IsDevelopment())
+            {
+                app.Services.GetRequiredService<DevelopmentEventsEndpoint>().Map(app);
+            }
             app.MapDashboardContracts();
             app.MapTerraScaleEndpoints();
             app.MapFallback(async (HttpContext context, DashboardSessions sessions, AccountService accounts) =>

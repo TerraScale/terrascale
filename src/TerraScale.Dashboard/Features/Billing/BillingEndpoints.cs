@@ -105,69 +105,6 @@ namespace TerraScale.Dashboard.Features.Billing
             var current = binding.EffectiveInterval.Length > 0 ? binding.EffectiveInterval : binding.Interval;
             return new(renews, Price(binding.EffectivePlan, current), "usd", current);
         }
-
-        public static IEndpointRouteBuilder MapBilling(this IEndpointRouteBuilder endpoints)
-        {
-            endpoints.MapGet("/billing", () => Results.Redirect("/organization?tab=billing"));
-            endpoints.MapPost("/billing/checkout", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.StatusCode(403);
-                }
-
-                try { return HttpRedirects.SeeOther(await billing.StartCheckoutAsync(context, form["plan"].ToString(), form["interval"].ToString(), form["return"].ToString(), http.RequestAborted)); }
-                catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
-                {
-                    if (DatabaseEndpoints.WantsHtml(http))
-                    {
-                        return HttpRedirects.SeeOther("/organization?tab=billing&payment=blocked");
-                    }
-
-                    return Results.Problem(error.Message, statusCode: error is AccountAccessException access ? access.StatusCode : 422);
-                }
-                catch (Exception error) when (error is StripeException or TerraBaseException or HttpRequestException or IOException ||
-                    error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-                {
-                    // The customer sees a generic 503; the cause (such as a Stripe refusal) must reach the host log.
-                    http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BillingEndpoints)).CheckoutForOrganizationIsUnavailable(context.Organization?.Id, error.GetType().Name, BillingPlanEndpoints.Describe(error));
-                    if (!DatabaseEndpoints.WantsHtml(http))
-                    {
-                        return Results.Problem("Checkout is temporarily unavailable. Return to billing to reconcile before trying again.", statusCode: 503);
-                    }
-
-                    var page = BillingCheckoutUnavailable.Create(new DocumentModel("Checkout unavailable", DocumentModel.NonceFor(http)));
-                    page.StatusCode = 503;
-                    return (IResult)page;
-                }
-            }).WithGroupName("integration").WithName("startDashboardCheckout").WithTags("Billing")
-                .WithSummary("Start or resume a bound Stripe checkout")
-                .WithDescription("Requires the current session, organization-owner permission and a same-origin CSRF form token. An unavailable provider returns 503; return to billing to resume or cancel rather than automatically retrying a mutation.")
-                .Accepts<CheckoutRequest>("application/x-www-form-urlencoded")
-                .Produces(303).Produces(401).Produces(403).ProducesProblem(422).ProducesProblem(503).Produces(503, contentType: "text/html");
-            endpoints.MapGet("/billing/portal", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
-            {
-                var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountEndpoints.LoginRedirect(http);
-                }
-
-                try { return HttpRedirects.SeeOther(await billing.PortalAsync(context, http.RequestAborted)); }
-                catch (AccountAccessException error) when (DatabaseEndpoints.WantsHtml(http))
-                { return BillingRecoveryModel.Response(http, error.StatusCode, "Billing portal unavailable", error.Message + " Return to billing to choose a plan or finish checkout."); }
-                catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            });
-            endpoints.MapStripeWebhooks();
-            return endpoints;
-        }
     }
 
     public sealed record CheckoutRequest([property: System.Text.Json.Serialization.JsonPropertyName("_csrf")] string Csrf,
