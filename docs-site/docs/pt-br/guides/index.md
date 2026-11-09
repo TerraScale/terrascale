@@ -29,7 +29,7 @@ Use the [quickstart](/pt-br/getting-started/) to establish one working applicati
 - [Dashboard usage](/pt-br/guides/dashboard): customer account and database workflow.
 - [Connect an AI assistant with MCP](/pt-br/guides/mcp): sign in or use a personal access token to connect an assistant.
 - [Single sign-on](/pt-br/guides/single-sign-on): connect your identity provider over OIDC for a verified email domain (Team and Enterprise).
-- [Import an existing database](/pt-br/guides/import) and [Export from PostgreSQL](/pt-br/guides/import-postgresql) (being updated for SQL).
+- [Import data](/pt-br/guides/import): load rows into a database with batched SQL statements.
 
 The [zero-configuration contract](/pt-br/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 
