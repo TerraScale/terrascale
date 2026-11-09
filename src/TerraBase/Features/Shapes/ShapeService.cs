@@ -17,6 +17,7 @@ internal sealed class ShapeService(
     private readonly ClosedChunks _closed = new(memory);
     private static readonly QuotaExceeded Busy = new("shape reads are at capacity; retry later", "shape_busy");
     private static readonly NotFound UnknownDatabase = new("the database does not exist", "unknown_database");
+    private static readonly Unavailable StorageBusy = new("shape storage changed or is busy; retry later");
     private static readonly NotFound UnknownTable = new("the table does not exist", "unknown_table");
     private static readonly Validation UnsupportedTable = new("shapes read ordinary rowid tables", "unsupported_table");
 
@@ -55,7 +56,7 @@ internal sealed class ShapeService(
         }
         catch (Exception error) when (error is ShapeSealOffsetException or ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
-            return new Unavailable("shape storage changed or is busy; retry later");
+            return StorageBusy;
         }
     }
 
@@ -80,7 +81,7 @@ internal sealed class ShapeService(
         }
         catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
-            return new Unavailable("shape storage changed or is busy; retry later");
+            return StorageBusy;
         }
     }
 
@@ -98,7 +99,7 @@ internal sealed class ShapeService(
         }
         catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
-            return new Unavailable("shape storage changed or is busy; retry later");
+            return StorageBusy;
         }
     }
 
@@ -118,7 +119,7 @@ internal sealed class ShapeService(
         }
         catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
-            return new Unavailable("shape storage changed or is busy; retry later");
+            return StorageBusy;
         }
     }
 
@@ -138,7 +139,7 @@ internal sealed class ShapeService(
         }
         catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
-            return new Unavailable("shape storage changed or is busy; retry later");
+            return StorageBusy;
         }
     }
 
@@ -152,7 +153,7 @@ internal sealed class ShapeService(
         }
         catch (Exception error) when (error is ShapeSealOffsetException or ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
-            return new Unavailable("shape storage changed or is busy; retry later");
+            return StorageBusy;
         }
     }
 
@@ -267,7 +268,7 @@ internal sealed class ShapeService(
         NotFound missing => missing,
         Unavailable unavailable => unavailable,
         QuotaExceeded busy => busy,
-        _ => throw new System.Diagnostics.UnreachableException(),
+        ShapeBody => throw new System.Diagnostics.UnreachableException(),
     };
 
     public async ValueTask<ShapeRead> PageAsync(ShapeScope scope, ShapeLineage lineage, long snapshot, int page, CancellationToken cancellationToken)

@@ -47,10 +47,6 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
         .CreateCounter<long>("terrabase.shape.sweep.handles", description: "Shape handles the sweep classified, by result.");
     private readonly Counter<long> _deleted = meters.Create(Telemetry.MeterName)
         .CreateCounter<long>("terrabase.shape.sweep.deleted", description: "Shape rows the sweep deleted, by retention or retirement.");
-    private TaskCompletionSource<ShapeSweepPass> _next = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    internal Task<ShapeSweepPass> NextPassAsync() => Volatile.Read(ref _next).Task;
-
     public override void Dispose()
     {
         _timer.Dispose();
@@ -73,8 +69,6 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
                     logger.ZLogWarning(error, $"Shape sweep pass failed; retrying next interval");
                     pass = new ShapeSweepPass(0, 0, 0, 0, 0, 0, 1);
                 }
-
-                Interlocked.Exchange(ref _next, new(TaskCreationOptions.RunContinuationsAsynchronously)).SetResult(pass);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
