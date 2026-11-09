@@ -161,7 +161,6 @@ namespace TerraScale.Dashboard.Features.Databases
             endpoints.MapDataFeatures();
             endpoints.MapDatabaseLogs();
             endpoints.MapDatabaseFunctions();
-            endpoints.MapApiKeyFeatures();
             endpoints.MapBackupFeatures((http, context, databaseId, error, status) => DetailPageAsync(http, context, databaseId, "backups",
                 http.RequestServices.GetRequiredService<IDatabaseBackend>(), http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status));
             return endpoints;
