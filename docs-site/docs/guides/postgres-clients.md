@@ -48,7 +48,7 @@ Dollar-quoted strings (`$$…$$`) and `E'…'` escape strings are refused with `
 
 ## Transactions
 
-`BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE SAVEPOINT` and `ROLLBACK TO SAVEPOINT` work, including `BEGIN READ ONLY` (a write in it answers `25006`). A transaction lives at most **5 seconds**; past the limit it rolls back with SQLSTATE `40000`. Without a transaction, each statement commits on its own. Several statements sent as one simple query in autocommit mode run as one implicit transaction: a failure rolls back the whole message.
+`BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE SAVEPOINT` and `ROLLBACK TO SAVEPOINT` work, including `BEGIN READ ONLY` (a write in it answers `25006`). A transaction runs at most **5 seconds of statement execution**, and rolls back after 5 seconds with no statement at all; past the limit it rolls back with SQLSTATE `40000`. Without a transaction, each statement commits on its own. Several statements sent as one simple query in autocommit mode run as one implicit transaction: a failure rolls back the whole message.
 
 ## Catalog queries, settings and notifications
 

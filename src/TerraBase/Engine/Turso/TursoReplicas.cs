@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Google.Protobuf;
 using System.Globalization;
 using System.Net;
@@ -1072,6 +1073,7 @@ internal sealed partial class TursoReplicas(
 
             private SqlStatementResult Execute(SqlStatement statement, CancellationToken cancellationToken)
             {
+                var started = Stopwatch.GetTimestamp();
                 try
                 {
                     var (prepared, consumed) = TursoStorageTransaction.Prepare(native, statement.Sql, statement.First);
@@ -1082,7 +1084,7 @@ internal sealed partial class TursoReplicas(
                         using (cancellationToken.Register(static state => TursoBindings.Interrupt((TursoDatabaseHandle)state!), native))
                         {
                             var (columns, rows, _, truncated) = Step(prepared, statement, cancellationToken);
-                            return new SqlStatementResult(columns, rows, 0, 0, 0, truncated, consumed);
+                            return new SqlStatementResult(columns, rows, 0, 0, 0, truncated, consumed, Stopwatch.GetElapsedTime(started));
                         }
                     }
                     finally

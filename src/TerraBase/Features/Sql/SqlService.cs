@@ -214,6 +214,9 @@ internal sealed class SqlSession(
     private readonly SemaphoreSlim _gate = new(1, 1);
     private long? _transportStarted;
     private long? _scriptStarted;
+    private long _requestExecution;
+    private long _transactionExecution;
+    private long? _lastExecutionEnded;
     private bool _inTransaction;
     private bool _readOnlyTransaction;
     private Pinned? _pinned;
@@ -231,7 +234,11 @@ internal sealed class SqlSession(
 
     public IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => _committed ?? [];
 
-    public void BeginRequest() => _transportStarted = time.GetTimestamp();
+    public void BeginRequest()
+    {
+        _transportStarted = time.GetTimestamp();
+        _requestExecution = 0;
+    }
 
     public ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken) =>
         ExecuteAsync(command, admit: null, cancellationToken);
@@ -408,8 +415,14 @@ internal sealed class SqlSession(
     private int _consumed;
 
     private bool RequestExpired =>
-        Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue
-        && time.GetElapsedTime(started) > SqlLimits.MaxRequestTime;
+        (_transportStarted is not null || _scriptStarted is not null) && TimeSpan.FromTicks(_requestExecution) >= SqlLimits.MaxRequestTime;
+
+    private void ChargeExecution(TimeSpan execution)
+    {
+        _requestExecution += execution.Ticks;
+        _transactionExecution += execution.Ticks;
+        _lastExecutionEnded = transactionTime.GetTimestamp();
+    }
 
     private SqlPlanOutcome Plan(string sql)
     {
@@ -430,14 +443,14 @@ internal sealed class SqlSession(
             timeout = Min(timeout, limit);
         }
 
-        if (Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue)
+        if (_transportStarted is not null || _scriptStarted is not null)
         {
-            timeout = Min(timeout, SqlLimits.MaxRequestTime - time.GetElapsedTime(started));
+            timeout = Min(timeout, SqlLimits.MaxRequestTime - TimeSpan.FromTicks(_requestExecution));
         }
 
-        if (_pinned is { } pinned)
+        if (_pinned is not null)
         {
-            timeout = Min(timeout, SqlLimits.MaxTransactionTime - transactionTime.GetElapsedTime(pinned.Opened));
+            timeout = Min(timeout, SqlLimits.MaxTransactionTime - TimeSpan.FromTicks(_transactionExecution));
         }
 
         return timeout > TimeSpan.FromMilliseconds(1) ? timeout : TimeSpan.FromMilliseconds(1);
@@ -653,6 +666,7 @@ internal sealed class SqlSession(
         try
         {
             var result = await pinned.Transaction.ExecuteStatementAsync(Internal(sql) with { First = first }, cancellationToken).ConfigureAwait(false);
+            ChargeExecution(result.Execution);
             if (first)
             {
                 _consumed = result.Consumed;
@@ -672,7 +686,7 @@ internal sealed class SqlSession(
     }
 
     private SqlError LostReason() =>
-        _expiring == _generation || (_pinned is { } pinned && transactionTime.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime) ? Expired : Aborted;
+        _expiring == _generation || (_pinned is not null && TimeSpan.FromTicks(_transactionExecution) >= SqlLimits.MaxTransactionTime) ? Expired : Aborted;
 
     private async ValueTask<(SqlOutcome Outcome, bool Ended)> RunAsync(
         IStorageTransaction transaction, SqlStatementPlan plan, SqlCommand command, Tally tally, Func<SqlResult, SqlError?>? admit, bool first,
@@ -692,6 +706,7 @@ internal sealed class SqlSession(
                     [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal),
                     MaxRows, MaxBytes, StatementTimeout(), first),
                 cancellationToken).ConfigureAwait(false);
+            ChargeExecution(raw.Execution);
         }
         catch (SqlStatementException error)
         {
@@ -917,6 +932,8 @@ internal sealed class SqlSession(
         }
 
         var generation = ++_generation;
+        _transactionExecution = 0;
+        _lastExecutionEnded = null;
         var timer = transactionTime.CreateTimer(_ => _ = ExpireLaterAsync(generation), null, SqlLimits.MaxTransactionTime, Timeout.InfiniteTimeSpan);
         _pinned = new Pinned(transaction, lease, write, transactionTime.GetTimestamp(), baseline, timer, new Tally(), []);
         return (_pinned, null);
@@ -926,6 +943,20 @@ internal sealed class SqlSession(
     {
         if (Volatile.Read(ref _pinned) is { } pinned && generation == Volatile.Read(ref _generation))
         {
+            var idle = transactionTime.GetElapsedTime(_lastExecutionEnded ?? pinned.Opened);
+            if (TimeSpan.FromTicks(Volatile.Read(ref _transactionExecution)) < SqlLimits.MaxTransactionTime && idle < SqlLimits.MaxTransactionTime)
+            {
+                try
+                {
+                    pinned.Timer.Change(SqlLimits.MaxTransactionTime - idle, Timeout.InfiniteTimeSpan);
+                    return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+            }
+
             Volatile.Write(ref _expiring, generation);
             pinned.Transaction.InterruptStatement();
         }
@@ -946,7 +977,7 @@ internal sealed class SqlSession(
 
     private async ValueTask ExpireIfDueAsync()
     {
-        if (_pinned is { } pinned && _lost is null && transactionTime.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime)
+        if (_pinned is not null && _lost is null && TimeSpan.FromTicks(_transactionExecution) >= SqlLimits.MaxTransactionTime)
         {
             await LoseAsync(Expired).ConfigureAwait(false);
         }

@@ -102,7 +102,7 @@ Untyped rows work too: `query` returns `SqlRecord` values you read by column nam
 
 ## Transactions over the session
 
-`database("main").connect()` opens a SQL WebSocket session. Outside a transaction every call is its own transaction; `transaction` begins one, runs your closure and commits, rolling back if the closure fails. **A transaction lasts at most 5 seconds**: past the limit the server rolls it back, so keep transactions small:
+`database("main").connect()` opens a SQL WebSocket session. Outside a transaction every call is its own transaction; `transaction` begins one, runs your closure and commits, rolling back if the closure fails. **A transaction runs at most 5 seconds of statement execution** (and rolls back after 5 seconds with no statement at all): past the limit the server rolls it back, so keep transactions small:
 
 ```rust
 let session = client.database("main").connect().await?;

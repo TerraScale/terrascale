@@ -67,15 +67,15 @@ These are the limits a request or a plan can hit. All SQL surfaces (HTTP, WebSoc
 | Rows changed per transaction | 1,024 | \`too_large\` (413) / 54000 |
 | Database file growth per transaction | 8 MiB | \`too_large\` (413) / 54000 |
 
-A query that stays inside result limits but scans or works past the plan's scan budget answers \`query_canceled\` (400) / 57014 with \`query too expensive: it exceeds the work budget\`; add indexes or a \`LIMIT\`, or narrow the query. A request whose statements together run past the 5 s request time limit answers \`query_canceled\` (400) / 57014 with \`the request exceeded its 5 s time limit; split the batch or narrow the query\`.
+A query that stays inside result limits but scans or works past the plan's scan budget answers \`query_canceled\` (400) / 57014 with \`query too expensive: it exceeds the work budget\`; add indexes or a \`LIMIT\`, or narrow the query. A request whose statements together spend more than 5 s executing answers \`query_canceled\` (400) / 57014 with \`the request exceeded its 5 s time limit; split the batch or narrow the query\`. Only statement execution counts toward the 5 s; time spent admitted, queued or waiting on the organization's limits does not.
 
 ## Transactions
 
 | Surface | Transaction limit |
 | --- | --- |
 | HTTP | One request is one atomic batch, all or nothing. \`BEGIN\`, \`COMMIT\` and \`ROLLBACK\` are refused. |
-| WebSocket | \`begin\`/\`commit\`/\`rollback\` frames. At most 5 seconds, then it rolls back. |
-| Postgres wire | \`BEGIN\`/\`COMMIT\`/\`ROLLBACK\` and savepoints. At most 5 seconds, then it rolls back. |
+| WebSocket | \`begin\`/\`commit\`/\`rollback\` frames. At most 5 s of statement execution, or 5 s with no statement at all, then it rolls back. |
+| Postgres wire | \`BEGIN\`/\`COMMIT\`/\`ROLLBACK\` and savepoints. At most 5 s of statement execution, or 5 s with no statement at all, then it rolls back. |
 
 A transaction left open past the limit rolls back and answers \`transaction_rolled_back\` (400) / 40000.
 
