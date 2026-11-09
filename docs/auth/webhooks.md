@@ -49,3 +49,45 @@ hours, then it is refused.
 
 Registration and rotation consume a purpose-bound step-up proof
 ([step-up proof](step-up-proof.md)); deletion needs only the admin role.
+
+## Verify deliveries
+
+Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com)
+spec: the `webhook-id`, `webhook-timestamp` (unix seconds) and
+`webhook-signature` headers, with space-separated `v1,<base64>` signature
+entries. The signature is HMAC-SHA256, keyed with the base64-decoded payload of
+the `whsec_` secret, over `{id}.{timestamp}.{body}` with the body exactly as
+delivered. Verify every `v1` entry in constant time (rotation keeps the
+previous secret's signatures valid for 24 hours) and refuse timestamps more
+than 5 minutes from now. Each SDK ships one `verifyWebhook` helper that does
+this and returns the parsed event, or the SDK's typed error.
+
+```csharp
+using TerraScale.DotNet;
+
+JsonElement evt = TerraScaleWebhooks.VerifyWebhook(secret, request.Headers.ToDictionary(h => h.Key, h => h.Value.First()), rawBody);
+```
+
+```js
+import { verifyWebhook } from "@terrascale/sdk/ts-auth/webhooks";
+
+const event = verifyWebhook(secret, req.headers, rawBody);
+```
+
+```go
+import "terrascale.tech/sdk/tsauth"
+
+event, err := tsauth.VerifyWebhook(secret, r.Header, rawBody)
+```
+
+```python
+from terrascale import verify_webhook
+
+event = verify_webhook(secret, headers, raw_body)
+```
+
+```rust
+use terrascale::webhooks::{verify_webhook, WebhookHeaders};
+
+let event = verify_webhook(secret, &WebhookHeaders { id, timestamp, signature }, &raw_body)?;
+```

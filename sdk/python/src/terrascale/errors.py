@@ -51,6 +51,12 @@ class TokenError(TerraScaleError):
         super().__init__(msg)
 
 
+class WebhookVerificationError(TerraScaleError):
+    def __init__(self, code: str, message: str):
+        self.code = code
+        super().__init__(message)
+
+
 class APIError(TerraScaleError):
     """A TerraBase error or an undecodable success response.
     ``request_id`` is the response's canonical ULID, or None."""

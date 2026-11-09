@@ -31,6 +31,8 @@ print(db.query("SELECT * FROM notes"))
 The API key is exchanged with ts-auth (`https://auth.terrascale.tech`) for a
 short-lived project access token, cached and refreshed automatically. Keep keys
 on your server and out of git. See [examples/quickstart.py](examples/quickstart.py).
+`verify_webhook` verifies a Standard Webhooks `v1` delivery of ts-auth end-user
+lifecycle events and returns the parsed event or raises `WebhookVerificationError`.
 
 ## SQL
 

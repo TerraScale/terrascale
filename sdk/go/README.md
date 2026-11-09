@@ -2,7 +2,9 @@
 
 Package `v1` is the TerraBase client for API keys and project JWTs: databases, SQL over REST
 and WebSocket, backups, file buckets, functions, usage and analytics. `tsauth` exchanges
-customer API keys and user tokens for project access tokens. The root package
+customer API keys and user tokens for project access tokens. `tsauth.VerifyWebhook`
+verifies a Standard Webhooks `v1` delivery of ts-auth end-user lifecycle events and
+returns the parsed event or a `*tsauth.WebhookError`. The root package
 holds hosted TSAuth clients, pure SQL builders and the PostgreSQL client.
 
 Platform entity IDs are canonical uppercase, 26-character Crockford ULIDs. Use
