@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Common.UI;
@@ -56,7 +55,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 return Results.Redirect(signUp ? HostedSignUp(authorize) : authorize);
             }
             catch (Exception error) when (DependencyFailure(error, context))
-            { return Failure(context, returnTo, "Sign-in is unavailable right now. Try again in a moment.", 503, error); }
+            { return Failure(context, returnTo, "Sign-in is unavailable right now. Try again in a moment.", 503, error.GetType().Name); }
         }
 
         // ts-auth's hosted sign-up page takes the same next=/{slug}/oauth/authorize?... as its sign-in page, so a new
@@ -71,16 +70,23 @@ namespace TerraScale.Dashboard.Features.Auth
 
         internal static async Task<IResult> CompleteAsync(HttpContext context, AuthFlows flows, IAuthOidcGateway auth, DashboardSessions sessions)
         {
-            var flow = await flows.TakeOidcAsync(context);
-            var state = context.Request.Query["state"].ToString();
-            if (flow is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(state), Encoding.UTF8.GetBytes(flow.State)))
+            var taken = await flows.TakeOidcAsync(context, context.Request.Query["state"].ToString());
+            if (taken is not OidcTake.Taken { Flow: var flow })
             {
-                return Failure(context, "/", "This sign-in link expired or was started in another browser. Sign in again.", 400);
+                var returnTo = taken is OidcTake.Expired expired ? expired.ReturnTo : "/";
+                if (await sessions.ReadAsync(context) is not null)
+                {
+                    return HttpRedirects.SeeOther(returnTo);
+                }
+
+                return taken is OidcTake.Expired
+                    ? Failure(context, returnTo, "This sign-in took longer than an hour to finish. Select Try again; you usually won't need a new code.", 400, "FlowExpired")
+                    : Failure(context, returnTo, "This sign-in was already used, or was started in another browser. Select Try again; you usually won't need a new code.", 400, "FlowUnknown");
             }
 
             if (context.Request.Query["error"].Count != 0)
             {
-                return flow.Mcp is not null ? McpOAuth.Denied(flow.Mcp) : Failure(context, flow.ReturnTo, "ts-auth did not sign you in. Sign in again.", 401);
+                return flow.Mcp is not null ? McpOAuth.Denied(flow.Mcp) : Failure(context, flow.ReturnTo, "ts-auth did not sign you in. Sign in again.", 401, "AuthorizationDenied");
             }
 
             try
@@ -113,18 +119,18 @@ namespace TerraScale.Dashboard.Features.Auth
                 return HttpRedirects.SeeOther(target);
             }
             catch (AccountAccessException error) when (flow.StepUp is not null || flow.Mcp is not null)
-            { return Failure(context, flow.ReturnTo, error.Message, error.StatusCode); }
+            { return Failure(context, flow.ReturnTo, error.Message, error.StatusCode, nameof(AccountAccessException)); }
             catch (SignInRejectedException)
-            { return Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401); }
+            { return Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401, nameof(SignInRejectedException)); }
             catch (TerraScale.Dashboard.Platform.TsAuth.TsAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
             {
                 var seconds = Math.Clamp((int)Math.Ceiling(error.RetryAfter?.TotalSeconds ?? 60), 1, 3600);
                 context.Response.Headers.RetryAfter = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 var wait = seconds > 120 ? $"{(long)Math.Ceiling(seconds / 60.0)} minutes" : $"{seconds} seconds";
-                return Failure(context, flow.ReturnTo, $"Too many sign-in attempts. Try again in {wait}.", 429, error);
+                return Failure(context, flow.ReturnTo, $"Too many sign-in attempts. Try again in {wait}.", 429, "RateLimited");
             }
             catch (Exception error) when (DependencyFailure(error, context))
-            { return Failure(context, flow.ReturnTo, "Sign-in could not finish right now. Try again in a moment.", 503, error); }
+            { return Failure(context, flow.ReturnTo, "Sign-in could not finish right now. Try again in a moment.", 503, error.GetType().Name); }
         }
 
         internal static async Task<IResult> LogoutAsync(HttpContext context)
@@ -185,10 +191,10 @@ namespace TerraScale.Dashboard.Features.Auth
         }
 
         // A fixed page with a manual retry link: a failed callback never redirects back into ts-auth by itself.
-        private static RazorSlices.RazorSlice<AuthFailurePage> Failure(HttpContext context, string returnTo, string error, int status, Exception? exception = null)
+        private static RazorSlices.RazorSlice<AuthFailurePage> Failure(HttpContext context, string returnTo, string error, int status, string cause)
         {
             var reference = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(5));
-            context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DashboardAuth").TsAuthSignInFailed(reference, exception?.GetType().Name ?? "Rejected");
+            context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DashboardAuth").TsAuthSignInFailed(reference, cause);
             var view = AuthFailureView.Create(new(new("Sign in", DocumentModel.NonceFor(context)), error, reference, Csrf.LocalRedirect(returnTo)));
             view.StatusCode = status;
             return view;

@@ -26,8 +26,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             await Assert.That(query["nonce"].ToString().Length).IsEqualTo(64);
             await Assert.That(query["scope"].ToString().Split(' ')).Contains("offline_access");
             await Assert.That(query["redirect_uri"].ToString()).IsEqualTo(new Uri(scenario.Origin, "/login/callback").AbsoluteUri);
-            // Only a random bearer for the encrypted, persisted flow travels in the browser.
-            var cookie = start.Headers.GetValues("Set-Cookie").Last(value => value.StartsWith("ts-dashboard-oidc=", StringComparison.Ordinal));
+            var cookie = start.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith("ts-dashboard-oidc-", StringComparison.Ordinal));
             await Assert.That(cookie).Contains("httponly");
             await Assert.That(cookie).Contains("samesite=lax");
             await Assert.That(cookie).DoesNotContain(query["state"].ToString());
@@ -51,6 +50,30 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             using var again = await browser.GetAsync("/login?returnTo=%2Fdatabases");
             await Assert.That(again.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(again.Headers.Location!.OriginalString).IsEqualTo("/databases");
+        }
+
+        [Test]
+        public async Task AnEarlierSignInFinishesAfterALaterOneStartsInTheSameBrowser()
+        {
+            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            using var browser = scenario.CreateClient();
+            var first = await browser.GetAsync("/login?returnTo=%2Fapi%2Fv1%2Fauth%2Fme");
+            using (var second = await browser.GetAsync("/login?returnTo=%2Fdatabases"))
+            {
+                await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            }
+
+            var callback = first.Headers.Location!;
+            using (var signedIn = await HttpJourney.HostedSignInAsync(browser, first))
+            {
+                await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+                await Assert.That(signedIn.Headers.Location!.OriginalString).IsEqualTo("/api/v1/auth/me");
+            }
+
+            var state = QueryHelpers.ParseQuery(callback.Query)["state"].ToString();
+            using var replayed = await browser.GetAsync("/login/callback?code=authorization-replayed&state=" + state);
+            await Assert.That(replayed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(replayed.Headers.Location!.OriginalString).IsEqualTo("/");
         }
 
         [Test]

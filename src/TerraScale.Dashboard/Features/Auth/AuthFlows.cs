@@ -1,56 +1,69 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // Only a random bearer travels in the browser. PKCE verifiers, state and nonce
-    // are encrypted in TerraBase, shared across replicas, and never logged.
     public sealed partial class AuthFlows(IDashboardState state, IDashboardIdentity identity, TimeProvider time)
     {
         private const string Table = "dashboard_auth_flows";
-        private const string OidcCookie = "ts-dashboard-oidc";
+        private const string OidcCookiePrefix = "ts-dashboard-oidc-";
+        private const string OidcPurpose = "ts-dashboard-oidc";
+        public static readonly TimeSpan OidcLifetime = TimeSpan.FromHours(1);
 
-        public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? mcp = null, StepUpIntent? stepUp = null)
+        public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, McpAuthorization? mcp = null, StepUpIntent? stepUp = null)
         {
             var flow = new OidcFlow(Random(), Random(), Random(), Csrf.LocalRedirect(returnTo),
-                $"{context.Request.Scheme}://{context.Request.Host}/login/callback", time.GetUtcNow().AddMinutes(10), tokenName, tokenDays, mcp)
+                $"{context.Request.Scheme}://{context.Request.Host}/login/callback", time.GetUtcNow().Add(OidcLifetime), tokenName, tokenDays, mcp)
             { StepUp = stepUp };
-            await EndAsync(context, OidcCookie);
-            await StoreAsync(context, OidcCookie, flow, flow.ExpiresAt);
+            await StoreAsync(context, OidcCookie(flow.State), OidcPurpose, flow, flow.ExpiresAt);
             return flow;
         }
 
-        public async Task<OidcFlow?> TakeOidcAsync(HttpContext context)
+        public async Task<OidcTake> TakeOidcAsync(HttpContext context, string returnedState)
         {
-            var stored = await ReadAsync<OidcFlow>(context, OidcCookie);
-            context.Response.Cookies.Delete(OidcCookie, Options(context));
-            if (stored is null)
+            if (!IsToken(returnedState))
             {
-                return null;
+                return new OidcTake.Unknown();
+            }
+
+            var cookie = OidcCookie(returnedState);
+            var stored = await ReadAsync<OidcFlow>(context, cookie, OidcPurpose);
+            context.Response.Cookies.Delete(cookie, Options(context));
+            if (stored is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(returnedState), Encoding.UTF8.GetBytes(stored.Value.State)))
+            {
+                return new OidcTake.Unknown();
             }
 
             try { await state.DeleteAsync(Table, stored.Id, stored.Version, context.RequestAborted); }
-            catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound)
-            { return null; }
-            return stored.Value.ExpiresAt > time.GetUtcNow() ? stored.Value : null;
+            catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.PreconditionFailed or HttpStatusCode.Conflict or HttpStatusCode.NotFound)
+            { return new OidcTake.Unknown(); }
+            return stored.Value.ExpiresAt > time.GetUtcNow() ? new OidcTake.Taken(stored.Value) : new OidcTake.Expired(stored.Value.ReturnTo);
         }
 
-        private async Task StoreAsync<T>(HttpContext context, string cookie, T value, DateTimeOffset expires)
+        private static string OidcCookie(string state)
+        {
+            return OidcCookiePrefix + Key(state)[..16];
+        }
+
+        private async Task StoreAsync<T>(HttpContext context, string cookie, string purpose, T value, DateTimeOffset expires)
         {
             var token = Random();
             var credentials = await identity.ReadAsync(context.RequestAborted);
-            await state.PutAsync(Table, Key(token), Seal(value, credentials.SessionEncryptionKey, cookie), StatePrecondition.Absent, context.RequestAborted);
+            await state.PutAsync(Table, Key(token), Seal(value, credentials.SessionEncryptionKey, purpose), StatePrecondition.Absent, context.RequestAborted);
             var options = Options(context);
             options.Expires = expires;
             context.Response.Cookies.Append(cookie, token, options);
         }
 
-        private async Task<Stored<T>?> ReadAsync<T>(HttpContext context, string cookie)
+        private async Task<Stored<T>?> ReadAsync<T>(HttpContext context, string cookie, string purpose)
         {
             var token = context.Request.Cookies[cookie];
-            if (token is not { Length: 64 } || token.Any(character => !char.IsAsciiHexDigitLower(character)))
+            if (!IsToken(token))
             {
                 return null;
             }
@@ -62,14 +75,15 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             var credentials = await identity.ReadAsync(context.RequestAborted);
-            try { return new(row.Id, row.Version, Open<T>(row.Body, credentials.SessionEncryptionKey, cookie)); }
+            try { return new(row.Id, row.Version, Open<T>(row.Body, credentials.SessionEncryptionKey, purpose)); }
             catch (Exception error) when (error is CryptographicException or FormatException or JsonException)
             { throw new IOException("Authentication flow is invalid."); }
         }
 
         private async Task EndAsync(HttpContext context, string cookie)
         {
-            if (context.Request.Cookies[cookie] is { Length: 64 } token && token.All(char.IsAsciiHexDigitLower))
+            var token = context.Request.Cookies[cookie];
+            if (IsToken(token))
             {
                 var row = await state.GetAsync(Table, Key(token), context.RequestAborted);
                 if (row is not null)
@@ -119,11 +133,29 @@ namespace TerraScale.Dashboard.Features.Auth
             return Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         }
 
+        private static bool IsToken([NotNullWhen(true)] string? value)
+        {
+            return value is { Length: 64 } && value.All(char.IsAsciiHexDigitLower);
+        }
+
         private static string Key(string value)
         {
             return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
         }
 
         private sealed record Stored<T>(string Id, string Version, T Value);
+    }
+
+    public abstract record OidcTake
+    {
+        private OidcTake()
+        {
+        }
+
+        public sealed record Taken(OidcFlow Flow) : OidcTake;
+
+        public sealed record Expired(string ReturnTo) : OidcTake;
+
+        public sealed record Unknown : OidcTake;
     }
 }

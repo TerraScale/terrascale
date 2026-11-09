@@ -73,8 +73,8 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 23, Level = LogLevel.Warning, Message = "Rejected account grant cleanup failed ({ErrorType})")]
         internal static partial void RejectedAccountGrantCleanupFailed(this ILogger logger, object? errorType);
 
-        [LoggerMessage(EventId = 24, Level = LogLevel.Warning, Message = "ts-auth sign-in failed: {Reference} ({ErrorType})")]
-        internal static partial void TsAuthSignInFailed(this ILogger logger, object? reference, object? errorType);
+        [LoggerMessage(EventId = 24, Level = LogLevel.Warning, Message = "ts-auth sign-in failed: {Reference} ({Cause})")]
+        internal static partial void TsAuthSignInFailed(this ILogger logger, object? reference, object? cause);
 
         [LoggerMessage(EventId = 25, Level = LogLevel.Warning, Message = "Checkout for organization {OrganizationId} is unavailable ({ErrorType}: {Error})")]
         internal static partial void CheckoutForOrganizationIsUnavailable(this ILogger logger, object? organizationId, object? errorType, object? error);

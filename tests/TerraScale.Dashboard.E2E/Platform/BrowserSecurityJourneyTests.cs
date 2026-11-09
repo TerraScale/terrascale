@@ -41,11 +41,8 @@ namespace TerraScale.Dashboard.E2E.Platform
                 }
                 if (path == "/login")
                 {
-                    // /login only starts ts-auth's hosted sign-in; its flow cookie must survive the top-level return to /login/callback, so it is Lax.
                     await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
-                    var flow = response.Headers.GetValues("Set-Cookie")
-                        // Starting a flow first expires any earlier flow cookie, so skip that empty deletion.
-                        .Single(value => value.StartsWith("ts-dashboard-oidc=", StringComparison.Ordinal) && !value.StartsWith("ts-dashboard-oidc=;", StringComparison.Ordinal));
+                    var flow = response.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith("ts-dashboard-oidc-", StringComparison.Ordinal));
                     await Assert.That(flow.ToLowerInvariant()).Contains("secure");
                     await Assert.That(flow.ToLowerInvariant()).Contains("httponly");
                     await Assert.That(flow.ToLowerInvariant()).Contains("samesite=lax");
