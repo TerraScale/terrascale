@@ -2,14 +2,6 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
-using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Rpc;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {
@@ -21,42 +13,9 @@ namespace TerraScale.Dashboard.E2E.Platform
         [Test]
         public async Task ProductionServesFromTheConfiguredTerraBaseOnTheConfiguredUrl()
         {
-            var peerSecret = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-            var credentialed = 0;
-            var terraBasePort = FreePort();
-            var builder = WebApplication.CreateBuilder();
-            // The private listener speaks HTTP/2 with prior knowledge, like TerraBase's.
-            builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, terraBasePort, listen => listen.Protocols = HttpProtocols.Http2));
-            builder.Logging.ClearProviders();
-            builder.Services.AddTerraBaseRestRpc(static (_, _) => { });
-            await using var terraBase = builder.Build();
-            // The dashboard's MagicOnion calls run through these REST fakes, as TerraBase serves them through its routes.
-            terraBase.UseTerraBaseRestPipeline();
-            terraBase.UseRouting();
-            terraBase.MapTerraBaseRestRpc();
-            terraBase.MapPost("/v1/projects/{project}/databases/ts-dashboard/sql/execute", async (HttpContext http) =>
-            {
-                if (http.Request.Headers["X-TerraBase-Peer-Credential"] == peerSecret)
-                {
-                    Interlocked.Increment(ref credentialed);
-                }
-
-                using var request = await JsonDocument.ParseAsync(http.Request.Body);
-                return Results.Json(new
-                {
-                    results = request.RootElement.GetProperty("statements").EnumerateArray().Select(statement => new
-                    {
-                        columns = Array.Empty<object>(),
-                        rows = statement.GetProperty("sql").GetString()!.StartsWith("SELECT name FROM sqlite_master", StringComparison.Ordinal)
-                            ? DashboardStateSchema.Tables.Select(name => new object[] { name }).ToArray() : [],
-                        rows_affected = 0
-                    }).ToArray()
-                });
-            });
-            await terraBase.StartAsync();
-
+            var terraBase = await TerraBaseStorage.SharedAsync();
             var port = FreePort();
-            using var process = Start(port, $"http://127.0.0.1:{terraBasePort}", peerSecret);
+            using var process = Start(port, terraBase.InternalAddress.GetLeftPart(UriPartial.Authority), TestIdentity.PeerSecret);
             try
             {
                 using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false }) { BaseAddress = new Uri($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromSeconds(10) };
@@ -94,8 +53,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                     output = log.ToString();
                 }
 
-                await Assert.That(terraBaseReady).IsEqualTo("ok").Because("Production under ts-orch reads its TerraBase state on ASPNETCORE_URLS: " + output);
-                await Assert.That(credentialed).IsGreaterThan(0).Because("State requests reach the configured TerraBase with the peer credential.");
+                await Assert.That(terraBaseReady).IsEqualTo("ok").Because("Production under ts-orch migrates a fresh TerraBase state database and reads it on ASPNETCORE_URLS: " + output);
                 await Assert.That(region).IsEqualTo("gru").Because("Readiness names the region ts-orch sets in TS_REGION.");
 
                 // The loopback edge terminates TLS: its X-Forwarded-Proto makes cookies Secure.

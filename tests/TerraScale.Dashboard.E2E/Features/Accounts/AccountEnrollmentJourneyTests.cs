@@ -8,9 +8,6 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
     public sealed class AccountEnrollmentJourneyTests(DashboardRootFixture fixture)
     {
         [Test]
-        [Arguments("sessions")]
-        [Arguments("auth_credentials")]
-        [Arguments("session_indexes")]
         [Arguments(AccessTokens.IndexTable)]
         [Arguments(AccessTokens.Table)]
         [Arguments(AccountService.OrganizationsTable)]

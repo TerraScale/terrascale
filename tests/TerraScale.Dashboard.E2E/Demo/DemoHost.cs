@@ -43,6 +43,11 @@ namespace TerraScale.Dashboard.E2E.Demo
         private readonly TestBillingCheckoutPersistence checkoutPersistence;
         private readonly TestReportingTransport reporting;
         private readonly TestAuthApiKeys apiKeys;
+        private readonly Lazy<Task<(TerraBaseStorage TerraBase, string Project)>> storage = new(async () =>
+        {
+            var terraBase = await TerraBaseStorage.SharedAsync();
+            return (terraBase, await terraBase.CreateProjectAsync(CancellationToken.None));
+        });
 
         public DemoEnvironment()
         {
@@ -62,6 +67,12 @@ namespace TerraScale.Dashboard.E2E.Demo
         internal TestState State => state;
         internal TestAuth Auth => auth;
         internal TestDatabases Databases => databases;
+
+        public async Task<DashboardDbContext> StorageAsync()
+        {
+            var (terraBase, project) = await storage.Value;
+            return terraBase.Open(project);
+        }
 
         public async Task InitializeAsync()
         {
@@ -89,6 +100,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         {
             var hostArgs = new[] { "--contentRoot", contentRoot, "--environment", "Development", "--urls", $"http://0.0.0.0:{port}" };
             stripe.SetOrigin(origin);
+            var (terraBase, project) = await storage.Value;
             TestRestRpcHost.Target? target = null;
             var rpc = await TestRestRpcHost.StartAsync(() => target ?? throw new InvalidOperationException("The fixture RPC target has not initialized."));
             WebApplication app;
@@ -97,6 +109,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 app = DashboardApplication.Build(hostArgs, builder =>
                 {
                     builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
+                    terraBase.Use(builder.Services, project);
                     builder.Services.AddSingleton(stripe);
                     builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(checkoutPersistence));
                     builder.Services.Replace(ServiceDescriptor.Singleton<IAuthGateway>(auth));

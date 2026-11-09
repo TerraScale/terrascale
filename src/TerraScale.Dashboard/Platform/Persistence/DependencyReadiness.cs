@@ -1,10 +1,11 @@
 using System.Reflection;
+using Microsoft.EntityFrameworkCore;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
     // Readiness names each dependency a signed-in request needs: ts-auth (its own unauthenticated /readyz) and the
     // TerraBase state. Public bodies carry the region and the build revision, which also travels in a header.
-    public sealed class DependencyReadiness(IDashboardState state, DashboardStateInitializer initializer, IHttpClientFactory http, IConfiguration configuration,
+    public sealed class DependencyReadiness(IDashboardState state, IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, IHttpClientFactory http, IConfiguration configuration,
         TimeProvider time, ILogger<DependencyReadiness> logger)
     {
         private static readonly Uri AuthReady = new("https://auth.terrascale.tech/readyz");
@@ -86,7 +87,8 @@ namespace TerraScale.Dashboard.Platform.Persistence
             try
             {
                 await state.CheckReadyAsync(deadline.Token);
-                return true;
+                await using var db = await storage.CreateDbContextAsync(deadline.Token);
+                return !(await db.Database.GetPendingMigrationsAsync(deadline.Token)).Any();
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {

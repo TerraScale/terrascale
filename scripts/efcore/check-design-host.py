@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import sys
 
-INTRODUCERS = ('Microsoft.EntityFrameworkCore.Design/', 'Microsoft.CodeAnalysis.Workspaces.MSBuild/')
+INTRODUCERS = ('Microsoft.EntityFrameworkCore.Design/', 'Microsoft.CodeAnalysis.Workspaces.MSBuild/', *(package + '/' for package in sys.argv[2:] if package == 'Stripe.net'))
 DESIGN = 'Microsoft.EntityFrameworkCore.Design'
 
 assets = json.loads(Path(sys.argv[1]).read_text())

@@ -21,13 +21,16 @@
       <_NewtonsoftPackage Include="@(ResolvedCompileFileDefinitions->'%(NuGetPackageId)')" Condition="$([System.String]::Copy('%(ResolvedCompileFileDefinitions.NuGetPackageId)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
     </ItemGroup>
     <Error Condition="'@(_DirectNewtonsoftPackage)' != ''" Text="Direct Newtonsoft package references are banned. Use System.Text.Json." />
+    <PropertyGroup>
+      <_DesignHostStripe Condition="'@(_DashboardStripePackage)' != ''">Stripe.net</_DesignHostStripe>
+    </PropertyGroup>
     <!-- Human approval 2026-10-29: only the official Stripe SDK's transitive Newtonsoft.Json dependency in dashboard projects. -->
-    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/dashboard/check-stripe-dependency.py&quot; &quot;$(ProjectAssetsFile)&quot;" Condition="'@(_DashboardStripePackage)' != ''" />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/dashboard/check-stripe-dependency.py&quot; &quot;$(ProjectAssetsFile)&quot;" Condition="'@(_DashboardStripePackage)' != '' and !$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))" />
     <ItemGroup Condition="'@(_DashboardStripePackage)' != ''">
       <_NewtonsoftPackage Remove="@(_NewtonsoftPackage)" Condition="'%(_NewtonsoftPackage.NuGetPackageId)' == 'Newtonsoft.Json'" />
     </ItemGroup>
     <Error Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign')) and ('$(IsPackable)' != 'false' or '$(IsPublishable)' != 'false')" Text="An Entity Framework Core design host is never packed or published: set IsPackable and IsPublishable to false." />
-    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/efcore/check-design-host.py&quot; &quot;$(ProjectAssetsFile)&quot;" Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))" />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/efcore/check-design-host.py&quot; &quot;$(ProjectAssetsFile)&quot; $(_DesignHostStripe)" Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))" />
     <ItemGroup Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))">
       <_NewtonsoftPackage Remove="@(_NewtonsoftPackage)" Condition="'%(_NewtonsoftPackage.NuGetPackageId)' == 'Newtonsoft.Json'" />
     </ItemGroup>

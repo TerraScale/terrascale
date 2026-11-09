@@ -2,11 +2,13 @@ using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Usage;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E
 {
@@ -62,6 +64,11 @@ namespace TerraScale.Dashboard.E2E
                 CookieContainer = new CookieContainer()
             })
             { BaseAddress = replica ? ReplicaOrigin : Origin, Timeout = TimeSpan.FromSeconds(30) };
+        }
+
+        public Task<DashboardDbContext> StorageAsync()
+        {
+            return first!.Services.GetRequiredService<IDbContextFactory<DashboardDbContext>>().CreateDbContextAsync();
         }
 
         private static Uri Address(WebApplication application)

@@ -65,17 +65,10 @@ namespace TerraScale.Dashboard.Common.Accounts
             return references;
         }
 
-        // Encrypted sessions and credentials are handled by DashboardSessions,
-        // which validates the sealed subject without asking ts-auth for a live grant.
         public static async Task CleanAsync(IDashboardState state, string userId, CancellationToken ct)
         {
             foreach (var reference in await ListAsync(state, userId, ct))
             {
-                if (reference.Table is "sessions" or "auth_credentials")
-                {
-                    continue;
-                }
-
                 var row = await state.GetAsync(reference.Table, reference.RecordId, ct);
                 if (row is null)
                 {
@@ -100,13 +93,13 @@ namespace TerraScale.Dashboard.Common.Accounts
         private static void Validate(Reference reference)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(reference.UserId);
-            if (reference.Table is not ("sessions" or "auth_credentials" or "session_indexes" or AccessTokens.Table or AccessTokens.IndexTable) ||
+            if (reference.Table is not (AccessTokens.Table or AccessTokens.IndexTable) ||
                 reference.RecordId is not { Length: 64 } || !reference.RecordId.All(char.IsAsciiHexDigitLower))
             {
                 throw new IOException("Enrollment reference is invalid.");
             }
 
-            if (reference.Table is "session_indexes" or AccessTokens.Table && reference.RecordId != AccountService.AccountStorageKey(reference.UserId))
+            if (reference.Table is AccessTokens.Table && reference.RecordId != AccountService.AccountStorageKey(reference.UserId))
             {
                 throw new IOException("Enrollment owner key is invalid.");
             }

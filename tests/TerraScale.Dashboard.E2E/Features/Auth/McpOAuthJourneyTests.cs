@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
@@ -218,7 +219,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             using var granted = await HttpJourney.HostedSignInAsync(browser, allowed, persona.Email, persona.Password);
             var code = QueryHelpers.ParseQuery(granted.Headers.Location!.Query)["code"].ToString();
             var credential = (await state.ListAsync(McpOAuth.CodeTable, default)).Single().Body.GetProperty("CredentialId").GetString()!;
-            await Assert.That(await state.GetAsync("auth_credentials", credential, default)).IsNotNull();
+            await Assert.That(await CredentialExistsAsync(scenario, credential)).IsTrue();
             if (redeemed?.StartsWith("unbound:", StringComparison.Ordinal) == true)
             {
                 // A code stored without a resource must not match a resource that canonicalizes to nothing.
@@ -251,7 +252,13 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             var tokens = await state.GetAsync(AccessTokens.Table, AccountService.AccountId(persona.Subject), default);
             await Assert.That(tokens is null || tokens.Body.Deserialize<AccessTokens.TokenSet>()!.Tokens.All(token => token.McpClientId != id)).IsTrue();
             await Assert.That(await state.ListAsync(McpOAuth.CodeTable, default)).IsEmpty();
-            await Assert.That(await state.GetAsync("auth_credentials", credential, default)).IsNull();
+            await Assert.That(await CredentialExistsAsync(scenario, credential)).IsFalse();
+        }
+
+        private static async Task<bool> CredentialExistsAsync(ReferenceScenario scenario, string id)
+        {
+            await using var storage = await scenario.StorageAsync();
+            return await storage.Sessions.AnyAsync(row => row.Id == id && row.Kind == SessionRow.Credential);
         }
 
         private static string ConsentPath(string id)

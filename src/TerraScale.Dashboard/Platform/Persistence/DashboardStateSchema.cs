@@ -7,13 +7,9 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
         public static IReadOnlyList<string> Tables { get; } = Array.AsReadOnly(
         [
-            "sessions",
             "account_deletions",
             "dashboard_deletion_cleanup",
             "dashboard_account_enrollments",
-            "auth_credentials",
-            "session_indexes",
-            "dashboard_auth_flows",
             "dashboard_accounts",
             "dashboard_account_identities",
             "dashboard_organizations",

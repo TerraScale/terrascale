@@ -239,6 +239,11 @@ namespace TerraScale.Dashboard.E2E
             .Addresses.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
         }
 
+        public Task<DashboardDbContext> StorageAsync()
+        {
+            return environment.StorageAsync();
+        }
+
         public async ValueTask DisposeAsync()
         {
             protocol.Release();

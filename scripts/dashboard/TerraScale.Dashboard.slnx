@@ -1,7 +1,9 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="../../src/TerraBase/TerraBase.csproj" />
     <Project Path="../../src/TerraScale.Dashboard.Analyzers/TerraScale.Dashboard.Analyzers.csproj" />
     <Project Path="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
+    <Project Path="../../src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj" />
     <Project Path="../../src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
     <Project Path="../../src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
   </Folder>

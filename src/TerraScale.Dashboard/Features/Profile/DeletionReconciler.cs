@@ -91,7 +91,7 @@ namespace TerraScale.Dashboard.Features.Profile
                         await VerifyFenceAsync(table, key, cancellationToken);
                     }
 
-                    await Task.WhenAll(new[] { AccessTokens.Table, "session_indexes" }.Select(table => VerifyAbsentAsync(table, key, cancellationToken)));
+                    await VerifyAbsentAsync(AccessTokens.Table, key, cancellationToken);
                     break;
                 case "organization":
                     var ended = await billing.EndSubscriptionAsync(proof.SubjectId, cancellationToken, completedDeletion: true);

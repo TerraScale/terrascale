@@ -18,16 +18,22 @@ namespace TerraScale.Dashboard.E2E.Demo
 
         public static async Task<int> RunAsync(string contentRoot, int port)
         {
-            var environment = new DemoEnvironment();
-            await environment.InitializeAsync();
-            await using var app = await environment.CreateHostAsync(contentRoot, port, StripeBilling.Origin, Configure);
-            await app.StartAsync();
-            // Port 0 is resolved at bind time, so the announced origin is the one the server actually listens on.
-            var origin = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
-            Console.WriteLine($"{OriginPrefix}{origin}");
-            Console.WriteLine($"Synthetic fixture on port {new Uri(origin).Port}; signs in as user@example.com");
-            await app.WaitForShutdownAsync();
-            return 0;
+            try
+            {
+                var environment = new DemoEnvironment();
+                await environment.InitializeAsync();
+                await using var app = await environment.CreateHostAsync(contentRoot, port, StripeBilling.Origin, Configure);
+                await app.StartAsync();
+                var origin = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
+                Console.WriteLine($"{OriginPrefix}{origin}");
+                Console.WriteLine($"Synthetic fixture on port {new Uri(origin).Port}; signs in as user@example.com");
+                await app.WaitForShutdownAsync();
+                return 0;
+            }
+            finally
+            {
+                await TerraBaseStorage.DisposeSharedAsync();
+            }
         }
 
         // CreateHost passes --environment Development; Production keeps stack traces off public error responses.

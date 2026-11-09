@@ -39,22 +39,19 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public async Task StoreStepUpAsync(HttpContext http, StepUpIntent intent)
         {
-            await EndAsync(http, StepUpCookie);
-            await StoreAsync(http, StepUpCookie, StepUpCookie, intent, intent.Challenge.ExpiresAt);
+            await EndAsync(http, StepUpCookie, AuthFlowRow.StepUpPurpose);
+            await StoreAsync(http, StepUpCookie, AuthFlowRow.StepUpPurpose, intent, intent.Challenge.ExpiresAt);
         }
 
         public async Task<StepUpIntent?> TakeStepUpAsync(HttpContext http)
         {
-            var stored = await ReadAsync<StepUpIntent>(http, StepUpCookie, StepUpCookie);
+            var stored = await ReadAsync<StepUpIntent>(http, StepUpCookie, AuthFlowRow.StepUpPurpose);
             http.Response.Cookies.Delete(StepUpCookie, Options(http));
-            if (stored is null)
+            if (stored is null || !await TakeAsync(stored.Row, http.RequestAborted))
             {
                 return null;
             }
 
-            try { await state.DeleteAsync(Table, stored.Id, stored.Version, http.RequestAborted); }
-            catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.NotFound)
-            { return null; }
             return stored.Value.Challenge.ExpiresAt > time.GetUtcNow() ? stored.Value : null;
         }
     }
