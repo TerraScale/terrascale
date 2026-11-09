@@ -142,7 +142,6 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
         return _databases.TryGetValue(key, out var entry) ? entry : Add(key, database);
     }
 
-    private DatabaseEntry? Find(TenantContext database) => _databases.TryGetValue(Key(database), out var entry) ? entry : null;
     private DatabaseEntry Add(DatabaseKey key, TenantContext database)
     {
         if (!TryTake(ref _databaseCount, MaxDatabases))

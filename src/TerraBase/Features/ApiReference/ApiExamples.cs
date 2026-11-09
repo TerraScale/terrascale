@@ -176,8 +176,4 @@ internal static class ApiExamples
     };
 
     private static string Page(string item) => "{\"items\":[" + item + "],\"next\":null}";
-
-    private static string DataPage(string item) => "{\"items\":[" + item + "],\"next_cursor\":null}";
-
-    private static string Items(string item) => "{\"items\":[" + item + "]}";
 }

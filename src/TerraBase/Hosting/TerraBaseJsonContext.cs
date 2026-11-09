@@ -85,7 +85,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(DatabasePurgeRecord))]
 [JsonSerializable(typeof(DatabasePurgeReceipt))]
 [JsonSerializable(typeof(ManagedDatabase))]
-[JsonSerializable(typeof(ManagedDatabaseBody))]
 [JsonSerializable(typeof(ManagementPage<DatabaseBackup>))]
 [JsonSerializable(typeof(ManagementPage<ManagedDatabase>))]
 [JsonSerializable(typeof(ManagementPage<ManagedDatabaseBody>))]

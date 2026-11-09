@@ -74,9 +74,6 @@ internal readonly record struct ExactNumber(BigInteger Mantissa, int Exponent)
         return true;
     }
 
-    /// <summary>Parses JSON number text; see <see cref="TryParse(ReadOnlySpan{byte}, out ExactNumber)"/>.</summary>
-    public static bool TryParse(string text, out ExactNumber number) => TryParse(Encoding.UTF8.GetBytes(text), out number);
-
     /// <summary>The exact sum; the value limits then decide whether it can be stored.</summary>
     public static ExactNumber Add(ExactNumber a, ExactNumber b)
     {
