@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-public sealed class GetProjectMetricsEndpoint(IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
+internal sealed class GetProjectMetricsEndpoint(IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     private const int Minutes = 5;
     private const string ContentType = "text/plain; version=0.0.4; charset=utf-8";

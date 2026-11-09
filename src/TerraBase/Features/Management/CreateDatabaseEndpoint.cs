@@ -9,7 +9,7 @@ namespace TerraBase.Features.Management;
 
 public sealed record DatabaseBody(string Id, string ProjectId, string Name);
 
-public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
+internal sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {

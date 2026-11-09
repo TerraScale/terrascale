@@ -7,7 +7,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-public sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations destinations) : EndpointWithoutRequest<IResult>
+internal sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations destinations) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
