@@ -32,7 +32,6 @@ internal interface IShapeSweepTransaction
 
 internal sealed record ShapeSweepPass(int Databases, int Current, int Retired, int Protected, long Deleted, int Refused, int Failed);
 
-// Keeps local shape data bounded with no shape request (#277).
 internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage, ITenantDirectory tenants, IMemoryBudget memory, TimeProvider time,
     IMeterFactory meters, ILogger<ShapeSweeper> logger, Func<IDatabaseStore, string, long, CancellationToken, ValueTask>? onTrimmed = null)
     : BackgroundService

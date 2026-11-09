@@ -21,8 +21,6 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
     public override void Configure()
     {
         Get(ShapeRoute.Shape + "/ws");
-        // CONNECT is the extended CONNECT of a WebSocket relayed from another region (RFC 8441): the same upgrade,
-        // served the same way.
         Verbs(HttpMethods.Get, "CONNECT");
         Name("connectShapeHints");
         Summary("Waits for shape changes over a WebSocket");

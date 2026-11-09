@@ -147,7 +147,6 @@ internal static partial class PostgresStatements
                     output[at[s]] = "?" + number.ToString(Invariant);
                     break;
                 case Word { QuoteStyle: null } word when Is(word, "ILIKE"):
-                    // SQLite's LIKE is already case-insensitive for ASCII.
                     output[at[s]] = "LIKE";
                     break;
                 case Word { QuoteStyle: null } word when create && (Is(word, "SERIAL") || Is(word, "BIGSERIAL") || Is(word, "SMALLSERIAL")):
@@ -644,8 +643,6 @@ internal static partial class PostgresStatements
                         : long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var whole) ? SqlValue.Of(whole)
                         : decimal.TryParse(text, NumberStyles.Float, Invariant, out var exact) && (decimal)(double)exact == exact ? SqlValue.Of((double)exact)
                         : Text(text),
-                    // Untyped (psql \bind, node-postgres): PostgreSQL types them from context; a canonical number binds as one,
-                    // because the CTE columns of a SQL read carry no affinity to convert '2' for an integer column.
                     (0 or PgOid.Unknown, var text) when long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var untyped) && untyped.ToString(Invariant) == text => SqlValue.Of(untyped),
                     (0 or PgOid.Unknown, var text) when text.Contains('.', StringComparison.Ordinal) && double.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, Invariant, out var untypedReal)
                         && untypedReal.ToString("R", Invariant) == text => SqlValue.Of(untypedReal),
@@ -722,15 +719,12 @@ internal static partial class PostgresStatements
     [GeneratedRegex(@"\ADEALLOCATE\s+(?:PREPARE\s+)?(\w+|""[^""]+"")\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DeallocatePattern();
 
-    // PostgreSQL commands with no SQLite equivalent; without this they would reach the SQLite parser as syntax errors.
     [GeneratedRegex(@"\A(?:((?:LISTEN|NOTIFY|UNLISTEN)\b)|(?:CREATE|ALTER|DROP)\s+EXTENSION\b)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex RefusedPattern();
 
     [GeneratedRegex(@"\A(?:SAVEPOINT|RELEASE|ROLLBACK\s+(?:WORK\s+|TRANSACTION\s+)?TO)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SavepointPattern();
 
-    // Isolation modes are accepted and ignored: SQL transactions are serializable (native-sql.md). The access mode is
-    // enforced by the SQL session (SQLSTATE 25006); BeginReadOnly names it for the BEGIN the session runs.
     [GeneratedRegex(@"\A(?:BEGIN|START\s+TRANSACTION)(?:\s+(?:WORK|TRANSACTION))?(?:\s*,?\s*(?:ISOLATION\s+LEVEL\s+)?(?:NOT\s+DEFERRED|DEFERRED|IMMEDIATE|EXCLUSIVE|SERIALIZABLE|REPEATABLE\s+READ|READ\s+COMMITTED|READ\s+UNCOMMITTED|READ\s+WRITE|READ\s+ONLY|READONLY))*\z",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BeginPattern();

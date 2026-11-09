@@ -343,7 +343,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            // A home-only database homed elsewhere relays the whole session to its home (docs/terrabase/cross-region.md).
             TenantContext tenant when (restriction is null || restriction == tenant.DatabaseId)
                 && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until),
@@ -516,8 +515,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 output.Empty('I');
                 return null;
             case PgStatement[] statements:
-                // PostgreSQL runs one Query message as a single implicit transaction: a failure rolls back the whole
-                // message. A batch that manages transactions itself keeps today's statement-by-statement behavior.
                 var atomic = statements is { Length: > 1 } && session.Sql.IsAutocommit
                     && !Array.Exists(statements, statement => statement.Kind is PgKind.Begin or PgKind.Commit or PgKind.Rollback);
                 PgError? failure = null;
@@ -826,9 +823,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return new[] { new PgResult(null, [], text.Split(' ', 2)[0].ToUpperInvariant()) };
     }
 
-    // PostgreSQL's transaction verbs on the session: BEGIN inside a transaction and COMMIT or ROLLBACK outside one only
-    // warn, and COMMIT of an aborted transaction rolls it back. A READ ONLY BEGIN carries the access mode into the SQL
-    // session, which refuses writes with 25006; READ WRITE and an unmodified BEGIN behave as before.
     private static async ValueTask<PgOutcome> TransactionAsync(Session session, PgKind kind, string text, CancellationToken cancellationToken)
     {
         async ValueTask<PgOutcome> Run(string verb)
@@ -848,7 +842,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         if (kind == PgKind.Begin)
         {
-            // The tag stays BEGIN, as in PostgreSQL; only the statement the session runs carries the access mode.
             var mode = PostgresStatements.BeginReadOnly(text) ? "BEGIN READ ONLY" : verb;
             return await session.Sql.ExecuteAsync(new SqlCommand(mode, [], NoNamed), cancellationToken).ConfigureAwait(false) is SqlError error
                 ? PostgresStatements.Error(error)
@@ -866,7 +859,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return outcome;
     }
 
-    // The implicit transaction of a multi-statement Query message: PostgreSQL sends no tags for it, only for its statements.
     private async ValueTask<PgError?> ControlAsync(Session session, PgKind kind, CancellationToken cancellationToken)
     {
         var statement = new PgStatement(kind, "", "", 0);
