@@ -154,7 +154,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             var personal = scenario.PersonalOrganizationId(userId);
             // The reported case: the owner scheduled the switch to Free, which keeps the subscription until renewal.
             var csrf = await HttpJourney.CsrfAsync(scenario.Client, "/organization?tab=billing");
-            using (var free = await HttpJourney.PostFormAsync(scenario.Client, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "free" }))
+            using (var free = await HttpJourney.PostConfirmedFormAsync(scenario.Client, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "free" }))
             {
                 await Assert.That(free.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             }

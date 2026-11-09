@@ -1,6 +1,7 @@
 using TerraScale.TerraBase.Contracts;
 using Stripe;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Common.Validation;
@@ -33,7 +34,7 @@ namespace TerraScale.Dashboard.Features.Billing
             });
             return endpoints;
         }
-        private static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing, string operation)
+        internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing, string operation)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
@@ -42,7 +43,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!Csrf.Validate(http, form))
+            if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return Results.Text("Invalid CSRF token.", statusCode: 403);
             }
@@ -53,6 +54,17 @@ namespace TerraScale.Dashboard.Features.Billing
                 {
                     return HttpRedirects.SeeOther(await billing.CancelCheckoutAsync(context,
                     http.Request.RouteValues["sessionId"]?.ToString() ?? form["sessionId"].ToString(), http.RequestAborted));
+                }
+
+                if (context.Organization is null || context.Role != "owner")
+                {
+                    throw new AccountAccessException("Only organization owners manage billing.");
+                }
+
+                var intent = StepUpFlow.Intent(http, context, "change_plan");
+                if (intent is null)
+                {
+                    return await StepUpFlow.StartAsync(http, context, "change_plan", "ts-auth");
                 }
 
                 var outcome = operation == "undo" ? await billing.UndoPlanChangeAsync(context, http.RequestAborted)
