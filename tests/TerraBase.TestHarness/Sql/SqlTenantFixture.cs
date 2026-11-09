@@ -2,7 +2,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
 
-/// <summary>The ordinary SQL journeys share setup authority; each owns a separate database.</summary>
 internal sealed record SqlTenantFixture(string User, string Organization, string Project, string Writer, string Reader)
 {
     private static readonly Lazy<Task<SqlTenantFixture>> Shared = new(CreateAsync);

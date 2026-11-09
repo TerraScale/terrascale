@@ -9,7 +9,6 @@ public sealed class PostgresWireTests
 {
     private const string People = "CREATE TABLE people (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email VARCHAR(80) UNIQUE, team TEXT)";
 
-    // psql 17's \dt and \d people (src/bin/psql/describe.c) against a server reporting 16.0, as ECHO_HIDDEN prints them.
     private const string ListTables = """
         SELECT n.nspname as "Schema",
           c.relname as "Name",
@@ -89,7 +88,6 @@ public sealed class PostgresWireTests
         await using var psql = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
 
         var script = await psql.QueryAsync($"{People}; CREATE TABLE people (id INTEGER PRIMARY KEY); CREATE TABLE never (id INTEGER PRIMARY KEY)");
-        // The failed statement rolls back the whole Query message, so the table needs its own message.
         await psql.QueryAsync(People);
         var deallocated = await psql.QueryAsync("DEALLOCATE ALL");
         var tables = await psql.QueryAsync(ListTables);
@@ -104,14 +102,12 @@ public sealed class PostgresWireTests
             ["id,integer,,t", "name,text,,t", "email,character varying,,f", "team,text,,f"]);
     }
 
-    // A simple-protocol Query message with several statements runs as one implicit transaction (ku TS-1307).
     [Test]
     public async Task Multi_statement_query_message_commits_every_statement()
     {
         await using var api = await ManagementApi.StartSharedAsync();
         var (database, key) = await DatabaseAsync(api, "sql:read", "sql:write");
         await using var psql = await PostgresWireClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
-        // Bogus names can carry an apostrophe (O'Conner); Quote escapes it for SQL text.
         var (one, two) = (Faker.Name.FullName(), Faker.Name.FullName());
 
         var created = await psql.QueryAsync(People);
@@ -141,7 +137,6 @@ public sealed class PostgresWireTests
         await Assert.That(names.Where(message => message.Type == 'D').Select(message => message.Fields[0]!)).IsEmpty();
     }
 
-    // Needs SQ1-d (writes) and SQ1-e (transactions).
     [Test]
     public async Task Transactions_commit_roll_back_and_abort_after_an_error()
     {
@@ -201,7 +196,6 @@ public sealed class PostgresWireTests
         }
     }
 
-    // A READ ONLY transaction stays usable for reads: writes fail with 25006 and ROLLBACK ends it normally (ku TS-1312).
     [Test]
     public async Task Read_only_transaction_refuses_writes_and_rolls_back()
     {
@@ -223,7 +217,6 @@ public sealed class PostgresWireTests
         await Assert.That(names).IsEmpty();
     }
 
-    // Only UTC and its aliases are supported time zones: anything else is refused with 22023 and SHOW keeps UTC (ku TS-1329).
     [Test]
     public async Task Invalid_time_zone_is_refused_and_show_stays_utc()
     {
@@ -276,7 +269,6 @@ public sealed class PostgresWireTests
         return await Assert.ThrowsAsync<PostgresException>(async () => await source.OpenConnectionAsync());
     }
 
-    // Doubles single quotes, as a SQL text literal requires.
     private static string Quote(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 
     private static async Task<List<string[]>> ReadAsync(NpgsqlConnection connection, string sql)

@@ -73,7 +73,6 @@ public sealed class ShapeOverlayTests
 
     private static async Task<(ReplicaShapeTails Tails, ResolvedShape Shape, long Offset)> TailAsync(LocalWriteWorld world, CancellationToken cancellationToken)
     {
-        // Opens the replica's writer before a tail polls: the first sync connect of a writer is refused while another connects.
         _ = await world.LocalAsync(homeDurable: false, [], cancellationToken);
         var home = new TableShapeClient(world.Writer, ManagementApi.Uri(world.Reference.Data).ToString(), "items");
         _ = await home.SyncAsync();

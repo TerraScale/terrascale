@@ -80,8 +80,6 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
     public Uri Uri(string offset, bool live, string? cursor = null, string? handle = null) =>
         new($"{Path}?handle={handle ?? Handle}&offset={offset}" + (live ? "&live=true" : "") + (cursor is null ? "" : "&cursor=" + cursor) + filter, UriKind.Relative);
 
-    // The shape contract permits 429 while another database seals its snapshot. Keep the same
-    // request and state, then retry with bounded backoff; raw GetAsync still exposes every refusal.
     private async Task<ShapeReply> GetAvailableAsync(Uri target)
     {
         var token = TestContext.Current!.Execution.CancellationToken;

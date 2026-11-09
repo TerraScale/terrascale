@@ -12,7 +12,6 @@ public sealed class TableShapeTests
     [Test]
     public async Task A_client_syncs_snapshot_then_chunks_then_parks_live_and_sees_inserts_updates_and_deletes()
     {
-        // This journey observes the host-wide parked-reader gauge.
         await using var db = await StartIsolatedAsync();
         await db.OkAsync(Items);
         await db.OkAsync(Stmt("INSERT INTO items (id, name) VALUES (1, ?), (2, ?), (3, ?)", "a", "b", "c"));
