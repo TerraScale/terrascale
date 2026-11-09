@@ -58,9 +58,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         public static string OperationUnitName => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("name").GetString()!;
         public static decimal OperationUnitsPerMillionUsd => catalog.GetProperty("metering").GetProperty("overageRates").GetProperty("operationUnitsPerMillionUsd").GetDecimal();
         public static decimal StorageGbMonthUsd => catalog.GetProperty("metering").GetProperty("overageRates").GetProperty("storageGbRegionMonthUsd").GetDecimal();
-        public static string AllowanceDefinition => catalog.GetProperty("metering").GetProperty("allowances").GetProperty("definition").GetString()!;
         public static string EnterpriseBilling => catalog.GetProperty("plans").EnumerateArray().Single(plan => plan.GetProperty("id").GetString() == "enterprise").GetProperty("billing").GetString()!;
-        public static string OperationUnitDefinition => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("definition").GetString()!;
         public static IReadOnlyList<BillingPlan> Plans { get; } = Array.AsReadOnly(catalog.GetProperty("plans").EnumerateArray()
             .Where(plan => plan.GetProperty("available").GetBoolean()).Select(plan =>
             {
