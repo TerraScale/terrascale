@@ -85,7 +85,7 @@ internal sealed class SqlSocketEndpoint(
 
     private async ValueTask<IResult> ServeAsync(TenantContext? database, bool canWrite, CancellationToken cancellationToken)
     {
-        HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
+        HttpContext.ReleaseRequestLease();
         var offered = HttpContext.WebSockets.WebSocketRequestedProtocols.Contains(Protocol, StringComparer.Ordinal);
         using var socket = await HttpContext.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext
         {

@@ -75,7 +75,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
             return ErrorResponse.From(new Validation("handle and a decimal offset are required"));
         }
 
-        HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
+        HttpContext.ReleaseRequestLease();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.ApplicationStopping);
         using var preauth = memory.TryReserve(MemoryLane.Foreground, 16 * 1024, null);
         if (preauth is null)
