@@ -101,6 +101,25 @@ ts projects create my-project
 ts -project my-project db create example
 ```
 
+### One command to a working setup
+
+`ts init` takes a signed-in developer from nothing to a working connection.
+It reuses the selected project's database `<db>` (or creates it with the
+project's default placement), creates one API key scoped to that database with
+`sql:read` and `sql:write`, writes a `.env` in the current directory (mode
+0600, never overwriting an existing file) and prints the install line and a
+first query snippet for the SDK it detects in the directory:
+
+```sh
+ts init            # uses main, or the project's only database
+ts init example    # reuse or create a named database
+```
+
+Pass `-lang <js|go|python|dotnet|rust>` to pick the snippet yourself, and
+`-yes` to create the database and key without the one confirmation. The key's
+secret is printed once and written to `.env` as `TERRASCALE_API_KEY`, next to
+`TERRASCALE_PROJECT_ID` and `TERRASCALE_DATABASE_NAME`.
+
 ## Sign in
 
 ```sh
