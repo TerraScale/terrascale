@@ -12,3 +12,7 @@
   savepoints), limited to 5 seconds each by the server;
   `isolation_level="AUTOCOMMIT"` keeps the previous one-request-per-statement
   HTTP path.
+- Alembic migrations run through the dialect: the `terrascale` dialect name is
+  registered with Alembic's SQLite implementation when Alembic is installed, so
+  `render_as_batch=True` table-copy migrations and autogenerate reflection work
+  over the SQL API. Documented in the Use SQLAlchemy and Alembic guide.

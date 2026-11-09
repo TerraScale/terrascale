@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from typing import Any, cast
 
 from sqlalchemy import pool
@@ -17,6 +18,7 @@ class TerraScaleDialect(SQLiteDialect_pysqlite):
     def import_dbapi(cls) -> Any:
         from terrascale import dbapi
 
+        _register_alembic_impl()
         return dbapi
 
     @classmethod
@@ -54,3 +56,12 @@ class TerraScaleDialect(SQLiteDialect_pysqlite):
             if value:
                 opts[key] = value
         return ([], opts)
+
+
+def _register_alembic_impl() -> None:
+    try:
+        impl = importlib.import_module("alembic.ddl.impl")
+        sqlite = importlib.import_module("alembic.ddl.sqlite")
+    except ImportError:
+        return
+    impl._impls.setdefault("terrascale", sqlite.SQLiteImpl)

@@ -18,6 +18,7 @@ Use the [quickstart](/pt-br/getting-started/) to establish one working applicati
 - [SQL over HTTP](/pt-br/guides/sql-http): run SQL statements with any HTTP client.
 - [Use Drizzle ORM](/pt-br/guides/orm-drizzle): run Drizzle's SQLite dialect over the JavaScript SDK.
 - [Use Prisma ORM](/pt-br/guides/orm-prisma): run Prisma's SQLite dialect over the JavaScript SDK's driver adapter.
+- [Use SQLAlchemy and Alembic](/pt-br/guides/orm-sqlalchemy): run SQLAlchemy's SQLite dialect, the ORM and Alembic migrations over the Python SDK.
 - [Errors and safe retries](/pt-br/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/pt-br/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
 - [Functions](/pt-br/guides/functions) (being updated for SQL).
