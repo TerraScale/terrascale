@@ -413,7 +413,7 @@ internal sealed class SqlSession(
             return plan.Run;
         }
 
-        var found = await run(Internal("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_ts_conflicts'")).ConfigureAwait(false);
+        var found = await run(Internal($"SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '{ConflictTable.Name}'")).ConfigureAwait(false);
         return found.Rows.Count > 0 ? plan.Run : without;
     }
 

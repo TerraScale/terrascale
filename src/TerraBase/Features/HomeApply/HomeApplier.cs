@@ -24,10 +24,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
     [
         "CREATE TABLE IF NOT EXISTS _ts_rows (tbl TEXT NOT NULL, pk TEXT NOT NULL, stamps TEXT NOT NULL, deleted TEXT, PRIMARY KEY (tbl, pk))",
         "CREATE TABLE IF NOT EXISTS _ts_applied (id TEXT PRIMARY KEY, region TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL, applied_at INTEGER NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS _ts_conflicts (id TEXT PRIMARY KEY, kind TEXT NOT NULL, table_name TEXT, row_key TEXT, column_name TEXT, "
-            + "winner_value TEXT, loser_value TEXT, winner_region TEXT, winner_node TEXT, winner_hlc TEXT, winner_transaction_id TEXT, winner_state TEXT, "
-            + "loser_region TEXT NOT NULL, loser_node TEXT NOT NULL, loser_hlc TEXT NOT NULL, loser_transaction_id TEXT NOT NULL, loser_state TEXT NOT NULL, "
-            + "message TEXT NOT NULL, created_at TEXT NOT NULL)",
+        ConflictTable.Ddl,
     ];
 
     public async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken)
@@ -313,7 +310,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
 
     private static async ValueTask<bool> EnsureTablesAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
     {
-        var present = await transaction.RunAsync("SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('_ts_rows', '_ts_applied', '_ts_conflicts')", cancellationToken).ConfigureAwait(false);
+        var present = await transaction.RunAsync("SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('_ts_rows', '_ts_applied', '{ConflictTable.Name}')", cancellationToken).ConfigureAwait(false);
         if (present.Rows is [[long count]] && count == Tables.Length)
         {
             return false;
@@ -344,9 +341,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         {
             var winner = conflict.Winner;
             _ = await transaction.RunAsync(
-                "INSERT INTO _ts_conflicts (id, kind, table_name, row_key, column_name, winner_value, loser_value, winner_region, winner_node, winner_hlc, "
-                + "winner_transaction_id, winner_state, loser_region, loser_node, loser_hlc, loser_transaction_id, loser_state, message, created_at) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ConflictTable.Insert,
                 [EntityIds.New(time).ToString(), conflict.Kind, conflict.Table, conflict.Key, conflict.Column, conflict.WinnerValue, conflict.LoserValue,
                     winner?.Region, winner?.Stamp.NodeId, winner is null ? null : StampText.Format(winner.Stamp), winner?.Transaction,
                     winner is null ? null : WriteStates.Confirmed, region.Region, region.Hlc!.Value.NodeId, StampText.Format(region.Hlc.Value), region.Id,
