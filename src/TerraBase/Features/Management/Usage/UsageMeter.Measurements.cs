@@ -10,25 +10,6 @@ namespace TerraBase.Features.Management.Usage;
 
 internal sealed partial class UsageMeter
 {
-    internal void ObserveMemory(Action observe)
-    {
-        lock (_measurements)
-        {
-            observe();
-        }
-    }
-
-    internal long ReservedMeasurementBytes
-    {
-        get
-        {
-            lock (_measurements)
-            {
-                return _measurementMemory.Values.Sum(reservations => reservations.Sum(reservation => reservation.Bytes));
-            }
-        }
-    }
-
     internal const int MaxDimensions = 256;
     internal const int MaxEntryMeasurementBytes = 256 * 1024;
     internal const int MaxBatchMeasurementBytes = 1024 * 1024;
