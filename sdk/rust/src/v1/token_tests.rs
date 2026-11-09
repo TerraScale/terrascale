@@ -282,3 +282,35 @@ async fn background_renewal_keeps_valid_token_and_shares_expired_waiters() {
     assert!(waiting.await.unwrap().is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn from_environment_exchanges_the_env_key_for_the_env_project() {
+    std::env::set_var("TERRASCALE_PROJECT_ID", PROJECT);
+    std::env::set_var("TERRASCALE_API_KEY", key());
+    let auth = Fixture::new(|_| ok(grant("env-access", 900))).await;
+    let data = Fixture::new(|_| ok("{}".into())).await;
+    std::env::set_var("TERRASCALE_BASE_URL", &data.url);
+    let mut client = Client::from_environment().unwrap();
+    std::env::remove_var("TERRASCALE_PROJECT_ID");
+    std::env::remove_var("TERRASCALE_API_KEY");
+    std::env::remove_var("TERRASCALE_BASE_URL");
+    let Auth::Key(key) = &mut Arc::get_mut(&mut client.inner).unwrap().auth else {
+        unreachable!()
+    };
+    Arc::get_mut(key).unwrap().endpoint = format!("{}/terrascale/oauth/token", auth.url)
+        .parse()
+        .unwrap();
+    read(&client).await.unwrap();
+    let seen = auth.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        String::from_utf8_lossy(&seen[0].body),
+        format!("grant_type=client_credentials&project={PROJECT}")
+    );
+    assert!(data
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|r| r.headers[AUTHORIZATION] == "Bearer env-access"));
+}

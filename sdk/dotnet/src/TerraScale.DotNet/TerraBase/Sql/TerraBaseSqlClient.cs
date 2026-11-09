@@ -77,6 +77,27 @@ public sealed partial class TerraBaseSqlClient
     internal TerraBaseSqlClient(TerraBaseConnection connection) => this.connection = connection;
 
     /// <summary>
+    /// Creates a client from TERRASCALE_API_KEY (required) and the optional TERRASCALE_BASE_URL and TERRASCALE_REGION,
+    /// exchanging the dashboard key at ts-auth for cached, auto-refreshed project access tokens. The client owns its
+    /// HttpClient (redirects disabled, <see cref="TerraBaseHttp.CreateHandler"/>) for its whole lifetime. Operations
+    /// name their project: <c>sql.Database(projectId, databaseName)</c>.
+    /// </summary>
+    public static TerraBaseSqlClient FromEnvironment()
+    {
+        var apiKey = Environment.GetEnvironmentVariable("TERRASCALE_API_KEY");
+        if (string.IsNullOrWhiteSpace(apiKey))
+            throw new ArgumentException("TERRASCALE_API_KEY is not set; export the dashboard API key or pass TerraBaseSqlClientOptions.ApiKey.");
+        var options = new TerraBaseSqlClientOptions { ApiKey = apiKey };
+        var baseUrl = Environment.GetEnvironmentVariable("TERRASCALE_BASE_URL");
+        if (!string.IsNullOrWhiteSpace(baseUrl))
+            options = options with { BaseAddress = new Uri(baseUrl, UriKind.Absolute) };
+        var region = Environment.GetEnvironmentVariable("TERRASCALE_REGION");
+        if (!string.IsNullOrWhiteSpace(region))
+            options = options with { Region = region };
+        return new TerraBaseSqlClient(new HttpClient(TerraBaseHttp.CreateHandler()), options);
+    }
+
+    /// <summary>
     /// Addresses database <paramref name="database"/> (its name or ULID) in project <paramref name="projectId"/>. With
     /// an ApiKey, the project's access token is requested on the first call.
     /// </summary>
