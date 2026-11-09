@@ -12,7 +12,7 @@ internal sealed class DeleteFunctionEndpoint(IManagementService management, IFun
         Delete(FunctionRoute.Item);
         Name("deleteFunction");
         Summary("Deletes a function and its logs");
-        Description(FunctionRoute.Description + "");
+        Description(FunctionRoute.Description);
         Tags("Functions");
         Produces(StatusCodes.Status204NoContent);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

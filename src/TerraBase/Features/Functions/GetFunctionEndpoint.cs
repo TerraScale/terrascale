@@ -12,7 +12,7 @@ internal sealed class GetFunctionEndpoint(IManagementService management, IFuncti
         Get(FunctionRoute.Item);
         Name("getFunction");
         Summary("Reads a function with its source");
-        Description(FunctionRoute.Description + "");
+        Description(FunctionRoute.Description);
         Tags("Functions");
         Produces<FunctionBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
