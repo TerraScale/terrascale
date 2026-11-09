@@ -19,8 +19,10 @@ catalog, backups, usage and file buckets remain.
 The new `@terrascale/sdk/prisma` export exposes `PrismaTerraScale`, a driver
 adapter factory over a `V1Database` for the ORM's driver-adapters interface:
 `queryRaw`, `executeRaw`, `executeScript`, typed column mapping and the last
-insert id, with queries running over HTTPS. Interactive transactions arrive in
-the next release; `startTransaction` throws a clear error meanwhile.
+insert id, with queries running over HTTPS. `startTransaction` runs interactive
+transactions over the SQL WebSocket session: `begin`, per-statement
+`queryRaw`/`executeRaw`, savepoints, and `commit`/`rollback`, each transaction
+limited to 5 seconds by the server; only `SERIALIZABLE` isolation is accepted.
 
 ## 0.0.19 — public-client refresh
 
