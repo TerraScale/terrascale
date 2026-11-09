@@ -56,6 +56,33 @@ function transactionError(error) {
   return error;
 }
 
+/**
+ * Maps a refused statement to Prisma's driver-adapter error kinds by SQLSTATE;
+ * anything else surfaces as the generic `sqlite` kind with the server's message.
+ * @param {unknown} error
+ * @returns {unknown}
+ */
+function adapterError(error) {
+  if (!(error instanceof SqlError)) return error;
+  const kind = mappedErrorKind(error.sqlstate);
+  const mapped = { ...kind ?? { kind: "sqlite", extendedCode: 1, message: error.message }, originalCode: error.code, originalMessage: error.message };
+  const wrapped = new Error(error.message, { cause: mapped });
+  wrapped.name = "DriverAdapterError";
+  return wrapped;
+}
+
+/** @param {string} sqlstate @returns {{ kind: string } & Record<string, unknown> | null} */
+function mappedErrorKind(sqlstate) {
+  switch (sqlstate) {
+    case "23505": return { kind: "UniqueConstraintViolation" };
+    case "23502": return { kind: "NullConstraintViolation" };
+    case "23503": return { kind: "ForeignKeyConstraintViolation", constraint: { foreignKey: {} } };
+    case "42P01": return { kind: "TableDoesNotExist" };
+    case "42703": return { kind: "ColumnNotFound" };
+    default: return null;
+  }
+}
+
 
 const columnTypeEnum = Object.freeze({
   Int32: 0, Int64: 1, Float: 2, Double: 3, Numeric: 4, Boolean: 5, Character: 6, Text: 7,
@@ -182,7 +209,11 @@ export class PrismaTerraScaleAdapter {
    * @returns {Promise<PrismaSqlResultSet>}
    */
   async queryRaw(query) {
-    return sqlResultSet(await this.#database.execute(query.sql, sqlArguments(query)));
+    try {
+      return sqlResultSet(await this.#database.execute(query.sql, sqlArguments(query)));
+    } catch (error) {
+      throw adapterError(error);
+    }
   }
 
   /**
@@ -191,8 +222,11 @@ export class PrismaTerraScaleAdapter {
    * @returns {Promise<number>}
    */
   async executeRaw(query) {
-    const result = await this.#database.execute(query.sql, sqlArguments(query));
-    return result.rowsAffected;
+    try {
+      return (await this.#database.execute(query.sql, sqlArguments(query))).rowsAffected;
+    } catch (error) {
+      throw adapterError(error);
+    }
   }
 
   /**
@@ -200,7 +234,11 @@ export class PrismaTerraScaleAdapter {
    * @param {string} script
    */
   async executeScript(script) {
-    await this.#database.batch(script.split(";").map(statement => statement.trim()).filter(statement => statement !== ""));
+    try {
+      await this.#database.batch(script.split(";").map(statement => statement.trim()).filter(statement => statement !== ""));
+    } catch (error) {
+      throw adapterError(error);
+    }
   }
 
   /**
@@ -216,7 +254,7 @@ export class PrismaTerraScaleAdapter {
       await socket.begin();
     } catch (error) {
       socket.close();
-      throw error;
+      throw adapterError(error);
     }
     return new PrismaTerraScaleTransaction(socket);
   }
@@ -250,7 +288,7 @@ export class PrismaTerraScaleTransaction {
     try {
       return sqlResultSet(await this.#socket.execute(query.sql, sqlArguments(query)));
     } catch (error) {
-      throw transactionError(error);
+      throw adapterError(transactionError(error));
     }
   }
 
@@ -263,7 +301,7 @@ export class PrismaTerraScaleTransaction {
     try {
       return (await this.#socket.execute(query.sql, sqlArguments(query))).rowsAffected;
     } catch (error) {
-      throw transactionError(error);
+      throw adapterError(transactionError(error));
     }
   }
 
@@ -310,7 +348,7 @@ export class PrismaTerraScaleTransaction {
       await this.#socket[verb]();
     } catch (error) {
       this.#socket.close();
-      throw transactionError(error);
+      throw adapterError(transactionError(error));
     }
     this.#socket.close();
   }
