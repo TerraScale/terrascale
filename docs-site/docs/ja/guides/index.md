@@ -20,6 +20,7 @@ Use the [quickstart](/ja/getting-started/) to establish one working application 
 - [Use Prisma ORM](/ja/guides/orm-prisma): run Prisma's SQLite dialect over the JavaScript SDK's driver adapter.
 - [Use SQLAlchemy and Alembic](/ja/guides/orm-sqlalchemy): run SQLAlchemy's SQLite dialect, the ORM and Alembic migrations over the Python SDK.
 - [Use GORM, sqlc and bun with Go](/ja/guides/orm-go): run GORM, sqlc and bun over the Go SDK's database/sql driver.
+- [Use Dapper and ADO.NET with .NET](/ja/guides/orm-dotnet): run Dapper and ADO.NET over the .NET SDK's DbConnection provider.
 - [Typed SQL with the Rust SDK](/ja/guides/rust-sql): queries, typed `query_as` selects, transactions over the session and batches in Rust.
 - [Errors and safe retries](/ja/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/ja/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.

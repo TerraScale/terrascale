@@ -137,5 +137,6 @@ refused: primary_key_violation statement 0 sqlstate 23505
 - [SDK reference](/de/guides/sdks) — the five SDKs and their install commands
 - [JavaScript](/de/getting-started/javascript), [Go](/de/getting-started/go) and [Python](/de/getting-started/python) quickstarts
 - [SQL over HTTP](/de/guides/sql-http) for the raw HTTP interface and [concepts](/de/concepts/sql) for the SQL dialect
+- [Use Dapper and ADO.NET with .NET](/de/guides/orm-dotnet) for ORMs and ADO.NET over the SDK's DbConnection provider
 
 </div>

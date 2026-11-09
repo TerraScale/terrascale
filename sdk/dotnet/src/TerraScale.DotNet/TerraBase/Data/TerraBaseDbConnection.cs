@@ -39,8 +39,45 @@ public sealed class TerraBaseDbConnection(TerraBaseSqlDatabase database) : DbCon
     /// <summary>Unsupported: one connection addresses one database.</summary>
     public override void ChangeDatabase(string databaseName) => throw new NotSupportedException("Create another connection for another database.");
 
-    /// <summary>Closes the connection. No work is pending; commands complete on their own.</summary>
-    public override void Close() => state = ConnectionState.Closed;
+    /// <summary>Closes the connection. With an open transaction it throws: the SDK is async-only, so only <see cref="CloseAsync"/> can roll it back.</summary>
+    public override void Close()
+    {
+        if (CurrentTransaction is not null)
+        {
+            throw new NotSupportedException("The TerraScale SDK is async-only; use CloseAsync or DisposeAsync so the open transaction rolls back.");
+        }
+
+        state = ConnectionState.Closed;
+    }
+
+    /// <summary>
+    /// Detaches an open transaction without rolling it back here — the server ends it at its timeout; the session is
+    /// async-only and is not blocked on. Never throws, so a sync dispose cannot mask the caller's own exception.
+    /// </summary>
+    protected override void Dispose(bool disposing)
+    {
+        if (CurrentTransaction is { } open)
+        {
+            CurrentTransaction = null;
+            open.Abandon();
+        }
+
+        base.Dispose(disposing);
+    }
+
+    /// <summary>Closes the connection asynchronously, rolling back an open transaction first.</summary>
+    public override async Task CloseAsync()
+    {
+        if (CurrentTransaction is { } open) await open.DisposeAsync().ConfigureAwait(false);
+        state = ConnectionState.Closed;
+    }
+
+    /// <summary>Closes the connection asynchronously; the base dispose keeps component semantics.</summary>
+    public override async ValueTask DisposeAsync()
+    {
+        await CloseAsync().ConfigureAwait(false);
+        await base.DisposeAsync().ConfigureAwait(false);
+    }
 
     /// <summary>Marks the connection open. Opening performs no network work.</summary>
     public override void Open() => state = ConnectionState.Open;
@@ -80,13 +117,6 @@ public sealed class TerraBaseDbConnection(TerraBaseSqlDatabase database) : DbCon
 
         CurrentTransaction = transaction;
         return transaction;
-    }
-
-    /// <summary>Rolls back and closes an open transaction, then closes the connection.</summary>
-    public override async Task CloseAsync()
-    {
-        if (CurrentTransaction is { } open) await open.DisposeAsync().ConfigureAwait(false);
-        state = ConnectionState.Closed;
     }
 
     /// <summary>Creates a command bound to this connection.</summary>
