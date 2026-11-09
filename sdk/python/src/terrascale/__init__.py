@@ -30,11 +30,13 @@ from .errors import (
     TerraScaleError,
     TokenError,
     UniqueViolationError,
+    WebhookVerificationError,
 )
 from .ids import is_valid_id, new_id, validate_id
 from .models import ApiKey, ApiKeyPage, ApiKeySecret, ProjectClient, ProjectClientPage, ProjectClientSecret, ScopedKey
 from .session import AsyncSqlSession, SqlSession
 from .sql import Column, Row, Statement, StatementResult
+from .webhooks import verify_webhook
 
 __all__ = [
     "__version__",
@@ -62,8 +64,10 @@ __all__ = [
     "new_id",
     "is_valid_id",
     "validate_id",
+    "verify_webhook",
     "TerraScaleError",
     "TokenError",
+    "WebhookVerificationError",
     "APIError",
     "InvalidRequestError",
     "InvalidResponseError",

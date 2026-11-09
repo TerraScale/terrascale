@@ -330,6 +330,8 @@ and administration mutations still need their owning public contracts.
 `@terrascale/sdk/ts-auth` retains its separate hosted identity management and OIDC
 client, with its own origin, instance and credentials. A server-only Better Auth
 database adapter is planned; the package exports no `./better-auth` entrypoint.
+`@terrascale/sdk/ts-auth/webhooks` exports the server-only `verifyWebhook`, which checks
+a Standard Webhooks `v1` delivery and returns the parsed event or throws `TsAuthWebhookError`.
 The optional live catalog check needs `TB_V1_MANAGEMENT_TOKEN` with `databases:read`
 in addition to `TB_V1_URL` and `TB_V1_PROJECT`; data-only keys are insufficient.
 Entity pages reject null and primitive records; recovery-code pages contain strings.
