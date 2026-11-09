@@ -60,7 +60,6 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
                 return Unavailable();
             }
 
-            // Only the configured ts-auth origin receives the credential. No redirects; bounded responses and admission.
             using var reservation = budget.TryReserve(MemoryLane.Foreground, 4L * MaxResponseBytes);
             if (reservation is null)
             {

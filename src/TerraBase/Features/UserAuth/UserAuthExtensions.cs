@@ -29,8 +29,6 @@ internal static class UserAuthExtensions
         })
             .ConfigurePrimaryHttpMessageHandler((handler, _) =>
             {
-                // Other regions reach ts-auth across continents: keep one pool, warm between key checks, so a check does not
-                // pay a new TLS handshake whenever the factory would rotate handlers. Connections still renew for DNS changes.
                 var sockets = (SocketsHttpHandler)handler;
                 sockets.AllowAutoRedirect = false;
                 sockets.PooledConnectionIdleTimeout = TimeSpan.FromMinutes(10);
@@ -159,7 +157,6 @@ internal static class UserAuthExtensions
         return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "auth_unavailable", KeyAuthorityMessages.Unavailable, op: null);
     }
 
-    // RFC 6750 §3: every 401 on the public listener carries a Bearer challenge.
     public static WebApplication UseTerraBaseBearerChallenge(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -168,13 +165,10 @@ internal static class UserAuthExtensions
             var presented = context.Request.Headers.Authorization.ToString();
             context.Response.OnStarting(() =>
             {
-                // The public listener only: internal traffic authenticates differently, and a refused API key
-                // already carries a richer challenge with the refusal code.
                 if (Listeners.ArrivedOn(context) == TerraBaseListener.Client
                     && context.Response.StatusCode == StatusCodes.Status401Unauthorized
                     && context.Response.Headers.WWWAuthenticate.Count == 0)
                 {
-                    // A presented-but-rejected credential is an invalid_token; a missing one names only the realm.
                     context.Response.Headers.WWWAuthenticate = context.Request.Headers.Authorization.Count > 0
                         ? "Bearer realm=\"terrascale\", error=\"invalid_token\""
                         : "Bearer realm=\"terrascale\"";

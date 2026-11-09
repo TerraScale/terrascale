@@ -6,11 +6,8 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace TerraBase.Features.UserAuth;
 
-// Verifying token signatures was 12 % of the write path's CPU (benchmark/bench/2026-10-12-write-path-cpu.md); entries
-// answer only while the issuer keys they were checked against are the current list, and strictly before expiration.
 internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandler.SchemeName)] TimeProvider? time = null)
 {
-    // About 1 KiB per entry: 4 MiB at most, then the whole cache starts over.
     private const int Capacity = 4096;
 
     private readonly ConcurrentDictionary<string, Accepted> _entries = new(StringComparer.Ordinal);
