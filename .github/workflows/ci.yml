@@ -500,10 +500,17 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      # Reads the private TerraBase image to check its revision label.
+      packages: read
       # ts-orch accepts this job's OIDC token to release the pinned digest.
       id-token: write
     steps:
       - *setup-builder
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
       - name: Release the pinned arm64 digest to each region
         env:
           GH_TOKEN: ${{ github.token }}
