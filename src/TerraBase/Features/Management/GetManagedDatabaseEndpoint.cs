@@ -22,7 +22,7 @@ internal sealed class GetManagedDatabaseEndpoint(IManagementService management) 
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await management.GetDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), cancellationToken) switch
+        await management.GetDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken) switch
         {
             ManagedDatabase value => TypedResults.Ok(ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),
             NotFound error => ManagementRoute.DatabaseNotFound(error),

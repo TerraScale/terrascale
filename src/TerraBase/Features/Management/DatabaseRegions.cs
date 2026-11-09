@@ -43,7 +43,7 @@ internal static class DatabaseRegions
     internal static async ValueTask<HomeRegionCheck> ElsewhereAsync(HttpContext context, IManagementService management, string region)
     {
         var database = await management.GetDatabaseAsync(
-            ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"), ManagementRoute.Value(context, "database"),
+            ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), context.RouteValue("project"), context.RouteValue("database"),
             context.RequestAborted).ConfigureAwait(false);
         return database switch
         {

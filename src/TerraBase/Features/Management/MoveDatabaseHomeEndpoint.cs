@@ -39,7 +39,7 @@ internal sealed class MoveDatabaseHomeEndpoint(IManagementService management, Ho
     public override async ValueTask<IResult> HandleAsync(MoveHomeRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var (user, organization, project) = (ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"));
+        var (user, organization, project) = (ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), HttpContext.RouteValue("project"));
         if (!TerraBaseOptions.IsRegion(request.HomeRegion))
         {
             return ErrorResponse.From(new Validation("homeRegion must name a region"));
@@ -50,7 +50,7 @@ internal sealed class MoveDatabaseHomeEndpoint(IManagementService management, Ho
             return ErrorResponse.From(unserved);
         }
 
-        switch (await management.GetDatabaseAsync(user, organization, project, ManagementRoute.Value(HttpContext, "database"), cancellationToken).ConfigureAwait(false))
+        switch (await management.GetDatabaseAsync(user, organization, project, HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false))
         {
             case NotFound error:
                 return ManagementRoute.DatabaseNotFound(error);

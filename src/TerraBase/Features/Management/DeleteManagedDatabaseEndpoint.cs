@@ -45,7 +45,7 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
             };
         }
 
-        return await management.DeleteDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"), ManagementRoute.Value(context, "database"), cancellationToken) switch
+        return await management.DeleteDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), context.RouteValue("project"), context.RouteValue("database"), cancellationToken) switch
         {
             Done => TypedResults.NoContent(),
             NotFound error => ManagementRoute.DatabaseNotFound(error),

@@ -56,7 +56,7 @@ internal static class RestoreOperationRoute
 
     public static IResult Accepted(HttpContext context, RestoreOperationRecord record)
     {
-        context.Response.Headers.Location = $"/v1/projects/{record.ProjectId}/databases/{ManagementRoute.Value(context, "databaseName")}/restores/{record.Id}";
+        context.Response.Headers.Location = $"/v1/projects/{record.ProjectId}/databases/{context.RouteValue("databaseName")}/restores/{record.Id}";
         return TypedResults.Json(ToBody(record), ManagementJsonContext.Default.RestoreOperation, statusCode: StatusCodes.Status202Accepted);
     }
 }

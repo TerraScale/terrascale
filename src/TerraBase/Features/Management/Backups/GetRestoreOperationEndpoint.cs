@@ -26,7 +26,7 @@ internal sealed class GetRestoreOperationEndpoint(IManagementService management,
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
         {
-            TenantContext database => await backups.GetRestoreOperationAsync(database.OrganizationId, database.DatabaseId!, ManagementRoute.Value(HttpContext, "operation"), cancellationToken) switch
+            TenantContext database => await backups.GetRestoreOperationAsync(database.OrganizationId, database.DatabaseId!, HttpContext.RouteValue("operation"), cancellationToken) switch
             {
                 RestoreOperationRecord record => TypedResults.Ok(RestoreOperationRoute.ToBody(record)),
                 NotFound error => ErrorResponse.From(error),

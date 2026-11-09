@@ -34,8 +34,8 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
     {
         ArgumentNullException.ThrowIfNull(request);
         return await management.GetDatabaseAsync(
-            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"),
-            ManagementRoute.Value(HttpContext, "database"), cancellationToken) switch
+            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), HttpContext.RouteValue("project"),
+            HttpContext.RouteValue("database"), cancellationToken) switch
         {
             NotFound error => ManagementRoute.DatabaseNotFound(error),
             Unavailable error => ErrorResponse.From(error),
@@ -45,7 +45,7 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
 
     private async ValueTask<IResult> UpdateAsync(DatabaseRegionsRequest request, ManagedDatabase database, CancellationToken cancellationToken)
     {
-        var (user, organization, project, id) = (ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"));
+        var (user, organization, project, id) = (ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"));
         var home = database.Home(options.Region);
         if (home != options.Region)
         {

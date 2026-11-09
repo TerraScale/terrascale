@@ -37,7 +37,7 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
         var found = await management.GetDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext),
-            ManagementRoute.Value(HttpContext, "project"), ManagementRoute.Value(HttpContext, "database"), cancellationToken).ConfigureAwait(false);
+            HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false);
         if (found is not ManagedDatabase record)
         {
             return found switch

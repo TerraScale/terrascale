@@ -50,7 +50,7 @@ internal sealed class RestoreBackupEndpoint(IManagementService management, IMana
             Forbidden error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
             TenantContext database => await backups.StartRestoreAsync(
-                ManagementRoute.UserId(HttpContext), organization, database, ManagementRoute.Value(HttpContext, "backup"), name, cancellationToken) switch
+                ManagementRoute.UserId(HttpContext), organization, database, HttpContext.RouteValue("backup"), name, cancellationToken) switch
             {
                 RestoreOperationRecord started => RestoreOperationRoute.Accepted(HttpContext, started),
                 BackupElsewhere elsewhere => DatabaseRegions.RecoveryRegion(elsewhere.Region, elsewhere.Database),

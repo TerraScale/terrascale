@@ -71,8 +71,8 @@ internal static class DatabaseTtlAnswer
         var placement = await DatabaseRegions.ElsewhereAsync(context, management, region).ConfigureAwait(false);
         return placement switch
         {
-            Done => From(context, await management.SetDatabaseTtlAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"),
-                ManagementRoute.Value(context, "database"), ttlSeconds, cancellationToken).ConfigureAwait(false)),
+            Done => From(context, await management.SetDatabaseTtlAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), context.RouteValue("project"),
+                context.RouteValue("database"), ttlSeconds, cancellationToken).ConfigureAwait(false)),
             DatabaseRegions.Misdirected elsewhere => elsewhere,
             NotFound error => ManagementRoute.DatabaseNotFound(error),
             Unavailable error => ErrorResponse.From(error),

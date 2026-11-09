@@ -40,7 +40,7 @@ internal sealed class ListManagedDatabasesEndpoint(
 
     private async ValueTask<IResult> ListAsync(PageQuery page, CancellationToken cancellationToken)
     {
-        var project = ManagementRoute.Value(HttpContext, "project");
+        var project = HttpContext.RouteValue("project");
         var actor = ManagementRoute.UserId(HttpContext);
         if (HttpContext.Request.RouteValues.TryGetValue("organization", out var bound) && bound is string known)
         {

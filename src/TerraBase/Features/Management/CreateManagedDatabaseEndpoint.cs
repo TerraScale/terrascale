@@ -99,7 +99,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
         }
 
         var actor = ManagementRoute.UserId(HttpContext);
-        var project = ManagementRoute.Value(HttpContext, "project");
+        var project = HttpContext.RouteValue("project");
         if (HttpContext.User.FindFirst("project_id") is null)
         {
             return await catalog.ResolveProjectAsync(project, actor, createIn: null, cancellationToken).ConfigureAwait(false) switch
@@ -152,7 +152,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
     {
         var organization = ManagementRoute.OrganizationId(HttpContext);
         return await apply.PrepareReplicatedAsync(organization, options.Region, await management.CreateDatabaseAsync(
-            ManagementRoute.UserId(HttpContext), organization, ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas, all, ttlSeconds),
+            ManagementRoute.UserId(HttpContext), organization, HttpContext.RouteValue("project"), name, cancellationToken, replicas, all, ttlSeconds),
             cancellationToken) switch
         {
             ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),

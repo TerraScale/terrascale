@@ -36,8 +36,8 @@ internal sealed class BranchManagedDatabaseIfIdEndpoint(IManagementService manag
             return ValueTask.FromResult(ManagementRoute.DatabaseNotFound(new NotFound()));
         }
 
-        var sourceId = ManagementRoute.Value(HttpContext, "database");
-        return !string.Equals(sourceId, ManagementRoute.Value(HttpContext, "expectedId"), StringComparison.Ordinal)
+        var sourceId = HttpContext.RouteValue("database");
+        return !string.Equals(sourceId, HttpContext.RouteValue("expectedId"), StringComparison.Ordinal)
             ? ValueTask.FromResult(ErrorResponse.From(new Conflict("the database identity changed", "database_identity_changed")))
             : BranchManagedDatabaseEndpoint.BranchAsync(HttpContext, request, management, options, sourceId, cancellationToken);
     }

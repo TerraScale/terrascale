@@ -26,7 +26,7 @@ internal sealed class AdminListProjectDatabasesEndpoint(IManagementService manag
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var project = ManagementRoute.Value(HttpContext, "project");
+        var project = HttpContext.RouteValue("project");
         if (!EntityIds.IsValid(project))
         {
             return ErrorResponse.From(new Validation("project must be a canonical uppercase ULID"));
