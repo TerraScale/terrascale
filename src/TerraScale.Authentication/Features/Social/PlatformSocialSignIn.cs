@@ -13,12 +13,11 @@ using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
 
 namespace TerraScale.Authentication.Features.Social;
 
 /// <summary>Authorization-code OAuth with S256 PKCE, browser binding and durable single-use state.</summary>
-public sealed class PlatformSocialSignIn(AuthOptions options, AuthStore store, Users users,
+public sealed class PlatformSocialSignIn(AuthOptions options, Challenges challenges, Users users,
     Sessions sessions, TotpCredentials mfa, IHttpClientFactory clients, TimeProvider clock)
 {
     /// <summary>The named backchannel; tests replace only its HTTP transport.</summary>
@@ -40,7 +39,7 @@ public sealed class PlatformSocialSignIn(AuthOptions options, AuthStore store, U
         var state = SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(
             new PlatformSocialState(tenant, provider, credential.ClientId, Tokens.Sha256Hex(SocialProviders.Open(options, tenant, credential)), verifier, Tokens.Sha256Hex(browser), SignInFlow.SafeNext(context, next)), PlatformSocialJson.Default.PlatformSocialState), Purpose);
         var hash = Tokens.Sha256Hex(state);
-        await store.CreateChallengeAsync(tenant, Purpose, hash, tenant, clock.GetUtcNow() + Lifetime, cancellationToken);
+        await challenges.CreateAsync(tenant, Purpose, hash, tenant, clock.GetUtcNow() + Lifetime, cancellationToken);
         context.Response.Cookies.Append(Cookie(hash), browser, CookieOptions());
         context.Response.Headers.CacheControl = "no-store";
         var authorization = provider == SocialProviders.GitHub ? "https://github.com/login/oauth/authorize" : "https://accounts.google.com/o/oauth2/v2/auth";
@@ -88,7 +87,7 @@ public sealed class PlatformSocialSignIn(AuthOptions options, AuthStore store, U
         }
 
         context.Response.Cookies.Delete(Cookie(hash), CookieOptions());
-        if (await store.ConsumeChallengeAsync(tenant, Purpose, hash, tenant, cancellationToken) is not { Binding: { } binding })
+        if (await challenges.ConsumeAsync(tenant, Purpose, hash, tenant, cancellationToken) is not { } binding)
         {
             return Refused(context, tenant);
         }

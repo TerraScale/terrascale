@@ -12,7 +12,7 @@ using TerraScale.Authentication.Features.SignIn;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraScale.Authentication.Configuration;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Email;

@@ -116,24 +116,6 @@ public sealed record ApiKeyRecord(
 /// <param name="LastUsedAt">The last successful token exchange, at most <c>ApiKeys.UsageGranularity</c> stale.</param>
 public sealed record ApiKeyUsageRecord(string KeyId, string InstanceId, string OrganizationId, string? ProjectId, DateTimeOffset LastUsedAt);
 
-/// <summary>
-/// An invitation (table <c>invitations</c>, addressed by id) to an organization role, or with a project to that
-/// project's role. Only the SHA-256 of its token is stored; <c>uniques</c> maps that digest to the invitation and holds
-/// one pending invitation per email and target.
-/// </summary>
-/// <param name="Id">Canonical ULID.</param>
-/// <param name="InstanceId">Always the platform tenant.</param>
-/// <param name="OrganizationId">The organization.</param>
-/// <param name="ProjectId">The project, for a project invitation.</param>
-/// <param name="Email">The invitee's normalized address.</param>
-/// <param name="Role">An organization role, or with a project a project role.</param>
-/// <param name="InvitedBy">The inviting user.</param>
-/// <param name="CreatedAt">Creation time.</param>
-/// <param name="ExpiresAt">Seven days later.</param>
-/// <param name="Status"><c>pending</c>, <c>accepted</c>, <c>declined</c> or <c>revoked</c>.</param>
-/// <param name="TokenHash">Lowercase hex SHA-256 of the token.</param>
-/// <param name="DecidedAt">When it stopped being pending.</param>
-/// <param name="DecidedBy">Who accepted, declined or revoked it.</param>
 public sealed record InvitationRecord(
     string Id,
     string InstanceId,

@@ -8,35 +8,19 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Hosting;
-using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Email;
 
-/// <summary>A product allowance alert, without a caller-selected recipient.</summary>
-/// <param name="OrganizationId">Organization whose current owners receive the message.</param>
-/// <param name="BillingMonth">UTC month in yyyy-MM form.</param>
-/// <param name="Metric">operations or storage.</param>
-/// <param name="Threshold">80 or 100.</param>
-/// <param name="Used">Observed usage.</param>
-/// <param name="Allowance">Published allowance.</param>
 public sealed record AllowanceEmailRequest(string OrganizationId, string BillingMonth, string Metric, int Threshold, long Used, long Allowance);
 
-/// <summary>Delivery state only; never a recipient, user identifier or address.</summary>
-/// <param name="Status">accepted, retryable, unknown, rejected or no_recipients.</param>
 public sealed record AllowanceEmailResponse(string Status);
 
-internal sealed record AllowanceEmailDelivery(string InstanceId, string OrganizationId, string BillingMonth, string Metric, int Threshold,
-    Dictionary<string, string> Recipients);
-
-/// <summary>Delivers an allowance message through the dashboard's existing ClientBasic email authority.</summary>
-public sealed class AllowanceEmailEndpoint(AuthStore store, PlatformDirectory directory, Users users, IEmailSender sender, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
+public sealed class AllowanceEmailEndpoint(PlatformDirectory directory, OwnerDeliveries deliveries, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
-    private const string Table = "email_allowance_deliveries";
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/{slug}/email/allowance");
@@ -50,7 +34,6 @@ public sealed class AllowanceEmailEndpoint(AuthStore store, PlatformDirectory di
         Produces<ErrorBody>(StatusCodes.Status422UnprocessableEntity);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
@@ -70,87 +53,9 @@ public sealed class AllowanceEmailEndpoint(AuthStore store, PlatformDirectory di
             throw PlatformDirectory.NotFound();
         }
 
-        var key = $"{request.OrganizationId}/{month}/{request.Metric}/{request.Threshold}";
-        var existing = await store.GetAsync(Table, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false);
-        if (existing is null)
-        {
-            var recipients = new Dictionary<string, string>(StringComparer.Ordinal);
-            await foreach (var rowData in store.QueryAsync(AuthStore.MembershipTable, OidcIssuer.InstanceId,
-                [("/organizationId", request.OrganizationId), ("/role", Roles.Owner)], cancellationToken).ConfigureAwait(false))
-            {
-                var member = ReadMember(rowData, request.OrganizationId);
-                if (member.Role != Roles.Owner)
-                {
-                    continue;
-                }
-                recipients[member.UserId] = "pending";
-                if (recipients.Count > 100)
-                {
-                    throw ApiException.Unavailable();
-                }
-            }
-            var delivery = new AllowanceEmailDelivery(OidcIssuer.InstanceId, request.OrganizationId, month, request.Metric, request.Threshold, recipients);
-            try
-            {
-                _ = await store.CreateAsync(Table, OidcIssuer.InstanceId, key,
-                    JsonSerializer.SerializeToElement(delivery, AllowanceEmailJson.Default.AllowanceEmailDelivery), cancellationToken).ConfigureAwait(false);
-            }
-            catch (StorePreconditionFailedException) { }
-        }
-
-        var current = await ReadAsync(key, request, cancellationToken).ConfigureAwait(false);
-        foreach (var recipient in current.Delivery.Recipients.Keys)
-        {
-            for (var attempt = 0; attempt < 8; attempt++)
-            {
-                current = await ReadAsync(key, request, cancellationToken).ConfigureAwait(false);
-                if (current.Delivery.Recipients[recipient] != "pending")
-                {
-                    break;
-                }
-                current.Delivery.Recipients[recipient] = "sending";
-                var claimed = await store.ReplaceAsync(Table, OidcIssuer.InstanceId, key,
-                    JsonSerializer.SerializeToElement(current.Delivery, AllowanceEmailJson.Default.AllowanceEmailDelivery), current.Version, cancellationToken).ConfigureAwait(false);
-                if (claimed is null)
-                {
-                    continue;
-                }
-
-                // A fresh membership read prevents sending to someone removed since the delivery was reserved.
-                var membership = await store.GetAsync(AuthStore.MembershipTable, OidcIssuer.InstanceId,
-                    $"{request.OrganizationId}/{recipient}", cancellationToken).ConfigureAwait(false);
-                var user = await users.GetAsync(OidcIssuer.InstanceId, recipient, cancellationToken).ConfigureAwait(false);
-                var outcome = membership is not null && ReadMember(membership, request.OrganizationId).Role == Roles.Owner && user is not null
-                    ? await sender.DeliverAsync(user.Email, Message(request), cancellationToken).ConfigureAwait(false)
-                    : EmailDeliveryOutcome.Rejected;
-                var status = outcome switch
-                {
-                    EmailDeliveryOutcome.Accepted => "accepted",
-                    EmailDeliveryOutcome.Retryable => "pending",
-                    EmailDeliveryOutcome.Rejected => "rejected",
-                    _ => "unknown",
-                };
-                await CompleteAsync(key, request, recipient, status, cancellationToken).ConfigureAwait(false);
-                break;
-            }
-        }
-
-        current = await ReadAsync(key, request, cancellationToken).ConfigureAwait(false);
-        var states = current.Delivery.Recipients.Values;
-        var result = states.Count == 0 ? "no_recipients" : states.Any(state => state is "unknown" or "sending") ? "unknown"
-            : states.Contains("pending") ? "retryable" : states.Contains("rejected") ? "rejected" : "accepted";
+        var result = await deliveries.SendAsync("allowance", $"{request.OrganizationId}/{month}/{request.Metric}/{request.Threshold}", request.OrganizationId!, Message(request),
+            cancellationToken).ConfigureAwait(false);
         return TypedResults.Json(new AllowanceEmailResponse(result), AllowanceEmailJson.Default.AllowanceEmailResponse);
-    }
-
-    internal static MembershipRecord ReadMember(StoredRow rowData, string organizationId)
-    {
-        var member = rowData.Body.Deserialize(PlatformJson.Default.MembershipRecord);
-        if (member is null || member.InstanceId != OidcIssuer.InstanceId || member.OrganizationId != organizationId || !TerraScaleIds.IsValid(member.UserId) ||
-            rowData.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, AuthStore.MembershipTable, $"{organizationId}/{member.UserId}"))
-        {
-            throw ApiException.Unavailable();
-        }
-        return member;
     }
 
     private static EmailMessage Message(AllowanceEmailRequest request)
@@ -162,37 +67,9 @@ public sealed class AllowanceEmailEndpoint(AuthStore store, PlatformDirectory di
         return new(subject, text) { FromName = "TerraScale", Purpose = EmailPurpose.Allowance, Tenant = request.OrganizationId! };
     }
 
-    private async Task<(AllowanceEmailDelivery Delivery, string Version)> ReadAsync(string key, AllowanceEmailRequest request, CancellationToken cancellationToken)
-    {
-        var rowData = await store.GetAsync(Table, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable();
-        var delivery = rowData.Body.Deserialize(AllowanceEmailJson.Default.AllowanceEmailDelivery);
-        if (rowData.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Table, key) ||
-            delivery is null || delivery.InstanceId != OidcIssuer.InstanceId || delivery.OrganizationId != request.OrganizationId ||
-            delivery.BillingMonth != request.BillingMonth || delivery.Metric != request.Metric || delivery.Threshold != request.Threshold || delivery.Recipients is null)
-        {
-            throw ApiException.Unavailable();
-        }
-        return (delivery, rowData.Version);
-    }
-
-    private async Task CompleteAsync(string key, AllowanceEmailRequest request, string recipient, string status, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; attempt < 8; attempt++)
-        {
-            var current = await ReadAsync(key, request, cancellationToken).ConfigureAwait(false);
-            current.Delivery.Recipients[recipient] = status;
-            if (await store.CompareAndPutAsync(Table, OidcIssuer.InstanceId, key,
-                JsonSerializer.SerializeToElement(current.Delivery, AllowanceEmailJson.Default.AllowanceEmailDelivery), current.Version, cancellationToken).ConfigureAwait(false))
-            {
-                return;
-            }
-        }
-        throw ApiException.Unavailable();
-    }
 }
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(AllowanceEmailRequest))]
 [JsonSerializable(typeof(AllowanceEmailResponse))]
-[JsonSerializable(typeof(AllowanceEmailDelivery))]
 internal sealed partial class AllowanceEmailJson : JsonSerializerContext;

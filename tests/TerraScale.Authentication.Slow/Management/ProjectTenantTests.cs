@@ -8,7 +8,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Management;
@@ -44,7 +44,7 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{root}/users/{owner.Id}", viewerToken)).IsEqualTo((404, "not_found"));
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/users/{endUser.Id}/disable", viewerToken)).IsEqualTo((403, "forbidden_role"));
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{root}/users", outsiderToken)).IsEqualTo((404, "not_found"));
-        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"/v1/{AuthStore.NewId()}/users", ownerToken)).IsEqualTo((404, "not_found"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"/v1/{AuthIds.New()}/users", ownerToken)).IsEqualTo((404, "not_found"));
 
         // Disabling ends the live session at once and refuses new ones; enabling lets the user sign in again.
         var disabled = await oidc.OkAsync(HttpMethod.Post, $"{root}/users/{endUser.Id}/disable", ownerToken);

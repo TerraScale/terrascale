@@ -1,70 +1,61 @@
-using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>
-/// Closes a platform user's auth account durably (docs/terrabase/project-closure.md): an account intent and a fence on every
-/// organization where it is the only member, committed first; then sole ownership read again under the fences; then each
-/// of those organizations' projects closed through TerraBase; then those organizations, the shared memberships and the user
-/// with everything keyed by it. A crash or restart resumes from the intent (<see cref="ClosureWorker"/>).
-/// </summary>
 public sealed class AccountDeletion(
     PlatformDirectory platform,
     Closures closures,
     Users users,
-    AuthStore store,
+    AuthData data,
+    StepUpProofs proofs,
     TimeProvider clock,
     IOpenIddictAuthorizationStore<OidcAuthorization> authorizations,
     IOpenIddictTokenStore<OidcToken> tokens,
     ILogger<AccountDeletion> logger)
 {
-    /// <summary>
-    /// Deletes <paramref name="user"/>'s account: true once deleted, false while project closures are pending (it finishes
-    /// in the background). A 409 (<c>last_owner</c>, <c>not_empty</c>, <c>closure_conflict</c>, <c>binding_conflict</c>) before
-    /// any removal ends the account intent: the account, its memberships and organizations stay, but project closures it
-    /// already started (which may hold a permanent TerraBase fence) are not rolled back; they finish on their own. Once
-    /// removals began, a 409 only pauses the closure until the cause is resolved; repeating the request resumes it.
-    /// </summary>
     public async Task<bool> DeleteAsync(UserRecord user, CancellationToken cancellationToken, string? receiptHash = null)
     {
         ArgumentNullException.ThrowIfNull(user);
+        using var home = HomeReads.Begin();
         var intent = await platform.CommitAsync(async () =>
         {
             var current = await platform.ClosureAsync("account", user.Id, cancellationToken).ConfigureAwait(false);
             var created = ClosureJob.New(PlatformDirectory.Instance, "account", user.Id, null, user.Id, clock);
             var closure = current?.Value ?? created.Job;
-            List<StoreOperation> operations = [.. StepUpProofs.Requirements(user)];
+            List<Change> operations = [.. await proofs.RequirementsAsync(user, cancellationToken).ConfigureAwait(false) ?? throw StepUpProofs.Required()];
             var candidates = new HashSet<string>(StringComparer.Ordinal);
             if (current is null)
             {
                 var (sole, _) = await platform.AccountScopeAsync(user.Id, cancellationToken).ConfigureAwait(false);
                 candidates.UnionWith(sole);
                 operations.Add(created.Create);
+                operations.Add(Change.Update(user));
                 foreach (var organizationId in sole)
                 {
                     operations.Add(await platform.OwnerAssertionAsync(user.Id, organizationId, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable());
                     operations.Add(ClosureJob.New(PlatformDirectory.Instance, "organization", organizationId, organizationId, user.Id, clock, user.Id).Create);
+                    operations.Add(await this.TouchAsync(organizationId, cancellationToken).ConfigureAwait(false));
                 }
             }
             else
             {
                 // Pin the exact creation and version while attaching, before a worker can remove it.
-                operations.Add(AuthStore.Replace(AuthStore.ClosureJobTable, user.InstanceId, ClosureJob.Key("account", user.Id),
-                    JsonSerializer.SerializeToElement(closure, ClosureJson.Default.ClosureJob), current.Version));
+                operations.Add(Change.Update(current, closure));
             }
 
             if (receiptHash is not null)
             {
-                var existing = await store.GetAsync(AuthStore.AccountDeletionReceiptTable, user.InstanceId, receiptHash, cancellationToken).ConfigureAwait(false);
+                var existing = await data.ReadAsync((db, token) => db.AccountDeletionReceipts
+                    .SingleOrDefaultAsync(row => row.InstanceId == user.InstanceId && row.TokenHash == receiptHash, token), cancellationToken).ConfigureAwait(false);
                 if (existing is not null)
                 {
-                    var receipt = existing.Body.Deserialize(DeletionJson.Default.AccountDeletionReceipt);
-                    if (receipt is null || receipt.SubjectId != user.Id || receipt.Generation != closure.Generation || receipt.ExpiresAt <= clock.GetUtcNow())
+                    var receipt = existing;
+                    if (receipt.SubjectId != user.Id || receipt.Generation != closure.Generation || receipt.ExpiresAt <= clock.GetUtcNow())
                     {
                         throw PlatformDirectory.Conflict("deletion_refused", "The receipt does not identify this account closure.");
                     }
@@ -80,8 +71,7 @@ public sealed class AccountDeletion(
                     }
 
                     var receipt = new AccountDeletionReceipt(user.InstanceId, receiptHash, user.Id, closure.Generation!, clock.GetUtcNow() + DeletionJob.CredentialBound, [.. candidates]);
-                    operations.Add(AuthStore.Create(AuthStore.AccountDeletionReceiptTable, user.InstanceId, receiptHash,
-                        JsonSerializer.SerializeToElement(receipt, DeletionJson.Default.AccountDeletionReceipt)));
+                    operations.Add(Change.Insert(receipt));
                 }
             }
 
@@ -98,7 +88,6 @@ public sealed class AccountDeletion(
         return await this.AdvanceAsync(job, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Reads only opaque status; neither token validity nor user absence is completion evidence.</summary>
     public async Task<bool> StatusAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
     {
         var receipt = await this.ReadReceiptAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false);
@@ -112,7 +101,7 @@ public sealed class AccountDeletion(
             }
 
             var key = DeletionJob.Key(PlatformDirectory.Instance, "organization", organizationId);
-            var proof = (await store.GetAsync(AuthStore.DeletionJobTable, PlatformDirectory.Instance, key, cancellationToken).ConfigureAwait(false))?.Body.Deserialize(DeletionJson.Default.DeletionJob);
+            var proof = await this.JobAsync(key, cancellationToken).ConfigureAwait(false);
             return proof is not null && proof.Id == key && proof.InstanceId == PlatformDirectory.Instance && proof.Scope == "organization" && proof.SubjectId == organizationId;
         }
 
@@ -124,7 +113,6 @@ public sealed class AccountDeletion(
         throw PlatformDirectory.Conflict("deletion_refused", "No completion proof exists for this closure generation.");
     }
 
-    /// <summary>Correlates an authorized logical deletion to its history request without advancing either worker.</summary>
     internal async Task<AccountDeletionHistory?> HistoryAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
     {
         if (!await this.StatusAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false))
@@ -136,8 +124,7 @@ public sealed class AccountDeletion(
         var scope = organizationId is null ? "account" : "organization";
         var subject = organizationId ?? receipt.SubjectId;
         var key = DeletionJob.Key(PlatformDirectory.Instance, scope, subject);
-        var rowData = await store.GetAsync(AuthStore.DeletionJobTable, PlatformDirectory.Instance, key, cancellationToken).ConfigureAwait(false);
-        var job = rowData?.Body.Deserialize(DeletionJson.Default.DeletionJob);
+        var job = await this.JobAsync(key, cancellationToken).ConfigureAwait(false);
         return job is not null && job.Id == key && job.InstanceId == PlatformDirectory.Instance && job.Scope == scope && job.SubjectId == subject
             && (organizationId is not null || job.ClosureGeneration == receipt.Generation) && job.ErasureId is { } erasure && PlatformDirectory.IsId(erasure)
             ? new AccountDeletionHistory(erasure, job.RequestedAt, job.AuthLogicalVerifiedAt, job.HistoryStatus, job.HistoryCompletedAt)
@@ -146,8 +133,8 @@ public sealed class AccountDeletion(
 
     private async Task<AccountDeletionReceipt> ReadReceiptAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
     {
-        var rowData = await store.GetAsync(AuthStore.AccountDeletionReceiptTable, PlatformDirectory.Instance, receiptHash, cancellationToken).ConfigureAwait(false);
-        var receipt = rowData?.Body.Deserialize(DeletionJson.Default.AccountDeletionReceipt);
+        var receipt = await data.ReadAsync((db, token) => db.AccountDeletionReceipts
+            .SingleOrDefaultAsync(row => row.InstanceId == PlatformDirectory.Instance && row.TokenHash == receiptHash, token), cancellationToken).ConfigureAwait(false);
         return receipt is not null && receipt.InstanceId == PlatformDirectory.Instance && receipt.TokenHash == receiptHash && receipt.ExpiresAt > clock.GetUtcNow()
             && (organizationId is null || receipt.OrganizationIds.Contains(organizationId, StringComparer.Ordinal))
             ? receipt : throw PlatformDirectory.NotFound();
@@ -156,29 +143,24 @@ public sealed class AccountDeletion(
     private async Task<bool> CompletedAsync(string userId, string generation, CancellationToken cancellationToken)
     {
         var key = DeletionJob.Key(PlatformDirectory.Instance, "account", userId);
-        var rowData = await store.GetAsync(AuthStore.DeletionJobTable, PlatformDirectory.Instance, key, cancellationToken).ConfigureAwait(false);
-        return rowData?.Body.Deserialize(DeletionJson.Default.DeletionJob) is { } proof
+        return await this.JobAsync(key, cancellationToken).ConfigureAwait(false) is { } proof
             && proof.Id == key && proof.InstanceId == PlatformDirectory.Instance && proof.Scope == "account" && proof.SubjectId == userId && proof.ClosureGeneration == generation;
     }
 
-    /// <summary>
-    /// One resumable step of an account closure: true when the account is gone, false while pending. Before it removes
-    /// anything, a refusal ends the intent (see <see cref="CancelAsync"/>). Once it began removing organizations,
-    /// memberships or the user (<see cref="ClosureJob.CommittedAt"/>), it never cancels: a late refusal pauses it and throws.
-    /// </summary>
     internal async Task<bool> AdvanceAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(job);
+        using var home = HomeReads.Begin();
         var userId = job.Value.SubjectId;
         if (await users.GetAsync(PlatformDirectory.Instance, userId, cancellationToken).ConfigureAwait(false) is not { } user)
         {
             // Deleted after its last step; only the intent was left.
-            await store.CompareAndDeleteAsync(AuthStore.ClosureJobTable, job.Value.InstanceId, ClosureJob.Key("account", userId), job.Version, cancellationToken).ConfigureAwait(false);
+            await data.SaveAsync(Change.Delete(job), cancellationToken).ConfigureAwait(false);
             return await this.CompletedAsync(userId, job.Value.Generation!, cancellationToken).ConfigureAwait(false)
                 ? true : throw PlatformDirectory.Conflict("deletion_refused", "No completion proof exists for this closure generation.");
         }
 
-        if (job.Value.CommittedAt is null && await store.IsClosureCancellingAsync(job.Value, cancellationToken).ConfigureAwait(false))
+        if (job.Value.CommittedAt is null && await platform.IsClosureCancellingAsync(job.Value, cancellationToken).ConfigureAwait(false))
         {
             // A pass that read before another region began cancelling must never begin removals. The barrier resumes
             // through the same handoff; a committed receipt means cancellation lost and the committed driver may continue.
@@ -215,8 +197,9 @@ public sealed class AccountDeletion(
                 await platform.CommitAsync(async () => new PlatformDirectory.Plan<bool>(
                 [
                     await platform.OwnerAssertionAsync(userId, organizationId, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable(),
-                    AuthStore.Require(AuthStore.ClosureJobTable, PlatformDirectory.Instance, ClosureJob.Key("account", userId), PlatformDirectory.Filter("exists", "/id")),
+                    Change.Assert(await platform.ClosureAsync("account", userId, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable()),
                     ClosureJob.New(PlatformDirectory.Instance, "organization", organizationId, organizationId, userId, clock, userId).Create,
+                    await this.TouchAsync(organizationId, cancellationToken).ConfigureAwait(false),
                 ], true), cancellationToken).ConfigureAwait(false);
             }
         }
@@ -224,7 +207,7 @@ public sealed class AccountDeletion(
         var pending = false;
         foreach (var organizationId in sole)
         {
-            await foreach (var projectId in platform.ProjectIdsAsync(organizationId, cancellationToken).ConfigureAwait(false))
+            foreach (var projectId in await platform.ProjectIdsAsync(organizationId, cancellationToken).ConfigureAwait(false))
             {
                 try
                 {
@@ -254,7 +237,7 @@ public sealed class AccountDeletion(
         for (var attempt = 0; job.Value.CommittedAt is null; attempt++)
         {
             var committed = job.Value with { CommittedAt = clock.GetUtcNow() };
-            if (await store.CommitAccountClosureAsync(committed, job.Version, cancellationToken).ConfigureAwait(false) is { } version)
+            if (await platform.CommitAccountClosureAsync(job, committed, cancellationToken).ConfigureAwait(false) is { } version)
             {
                 job = new(committed, version);
                 break;
@@ -269,7 +252,7 @@ public sealed class AccountDeletion(
             }
 
             job = reread;
-            if (job.Value.CommittedAt is null && await store.IsClosureCancellingAsync(job.Value, cancellationToken).ConfigureAwait(false))
+            if (job.Value.CommittedAt is null && await platform.IsClosureCancellingAsync(job.Value, cancellationToken).ConfigureAwait(false))
             {
                 await this.CancelAsync(job, "refused", cancellationToken).ConfigureAwait(false);
                 return false;
@@ -318,7 +301,7 @@ public sealed class AccountDeletion(
 
         await users.DeleteAsync(user.InstanceId, user.Id, job.Value.Generation, cancellationToken).ConfigureAwait(false);
         await this.CleanUpAsync(user, cancellationToken).ConfigureAwait(false);
-        await store.CompareAndDeleteAsync(AuthStore.ClosureJobTable, job.Value.InstanceId, ClosureJob.Key("account", userId), job.Version, cancellationToken).ConfigureAwait(false);
+        await data.SaveAsync(Change.Delete(job), cancellationToken).ConfigureAwait(false);
         return await this.CompletedAsync(userId, job.Value.Generation!, cancellationToken).ConfigureAwait(false)
             ? true : throw PlatformDirectory.Conflict("deletion_refused", "No completion proof exists for this closure generation.");
     }
@@ -385,10 +368,11 @@ public sealed class AccountDeletion(
     // The account's intents of one scope, each read again at its own address.
     private async IAsyncEnumerable<Versioned<ClosureJob>> IntentsAsync(string userId, string scope, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        await foreach (var rowData in store.QueryAsync(AuthStore.ClosureJobTable, PlatformDirectory.Instance, "/accountId", userId, cancellationToken).ConfigureAwait(false))
+        var intents = await data.ReadAsync((db, token) => db.ClosureJobs
+            .Where(job => job.InstanceId == PlatformDirectory.Instance && job.AccountId == userId && job.Scope == scope).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        foreach (var intent in intents)
         {
-            if (rowData.Body.Deserialize(ClosureJson.Default.ClosureJob) is { } intent && intent.Scope == scope && intent.AccountId == userId
-                && await platform.ClosureAsync(scope, intent.SubjectId, cancellationToken).ConfigureAwait(false) is { } current && current.Value.Same(intent)
+            if (await platform.ClosureAsync(scope, intent.SubjectId, cancellationToken).ConfigureAwait(false) is { } current && current.Value.Same(intent)
                 && current.Value.AccountId == userId)
             {
                 yield return current;
@@ -396,28 +380,18 @@ public sealed class AccountDeletion(
         }
     }
 
+    private async Task<Change> TouchAsync(string organizationId, CancellationToken cancellationToken) =>
+        await platform.OrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) is { } organization
+            ? Change.Update(organization, organization.Value)
+            : throw ApiException.Unavailable();
+
+    private Task<DeletionJob?> JobAsync(string key, CancellationToken cancellationToken) =>
+        data.ReadAsync((db, token) => db.DeletionJobs.SingleOrDefaultAsync(job => job.Id == key, token), cancellationToken);
+
     private async Task CleanUpAsync(UserRecord user, CancellationToken cancellationToken)
     {
-        // Every session, passcode, MFA and token check reads the user first, so what a failure leaves behind grants nothing.
         try
         {
-            await foreach (var rowData in store.QueryAsync(AuthStore.SessionTable, user.InstanceId, "/userId", user.Id, cancellationToken).ConfigureAwait(false))
-            {
-                if (rowData.Body.Deserialize(IdentityJson.Default.SessionRecord) is { } session && session.UserId == user.Id)
-                {
-                    await store.CompareAndDeleteAsync(AuthStore.SessionTable, user.InstanceId, session.TokenHash, rowData.Version, cancellationToken).ConfigureAwait(false);
-                }
-            }
-
-            foreach (var (table, key) in new[] { (AuthStore.PasscodeTable, user.Id), (AuthStore.MfaTable, user.Id) })
-            {
-                if (await store.GetAsync(table, user.InstanceId, key, cancellationToken).ConfigureAwait(false) is { } rowData)
-                {
-                    await store.CompareAndDeleteAsync(table, user.InstanceId, key, rowData.Version, cancellationToken).ConfigureAwait(false);
-                }
-            }
-
-            // Refresh tokens, device codes and sign-in entries, then the sign-ins (authorizations) they belong to.
             await foreach (var token in tokens.FindBySubjectAsync(user.Id, cancellationToken).ConfigureAwait(false))
             {
                 await IgnoreRaceAsync(tokens.DeleteAsync(token, cancellationToken)).ConfigureAwait(false);

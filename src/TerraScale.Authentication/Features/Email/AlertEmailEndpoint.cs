@@ -9,34 +9,18 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Hosting;
-using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Email;
 
-/// <summary>A dashboard alert rule transition, without a caller-selected recipient.</summary>
-/// <param name="OrganizationId">Organization whose current owners receive the message.</param>
-/// <param name="ProjectId">Project of that organization the rule watches.</param>
-/// <param name="AlertId">The alert rule's ULID.</param>
-/// <param name="State">firing or resolved.</param>
-/// <param name="RuleName">Rule name, at most 100 characters.</param>
-/// <param name="Metric">p95_latency_ms, error_rate_percent, storage_gb or operation_units_percent.</param>
-/// <param name="DatabaseName">The watched database, or null for the whole project.</param>
-/// <param name="Threshold">The rule's threshold.</param>
-/// <param name="Value">The observed value.</param>
 public sealed record EmailAlertRequest(string? OrganizationId, string? ProjectId, string? AlertId, string? State, string? RuleName, string? Metric,
     string? DatabaseName, double? Threshold, double? Value);
 
-internal sealed record AlertEmailDelivery(string InstanceId, string OrganizationId, string AlertId, string State, Dictionary<string, string> Recipients);
-
-/// <summary>Delivers an alert transition through the dashboard's existing ClientBasic email authority, as allowance messages are.</summary>
-public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirectory directory, Users users, IEmailSender sender, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed partial class AlertEmailEndpoint(PlatformDirectory directory, OwnerDeliveries deliveries, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    private const string Table = "email_alert_deliveries";
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/{slug}/email/alert");
@@ -51,7 +35,6 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
@@ -75,67 +58,8 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
             throw PlatformDirectory.NotFound();
         }
 
-        var key = $"{organization}/{request.AlertId}/{request.State}";
-        if (await store.GetAsync(Table, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false) is null)
-        {
-            var recipients = new Dictionary<string, string>(StringComparer.Ordinal);
-            await foreach (var rowData in store.QueryAsync(AuthStore.MembershipTable, OidcIssuer.InstanceId,
-                [("/organizationId", organization), ("/role", Roles.Owner)], cancellationToken).ConfigureAwait(false))
-            {
-                if (AllowanceEmailEndpoint.ReadMember(rowData, organization) is { Role: Roles.Owner } member)
-                {
-                    recipients[member.UserId] = "pending";
-                }
-                if (recipients.Count > 100)
-                {
-                    throw ApiException.Unavailable();
-                }
-            }
-            try
-            {
-                _ = await store.CreateAsync(Table, OidcIssuer.InstanceId, key, Serialize(new(OidcIssuer.InstanceId, organization, request.AlertId!, request.State, recipients)),
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (StorePreconditionFailedException) { }
-        }
-
-        var message = Message(request, name, project.Name, threshold, value);
-        var current = await ReadAsync(key, request, cancellationToken).ConfigureAwait(false);
-        foreach (var recipient in current.Delivery.Recipients.Keys)
-        {
-            for (var attempt = 0; attempt < 8; attempt++)
-            {
-                current = await ReadAsync(key, request, cancellationToken).ConfigureAwait(false);
-                if (current.Delivery.Recipients[recipient] != "pending")
-                {
-                    break;
-                }
-                current.Delivery.Recipients[recipient] = "sending";
-                if (await store.ReplaceAsync(Table, OidcIssuer.InstanceId, key, Serialize(current.Delivery), current.Version, cancellationToken).ConfigureAwait(false) is null)
-                {
-                    continue;
-                }
-
-                // A fresh membership read prevents sending to someone removed since the delivery was reserved.
-                var membership = await store.GetAsync(AuthStore.MembershipTable, OidcIssuer.InstanceId, $"{organization}/{recipient}", cancellationToken).ConfigureAwait(false);
-                var user = await users.GetAsync(OidcIssuer.InstanceId, recipient, cancellationToken).ConfigureAwait(false);
-                var outcome = membership is not null && AllowanceEmailEndpoint.ReadMember(membership, organization).Role == Roles.Owner && user is not null
-                    ? await sender.DeliverAsync(user.Email, message, cancellationToken).ConfigureAwait(false)
-                    : EmailDeliveryOutcome.Rejected;
-                await CompleteAsync(key, request, recipient, outcome switch
-                {
-                    EmailDeliveryOutcome.Accepted => "accepted",
-                    EmailDeliveryOutcome.Retryable => "pending",
-                    EmailDeliveryOutcome.Rejected => "rejected",
-                    _ => "unknown",
-                }, cancellationToken).ConfigureAwait(false);
-                break;
-            }
-        }
-
-        var states = (await ReadAsync(key, request, cancellationToken).ConfigureAwait(false)).Delivery.Recipients.Values;
-        var result = states.Count == 0 ? "no_recipients" : states.Any(state => state is "unknown" or "sending") ? "unknown"
-            : states.Contains("pending") ? "retryable" : states.Contains("rejected") ? "rejected" : "accepted";
+        var result = await deliveries.SendAsync("alert", $"{organization}/{request.AlertId}/{request.State}", organization, Message(request, name, project.Name, threshold, value),
+            cancellationToken).ConfigureAwait(false);
         return TypedResults.Json(new AllowanceEmailResponse(result), AlertEmailJson.Default.AllowanceEmailResponse);
     }
 
@@ -155,35 +79,6 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
         return new($"[TerraScale] Alert {(firing ? "firing" : "resolved")}: {name}", text) { FromName = "TerraScale", Purpose = EmailPurpose.Alert, Tenant = request.OrganizationId! };
     }
 
-    private static JsonElement Serialize(AlertEmailDelivery delivery) => JsonSerializer.SerializeToElement(delivery, AlertEmailJson.Default.AlertEmailDelivery);
-
-    private async Task<(AlertEmailDelivery Delivery, string Version)> ReadAsync(string key, EmailAlertRequest request, CancellationToken cancellationToken)
-    {
-        var rowData = await store.GetAsync(Table, OidcIssuer.InstanceId, key, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable();
-        var delivery = rowData.Body.Deserialize(AlertEmailJson.Default.AlertEmailDelivery);
-        if (rowData.Id != AuthStore.NaturalKeyId(OidcIssuer.InstanceId, Table, key) || delivery is null ||
-            delivery.InstanceId != OidcIssuer.InstanceId || delivery.OrganizationId != request.OrganizationId || delivery.AlertId != request.AlertId ||
-            delivery.State != request.State || delivery.Recipients is null)
-        {
-            throw ApiException.Unavailable();
-        }
-        return (delivery, rowData.Version);
-    }
-
-    private async Task CompleteAsync(string key, EmailAlertRequest request, string recipient, string status, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; attempt < 8; attempt++)
-        {
-            var current = await ReadAsync(key, request, cancellationToken).ConfigureAwait(false);
-            current.Delivery.Recipients[recipient] = status;
-            if (await store.CompareAndPutAsync(Table, OidcIssuer.InstanceId, key, Serialize(current.Delivery), current.Version, cancellationToken).ConfigureAwait(false))
-            {
-                return;
-            }
-        }
-        throw ApiException.Unavailable();
-    }
-
     // TerraBase database names.
     [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z", RegexOptions.CultureInvariant)]
     private static partial Regex DatabaseName();
@@ -192,5 +87,4 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(EmailAlertRequest))]
 [JsonSerializable(typeof(AllowanceEmailResponse))]
-[JsonSerializable(typeof(AlertEmailDelivery))]
 internal sealed partial class AlertEmailJson : JsonSerializerContext;

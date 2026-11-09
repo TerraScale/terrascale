@@ -3,7 +3,8 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Store;
+using Microsoft.EntityFrameworkCore;
+using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
@@ -98,11 +99,14 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         ArgumentNullException.ThrowIfNull(settings);
         var services = this.HttpContext.RequestServices;
         var options = services.GetRequiredService<AuthOptions>();
-        var store = services.GetRequiredService<AuthStore>();
+        var data = services.GetRequiredService<AuthData>();
+        var counts = await data.ReadAsync(async (db, token) => new CountsBody(
+            await db.Users.LongCountAsync(user => user.InstanceId == projectId, token).ConfigureAwait(false),
+            await db.OidcApplications.LongCountAsync(application => application.InstanceId == projectId, token).ConfigureAwait(false)), cancellationToken);
         var issuer = OidcIssuer.Issuer(options, projectId).AbsoluteUri;
         return new(projectId, issuer, issuer + "/.well-known/openid-configuration", new Uri(options.PublicOrigin, $"ui/{projectId}/sign-in").AbsoluteUri,
             new(settings.Passcode, settings.Password, settings.SignUp), new(settings.Name, settings.LogoUrl, settings.ThemeColor, settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.EmailMessage),
-            new(await store.CountAsync(AuthStore.UserTable, projectId, cancellationToken), await store.CountAsync(AuthStore.OidcApplicationTable, projectId, cancellationToken)),
+            counts,
             [.. SocialProviders.Names.Select(name => settings.Provider(name) is { } record
                 ? new ProviderBody(name, true, record.ClientId, record.Issuer, record.TeamId, record.KeyId, SocialProviders.Callback(options, projectId, name).AbsoluteUri)
                 : new ProviderBody(name, false, null, null, null, null, SocialProviders.Callback(options, projectId, name).AbsoluteUri))], settings.Configuration ?? ConfigurationBody.Default);

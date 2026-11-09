@@ -9,7 +9,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -120,12 +120,8 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
     private static async Task<string> SeededGoogleProjectAsync(OidcHarness oidc, FakeSocialProviders providers)
     {
         var services = oidc.Server.App.Services;
-        var store = services.GetRequiredService<AuthStore>();
-        var clock = services.GetRequiredService<TimeProvider>();
         var options = services.GetRequiredService<AuthOptions>();
-        var project = new ProjectRecord(AuthStore.NewId(), OidcIssuer.InstanceId, AuthStore.NewId(), "Social", AuthStore.NewId(), clock.GetUtcNow());
-        await store.CreateAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, project.Id,
-            JsonSerializer.SerializeToElement(project, PlatformJson.Default.ProjectRecord), CancellationToken.None);
+        var project = await services.GetRequiredService<AuthData>().SeedProjectAsync(AuthIds.New(), "Social");
         var sealedProvider = SocialProviders.Seal(options, project.Id, SocialProviders.Google, null, "project-client", providers.ClientSecret, null, null, null);
         _ = await services.GetRequiredService<ProjectAuthSettings>().UpdateAsync(project.Id, current =>
             current with { Providers = [.. (current.Providers ?? []).Where(other => other.Provider != SocialProviders.Google), sealedProvider] });

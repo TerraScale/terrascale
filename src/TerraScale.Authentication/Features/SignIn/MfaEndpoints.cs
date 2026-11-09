@@ -9,7 +9,7 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Endpoints;
 using ZLogger;
 
@@ -186,7 +186,7 @@ public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, Au
             { Account = live.User.Email }, StatusCodes.Status401Unauthorized);
         }
 
-        if (await mfa.BeginAsync(live.User, SecurityFlow.Fresh(this.HttpContext, live.Session), cancellationToken) is not { } enrollment)
+        if (await mfa.BeginAsync(live.User, SecurityFlow.Fresh(this.HttpContext, live.Session, live.Version), cancellationToken) is not { } enrollment)
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("Already set up", "Two-factor authentication is already on, or your account changed. Reload and try again."),
                 StatusCodes.Status409Conflict, cancellationToken);
@@ -348,7 +348,7 @@ public sealed class RecoveryRegenerateEndpoint(Sessions sessions, TotpCredential
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
         if (await mfa.RegenerateAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(),
-                SecurityFlow.Fresh(this.HttpContext, live.Session), cancellationToken) is not { } issued)
+                SecurityFlow.Fresh(this.HttpContext, live.Session, live.Version), cancellationToken) is not { } issued)
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."),
                 StatusCodes.Status401Unauthorized, cancellationToken);
@@ -382,10 +382,10 @@ internal static class SecurityFlow
     /// still stored, unrevoked and at its authentication state, and was unexpired at the time this request sampled. A
     /// commit the store acknowledges is kept even if it lands after a deadline; the pending secret expires by the earlier one.
     /// </summary>
-    public static MfaAuthorization Fresh(HttpContext context, SessionRecord session)
+    public static MfaAuthorization Fresh(HttpContext context, SessionRecord session, string version)
     {
         var fresh = session.CreatedAt + ReauthenticationWindow;
-        return new(Sessions.Live(session, context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()), fresh < session.ExpiresAt ? fresh : session.ExpiresAt);
+        return new(Sessions.Live(session, version, context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()), fresh < session.ExpiresAt ? fresh : session.ExpiresAt);
     }
 
     /// <summary>
@@ -394,7 +394,7 @@ internal static class SecurityFlow
     /// submission. The endpoint then opens the replacement from the committed user state.
     /// </summary>
     public static MfaAuthorization Consumed(SessionRecord session, string version) =>
-        new(AuthStore.Delete(AuthStore.SessionTable, session.InstanceId, session.TokenHash, version), session.ExpiresAt);
+        new(Change.Delete(session, version), session.ExpiresAt);
 
     /// <summary>The answer to a factor change that did not commit: sign in again once the caller's session is gone.</summary>
     public static async Task<IResult> RefusedAsync(HttpContext context, Sessions sessions, TotpCredentials mfa, UserRecord user, (string Title, string Message) error, int statusCode,

@@ -72,3 +72,6 @@ dotnet_diagnostic.IDE0350.severity = silent
 
 # Soft limit for editors; long string literals may exceed it.
 max_line_length = 140
+
+[src/TerraScale.Authentication/Storage/Migrations/*.cs]
+generated_code = true

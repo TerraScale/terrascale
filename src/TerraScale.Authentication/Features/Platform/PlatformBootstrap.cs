@@ -1,32 +1,22 @@
-using System.Text.Json;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>Seeds TerraScale identity in ts-auth's own database, independently of TerraBase startup.</summary>
-public sealed class PlatformBootstrap(AuthStore store, Users users, PlatformDirectory directory, TimeProvider clock, string ownerEmail = PlatformBootstrap.OwnerEmail)
+public sealed class PlatformBootstrap(AuthData data, Users users, PlatformDirectory directory, TimeProvider clock, string ownerEmail = PlatformBootstrap.OwnerEmail)
 {
-    /// <summary>The initial owner; email-code sign-in must still prove control of the mailbox.</summary>
     public const string OwnerEmail = "mariogk@terrascale.tech";
 
-    /// <summary>The organization ID agreed with TerraBase's platform seed.</summary>
     public const string OrganizationId = "00000000000000000000000001";
 
-    /// <summary>The project owning only the pre-created ts-auth database.</summary>
     public const string AuthProjectId = App.StorageProject;
 
-    /// <summary>The project owning only the pre-created ts-dashboard database.</summary>
     public const string DashboardProjectId = "00000000000000000000000005";
 
-    /// <summary>
-    /// Creates the passwordless owner, then the organization, both projects, grants, name claims and audit in one
-    /// create-only transaction. Concurrent starts read the winner; restarts never reset accounts or restore revoked roles.
-    /// A conflicting fixed ID or incomplete topology fails closed without overwriting it.
-    /// </summary>
     public async Task EnsureAsync(CancellationToken cancellationToken)
     {
+        using var home = HomeReads.Begin();
         var instance = PlatformDirectory.Instance;
         var owner = await users.FindByEmailAsync(instance, ownerEmail, cancellationToken).ConfigureAwait(false)
             ?? await users.CreateAsync(instance, ownerEmail, cancellationToken).ConfigureAwait(false)
@@ -53,22 +43,17 @@ public sealed class PlatformBootstrap(AuthStore store, Users users, PlatformDire
             var now = clock.GetUtcNow();
             var organization = new OrganizationRecord(OrganizationId, instance, "TerraScale", owner.Id, now, Owners: 1, Projects: 2);
             var member = new MembershipRecord(instance, OrganizationId, owner.Id, Roles.Owner, now);
-            var operations = new List<StoreOperation>
-            {
-                AuthStore.Create(AuthStore.OrganizationTable, instance, OrganizationId, JsonSerializer.SerializeToElement(organization, PlatformJson.Default.OrganizationRecord)),
-                AuthStore.Create(AuthStore.MembershipTable, instance, $"{OrganizationId}/{owner.Id}", JsonSerializer.SerializeToElement(member, PlatformJson.Default.MembershipRecord)),
-            };
+            var operations = new List<Change> { Change.Insert(organization), Change.Insert(member) };
             foreach (var (id, name) in new[] { (AuthProjectId, App.StorageDatabase), (DashboardProjectId, "ts-dashboard") })
             {
                 var project = new ProjectRecord(id, instance, OrganizationId, name, owner.Id, now);
                 var grant = new ProjectMemberRecord(instance, OrganizationId, id, owner.Id, Roles.Admin, now);
-                operations.Add(AuthStore.Claim(instance, "project-name", $"{OrganizationId}/{name.ToUpperInvariant()}", id));
-                operations.Add(AuthStore.Create(AuthStore.ProjectTable, instance, id, JsonSerializer.SerializeToElement(project, PlatformJson.Default.ProjectRecord)));
-                operations.Add(AuthStore.Create(AuthStore.ProjectMemberTable, instance, $"{id}/{owner.Id}", JsonSerializer.SerializeToElement(grant, PlatformJson.Default.ProjectMemberRecord)));
+                operations.Add(Change.Insert(project));
+                operations.Add(Change.Insert(grant));
             }
 
             operations.Add(directory.Audit(OrganizationId, owner.Id, "platform.bootstrapped"));
-            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
+            if (await data.SaveAsync(operations, cancellationToken).ConfigureAwait(false))
             {
                 return;
             }

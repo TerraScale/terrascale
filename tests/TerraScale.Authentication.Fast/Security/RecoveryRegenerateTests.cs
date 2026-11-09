@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using OtpNet;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Security;

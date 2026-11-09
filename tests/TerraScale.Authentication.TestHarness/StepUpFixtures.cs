@@ -5,7 +5,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Tests;
 
@@ -28,30 +28,12 @@ public static class StepUpFixtures
             return null;
         }
 
-        var store = services.GetRequiredService<AuthStore>();
-        var id = AuthStore.NewId();
+        var id = AuthIds.New();
         var proof = id + "." + Tokens.RandomToken(43);
-        var record = new
-        {
-            instanceId = user.InstanceId,
-            id,
-            userId = user.Id,
-            authEpoch = user.AuthEpoch,
-            authStamp = user.AuthStamp,
-            tokenHash = Tokens.Sha256Hex(proof),
-            purpose,
-            audience,
-            returnUri = "https://dash.example.test/auth/step-up/callback",
-            expiresAt = services.GetRequiredService<TimeProvider>().GetUtcNow().AddMinutes(5),
-            primaryVerified = true,
-            approved = true,
-            consumed = false,
-            mailRequested = false,
-            bindings = bindings ?? user.AuthenticationBindings,
-            organizationId,
-        };
-        await store.CreateAsync(AuthStore.StepUpProofTable, user.InstanceId, id,
-            JsonSerializer.SerializeToElement(record, Metadata));
+        var record = new StepUpRecord(user.InstanceId, id, user.Id, user.AuthEpoch, user.AuthStamp, Tokens.Sha256Hex(proof), purpose, audience,
+            "https://dash.example.test/auth/step-up/callback", services.GetRequiredService<TimeProvider>().GetUtcNow().AddMinutes(5),
+            PrimaryVerified: true, Approved: true, Bindings: bindings ?? user.AuthenticationBindings, OrganizationId: organizationId);
+        await services.GetRequiredService<AuthData>().SaveAsync(Change.Insert(record), CancellationToken.None);
         return proof;
     }
 

@@ -2,8 +2,8 @@ using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Bogus;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Webhooks;
@@ -32,20 +32,15 @@ public sealed partial class WebhookOutboxTests(TerraBaseFixture fixture)
         using var verified = await oidc.PostFormAsync($"/ui/{project}/sign-up/verify", new() { ["email"] = email, ["code"] = code, ["pending_token"] = pending, ["next"] = string.Empty });
         await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
-        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
-        List<JsonElement> events = [];
-        await foreach (var row in store.QueryAsync(AuthStore.WebhookOutboxTable, project, "/instanceId", project))
-        {
-            events.Add(row.Body);
-        }
+        var events = await oidc.Database.ReadAsync(db => db.WebhookOutbox.Where(row => row.InstanceId == project).ToListAsync());
 
         await Assert.That(events).HasSingleItem();
         var delivered = events[0];
-        await Assert.That(delivered.GetProperty("eventType").GetString()).IsEqualTo("user.signed_up");
-        await Assert.That(delivered.GetProperty("status").GetString()).IsEqualTo("pending");
-        await Assert.That(delivered.GetProperty("attempts").GetInt32()).IsEqualTo(0);
-        await Assert.That(delivered.GetProperty("payload").GetProperty("email").GetString()).IsEqualTo(email);
-        await Assert.That(delivered.GetProperty("nextAttemptAt").GetDateTimeOffset()).IsGreaterThan(DateTimeOffset.UtcNow.AddMinutes(-5));
+        await Assert.That(delivered.EventType).IsEqualTo("user.signed_up");
+        await Assert.That(delivered.Status).IsEqualTo("pending");
+        await Assert.That(delivered.Attempts).IsEqualTo(0);
+        await Assert.That(delivered.Email).IsEqualTo(email);
+        await Assert.That(delivered.NextAttemptAt).IsGreaterThan(DateTimeOffset.UtcNow.AddMinutes(-5));
     }
 
     [GeneratedRegex("name=\"pending_token\" value=\"([^\"]+)\"")]

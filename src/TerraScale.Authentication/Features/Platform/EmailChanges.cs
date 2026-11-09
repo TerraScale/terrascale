@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -10,21 +10,17 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>The requested sign-in address.</summary>
 public sealed record EmailChangeRequest([property: JsonPropertyName("new_email")] string NewEmail);
 
-/// <summary>The code the new address received.</summary>
 public sealed record ConfirmEmailChangeRequest([property: JsonPropertyName("code")] string Code)
 {
-    /// <inheritdoc />
     public override string ToString() => nameof(ConfirmEmailChangeRequest);
 }
 
-/// <summary>A pending change: the new address and when its code stops working.</summary>
 public sealed record EmailChangeBody(
     [property: JsonPropertyName("new_email")] string NewEmail,
     [property: JsonPropertyName("expires_at")] DateTimeOffset ExpiresAt);
@@ -32,28 +28,18 @@ public sealed record EmailChangeBody(
 internal sealed record EmailChangeRecord(string InstanceId, string UserId, long AuthEpoch, string? AuthStamp, string NewEmail,
     string CodeHash, string CancelHash, DateTimeOffset ExpiresAt, int FailedAttempts, IReadOnlyList<CredentialBinding> Bindings);
 
-/// <summary>
-/// Sign-in email changes. A fresh <c>change_email</c> step-up proof starts one pending change per account: a single-use
-/// code goes to the new address and a cancel link to the current one. Confirming the code at the same authentication
-/// state swaps the unique email reservation and advances the epoch in one transaction, ending every session and token.
-/// </summary>
-public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions, AttemptLimiter limiter, SignInMail mail, AuthOptions options, TimeProvider clock)
+public sealed class EmailChanges(AuthData data, Credentials credentials, Users users, Sessions sessions, AttemptLimiter limiter, SignInMail mail, AuthOptions options, TimeProvider clock)
 {
-    /// <summary>How long a change's code and cancel link work.</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
 
-    /// <summary>Wrong codes a pending change survives.</summary>
     public const int MaxAttempts = 5;
 
-    /// <summary>Change requests per account, and per target address, per hour.</summary>
     public const int MaxRequests = 3;
 
-    /// <summary>Change requests across the platform per hour, bounding the mail they send.</summary>
     public const int MaxGlobalRequests = 100;
 
     private readonly byte[] digestKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth email change digests"u8.ToArray());
 
-    /// <summary>Starts a change after consuming the request's <c>change_email</c> proof; replaces any pending change.</summary>
     public async Task<EmailChangeBody> RequestAsync(UserRecord caller, HttpRequest request, string newEmail, StepUpProofs proofs, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
@@ -82,11 +68,9 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
         var cancel = Tokens.RandomToken(43);
         var record = new EmailChangeRecord(caller.InstanceId, caller.Id, caller.AuthEpoch, caller.AuthStamp, normalized,
             this.Digest(caller, normalized, code), Tokens.Sha256Hex(cancel), clock.GetUtcNow() + Lifetime, 0, verified.StepUpBindings);
-        var json = JsonSerializer.SerializeToElement(record, EmailChangeJson.Default.EmailChangeRecord);
-        var existing = await store.GetAsync(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false);
-        if (await store.TransactAsync([.. StepUpProofs.Requirements(verified), existing is null
-            ? AuthStore.Create(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, json)
-            : AuthStore.Replace(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, json, existing.Version)], cancellationToken).ConfigureAwait(false) is not null)
+        var existing = await this.ReadStoredAsync(caller.Id, cancellationToken).ConfigureAwait(false);
+        if (await proofs.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements
+            || !await data.SaveAsync([.. requirements, existing is null ? Change.Insert(record) : Change.Update(existing, record)], cancellationToken).ConfigureAwait(false))
         {
             throw ApiException.Unavailable();
         }
@@ -108,7 +92,6 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
         return new EmailChangeBody(normalized, record.ExpiresAt);
     }
 
-    /// <summary>Commits the caller's pending change with its code; every refusal looks alike except a taken address.</summary>
     public async Task ConfirmAsync(UserRecord caller, string code, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
@@ -124,8 +107,7 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
             var record = current.Record;
             if (!Passcodes.WellFormed(code) || !Tokens.FixedTimeEquals(record.CodeHash, this.Digest(caller, record.NewEmail, code.Trim())))
             {
-                var charged = JsonSerializer.SerializeToElement(record with { FailedAttempts = record.FailedAttempts + 1 }, EmailChangeJson.Default.EmailChangeRecord);
-                if (await store.CompareAndPutAsync(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, charged, current.Version, cancellationToken).ConfigureAwait(false))
+                if (await data.SaveAsync(Change.Update(record with { FailedAttempts = record.FailedAttempts + 1 }, current.Version), cancellationToken).ConfigureAwait(false))
                 {
                     throw Denied();
                 }
@@ -133,16 +115,17 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
                 continue;
             }
 
-            if (record.Bindings.Count == 0 || !await store.AreCredentialsCurrentAsync(caller.InstanceId, record.Bindings, cancellationToken).ConfigureAwait(false))
+            var lineage = record.Bindings.Where(binding => binding != Credentials.UserState(caller.Id, record.AuthStamp ?? string.Empty)).ToArray();
+            if (record.Bindings.Count == 0 || !await credentials.AreCurrentAsync(caller.InstanceId, record.Bindings, cancellationToken).ConfigureAwait(false)
+                || await credentials.RequireAsync(caller.InstanceId, lineage, cancellationToken).ConfigureAwait(false) is not { } requirements)
             {
                 throw Denied();
             }
 
             // Consuming the row, reserving the address and advancing the epoch commit together; a replay finds no row.
             // The user write itself is versioned, so its own state binding is not asserted separately.
-            var lineage = record.Bindings.Where(binding => binding != AuthStore.UserStateBinding(caller.Id, record.AuthStamp ?? string.Empty)).ToArray();
             var changed = await users.ChangeEmailAsync(caller.InstanceId, caller.Id, record.AuthEpoch, record.AuthStamp, record.NewEmail,
-                [AuthStore.Delete(AuthStore.EmailChangeTable, caller.InstanceId, caller.Id, current.Version), .. AuthStore.CredentialRequirements(caller.InstanceId, lineage)],
+                [Change.Delete(record, current.Version), .. requirements],
                 cancellationToken).ConfigureAwait(false);
             if (changed == true)
             {
@@ -155,7 +138,6 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
         throw Denied();
     }
 
-    /// <summary>The current address's cancel link: ends the pending change by signing the account out everywhere.</summary>
     public async Task<bool> CancelAsync(string userId, string token, CancellationToken cancellationToken)
     {
         const string Instance = Oidc.OidcIssuer.InstanceId;
@@ -172,17 +154,20 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
             return false;
         }
 
-        await store.CompareAndDeleteAsync(AuthStore.EmailChangeTable, Instance, userId, current.Version, cancellationToken).ConfigureAwait(false);
+        await data.SaveAsync(Change.Delete(current.Record, current.Version), cancellationToken).ConfigureAwait(false);
         return true;
     }
 
     private async Task<(EmailChangeRecord Record, string Version)?> ReadAsync(string instanceId, string userId, CancellationToken cancellationToken)
     {
-        var rowData = await store.GetAsync(AuthStore.EmailChangeTable, instanceId, userId, cancellationToken).ConfigureAwait(false);
-        return rowData?.Body.Deserialize(EmailChangeJson.Default.EmailChangeRecord) is { } record
+        var rowData = await this.ReadStoredAsync(userId, cancellationToken).ConfigureAwait(false);
+        return rowData?.Value is { } record
             && record.InstanceId == instanceId && record.UserId == userId && record.ExpiresAt > clock.GetUtcNow()
                 ? (record, rowData.Version) : null;
     }
+
+    private Task<Versioned<EmailChangeRecord>?> ReadStoredAsync(string userId, CancellationToken cancellationToken) =>
+        data.ReadAsync((db, token) => db.EmailChanges.Where(row => row.UserId == userId).WithVersion().SingleOrDefaultAsync(token), cancellationToken);
 
     private string Digest(UserRecord caller, string newEmail, string code) =>
         Convert.ToHexStringLower(HMACSHA256.HashData(this.digestKey, Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture,
@@ -194,7 +179,6 @@ public sealed class EmailChanges(AuthStore store, Users users, Sessions sessions
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
-[JsonSerializable(typeof(EmailChangeRecord))]
 [JsonSerializable(typeof(EmailChangeRequest))]
 [JsonSerializable(typeof(ConfirmEmailChangeRequest))]
 [JsonSerializable(typeof(EmailChangeBody))]

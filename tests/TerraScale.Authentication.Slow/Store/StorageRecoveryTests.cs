@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -8,7 +9,6 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 using Turso.Data.Sqlite;
@@ -63,8 +63,8 @@ public sealed class StorageRecoveryTests
             await Assert.That((terrabase.ClientAddress, terrabase.InternalAddress)).IsEqualTo(front);
             await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
             await Assert.That(await KeyIdAsync(auth)).IsEqualTo(before);
-            var keys = await terrabase.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth").RowsAsync(AuthStore.SigningKeyTable);
-            await Assert.That(keys.Count).IsEqualTo(1);
+            var keys = await terrabase.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth").ReadAsync(db => db.SigningKeys.CountAsync());
+            await Assert.That(keys).IsEqualTo(1);
         }
         finally
         {
@@ -85,8 +85,8 @@ public sealed class StorageRecoveryTests
         var database = terrabase.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         await using var auth = await StartAuthAsync(terrabase, tenant, provision: true);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
-        var keys = await database.RowsAsync(AuthStore.SigningKeyTable);
-        await Assert.That(keys.Count).IsEqualTo(1);
+        var keys = await database.ReadAsync(db => db.SigningKeys.CountAsync());
+        await Assert.That(keys).IsEqualTo(1);
 
         await terrabase.StopAsync();
         await LeaveFaultingMarkAsync(terrabase, tenant.Organization.Id, tenant.Project.Id, created.Id);
@@ -98,7 +98,7 @@ public sealed class StorageRecoveryTests
         using var ready = await auth.Client.GetAsync("/readyz");
         await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var refusal = await Assert.ThrowsAsync<TerraBaseUnavailableException>(async () =>
-            await database.CreateTableAsync("after_crash"))
+            await database.ExecuteAsync("CREATE TABLE after_crash (id TEXT PRIMARY KEY NOT NULL)"))
             ?? throw new InvalidOperationException("The faulted copy accepted an ordinary write.");
         await Assert.That(refusal.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(refusal.ErrorCode).IsEqualTo("copy_faulted");

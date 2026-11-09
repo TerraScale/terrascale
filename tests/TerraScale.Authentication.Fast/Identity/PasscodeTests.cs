@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using OtpNet;
 using System.Globalization;
@@ -12,7 +13,7 @@ using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.Webhooks;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 
@@ -34,7 +35,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         var earlier = (await passcodes.RequestAsync("instance", Email))!;
         var current = (await passcodes.RequestAsync("instance", Email))!;
         var latest = (await passcodes.RequestAsync("instance", Email))!;
-        await Assert.That((await database.RowsAsync("passcodes")).Count).IsEqualTo(1);
+        await Assert.That(await database.ReadAsync(db => db.Passcodes.CountAsync())).IsEqualTo(1);
         // A superseded code never signs in (QA round 4, auth:5); equal codes (one in a million) would be indistinguishable.
         foreach (var superseded in new[] { earlier.Code, current.Code }.Where(code => code != latest.Code))
         {
@@ -45,18 +46,20 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         await Assert.That(signedIn).IsNotNull();
         await Assert.That((await sessions.ResolveAsync("instance", signedIn!.Token))!.Value.User.Id).IsEqualTo(user.Id);
         await Assert.That(await passcodes.VerifyAsync("instance", Email, latest.Code)).IsNull();
-        var stored = (await database.RowsAsync("passcodes")).Single().Body;
-        await Assert.That(stored.GetProperty("consumed").GetBoolean()).IsTrue();
-        await Assert.That((await database.RowsAsync("sessions")).Count).IsEqualTo(1);
+        var stored = await database.ReadAsync(db => db.Passcodes.SingleAsync());
+        await Assert.That(stored.Consumed).IsTrue();
+        await Assert.That(await database.ReadAsync(db => db.Sessions.CountAsync())).IsEqualTo(1);
     }
 
     private (Users Users, Sessions Sessions, Passcodes Passcodes) Stack(TerraBaseTestTenant tenant, TimeProvider clock, AuthOptions options)
     {
-        var store = new AuthStore(fixture.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth"), clock);
-        var outbox = new WebhookOutbox(new ProjectAuthSettings(store), clock);
-        var users = new Users(store, outbox, clock);
-        var totp = new TotpCredentials(store, users, new AttemptLimiter(new TerraBaseRecordStore(store), clock, options), options, clock);
-        var sessions = new Sessions(store, users, totp, outbox, clock);
-        return (users, sessions, new Passcodes(store, users, sessions, outbox, clock, options));
+        var data = fixture.Server.Sql(tenant.ApiKey).Database(tenant.Project.Id, "auth").Data();
+        var credentials = new Credentials(data);
+        var settings = new ProjectAuthSettings(data);
+        var outbox = new WebhookOutbox(settings, clock);
+        var users = new Users(data, credentials, outbox, clock);
+        var totp = new TotpCredentials(data, credentials, users, new AttemptLimiter(new TerraBaseAttemptStore(data), clock, options), options, clock);
+        var sessions = new Sessions(data, users, credentials, settings, totp, outbox, clock);
+        return (users, sessions, new Passcodes(data, credentials, users, sessions, outbox, clock, options));
     }
 }

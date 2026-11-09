@@ -6,4 +6,4 @@ The MFA factor-before-user ordering is unchanged: an activation or global sign-o
 
 Project lists still authorize the organization from fresh membership and organization records. Owners and admins inherit the highest project role, so their lists need no explicit project-grant reads. Lower organization roles and collaborators still read their grants. Responses, pagination, storage formats and transaction authority assertions are unchanged.
 
-The `TerraScale.Authentication.Storage` activity source records point reads, uniqueness reads and paged queries as children of the current request. The `ts_auth.storage.read.duration` histogram reports seconds by table, operation, serving region and completion/failure. Spans and metrics omit record keys, tenant/user ids and credentials; no new setting is required. HTTP client spans retain the actual upstream connection timing.
+Storage reads are EF Core queries; the `Microsoft.EntityFrameworkCore` meter and the HTTP client spans of each TerraBase request report their timing. Neither carries record keys, tenant/user ids or credentials.

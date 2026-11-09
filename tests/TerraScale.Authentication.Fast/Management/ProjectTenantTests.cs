@@ -2,13 +2,13 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Bogus;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Management;
@@ -40,9 +40,9 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         var listed = (await oidc.OkAsync(HttpMethod.Get, $"{root}/clients", token)).GetProperty("items");
         await Assert.That(listed.GetArrayLength()).IsEqualTo(1);
         await Assert.That(listed[0].TryGetProperty("client_secret", out _)).IsFalse();
-        var stored = await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.OidcApplicationTable, project, clientId);
-        await Assert.That(stored!.Body.GetRawText()).DoesNotContain(secret);
-        await Assert.That(stored.Body.GetProperty("instanceId").GetString()).IsEqualTo(project);
+        var stored = await oidc.Database.ReadAsync(db => db.OidcApplications.SingleAsync(client => client.InstanceId == project && client.Id == clientId));
+        await Assert.That(stored.ClientSecret).IsNotEqualTo(secret);
+        await Assert.That(stored.InstanceId).IsEqualTo(project);
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, $"{root}/clients", token, body with { redirect_uris = InsecureRedirect })).IsEqualTo((400, "invalid_request"));
         var settings = await oidc.OkAsync(HttpMethod.Get, $"{root}/settings", token);
         await Assert.That(settings.GetProperty("methods").GetProperty("sign_up").GetBoolean()).IsTrue();

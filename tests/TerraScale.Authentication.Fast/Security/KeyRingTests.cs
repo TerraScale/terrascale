@@ -13,7 +13,7 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet;
 
@@ -114,13 +114,10 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         // A project's key is stored only while its project exists.
         beforeStart: target is null ? null : async services =>
         {
-            var store = services.GetRequiredService<AuthStore>();
+            var data = services.GetRequiredService<AuthData>();
             foreach (var project in Projects)
             {
-                if (await store.GetAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, project) is null)
-                {
-                    await store.CreateAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, project, TerraBaseFixture.Json($$"""{"id":"{{project}}"}"""));
-                }
+                await data.SeedProjectAsync(project);
             }
         });
 

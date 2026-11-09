@@ -15,6 +15,9 @@
   <ItemGroup Label="Analyzer authoring">
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.9.0-1.26328.17" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.9.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="5.9.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.9.0" />
   </ItemGroup>
   <!-- Microsoft.Extensions track the .NET 11 SDK and shared framework; lower pins
        downgrade what ASP.NET Core 11 requires (NU1109). -->
@@ -55,6 +58,7 @@
   </ItemGroup>
   <ItemGroup Label="API and hosting">
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0-rc.3.26522.148" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.17.13" />
     <PackageVersion Include="RazorSlices" Version="0.12.1" />
   </ItemGroup>

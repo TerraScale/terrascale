@@ -1,7 +1,7 @@
 # API key lifecycle
 
 This note replaces the "Delegated API-key secrets" part of
-[SQL credential fences](../pivot/p1-sql-storage.md).
+[credential conditions](../storage.md).
 
 ## A key works until it is revoked or expires
 

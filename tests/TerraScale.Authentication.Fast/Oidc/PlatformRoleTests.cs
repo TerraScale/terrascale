@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using Microsoft.IdentityModel.JsonWebTokens;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 
@@ -38,11 +37,8 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
     // What an operator does through TerraBase's internal listener: edits the stored user.
     private static async Task SetRoleAsync(TerraBaseSqlDatabase database, string userId, string? role)
     {
-        var id = AuthStore.NaturalKeyId(OidcIssuer.InstanceId, AuthStore.UserTable, userId);
-        var stored = (await database.RowAsync(AuthStore.UserTable, id))!;
-        var user = JsonNode.Parse(stored.Body.GetRawText())!.AsObject();
-        user["platformRole"] = role;
-        await database.OverwriteAsync(AuthStore.UserTable, id, JsonSerializer.SerializeToElement(user), stored.Version);
+        var updated = await database.ExecuteAsync("UPDATE users SET platform_role = ? WHERE id = ? AND instance_id = ?", [role, userId, OidcIssuer.InstanceId]);
+        await Assert.That(updated.RowsAffected).IsEqualTo(1);
     }
 
     private static string? Role(JsonElement tokens) =>

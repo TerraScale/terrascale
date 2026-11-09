@@ -42,7 +42,7 @@ its own tokens. The parameter names follow RFC 8693.
   A job of `ci.yml` itself may carry none, so absence is accepted; present with any other value (a reusable workflow
   here or in another repository, another ref, empty, JSON null, a number, an array or an object) is refused. The check
   reads the raw payload, so no typed lookup can hide a non-string value.
-- `jti` is single-use on every replica: a unique claim in ts-auth's `uniques` table. `run_id` is required.
+- `jti` is single-use on every replica: a row in ts-auth's `credential_claims` table, whose primary key refuses a second use. `run_id` is required.
   Shortcut: the claims are never pruned. That is one small record per e2e run; prune them if runs grow.
 - Every refusal logs only the name of the claim that failed, never the token. A successful token logs an audit line with
   organization, project, `run_id`, `run_attempt`, `sha`, `jti` and scopes.
@@ -53,7 +53,7 @@ The issued token's `sub` is `github-actions:1414527764:<run_id>`. It carries `or
 ## Activation (user-run, after approval), revocation
 
 
-- Binding creates the public client with a fresh e2e organization and project id (ULIDs from `AuthStore.NewId`), held in
+- Binding creates the public client with a fresh e2e organization and project id (ULIDs from `AuthIds.New`), held in
   the client's properties. They are not platform directory records: no user is a member and no API reaches them, which
   keeps the project isolated. TerraBase enrolls the project on the first database create (below).
 - Running it again prints `already bound; nothing changed` with the same ids.

@@ -10,7 +10,7 @@
   <Folder Name="/auth/">
     <Project Path="src/TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj" />
     <Project Path="src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj" />
-    <Project Path="src/TerraScale.Authentication.Store/TerraScale.Authentication.Store.csproj" />
+    <Project Path="src/TerraScale.Authentication.EntityFrameworkDesign/TerraScale.Authentication.EntityFrameworkDesign.csproj" />
     <Project Path="src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
     <Project Path="tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj" />
     <Project Path="tests/TerraScale.Authentication.Slow/TerraScale.Authentication.Slow.csproj" />

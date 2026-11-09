@@ -5,7 +5,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.Platform;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Management;

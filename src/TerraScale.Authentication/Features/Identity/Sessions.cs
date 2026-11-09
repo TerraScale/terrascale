@@ -1,55 +1,36 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Identity;
 
-/// <summary>A newly issued session and the bearer token for its cookie. The token is never stored.</summary>
-/// <param name="Token">The bearer token; return it to the browser once.</param>
-/// <param name="Session">The stored session.</param>
 public sealed record IssuedSession(string Token, SessionRecord Session)
 {
-    /// <summary>Omits the bearer token, so formatting or logging the record never discloses it.</summary>
     public override string ToString() => nameof(IssuedSession);
 }
 
-/// <summary>
-/// Server-side browser sessions. A session is valid until its absolute expiry unless it is revoked or the user's
-/// authentication epoch advances. Every check reads the regional TerraBase copy; revocation and losing branches take effect after replication.
-/// Callers authorize the instance before using these operations.
-/// </summary>
-public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp, WebhookOutbox outbox, TimeProvider clock)
+public sealed class Sessions(AuthData data, Users users, Credentials credentials, ProjectAuthSettings settings, TotpCredentials totp, WebhookOutbox outbox, TimeProvider clock)
 {
-    /// <summary>Absolute session lifetime from authentication.</summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(14);
 
-    // Issued tokens are 48 characters; anything far longer is never ours and is not hashed or looked up.
     private const int MaxTokenLength = 256;
 
-    private readonly ProjectAuthSettings settings = new(store);
-
-    /// <summary>The project's absolute lifetime, or the platform's fixed lifetime.</summary>
     public async Task<TimeSpan> GetLifetimeAsync(string instanceId, CancellationToken cancellationToken = default) =>
         Tenancy.IsProject(instanceId)
-            ? TimeSpan.FromSeconds((await this.settings.GetAsync(instanceId, cancellationToken).ConfigureAwait(false)).Configuration?.SessionLifetimeSeconds
+            ? TimeSpan.FromSeconds((await settings.GetAsync(instanceId, cancellationToken).ConfigureAwait(false)).Configuration?.SessionLifetimeSeconds
                 ?? ConfigurationBody.Default.SessionLifetimeSeconds)
             : Lifetime;
 
-    /// <summary>
-    /// Opens a session; refuses stale authentication, and an active factor unless <see cref="UserRecord.MultiFactor"/>
-    /// says this sign-in proved it.
-    /// </summary>
     public async Task<IssuedSession> CreateAsync(UserRecord user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
         var project = Tenancy.IsProject(user.InstanceId)
-            ? await this.settings.GetAsync(user.InstanceId, cancellationToken).ConfigureAwait(false)
+            ? await settings.GetAsync(user.InstanceId, cancellationToken).ConfigureAwait(false)
             : null;
         var lifetime = project is null ? Lifetime
             : TimeSpan.FromSeconds(project.Configuration?.SessionLifetimeSeconds ?? ConfigurationBody.Default.SessionLifetimeSeconds);
@@ -60,46 +41,20 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
             ?? throw new ApiException(401, "invalid_credentials", "Authentication could not be completed.");
     }
 
-    /// <summary>The live session for <paramref name="token"/> and its user, or <see langword="null"/>.</summary>
     public async Task<(SessionRecord Session, UserRecord User)?> ResolveAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
         await this.ReadLiveAsync(instanceId, token, cancellationToken).ConfigureAwait(false) is { } live ? (live.Session, live.User) : null;
 
-    /// <summary>As <see cref="ResolveAsync"/>, with the version of the session record a caller's commit can be bound to.</summary>
     internal Task<(SessionRecord Session, string Version, UserRecord User)?> ResolveVersionedAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
         this.ReadLiveAsync(instanceId, token, cancellationToken);
 
-    /// <summary>
-    /// Asserts, inside a caller's transaction, that <paramref name="session"/> is still stored unrevoked, unexpired at
-    /// <paramref name="now"/> and at the authentication state it was opened with: a sign-out that lands before the commit fails it.
-    /// </summary>
-    internal static StoreOperation Live(SessionRecord session, DateTimeOffset now)
+    internal static Change Live(SessionRecord session, string version, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(session);
-        var live = new JsonObject
-        {
-            ["and"] = new JsonArray(
-                new JsonObject { ["eq"] = new JsonArray("/instanceId", session.InstanceId) },
-                new JsonObject { ["eq"] = new JsonArray("/userId", session.UserId) },
-                new JsonObject { ["eq"] = new JsonArray("/tokenHash", session.TokenHash) },
-                new JsonObject { ["eq"] = new JsonArray("/authEpoch", session.AuthEpoch) },
-                new JsonObject { ["ne"] = new JsonArray("/revoked", true) },
-                // Expiries are written from UTC instants, so their ISO 8601 text orders chronologically.
-                new JsonObject { ["gt"] = new JsonArray("/expiresAt", JsonSerializer.SerializeToNode(now, IdentityJson.Default.DateTimeOffset)) }),
-        };
-        if (session.AuthStamp is not null)
-        {
-            ((JsonArray)live["and"]!).Add(new JsonObject { ["eq"] = new JsonArray("/authStamp", session.AuthStamp) });
-        }
-
-        using var filter = JsonDocument.Parse(live.ToJsonString());
-        return AuthStore.Require(AuthStore.SessionTable, session.InstanceId, session.TokenHash, filter.RootElement.Clone());
+        return session.Revoked || session.ExpiresAt <= now
+            ? throw new ApiException(401, "invalid_credentials", "Authentication could not be completed.")
+            : Change.Assert(session, version);
     }
 
-    /// <summary>
-    /// Replaces a live session with a new token after a privilege change. The old token stops working first, so
-    /// concurrent regional rotations converge to one usable successor; the successor keeps the old expiry.
-    /// Returns <see langword="null"/> when the session is not live or another rotation or sign-out won.
-    /// </summary>
     public async Task<IssuedSession?> RotateAsync(string instanceId, string? token, CancellationToken cancellationToken = default)
     {
         if (await this.ReadLiveAsync(instanceId, token, cancellationToken).ConfigureAwait(false) is not { } live)
@@ -107,40 +62,34 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
             return null;
         }
 
-        if (live.Session.Bindings.Count >= AuthStore.MaxCredentialBindings)
+        if (live.Session.Bindings.Count >= Credentials.MaxBindings)
         {
             throw new ApiException(401, "reauthentication_required", "This sign-in reached its rotation limit. Sign in again to continue.");
         }
 
-        var binding = AuthStore.NewCredentialBinding("session", live.Session.TokenHash);
+        var binding = Credentials.New("session", live.Session.TokenHash);
         if (!await this.TryRevokeAsync(live.Session, live.Version, binding, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
 
         var successor = await this.IssueAsync(live.User with { AuthenticationBindings = [.. live.Session.Bindings, binding] }, live.Session.CreatedAt, live.Session.ExpiresAt, cancellationToken).ConfigureAwait(false);
-        // A rotation that completes after the absolute expiry hands out nothing.
         return successor is not null && successor.Session.ExpiresAt > clock.GetUtcNow() ? successor : null;
     }
 
-    /// <summary>Signs one session out. True once the session is revoked, including when it already was; false once pruned.</summary>
     public async Task<bool> RevokeAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
         token is { Length: > 0 and <= MaxTokenLength } && await this.RevokeStoredAsync(instanceId, Tokens.Sha256Hex(token), cancellationToken).ConfigureAwait(false);
 
-    /// <summary>Signs out the session stored under <paramref name="tokenHash"/>; as <see cref="RevokeAsync"/>.</summary>
     public async Task<bool> RevokeStoredAsync(string instanceId, string tokenHash, CancellationToken cancellationToken = default)
     {
-        // A concurrent revocation or policy reduction can change the version; reread before retrying.
         for (var round = 0; round < 2; round++)
         {
-            var rowData = await store.GetAsync(AuthStore.SessionTable, instanceId, tokenHash, cancellationToken).ConfigureAwait(false);
-            var session = rowData?.Body.Deserialize(IdentityJson.Default.SessionRecord);
-            if (session is null || session.InstanceId != instanceId)
+            if (await this.ReadAsync(instanceId, tokenHash, cancellationToken).ConfigureAwait(false) is not { } current)
             {
                 return false;
             }
 
-            if (session.Revoked || await this.TryRevokeAsync(session, rowData!.Version, AuthStore.NewCredentialBinding("session", session.TokenHash), cancellationToken).ConfigureAwait(false))
+            if (current.Value.Revoked || await this.TryRevokeAsync(current.Value, current.Version, Credentials.New("session", current.Value.TokenHash), cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
@@ -149,29 +98,23 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         throw ApiException.Unavailable();
     }
 
-    /// <summary>
-    /// Signs the user out everywhere by advancing their authentication epoch, which also voids outstanding passcodes.
-    /// False when the user does not exist in the instance.
-    /// </summary>
     public async Task<bool> RevokeAllAsync(string instanceId, string userId, CancellationToken cancellationToken = default)
     {
         long? initial = null;
         for (var round = 0; round < 8; round++)
         {
-            if (await users.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current)
+            if (await users.GetAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current)
             {
                 return false;
             }
 
-            initial ??= current.User.AuthEpoch;
-            // Another writer already advanced the epoch past every session issued before this call.
-            if (current.User.AuthEpoch > initial)
+            initial ??= current.AuthEpoch;
+            if (current.AuthEpoch > initial)
             {
                 return true;
             }
 
-            var advanced = JsonSerializer.SerializeToElement(current.User with { AuthEpoch = current.User.AuthEpoch + 1, AuthStamp = AuthStore.NewId() }, IdentityJson.Default.UserRecord);
-            if (await store.CompareAndPutAsync(AuthStore.UserTable, instanceId, userId, advanced, current.Version, cancellationToken).ConfigureAwait(false))
+            if (await data.SaveAsync(Change.Update(current with { AuthEpoch = current.AuthEpoch + 1, AuthStamp = AuthIds.New() }), cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
@@ -180,77 +123,47 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         throw ApiException.Unavailable();
     }
 
-    /// <summary>
-    /// Deletes revoked and expired sessions of every instance in batches of <paramref name="batchSize"/>, each only at the
-    /// version read. A dead session already resolves to nothing and never becomes live again, so deleting it changes no
-    /// authorization outcome; it keeps storage proportional to live sessions. Returns how many this call deleted.
-    /// </summary>
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
-        // Expiries are written from UTC instants, so their ISO 8601 text orders chronologically.
-        var now = JsonSerializer.Serialize(clock.GetUtcNow(), IdentityJson.Default.DateTimeOffset);
-        using var filter = JsonDocument.Parse($$"""{"or":[{"eq":["/revoked",true]},{"lte":["/expiresAt",{{now}}]}]}""");
-        var total = 0;
-        while (true)
-        {
-            var batch = await store.QueryAsync(AuthStore.SessionTable, filter.RootElement, batchSize, cancellationToken).ConfigureAwait(false);
-            var deleted = 0;
-            foreach (var rowData in batch)
-            {
-                if (rowData.Body.Deserialize(IdentityJson.Default.SessionRecord) is { } session
-                    && await store.CompareAndDeleteAsync(AuthStore.SessionTable, session.InstanceId, session.TokenHash, rowData.Version, cancellationToken).ConfigureAwait(false))
-                {
-                    deleted++;
-                }
-            }
-
-            total += deleted;
-            // A full batch may hide more. A batch that deleted nothing went to a competing replica, which keeps draining;
-            // stopping then also ends the loop on any record that cannot be deleted.
-            if (batch.Count < batchSize || deleted == 0)
-            {
-                return total;
-            }
-        }
+        var now = clock.GetUtcNow();
+        return await data.ReadAsync((db, token) => db.Sessions.Where(session => session.Revoked || session.ExpiresAt <= now).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<IssuedSession?> IssueAsync(UserRecord user, DateTimeOffset createdAt, DateTimeOffset expiresAt, CancellationToken cancellationToken, StoreOperation? extra = null)
+    private async Task<IssuedSession?> IssueAsync(UserRecord user, DateTimeOffset createdAt, DateTimeOffset expiresAt, CancellationToken cancellationToken, Change? extra = null)
     {
-        if (!await store.AreCredentialsCurrentAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken).ConfigureAwait(false)
-            || !user.MultiFactor && !await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false))
+        if (user.Disabled || await credentials.RequireAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken).ConfigureAwait(false) is not { } lineage
+            || !user.MultiFactor && !await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false)
+            || await this.ClosingAsync(user, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
 
         var token = Tokens.RandomToken(48);
-        var session = new SessionRecord(user.InstanceId, user.Id, Tokens.Sha256Hex(token), user.AuthEpoch, createdAt, expiresAt) { Bindings = user.AuthenticationBindings, AuthStamp = user.AuthStamp, Mfa = user.MultiFactor, MfaMethod = user.MfaMethod };
-        var epoch = new JsonObject
+        var session = new SessionRecord(user.InstanceId, user.Id, Tokens.Sha256Hex(token), user.AuthEpoch, createdAt, expiresAt)
         {
-            ["and"] = new JsonArray(
-                new JsonObject { ["eq"] = new JsonArray("/instanceId", user.InstanceId) },
-                new JsonObject { ["eq"] = new JsonArray("/id", user.Id) },
-                new JsonObject { ["eq"] = new JsonArray("/authEpoch", user.AuthEpoch) },
-                new JsonObject { ["eq"] = new JsonArray("/authStamp", user.AuthStamp) },
-                // A disabled account opens no session.
-                new JsonObject { ["ne"] = new JsonArray("/disabled", true) }),
+            Id = AuthIds.New(),
+            Bindings = user.AuthenticationBindings,
+            AuthStamp = user.AuthStamp,
+            Mfa = user.MultiFactor,
+            MfaMethod = user.MfaMethod,
         };
-        using var filter = JsonDocument.Parse(epoch.ToJsonString());
-        // Activation, reset and global revocation must not race a primary-only session into storage.
-        List<StoreOperation> writes =
-        [
-            // A pending account closure temporarily blocks new sign-ins; cancellation restores them without changing credentials.
-            AuthStore.Absent(AuthStore.ClosureJobTable, user.InstanceId, ClosureJob.Key("account", user.Id)),
-            AuthStore.Require(AuthStore.UserTable, user.InstanceId, user.Id, filter.RootElement),
-            AuthStore.Create(AuthStore.SessionTable, user.InstanceId, session.TokenHash,
-                JsonSerializer.SerializeToElement(session, IdentityJson.Default.SessionRecord)),
-        ];
+        List<Change> changes = [.. lineage, Change.Assert(user), Change.Insert(session)];
         if (extra is not null)
         {
-            writes.Add(extra);
+            changes.Add(extra);
         }
 
-        return await store.TransactAsync(writes, cancellationToken).ConfigureAwait(false) is null ? new IssuedSession(token, session) : null;
+        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false) ? new IssuedSession(token, session) : null;
     }
+
+    private Task<bool> ClosingAsync(UserRecord user, CancellationToken cancellationToken) =>
+        user.InstanceId == OidcIssuer.InstanceId
+            ? data.ReadAsync((db, token) => db.ClosureJobs.AnyAsync(job => job.InstanceId == user.InstanceId && job.Scope == "account" && job.SubjectId == user.Id, token), cancellationToken)
+            : Task.FromResult(false);
+
+    private Task<Versioned<SessionRecord>?> ReadAsync(string instanceId, string tokenHash, CancellationToken cancellationToken) =>
+        data.ReadAsync((db, token) => db.Sessions.Where(session => session.TokenHash == tokenHash && session.InstanceId == instanceId).WithVersion()
+            .SingleOrDefaultAsync(token), cancellationToken);
 
     private async Task<(SessionRecord Session, string Version, UserRecord User)?> ReadLiveAsync(string instanceId, string? token, CancellationToken cancellationToken)
     {
@@ -263,34 +176,29 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         var lifetime = await this.GetLifetimeAsync(instanceId, cancellationToken).ConfigureAwait(false);
         for (var round = 0; round < 3; round++)
         {
-            var rowData = await store.GetAsync(AuthStore.SessionTable, instanceId, hash, cancellationToken).ConfigureAwait(false);
-            var session = rowData?.Body.Deserialize(IdentityJson.Default.SessionRecord);
-            if (session is null || session.Revoked || session.InstanceId != instanceId || !Tokens.FixedTimeEquals(session.TokenHash, hash)
-                || session.ExpiresAt <= clock.GetUtcNow())
+            if (await this.ReadAsync(instanceId, hash, cancellationToken).ConfigureAwait(false) is not { } current
+                || current.Value.Revoked || !Tokens.FixedTimeEquals(current.Value.TokenHash, hash) || current.Value.ExpiresAt <= clock.GetUtcNow())
             {
                 return null;
             }
 
-            var version = rowData!.Version;
+            var (session, version) = (current.Value, current.Version);
             var policyExpiry = session.CreatedAt + lifetime;
             if (policyExpiry < session.ExpiresAt)
             {
-                // Persist even an already elapsed reduction: later policy increases must not revive this cookie.
                 session = session with { ExpiresAt = policyExpiry };
-                var shortened = await store.ReplaceAsync(AuthStore.SessionTable, instanceId, hash,
-                    JsonSerializer.SerializeToElement(session, IdentityJson.Default.SessionRecord), version, cancellationToken).ConfigureAwait(false);
-                if (shortened is null)
+                var shortened = Change.Update(current, session);
+                if (!await data.SaveAsync(shortened, cancellationToken).ConfigureAwait(false))
                 {
                     continue;
                 }
 
-                version = shortened;
+                version = shortened.Version!;
             }
 
             var user = await users.GetAsync(instanceId, session.UserId, cancellationToken).ConfigureAwait(false);
-            // A lookup that completes after expiry authorizes nothing.
             return user is not null && !user.Disabled && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp
-                && await store.AreCredentialsCurrentAsync(instanceId, session.Bindings, cancellationToken).ConfigureAwait(false)
+                && await credentials.AreCurrentAsync(instanceId, session.Bindings, cancellationToken).ConfigureAwait(false)
                 && (session.Mfa || await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false))
                 && session.ExpiresAt > clock.GetUtcNow() ? (session, version, user with { AuthenticationBindings = session.Bindings, MultiFactor = session.Mfa, MfaMethod = session.MfaMethod }) : null;
         }
@@ -298,11 +206,6 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         throw ApiException.Unavailable();
     }
 
-    private async Task<bool> TryRevokeAsync(SessionRecord session, string version, CredentialBinding binding, CancellationToken cancellationToken) =>
-        await store.TransactAsync(
-        [
-            AuthStore.CredentialClaim(session.InstanceId, binding),
-            AuthStore.Replace(AuthStore.SessionTable, session.InstanceId, session.TokenHash,
-                JsonSerializer.SerializeToElement(session with { Revoked = true }, IdentityJson.Default.SessionRecord), version),
-        ], cancellationToken).ConfigureAwait(false) is null;
+    private Task<bool> TryRevokeAsync(SessionRecord session, string version, CredentialBinding binding, CancellationToken cancellationToken) =>
+        data.SaveAsync([Credentials.Claim(session.InstanceId, binding), Change.Update(session with { Revoked = true }, version)], cancellationToken);
 }

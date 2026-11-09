@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -54,7 +55,7 @@ public static class TerraBaseTransport
             logger.ZLogWarning($"No TerraBase machine answered at {context.DnsEndPoint.Host:@Region} or at any of {otherRegions.Count:@Fallbacks} fallbacks; storage fails closed");
             throw new HttpRequestException(HttpRequestError.ConnectionError, $"No TerraBase machine answered at {context.DnsEndPoint.Host}");
         };
-        HttpMessageHandler pipeline = new FailClosed(handler);
+        HttpMessageHandler pipeline = new HomeReads.Handler { InnerHandler = new FailClosed(handler) };
         return peerSecret is null ? pipeline : new PeerCredentialHandler(peerSecret) { InnerHandler = pipeline };
     }
 

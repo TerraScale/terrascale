@@ -1,6 +1,4 @@
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Tests;
@@ -34,21 +32,6 @@ public sealed class SharedStateTarget
     }
 
     public void Register(IServiceCollection services, string? apiKey = null) => this.fixture.UseStorage(services, this.tenant, apiKey: apiKey);
-
-    public async Task<JsonElement?> ReadAsync(string table, string instanceId, string key)
-    {
-        var rows = await this.Database.QueryAsync($"SELECT body FROM \"{table}\" WHERE id = ?", [AuthStore.NaturalKeyId(instanceId, table, key)]);
-        if (rows.Count == 0)
-        {
-            return null;
-        }
-
-        using var body = JsonDocument.Parse(rows[0].GetString(0));
-        return body.RootElement.Clone();
-    }
-
-    public async Task<int> CountAsync(string table) =>
-        (int)(await this.Database.QueryAsync($"SELECT count(*) FROM \"{table}\""))[0].GetInt64(0);
 }
 
 /// <summary>A wall clock the test moves by hand.</summary>

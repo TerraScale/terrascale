@@ -40,6 +40,9 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     /// <summary>How the second factor was proved (<c>totp</c> or <c>passkey</c>); null when the attempt proved none.</summary>
     [JsonIgnore]
     public string? MfaMethod { get; init; }
+
+    [JsonIgnore]
+    public string? Version { get; init; }
 }
 
 /// <summary>A browser session (table <c>sessions</c>). Only the SHA-256 of its bearer token is stored.</summary>
@@ -52,6 +55,8 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
 /// <param name="Revoked">Set by sign-out and rotation; never cleared.</param>
 public sealed record SessionRecord(string InstanceId, string UserId, string TokenHash, long AuthEpoch, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, bool Revoked = false)
 {
+    public string Id { get; init; } = string.Empty;
+
     /// <summary>The user's authentication-state identity when this session was opened.</summary>
     public string? AuthStamp { get; init; }
 
@@ -119,6 +124,8 @@ public sealed record PasscodeRecord(
     /// <summary>Dedicated step-up request id; its passcode never inherits sign-in code ancestry or resets authentication.</summary>
     public string? StepUpRequestId { get; init; }
 
+    public string Key { get; init; } = string.Empty;
+
     /// <summary>The winning redemption this result depends on; not part of the stored passcode.</summary>
     [JsonIgnore]
     public CredentialBinding? Binding { get; init; }
@@ -140,3 +147,12 @@ public sealed record CredentialBinding(string Kind, string Key, string OwnerId);
 /// <param name="ClientId">OAuth client that verified this subject.</param>
 /// <param name="Subject">Stable provider subject.</param>
 public sealed record LinkedProvider(string Provider, string Issuer, string ClientId, string Subject);
+
+public sealed record ProviderLinkRecord(string InstanceId, string UserId, string Provider, string Issuer, string ClientId, string Subject)
+{
+    public LinkedProvider Identity => new(this.Provider, this.Issuer, this.ClientId, this.Subject);
+}
+
+public sealed record CredentialClaimRecord(string InstanceId, string Kind, string Key, string OwnerId);
+
+public sealed record ChallengeRecord(string InstanceId, string Purpose, string TokenHash, string SubjectId, DateTimeOffset ExpiresAt, bool Consumed = false);

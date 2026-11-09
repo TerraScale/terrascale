@@ -12,7 +12,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Security;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 using IResult = Microsoft.AspNetCore.Http.IResult;
 using SameSiteMode = Microsoft.Net.Http.Headers.SameSiteMode;

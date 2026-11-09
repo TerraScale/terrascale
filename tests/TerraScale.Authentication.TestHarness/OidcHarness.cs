@@ -13,6 +13,7 @@ using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Tests;
@@ -146,7 +147,7 @@ public sealed partial class OidcHarness : IAsyncDisposable
     private readonly TerraBaseFixture? fixture;
     private readonly string masterKey;
     private readonly bool ownsServer;
-    private readonly string prefix = TerraScale.Authentication.Store.AuthStore.NewId().ToLowerInvariant();
+    private readonly string prefix = AuthIds.New().ToLowerInvariant();
 
     private OidcHarness(TerraBaseFixture? fixture, TerraBaseTestTenant tenant, string masterKey, AuthTestServer server, TerraBaseSqlDatabase database, CapturingEmailSender email, bool ownsServer = true)
     {

@@ -1,7 +1,7 @@
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.Observability;

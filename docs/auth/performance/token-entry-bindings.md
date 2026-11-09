@@ -1,7 +1,7 @@
 # Token entries carry their ancestry from creation
 
 Every non-limiter TerraBase write from ts-auth waits for another region's durable
-ack (`TB-Durability: remote_durable`, see [SQL storage](../pivot/p1-sql-storage.md)),
+ack (`TB-Durability: remote_durable`, see [SQL storage](../storage.md)),
 so a token request costs roughly one cross-region round trip per sequential write.
 
 Each stored token entry is bound to the credential ancestry that `RedeemExactlyOnce`

@@ -1,8 +1,7 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Store;
-using TerraScale.DotNet.TerraBase;
+using Microsoft.EntityFrameworkCore;
+using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
@@ -32,57 +31,39 @@ public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode 
 }
 
 /// <summary>Per-project sign-in settings, read by the management API and the tenant's hosted pages.</summary>
-public sealed class ProjectAuthSettings(AuthStore store)
+public sealed class ProjectAuthSettings(AuthData data)
 {
-    private const string Table = AuthStore.ProjectAuthSettingsTable;
-
-    /// <summary>The project's settings; a project that never changed them has every method on and no branding.</summary>
     public async Task<ProjectAuthSettingsRecord> GetAsync(string projectId, CancellationToken cancellationToken = default) =>
-        (await this.ReadAsync(projectId, cancellationToken).ConfigureAwait(false)).Settings;
+        (await this.ReadVersionedAsync(projectId, cancellationToken).ConfigureAwait(false)).Settings;
 
-    /// <summary>Applies <paramref name="change"/> to the settings read, retrying when another writer won.</summary>
     public async Task<ProjectAuthSettingsRecord> UpdateAsync(string projectId, Func<ProjectAuthSettingsRecord, ProjectAuthSettingsRecord> change, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(change);
         for (var round = 0; round < 3; round++)
         {
-            var (current, version) = await this.ReadAsync(projectId, cancellationToken).ConfigureAwait(false);
+            var (current, version) = await this.ReadVersionedAsync(projectId, cancellationToken).ConfigureAwait(false);
             var updated = change(current) with { InstanceId = projectId };
-            var record = JsonSerializer.SerializeToElement(updated, ProjectAuthSettingsJson.Default.ProjectAuthSettingsRecord);
-            try
+            if (await data.SaveAsync(Write(updated, version), cancellationToken).ConfigureAwait(false))
             {
-                if (version is null)
-                {
-                    await store.CreateAsync(Table, projectId, projectId, record, cancellationToken).ConfigureAwait(false);
-                    return updated;
-                }
-
-                if (await store.CompareAndPutAsync(Table, projectId, projectId, record, version, cancellationToken).ConfigureAwait(false))
-                {
-                    return updated;
-                }
-            }
-            catch (StorePreconditionFailedException)
-            {
-                // A concurrent first write created it; read it again.
+                return updated;
             }
         }
 
         throw ApiException.Unavailable();
     }
 
-    internal Task<(ProjectAuthSettingsRecord Settings, string? Version)> ReadVersionedAsync(string projectId, CancellationToken cancellationToken) => this.ReadAsync(projectId, cancellationToken);
+    internal static Change Write(ProjectAuthSettingsRecord settings, string? version) =>
+        version is null ? Change.Insert(settings) : Change.Update(settings, version);
 
-    internal static JsonElement Stored(ProjectAuthSettingsRecord settings) =>
-        JsonSerializer.SerializeToElement(settings, ProjectAuthSettingsJson.Default.ProjectAuthSettingsRecord);
-
-    private async Task<(ProjectAuthSettingsRecord Settings, string? Version)> ReadAsync(string projectId, CancellationToken cancellationToken) =>
-        await store.GetAsync(Table, projectId, projectId, cancellationToken).ConfigureAwait(false) is { } rowData
-        && rowData.Body.Deserialize(ProjectAuthSettingsJson.Default.ProjectAuthSettingsRecord) is { } settings && settings.InstanceId == projectId
-            ? (settings, rowData.Version)
+    internal async Task<(ProjectAuthSettingsRecord Settings, string? Version)> ReadVersionedAsync(string projectId, CancellationToken cancellationToken) =>
+        await data.ReadAsync((db, token) => db.ProjectAuthSettings.Where(settings => settings.InstanceId == projectId).WithVersion().SingleOrDefaultAsync(token), cancellationToken)
+            .ConfigureAwait(false) is { } stored
+            ? (stored.Value, stored.Version)
             : (new ProjectAuthSettingsRecord(projectId), null);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
-[JsonSerializable(typeof(ProjectAuthSettingsRecord))]
+[JsonSerializable(typeof(IReadOnlyList<SocialProviderRecord>))]
+[JsonSerializable(typeof(IReadOnlyList<FooterLinkBody>))]
+[JsonSerializable(typeof(ConfigurationBody))]
 internal sealed partial class ProjectAuthSettingsJson : JsonSerializerContext;

@@ -4,13 +4,13 @@ using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Hosting;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Platform;
 
 /// <summary>Durable acknowledgement after dashboard verified its own scoped cleanup.</summary>
-public sealed class AcknowledgeDeletionEndpoint(AuthStore store, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
+public sealed class AcknowledgeDeletionEndpoint(AuthData data, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -59,7 +59,7 @@ public sealed class AcknowledgeDeletionEndpoint(AuthStore store, AuthOptions opt
             throw new ApiException(400, "invalid_request", "Send an exact deletion acknowledgement JSON object.");
         }
 
-        await DashboardDeletionProofs.AcknowledgeAsync(store, clock, this.HttpContext.GetRouteValue("id") as string, request, cancellationToken);
+        await DashboardDeletionProofs.AcknowledgeAsync(data, clock, this.HttpContext.GetRouteValue("id") as string, request, cancellationToken);
         return TypedResults.NoContent();
     }
 }

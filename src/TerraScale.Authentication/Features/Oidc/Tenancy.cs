@@ -1,6 +1,7 @@
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Hosting;
-using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Oidc;
@@ -22,7 +23,7 @@ public static class Tenancy
     /// <summary>Resolves the request's tenant into the request items.</summary>
     public static void UseTenancy(this WebApplication app) => app.Use(async (HttpContext context, RequestDelegate next) =>
     {
-        if (await ResolveAsync(context.RequestServices.GetRequiredService<AuthStore>(), context.Request.Path, context.RequestAborted) is { } tenant)
+        if (await ResolveAsync(context.RequestServices.GetRequiredService<AuthData>(), context.Request.Path, context.RequestAborted) is { } tenant)
         {
             context.Items[ItemKey] = tenant;
         }
@@ -43,7 +44,7 @@ public static class Tenancy
     public static string SessionCookie(string tenant) =>
         IsProject(tenant) ? SecuritySchemes.SessionCookieName + "_" + tenant : SecuritySchemes.SessionCookieName;
 
-    private static async Task<string?> ResolveAsync(AuthStore store, PathString path, CancellationToken cancellationToken)
+    private static async Task<string?> ResolveAsync(AuthData data, PathString path, CancellationToken cancellationToken)
     {
         var segments = (path.Value ?? string.Empty).Split('/', 4);
         var (tenant, rest) = segments switch
@@ -68,13 +69,8 @@ public static class Tenancy
 
         try
         {
-            // Discovery and the JWKS decide nothing about authorization: this region's copy may answer. Sign-in and
-            // tokens read the project itself, so a deleted project stops serving them at once.
-            var metadata = rest is OidcIssuer.ConfigurationPath or OidcIssuer.JwksPath;
-            var project = metadata
-                ? await store.GetLocalAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false)
-                : await store.GetAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false);
-            return project is null ? null : tenant;
+            return await data.ReadAsync((db, token) => db.Projects.AnyAsync(project => project.Id == tenant && project.InstanceId == OidcIssuer.InstanceId, token),
+                cancellationToken).ConfigureAwait(false) ? tenant : null;
         }
         catch (Exception error) when (error is not (OperationCanceledException or OutOfMemoryException))
         {
