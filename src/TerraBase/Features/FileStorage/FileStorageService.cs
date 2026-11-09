@@ -362,7 +362,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             }
             try { await SweepAsync(stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (OperationCanceledException);
+            catch (OperationCanceledException) { }
             catch (Exception error) when (StoreFailure(error) || error is QueryCapacityException)
             {
                 CleanupIncomplete(logger, null);
