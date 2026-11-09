@@ -375,7 +375,7 @@ internal sealed partial class ContinuousBackup
                 }
             }
 
-            var restored = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, cancellationToken)
+            var restored = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, next: null, cancellationToken)
                 .ConfigureAwait(false);
             try
             {

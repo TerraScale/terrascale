@@ -23,10 +23,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         }
     }
 
-    public Task<RestoredBackup> BuildAsync(
-        string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, CancellationToken cancellationToken) =>
-        BuildAsync(file, scope, snapshot, at, until, next: null, cancellationToken);
-
     public async Task<RestoredBackup> BuildAsync(
         string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, CancellationToken cancellationToken)
     {
