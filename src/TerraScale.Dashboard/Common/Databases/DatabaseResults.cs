@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.Common.Databases
         }
 
         // A plan allowance refusal lasts until the month ends or the plan changes; retrying soon never helps.
-        internal const string AllowanceUsed = "This organization reached its plan's write units for this month, so new writes are paused. " +
+        internal const string AllowanceUsed = "This organization reached its plan's operation units for this month, so new writes are paused. " +
             "Reads keep working, and writes resume next month (UTC). Upgrade the plan on the organization's Billing tab to keep writing now; Usage shows this month's total.";
         private static string Generic(Exception error)
         {
