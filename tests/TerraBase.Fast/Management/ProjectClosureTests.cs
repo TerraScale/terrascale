@@ -7,7 +7,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Fast.Management;
 
-// ts-auth's project closure handoff (docs/terrabase/project-closure.md) on one machine.
 public sealed class ProjectClosureTests
 {
     private static readonly string[] ReadScope = ["sql:read"];

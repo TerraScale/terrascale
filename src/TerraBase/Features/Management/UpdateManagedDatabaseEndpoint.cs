@@ -9,7 +9,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-// Renaming and replica regions follow docs/cross-region.md.
 internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     public override void Configure()

@@ -29,7 +29,6 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        // Recovery must run once the gate opens, or abandoned creations stay on disk unaudited (TS-994).
         HashSet<string> local = [.. engine.EnumerateDatabaseFiles(cancellationToken).Select(file => file.Database?.DatabaseId).OfType<string>()];
         _deferredRecovery = RecoverOnceOpenAsync(local);
     }

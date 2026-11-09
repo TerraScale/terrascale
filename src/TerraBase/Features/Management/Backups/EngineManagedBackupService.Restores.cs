@@ -22,6 +22,16 @@ namespace TerraBase.Features.Management.Backups;
 
 internal sealed partial class EngineManagedBackupService
 {
+    private const int MaxDatabaseNameLength = 63;
+    private const int MaxRestoreNameAttempts = 100;
+
+    private static readonly TimeSpan RestoreLeaseExpiry = TimeSpan.FromHours(1);
+
+    private static readonly TimeSpan RestoreLeaseHeartbeat = TimeSpan.FromMinutes(5);
+
+    private readonly ConcurrentDictionary<string, byte> _runningRestores = new();
+
+    private readonly DateTimeOffset _startedAt = time.GetUtcNow();
     public async ValueTask<StartRestoreResult> StartRestoreAsync(
         string userId, string organizationId, TenantContext database, string backupId, string? name, CancellationToken cancellationToken)
     {

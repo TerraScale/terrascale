@@ -37,7 +37,6 @@ internal sealed class HomeDatabaseCountEndpoint(IManagementService management) :
         {
             long count => TypedResults.Json(new HomeCountBody(count), TerraBaseJsonContext.Default.HomeCountBody),
             Unavailable error => ErrorResponse.From(error),
-            _ => throw new InvalidOperationException(),
         };
     }
 }
