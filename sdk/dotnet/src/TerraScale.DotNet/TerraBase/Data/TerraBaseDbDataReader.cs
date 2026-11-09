@@ -85,8 +85,6 @@ public sealed class TerraBaseDbDataReader : DbDataReader
         return true;
     }
 
-
-
     /// <summary>A column's name.</summary>
     public override string GetName(int ordinal) => result.Columns[ordinal].Name;
 

@@ -166,6 +166,14 @@ public sealed class TerraBaseSqlSession : IAsyncDisposable
         connecting.Dispose();
     }
 
+    internal void Abort()
+    {
+        if (disposed) return;
+        disposed = true;
+        closing.Cancel();
+        Volatile.Read(ref link).Socket.Abort();
+    }
+
     private Link Start(WebSocket socket)
     {
         var started = new Link(socket);

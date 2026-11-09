@@ -27,8 +27,19 @@ public sealed class TerraBaseDbCommand : DbCommand
         set => field = value ?? "";
     } = "";
 
-    /// <summary>The command timeout; execution deadlines are enforced by the SDK.</summary>
-    public override int CommandTimeout { get; set; }
+    /// <summary>
+    /// Seconds the command may run before it throws <see cref="TimeoutException"/>; 0, the default, leaves only the SDK's
+    /// 30-second request deadline, which also bounds larger values.
+    /// </summary>
+    public override int CommandTimeout
+    {
+        get;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            field = value;
+        }
+    }
 
     /// <summary>Always <see cref="System.Data.CommandType.Text"/>.</summary>
     public override CommandType CommandType
@@ -115,9 +126,18 @@ public sealed class TerraBaseDbCommand : DbCommand
                 : "The connection has an open transaction; set the command's Transaction property to it.");
         }
 
-        return open is { } transaction
-            ? await transaction.Session.BatchAsync(statements, cancellationToken).ConfigureAwait(false)
-            : await connection.SqlDatabase.BatchAsync(statements, cancellationToken).ConfigureAwait(false);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (CommandTimeout > 0) deadline.CancelAfter(TimeSpan.FromSeconds(CommandTimeout));
+        try
+        {
+            return open is { } transaction
+                ? await transaction.Session.BatchAsync(statements, deadline.Token).ConfigureAwait(false)
+                : await connection.SqlDatabase.BatchAsync(statements, deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException($"The command did not finish within its CommandTimeout of {CommandTimeout} seconds.", error);
+        }
     }
 
     private TerraBaseSqlStatement[] Statements()
