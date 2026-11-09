@@ -70,8 +70,11 @@ name in a project) fails the one request and writes nothing; the dashboard answe
 ### Accounts and organizations
 
 `AccountStore` and `OrganizationStore` load an account (with its notifications) or an organization (with its projects,
-databases, audit events and invitation reservations) as one `AccountRecord` or `OrganizationRecord`: the root row
-first, then its child tables, so every child row is at least as new as the root's `version`. A change saves only the
+databases, audit events and invitation reservations) as one `AccountRecord` or `OrganizationRecord`. An account and its
+notifications come back in one joined query. An organization read for a change loads the root row first, then its
+child tables, so every child row is at least as new as the root's `version`; the read-only views of a request's
+organizations load roots and children in parallel, one round trip, started as soon as ts-auth lists the
+organizations. A change saves only the
 rows that differ, inserts, updates and deletes, in one `SaveChangesAsync`, and writes a new `version` on the root row as
 its concurrency token. A concurrent change of the same account or organization makes the save write nothing; the
 caller rereads and applies its change again, at most four times, and then answers `412`. ts-auth stays the source of

@@ -16,25 +16,22 @@ public sealed class AccountStore(IDbContextFactory<DashboardDbContext> storage, 
     public async Task<StoredAccount?> FindAsync(string subject, CancellationToken cancellationToken)
     {
         var hash = AccountService.AccountStorageKey(subject);
-        var row = (await RowSync.QueryAsync(storage, db => db.Accounts.Where(account => account.SubjectHash == hash), cancellationToken)).SingleOrDefault();
-        if (row is null)
+        await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        var found = await db.Accounts.AsNoTracking().Where(account => account.SubjectHash == hash)
+            .Select(account => new { Row = account, Notifications = db.Notifications.Where(note => note.AccountId == account.Id).OrderBy(note => note.CreatedAt).ThenBy(note => note.Id).ToList() })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (found is null)
         {
             return null;
         }
 
-        if (row.ErasureId is not null)
+        if (found.Row.ErasureId is not null)
         {
-            return new(new AccountRecord { Id = row.Id }, row.Version, true) { Row = row };
+            return new(new AccountRecord { Id = found.Row.Id }, found.Row.Version, true) { Row = found.Row };
         }
 
-        if (row.UserId != subject)
-        {
-            throw new IOException("Account identity is invalid.");
-        }
-
-        var notifications = await RowSync.QueryAsync(storage, db => db.Notifications.Where(note => note.AccountId == row.Id)
-            .OrderBy(note => note.CreatedAt).ThenBy(note => note.Id), cancellationToken);
-        return new(Read(row, notifications), row.Version, false) { Row = row, Notifications = notifications };
+        return found.Row.UserId != subject ? throw new IOException("Account identity is invalid.") :
+            new(Read(found.Row, found.Notifications), found.Row.Version, false) { Row = found.Row, Notifications = found.Notifications };
     }
 
     public async Task CreateAsync(AccountRecord account, CancellationToken cancellationToken)

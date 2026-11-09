@@ -26,19 +26,20 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
 {
     public async Task<StoredOrganization?> FindAsync(string id, CancellationToken cancellationToken)
     {
-        return (await FindManyAsync([id], cancellationToken)).GetValueOrDefault(id);
+        return (await LoadAsync(db => db.Organizations.Where(row => row.Id == id), null, cancellationToken)).GetValueOrDefault(id);
     }
 
-    public async Task<IReadOnlyDictionary<string, StoredOrganization>> FindManyAsync(IReadOnlyCollection<string> ids, CancellationToken cancellationToken)
+    public async Task<IReadOnlyDictionary<string, OrganizationRecord?>> ReadManyAsync(IReadOnlyCollection<string> ids, CancellationToken cancellationToken)
     {
         var keys = ids.Distinct(StringComparer.Ordinal).ToArray();
-        return keys.Length == 0 ? new Dictionary<string, StoredOrganization>() :
-            await LoadAsync(db => db.Organizations.Where(row => keys.Contains(row.Id)), cancellationToken);
+        return keys.Length == 0 ? new Dictionary<string, OrganizationRecord?>() :
+            (await LoadAsync(db => db.Organizations.Where(row => keys.Contains(row.Id)), keys, cancellationToken))
+            .ToDictionary(pair => pair.Key, pair => pair.Value.Erased ? null : pair.Value.Organization, StringComparer.Ordinal);
     }
 
     public async Task<IReadOnlyList<OrganizationRecord>> ListAsync(CancellationToken cancellationToken)
     {
-        return [.. (await LoadAsync(db => db.Organizations.Where(row => row.ErasureId == null), cancellationToken)).Values.Select(stored => stored.Organization)];
+        return [.. (await LoadAsync(db => db.Organizations.Where(row => row.ErasureId == null), [], cancellationToken)).Values.Select(stored => stored.Organization)];
     }
 
     public async Task<bool> IsErasedAsync(string id, CancellationToken cancellationToken)
@@ -131,24 +132,27 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
         RowSync.Sync(db, loaded.Reservations, next.Reservations, row => row.Id);
     }
 
-    private async Task<Dictionary<string, StoredOrganization>> LoadAsync(Func<DashboardDbContext, IQueryable<OrganizationRow>> roots, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, StoredOrganization>> LoadAsync(Func<DashboardDbContext, IQueryable<OrganizationRow>> roots, string[]? snapshot,
+        CancellationToken cancellationToken)
     {
-        var found = await RowSync.QueryAsync(storage, roots, cancellationToken);
-        var live = found.Where(row => row.ErasureId is null).Select(row => row.Id).ToArray();
-        var projects = live.Length == 0 ? Task.FromResult(new List<OrganizationProjectRow>()) :
-            RowSync.QueryAsync(storage, db => db.OrganizationProjects.Where(row => live.Contains(row.OrganizationId)), cancellationToken);
-        var databases = live.Length == 0 ? Task.FromResult(new List<ProjectDatabaseRow>()) :
-            RowSync.QueryAsync(storage, db => db.ProjectDatabases.Where(row => live.Contains(row.OrganizationId)), cancellationToken);
-        var audit = live.Length == 0 ? Task.FromResult(new List<AuditEventRow>()) :
-            RowSync.QueryAsync(storage, db => db.AuditEvents.Where(row => live.Contains(row.OrganizationId)).OrderBy(row => row.OccurredAt).ThenBy(row => row.Id), cancellationToken);
-        var reservations = live.Length == 0 ? Task.FromResult(new List<InvitationReservationRow>()) :
-            RowSync.QueryAsync(storage, db => db.InvitationReservations.Where(row => live.Contains(row.OrganizationId)), cancellationToken);
-        await Task.WhenAll(projects, databases, audit, reservations);
+        var rootRows = RowSync.QueryAsync(storage, roots, cancellationToken);
+        var scope = snapshot ?? [.. (await rootRows).Where(row => row.ErasureId is null).Select(row => row.Id)];
+        var all = snapshot is [];
+        var empty = !all && scope.Length == 0;
+        var projects = empty ? Task.FromResult(new List<OrganizationProjectRow>()) :
+            RowSync.QueryAsync(storage, db => db.OrganizationProjects.Where(row => all || scope.Contains(row.OrganizationId)), cancellationToken);
+        var databases = empty ? Task.FromResult(new List<ProjectDatabaseRow>()) :
+            RowSync.QueryAsync(storage, db => db.ProjectDatabases.Where(row => all || scope.Contains(row.OrganizationId)), cancellationToken);
+        var audit = empty ? Task.FromResult(new List<AuditEventRow>()) :
+            RowSync.QueryAsync(storage, db => db.AuditEvents.Where(row => all || scope.Contains(row.OrganizationId)).OrderBy(row => row.OccurredAt).ThenBy(row => row.Id), cancellationToken);
+        var reservations = empty ? Task.FromResult(new List<InvitationReservationRow>()) :
+            RowSync.QueryAsync(storage, db => db.InvitationReservations.Where(row => all || scope.Contains(row.OrganizationId)), cancellationToken);
+        await Task.WhenAll(rootRows, projects, databases, audit, reservations);
         var projectRows = (await projects).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
         var databaseRows = (await databases).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
         var auditRows = (await audit).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
         var reservationRows = (await reservations).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
-        return found.ToDictionary(row => row.Id, row =>
+        return (await rootRows).ToDictionary(row => row.Id, row =>
         {
             var rows = new OrganizationRows(row, [.. projectRows[row.Id]], [.. databaseRows[row.Id]], [.. auditRows[row.Id]], [.. reservationRows[row.Id]]);
             return row.ErasureId is null ? new StoredOrganization(Read(rows), row.Version, false) { Rows = rows } :

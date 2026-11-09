@@ -20,6 +20,7 @@ public sealed class TerraBaseStorage : IAsyncDisposable
 {
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(60);
     private static readonly Lock SharedGate = new();
+    private static readonly Lazy<Task<IReadOnlyList<TerraBaseSqlStatement>>> Schema = new(() => Task.Run(GenerateSchema));
     private static Task<TerraBaseStorage>? shared;
     private readonly string directory = Directory.CreateTempSubdirectory("ts-dashboard-terrabase-").FullName;
     private readonly ConcurrentQueue<string> output = new();
@@ -28,7 +29,6 @@ public sealed class TerraBaseStorage : IAsyncDisposable
     private readonly HttpClient databases = new(TerraBaseHttp.CreateHandler());
     private readonly Lock projectGate = new();
     private Task<TerraBaseDatabaseClient>? project;
-    private Task<IReadOnlyList<TerraBaseSqlStatement>>? schema;
     private string? projectId;
     private Process? process;
 
@@ -61,10 +61,12 @@ public sealed class TerraBaseStorage : IAsyncDisposable
 
     public static async Task<TerraBaseStorage> StartAsync()
     {
+        _ = Schema.Value;
         var storage = new TerraBaseStorage();
         try
         {
             await storage.LaunchAsync();
+            await storage.Project();
             return storage;
         }
         catch
@@ -79,7 +81,7 @@ public sealed class TerraBaseStorage : IAsyncDisposable
         var project = await Project().WaitAsync(cancellationToken);
         var name = "dashboard-" + ids.NewId().ToLowerInvariant();
         await project.Database(projectId!, name).CreateAsync(cancellationToken);
-        await Database(name).BatchAsync(await SchemaAsync(), cancellationToken);
+        await Database(name).BatchAsync(await Schema.Value.WaitAsync(cancellationToken), cancellationToken);
         return name;
     }
 
@@ -88,20 +90,16 @@ public sealed class TerraBaseStorage : IAsyncDisposable
         return new TerraBaseSqlClient(peer, new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(projectId!, name);
     }
 
-    private Task<IReadOnlyList<TerraBaseSqlStatement>> SchemaAsync()
+    private static IReadOnlyList<TerraBaseSqlStatement> GenerateSchema()
     {
-        lock (projectGate)
-        {
-            return schema ??= Task.Run<IReadOnlyList<TerraBaseSqlStatement>>(() =>
-            {
-                using var db = new DashboardDbContext(new DbContextOptionsBuilder<DashboardDbContext>().UseTerraBase(Database("schema")).Options);
-                var script = db.GetService<IMigrator>().GenerateScript();
-                return [.. script.Split(";" + Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Select(statement => statement.TrimEnd(';'))
-                    .Where(statement => statement.Length > 0 && statement is not ("BEGIN TRANSACTION" or "COMMIT"))
-                    .Select(statement => new TerraBaseSqlStatement(statement))];
-            });
-        }
+        using var client = new HttpClient();
+        var database = new TerraBaseSqlClient(client, new TerraBaseSqlClientOptions { BaseAddress = new Uri("http://127.0.0.1/") }).Database("00000000000000000000000000", "schema");
+        using var db = new DashboardDbContext(new DbContextOptionsBuilder<DashboardDbContext>().UseTerraBase(database).Options);
+        var script = db.GetService<IMigrator>().GenerateScript();
+        return [.. script.Split(";" + Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(statement => statement.TrimEnd(';'))
+            .Where(statement => statement.Length > 0 && statement is not ("BEGIN TRANSACTION" or "COMMIT"))
+            .Select(statement => new TerraBaseSqlStatement(statement))];
     }
 
     private Task<TerraBaseDatabaseClient> Project()

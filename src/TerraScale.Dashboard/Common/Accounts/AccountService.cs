@@ -234,6 +234,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             // The account and ts-auth's organization list load together; a Personal organization this call just
             // created is listed again below, so the parallel list never hides it.
             var listing = platform.ListOrganizationsAsync(session, cancellationToken);
+            var listed = SnapshotAsync(listing);
             var account = await EnsureAsync(session, cancellationToken);
             // The organization this view selects also needs its members and ownership transfer; they load with its projects.
             var accessFor = organizationId ?? (projectId is null ? account.ActiveOrganizationId : null);
@@ -246,13 +247,19 @@ namespace TerraScale.Dashboard.Common.Accounts
                 return await read();
             }
 
-            var lives = await listing;
+            var (lives, snapshot) = await listed;
             if (account.PersonalOrganizationId.Length != 0 && lives.All(live => live.Id != account.PersonalOrganizationId))
             {
-                lives = await platform.ListOrganizationsAsync(session, cancellationToken);
+                (lives, snapshot) = await SnapshotAsync(platform.ListOrganizationsAsync(session, cancellationToken));
             }
 
-            var snapshot = organizationStore.FindManyAsync([.. lives.Where(live => TerraScaleIds.IsValid(live.Id)).Select(live => live.Id)], cancellationToken);
+            async Task<(IReadOnlyList<TsAuthPlatformOrganization> Lives, Task<IReadOnlyDictionary<string, OrganizationRecord?>> Snapshot)> SnapshotAsync(
+                Task<IReadOnlyList<TsAuthPlatformOrganization>> organizations)
+            {
+                var found = await organizations;
+                return (found, organizationStore.ReadManyAsync([.. found.Where(live => TerraScaleIds.IsValid(live.Id)).Select(live => live.Id)], cancellationToken));
+            }
+
             var prefetched = new System.Collections.Concurrent.ConcurrentDictionary<string, OrganizationAccess>(StringComparer.Ordinal);
             async Task HydrateSelectedAsync(OrganizationRecord org)
             {
@@ -374,29 +381,30 @@ namespace TerraScale.Dashboard.Common.Accounts
         }
 
         // An organization created outside the dashboard starts as a business workspace that needs billing.
-        private async Task<OrganizationRecord> OrganizationStateAsync(TsAuthPlatformOrganization live, Task<IReadOnlyDictionary<string, StoredOrganization>> snapshot,
+        private async Task<OrganizationRecord> OrganizationStateAsync(TsAuthPlatformOrganization live, Task<IReadOnlyDictionary<string, OrganizationRecord?>> snapshot,
             CancellationToken cancellationToken, bool create = true)
         {
-            var stored = (await snapshot).GetValueOrDefault(live.Id);
-            if (stored is null)
+            if ((await snapshot).TryGetValue(live.Id, out var read))
             {
-                var created = new OrganizationRecord { Id = live.Id, Name = live.Name, Slug = Slug(live.Name), Kind = "business", BillingStatus = "billing_required", OwnerUserId = live.CreatedBy, CreatedAt = live.CreatedAt };
-                if (!create)
-                {
-                    return created;
-                }
-
-                try
-                {
-                    await organizationStore.CreateAsync(created, cancellationToken);
-                    return created;
-                }
-                catch (StateConflictException)
-                {
-                    stored = await organizationStore.FindAsync(live.Id, cancellationToken) ?? throw new IOException("Organization state did not persist.");
-                }
+                return read ?? throw new AccountAccessException("Organization is unavailable.", 404);
             }
-            return stored.Erased ? throw new AccountAccessException("Organization is unavailable.", 404) : stored.Organization;
+
+            var created = new OrganizationRecord { Id = live.Id, Name = live.Name, Slug = Slug(live.Name), Kind = "business", BillingStatus = "billing_required", OwnerUserId = live.CreatedBy, CreatedAt = live.CreatedAt };
+            if (!create)
+            {
+                return created;
+            }
+
+            try
+            {
+                await organizationStore.CreateAsync(created, cancellationToken);
+                return created;
+            }
+            catch (StateConflictException)
+            {
+                var stored = await organizationStore.FindAsync(live.Id, cancellationToken) ?? throw new IOException("Organization state did not persist.");
+                return stored.Erased ? throw new AccountAccessException("Organization is unavailable.", 404) : stored.Organization;
+            }
         }
 
         // ts-auth's name, the caller's role and the project list replace the stored projection in this view.
