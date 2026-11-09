@@ -21,6 +21,7 @@ public readonly union PointInTimeRestoreResult(Done, NotFound, Conflict, Validat
 
 public readonly union RestoreWindowResult(RestoreWindow, NotFound, Unavailable);
 
+// Point-in-time restore from continuous backup (TS-633).
 public interface IPointInTimeRestore
 {
     Task<RestoreWindowResult> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);

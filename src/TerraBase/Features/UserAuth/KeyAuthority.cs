@@ -22,6 +22,7 @@ public sealed record KeyRefused(string Code);
 
 public readonly union KeyAuthorityResult(KeyActive, KeyRefused, Unavailable);
 
+// Key revocation across transports is specified in docs/terrabase/key-revocation.md.
 public interface IKeyAuthority
 {
     ValueTask<KeyAuthorityResult> CheckAsync(KeyToken key, CancellationToken cancellationToken);

@@ -6,6 +6,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
+// Continuous backup ships here (TS-633).
 public static class BackupExtensions
 {
     public static IServiceCollection AddTerraBaseBackup(this IServiceCollection services, TerraBaseOptions options)

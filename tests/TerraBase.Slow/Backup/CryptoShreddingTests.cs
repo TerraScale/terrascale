@@ -10,6 +10,7 @@ using TerraBase.Testing;
 
 namespace TerraBase.Slow.Backup;
 
+// Deleting a database or erasing an account destroys its backup data keys (docs/terrabase/crypto-shredding.md).
 public sealed class CryptoShreddingTests
 {
     [Test]
