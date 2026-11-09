@@ -127,7 +127,7 @@ internal static class ProjectCheck
                     return;
                 }
             }
-            else if (context.GetEndpoint()?.Metadata.GetMetadata<ManagementUserRoute>() is not null
+            else if (context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
                 && !context.User.IsOperator())
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;

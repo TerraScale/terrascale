@@ -71,7 +71,7 @@ internal static class ProjectCatalog
                 return;
             }
 
-            if (restricted is not null && restrictedId != context.Request.RouteValues["database"] as string)
+            if (restricted is not null && context.Request.RouteValues["database"] is string routeDatabase && restrictedId != routeDatabase)
             {
                 await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
                 return;

@@ -169,7 +169,13 @@ internal static class QosExtensions
             return await context.RequestServices.GetRequiredService<IProjectCatalog>()
                 .ResolveProjectAsync(projectId, context.User.UserId(), createIn: null, context.RequestAborted).ConfigureAwait(false) switch
             {
-                string organization => await ResolvePlanAsync(context, organization).ConfigureAwait(false),
+                string owner => await context.RequestServices.GetRequiredService<IManagementService>()
+                    .GetOrganizationAsync(context.User.UserId(), owner, context.RequestAborted).ConfigureAwait(false) switch
+                {
+                    Organization organization => new TenantContext(organization.Id, organization.Plan),
+                    NotFound => new Done(),
+                    Unavailable error => error,
+                },
                 NotFound => new Done(),
                 Unavailable error => error,
             };
