@@ -79,6 +79,61 @@ function tsAuthClient(respond, requests, overrides = {}) {
 }
 
 describe("ts-auth client", () => {
+  test("projects list and disable users with the sign-in bearer", async () => {
+    /** @type {Request[]} */
+    const requests = [];
+    const projectUser = {
+      id: "01ARZ3NDEKTSV4RRFFQ6000011",
+      email: "ada@acme.test",
+      created_at: "2026-11-08T00:00:00Z",
+      disabled: false,
+    };
+    const tsAuth = tsAuthClient(
+      (_request, index) => json(index === 0 ? { items: [projectUser], next: null } : projectUser),
+      requests,
+    );
+    const signIn = "header.payload.signature";
+
+    const listed = await tsAuth.projects.listUsers(
+      signIn,
+      "01ARZ3NDEKTSV4RRFFQ6000042",
+      { search: "ada", limit: 2, after: "cursor" },
+    );
+    assert.equal(listed.ok, true);
+    assert.equal(
+      new URL(/** @type {Request} */ (requests[0]).url).pathname,
+      "/v1/01ARZ3NDEKTSV4RRFFQ6000042/users",
+    );
+    assert.equal(
+      new URL(/** @type {Request} */ (requests[0]).url).search,
+      "?q=ada&limit=2&after=cursor",
+    );
+    assert.equal(
+      /** @type {Request} */ (requests[0]).headers.get("authorization"),
+      `Bearer ${signIn}`,
+    );
+    if (listed.ok) {
+      assert.equal(listed.value.items[0]?.email, "ada@acme.test");
+      assert.equal(listed.value.next, null);
+    }
+
+    const disabled = await tsAuth.projects.disableUser(
+      signIn,
+      "01ARZ3NDEKTSV4RRFFQ6000042",
+      "01ARZ3NDEKTSV4RRFFQ6000011",
+    );
+    assert.equal(disabled.ok, true);
+    assert.equal(
+      new URL(/** @type {Request} */ (requests[1]).url).pathname,
+      "/v1/01ARZ3NDEKTSV4RRFFQ6000042/users/01ARZ3NDEKTSV4RRFFQ6000011/disable",
+    );
+    assert.equal(/** @type {Request} */ (requests[1]).method, "POST");
+    assert.equal(
+      /** @type {Request} */ (requests[1]).headers.get("authorization"),
+      `Bearer ${signIn}`,
+    );
+  });
+
   test("sends exact management routes, bearer, and JSON bodies", async () => {
     /** @type {Request[]} */
     const requests = [];

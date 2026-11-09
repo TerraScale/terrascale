@@ -1,4 +1,5 @@
 import { TsAuthHttp } from "./http.js";
+import { TsAuthProjectsClient } from "./ts-auth-projects.js";
 import { err } from "./result.js";
 import { isValidId, requireId } from "./ids.js";
 /** @import { TerraScaleResult } from "./result.js" */
@@ -2526,6 +2527,11 @@ export class TsAuthClient {
    * @readonly
    */
   oidc;
+  /**
+   * @type {TsAuthProjectsClient}
+   * @readonly
+   */
+  projects;
 
   /** @param {TsAuthClientConfig} config */
   constructor(config) {
@@ -2554,6 +2560,7 @@ export class TsAuthClient {
     this.oauthClients = new TsAuthOauthClientsClient(this.#http, slug);
     this.oauthResources = new TsAuthOauthResourcesClient(this.#http, slug);
     this.oidc = new TsAuthOidcClient(this.#http, slug);
+    this.projects = new TsAuthProjectsClient(this.#http);
   }
 
   get config() {
