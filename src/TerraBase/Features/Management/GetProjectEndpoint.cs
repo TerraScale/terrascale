@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>GET …/projects/{project}</c>: reads a project.</summary>
 internal sealed class GetProjectEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ManagementRoute.Project);
@@ -23,7 +21,6 @@ internal sealed class GetProjectEndpoint(IManagementService management) : Endpoi
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await management.GetProjectAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), cancellationToken) switch
         {

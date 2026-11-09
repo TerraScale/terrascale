@@ -4,34 +4,12 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary>A consistent snapshot of a managed database.</summary>
-/// <param name="Id">Canonical uppercase ULID.</param>
-/// <param name="DatabaseId">The database it was taken of.</param>
-/// <param name="Status">Always <c>ready</c>: a backup is listed only once registered (complete).</param>
-/// <param name="Trigger"><c>manual</c> or <c>scheduled</c>.</param>
-/// <param name="SizeBytes">Bytes the snapshot occupies on disk.</param>
-/// <param name="CreatedAt">When the backup completed; retention counts from here.</param>
 public sealed record DatabaseBackup(string Id, string DatabaseId, string Status, string Trigger, long SizeBytes, DateTimeOffset CreatedAt);
 
-/// <summary>When a database is backed up and how long its backups are kept.</summary>
-/// <param name="FullBackupCron">Standard 5-field cron expression (UTC), or <see langword="null"/> for no scheduled backups.</param>
-/// <param name="RetentionDays">Backups older than this many days are deleted (1 to 35).</param>
-/// <param name="UpdatedAt">When the policy was last saved; <see langword="null"/> for the default policy.</param>
 public sealed record BackupPolicy(string? FullBackupCron, int RetentionDays, DateTimeOffset? UpdatedAt);
 
-/// <summary>Why the last scheduled backup attempt failed.</summary>
-/// <param name="Code">A stable machine-readable code.</param>
-/// <param name="Message">A safe human-readable description; never internal paths or secrets.</param>
 public sealed record BackupPolicyError(string Code, string Message);
 
-/// <summary>The body of <c>GET …/backup-policy</c>: the policy and the health of its scheduled backups.</summary>
-/// <param name="FullBackupCron">Standard 5-field cron expression (UTC), or <see langword="null"/> for no scheduled backups.</param>
-/// <param name="RetentionDays">Backups older than this many days are deleted (1 to 35).</param>
-/// <param name="UpdatedAt">When the policy was last saved; <see langword="null"/> for the default policy.</param>
-/// <param name="LastSucceededAt">When the newest scheduled backup completed; <see langword="null"/> if none ever did.</param>
-/// <param name="LastFailedAt">When the newest scheduled attempt failed; <see langword="null"/> if none ever failed.</param>
-/// <param name="LastError">The error of the attempt named by <paramref name="LastFailedAt"/>, when its cause is known.</param>
-/// <param name="NextDueAt">The next cron occurrence in UTC; <see langword="null"/> with no cron.</param>
 public sealed record BackupPolicyStatus(
     string? FullBackupCron,
     int RetentionDays,
@@ -41,58 +19,36 @@ public sealed record BackupPolicyStatus(
     BackupPolicyError? LastError,
     DateTimeOffset? NextDueAt);
 
-/// <summary>The body of <c>PUT …/backup-policy</c>.</summary>
-/// <param name="FullBackupCron">Standard 5-field cron expression (UTC); null or empty for no scheduled backups.</param>
-/// <param name="RetentionDays">1 to 35.</param>
 public sealed record BackupPolicyRequest(string? FullBackupCron, int? RetentionDays);
 
-/// <summary>The body of <c>POST …/point-in-time/restore</c>.</summary>
-/// <param name="PointInTime">The time to restore the database as of, inside its restore window.</param>
-/// <param name="Destination"><c>platform</c> (default) or <c>customer</c>.</param>
-/// <param name="Name">The new database's name; the first free of <c>&lt;source&gt;-restore</c>, <c>-restore-2</c>, … without it.</param>
-/// <param name="TtlSeconds">Seconds until the new database is deleted, 60 to 31,536,000; null keeps it until deleted.</param>
 public sealed record PointInTimeRestoreRequest(DateTimeOffset? PointInTime, string? Name, string? Destination = null, long? TtlSeconds = null);
 
-/// <summary>Body of <c>POST …/point-in-time/rewind</c>.</summary>
 public sealed record PointInTimeRewindRequest(DateTimeOffset? PointInTime, string? Destination = null);
 
-/// <summary>A page of a database's backups.</summary>
 public readonly union ListBackupsResult(ManagementPage<DatabaseBackup>, Unavailable);
 
-/// <summary>A completed backup, or that its database is gone or out of the user's reach.</summary>
 public readonly union CreateBackupResult(DatabaseBackup, NotFound, Unavailable);
 
-/// <summary>A database's backup policy with its scheduled-backup health.</summary>
 public readonly union GetBackupPolicyResult(BackupPolicyStatus, Unavailable);
 
-/// <summary>The saved policy, or why it was not saved.</summary>
 public readonly union SetBackupPolicyResult(BackupPolicy, NotFound, Forbidden, Unavailable);
 
-/// <summary>The database a backup was restored into, or why it was not restored; a taken name is a conflict.</summary>
 public readonly union RestoreBackupResult(ManagedDatabase, BackupElsewhere, NotFound, Conflict, Forbidden, Validation, QuotaExceeded, Unavailable);
 
-/// <summary>A recovery request that must execute in the named region.</summary>
-/// <param name="Region">The region holding the recovery source.</param>
-/// <param name="Database">The source database's actual placement.</param>
 public sealed record BackupElsewhere(string Region, ManagedDatabase Database);
 
 public readonly union StartRestoreResult(RestoreOperationRecord, BackupElsewhere, NotFound, Conflict, Forbidden, Validation, QuotaExceeded, Unavailable);
 
 public readonly union GetRestoreOperationResult(RestoreOperationRecord, NotFound, Unavailable);
 
-/// <summary>Backups of managed databases, their policy, and restoring them into new databases.</summary>
 public interface IManagedBackupService
 {
-    /// <summary>Lists the registered backups of a database, oldest first; the cursor is opaque.</summary>
     ValueTask<ListBackupsResult> ListBackupsAsync(string organizationId, string databaseId, string? after, int limit, CancellationToken cancellationToken);
 
-    /// <summary>Takes a backup of <paramref name="database"/> now.</summary>
     ValueTask<CreateBackupResult> CreateBackupAsync(string userId, string organizationId, TenantContext database, CancellationToken cancellationToken);
 
-    /// <summary>Reads the policy of a database, or the default policy when none was saved.</summary>
     ValueTask<GetBackupPolicyResult> GetPolicyAsync(string databaseId, CancellationToken cancellationToken);
 
-    /// <summary>Saves the policy of a database; the values are validated by the caller.</summary>
     ValueTask<SetBackupPolicyResult> SetPolicyAsync(
         string userId, string organizationId, TenantContext database, string? fullBackupCron, int retentionDays, CancellationToken cancellationToken);
 
@@ -105,16 +61,10 @@ public interface IManagedBackupService
 
     ValueTask<GetRestoreOperationResult> GetRestoreOperationAsync(string organizationId, string databaseId, string operationId, CancellationToken cancellationToken);
 
-    /// <summary>Replaces the database's own tables with their state as of <paramref name="at"/>, in place.</summary>
     ValueTask<RestoreBackupResult> RewindPointInTimeAsync(
         string userId, string organizationId, TenantContext database, DateTimeOffset at, string destination, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// One scheduler pass: a page of the storage sweep, retention, then the scheduled backups that are due; none while the
-    /// catalog is at a version this build cannot use.
-    /// </summary>
     ValueTask RunScheduleAsync(CancellationToken cancellationToken);
 
-    /// <summary>Settles restore operations a stopped process left running in this region, naming any database they may have left behind.</summary>
     ValueTask RecoverInterruptedRestoresAsync(CancellationToken cancellationToken);
 }

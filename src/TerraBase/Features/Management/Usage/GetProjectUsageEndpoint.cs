@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
@@ -5,14 +6,11 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary><c>GET …/projects/{project}/usage</c>: sums the usage of every database of a project.</summary>
 internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage peers, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
-    /// <summary>The bounds of the project usage route.</summary>
     internal const string LimitsDescription =
         "Every database is listed before any is counted: more than 100 answer 400 \"query too expensive\" without a count. A request still running after 5 seconds starts no further catalog read or count and answers 503 capacity with Retry-After; retry it unchanged.";
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Project + "/usage");
@@ -28,7 +26,6 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         UsageWindow.Parse(HttpContext.Request.Query, time.GetUtcNow()) switch
         {
@@ -36,15 +33,14 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
             UsageWindow window => await ReadAsync(window, cancellationToken),
         };
 
-    // This node's share, plus every other region's when the client asked: each region meters only what it served.
     private async ValueTask<IResult> ReadAsync(UsageWindow window, CancellationToken cancellationToken)
     {
         var organization = ManagementRoute.OrganizationId(HttpContext);
         var nodeOnly = PeerUsage.NodeOnly(HttpContext);
-        var others = nodeOnly ? Task.FromResult<List<ProjectUsage>?>([]) : peers.ProjectAsync(HttpContext, cancellationToken);
+        var others = nodeOnly ? Task.FromResult<IReadOnlyList<ProjectUsage>?>([]) : peers.ProjectAsync(HttpContext, cancellationToken);
         var month = PeerUsage.MonthOf(time.GetUtcNow());
         var units = nodeOnly
-            ? Task.FromResult<Dictionary<string, UsageTotals>?>(new(StringComparer.Ordinal) { [organization] = new UsageTotals(0, 0) })
+            ? Task.FromResult<IReadOnlyDictionary<string, UsageTotals>?>(new Dictionary<string, UsageTotals>(StringComparer.Ordinal) { [organization] = new UsageTotals(0, 0) })
             : peers.MonthsAsync([organization], month, cancellationToken);
         var local = await usage.GetProjectUsageAsync(
             ManagementRoute.UserId(HttpContext), organization, ManagementRoute.Value(HttpContext, "project"), window, cancellationToken);
@@ -55,7 +51,7 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
                 NotFound error => ErrorResponse.From(error),
                 Validation error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),
-                ProjectUsage => throw new System.Diagnostics.UnreachableException(),
+                ProjectUsage => throw new UnreachableException(),
             };
         }
 

@@ -9,13 +9,11 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>GET …/projects/{project}/databases</c>: lists the databases of a project.</summary>
 internal sealed class ListManagedDatabasesEndpoint(
     IManagementService management, IProjectCatalog catalog, IRegionPeers regions, RemoteDatabases remote) : EndpointWithoutRequest<IResult>
 {
     internal const string ListOperationName = "listDatabases";
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(ProjectApiRoute.Databases);
@@ -33,7 +31,6 @@ internal sealed class ListManagedDatabasesEndpoint(
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ManagementRoute.CheckPage(HttpContext) switch
         {
@@ -102,10 +99,6 @@ internal sealed class ListManagedDatabasesEndpoint(
             _ => throw new InvalidOperationException(),
         };
 
-    /// <summary>
-    /// The local page, or when the token is not narrowed to one database, the cluster's: this region's items and each peer
-    /// region's, deduplicated by id in id order. A narrowed token keeps its single-database local page.
-    /// </summary>
     private async ValueTask<ManagementPage<ManagedDatabaseBody>> MergedAsync(
         ManagementPage<ManagedDatabase> local, bool restricted, PageQuery page, string project, CancellationToken cancellationToken)
     {
@@ -118,9 +111,6 @@ internal sealed class ListManagedDatabasesEndpoint(
         var items = local.Items.Select(database => ManagedDatabaseBody.From(database, region)).ToList();
         var more = local.Next is not null;
         var peers = await regions.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
-        // Every region's page for this window, keyed by region: the database ids it listed for the project, and the
-        // window's last id — null when a page reached the project's end, so its omissions are decisive for every later
-        // id too. The local page is this region's own answer; a peer with no entry could not be read.
         var windows = new Dictionary<string, (HashSet<string> Ids, string? Last)>(StringComparer.Ordinal)
         {
             [region] = ([.. local.Items.Select(database => database.Id)], local.Next is null ? null : local.Items[^1].Id),
@@ -151,10 +141,6 @@ internal sealed class ListManagedDatabasesEndpoint(
             .SkipWhile(database => page.After is not null && string.CompareOrdinal(database.Id, page.After) <= 0)
             .Take(page.Limit + 1)
             .ToList();
-        // A database its home region no longer lists is the ghost of a deletion its replica regions have not reconciled
-        // yet, so the merged page drops it whatever a replica still records. Pages are in id order, so a home's omission
-        // is decisive only within the window it covered; an id sorting after the window's last is inconclusive, and a
-        // home that could not be read keeps its replicas listed, like every other surface.
         bool Ghost(ManagedDatabaseBody candidate) =>
             windows.TryGetValue(candidate.HomeRegion, out var window)
             && (window.Last is null || string.CompareOrdinal(candidate.Id, window.Last) <= 0) && !window.Ids.Contains(candidate.Id);

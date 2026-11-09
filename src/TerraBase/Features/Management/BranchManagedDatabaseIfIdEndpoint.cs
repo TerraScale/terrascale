@@ -7,10 +7,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Branches only the source identity the caller expected.</summary>
 internal sealed class BranchManagedDatabaseIfIdEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<ForkRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ProjectApiRoute.Database + "/branches/if-id/{expectedId}");
@@ -30,17 +28,14 @@ internal sealed class BranchManagedDatabaseIfIdEndpoint(IManagementService manag
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(ForkRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        // A database-restricted token cannot create a sibling database; preserve its opaque refusal before the guard.
         if (ProjectAccess.Current is { DatabaseName: not null })
         {
             return ValueTask.FromResult(ManagementRoute.DatabaseNotFound(new NotFound()));
         }
 
-        // Project catalog admission resolved the name once; route validation already checked expectedId's ULID.
         var sourceId = ManagementRoute.Value(HttpContext, "database");
         return !string.Equals(sourceId, ManagementRoute.Value(HttpContext, "expectedId"), StringComparison.Ordinal)
             ? ValueTask.FromResult(ErrorResponse.From(new Conflict("the database identity changed", "database_identity_changed")))

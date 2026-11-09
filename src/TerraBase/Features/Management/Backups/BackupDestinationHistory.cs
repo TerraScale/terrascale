@@ -6,7 +6,6 @@ using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.Management.Backups;
 
-// Outside project state: deleting authorization must not discard the sealed credentials owed to a purge.
 internal static class BackupDestinationHistory
 {
     internal static string Kind(string projectId) => $"backup_destination_history/{projectId}";

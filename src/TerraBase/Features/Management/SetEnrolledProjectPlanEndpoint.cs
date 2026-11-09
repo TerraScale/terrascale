@@ -1,13 +1,13 @@
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
 internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put("/admin/projects/{project}/plan");
@@ -22,7 +22,6 @@ internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog, Pl
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -35,7 +34,7 @@ internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog, Pl
         return ManagementRoute.CheckPlan(request) switch
         {
             Validation error => ErrorResponse.From(error),
-            TerraBase.Tenancy.PlanTier plan => await catalog.SetEnrolledPlanAsync(project, plan, cancellationToken).ConfigureAwait(false) switch
+            PlanTier plan => await catalog.SetEnrolledPlanAsync(project, plan, cancellationToken).ConfigureAwait(false) switch
             {
                 Organization value => await fanout.PublishAsync(HttpContext, value.Id, plan, cancellationToken).ConfigureAwait(false) is { } error
                     ? ErrorResponse.From(error) : TypedResults.Ok(value),

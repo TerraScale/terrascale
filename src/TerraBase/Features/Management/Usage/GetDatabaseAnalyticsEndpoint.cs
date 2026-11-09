@@ -4,7 +4,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-public sealed class GetDatabaseAnalyticsEndpoint(IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
+internal sealed class GetDatabaseAnalyticsEndpoint(IUsageAnalytics analytics, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {

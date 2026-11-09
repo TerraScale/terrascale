@@ -2,52 +2,33 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>One organization's units this node served in a month.</summary>
-/// <param name="OrganizationId">The organization.</param>
-/// <param name="Reads">SQL read units.</param>
-/// <param name="Writes">Billed write units.</param>
-/// <param name="StorageByteHours">Stored bytes times hours.</param>
 public sealed record NodeUsageMonth(string OrganizationId, long Reads, long Writes, long StorageByteHours);
 
-/// <summary>The units this node served in a month, per organization asked for.</summary>
-/// <param name="Items">One item per organization, in the order asked.</param>
 public sealed record NodeUsageMonths(IReadOnlyList<NodeUsageMonth> Items);
 
-/// <summary>
-/// Sums usage over every region. Each node meters only the work it serves, once: a write at the database's home, a
-/// replica read in the replica region, a forwarded request only where it runs. Its units live in its own system
-/// database, which no other region holds, so every total a client or billing reads is this node's units plus every
-/// other region's own, asked over the internal listener with the peer credential.
-/// </summary>
 internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, InternalCredential credential)
 {
-    /// <summary>Marks a peer's request for this node's own units only, so the fan-out never recurses.</summary>
     internal const string ScopeHeader = "X-TerraBase-Usage-Scope";
 
     private const string NodeScope = "node";
 
     internal const string MonthsPath = "/v1/internal/usage/months";
 
-    /// <summary>Organizations one months request names at most.</summary>
     internal const int MaxOrganizations = 100;
 
     private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(3);
 
-    /// <summary>Whether a peer asked for this node's own units: honored only behind the peer credential.</summary>
     internal static bool NodeOnly(HttpContext context) =>
         (Listeners.IsForwarded(context) || Listeners.ArrivedOn(context) == TerraBaseListener.Internal)
         && context.Request.Headers[ScopeHeader] is [NodeScope];
 
-    /// <summary>
-    /// Every other region's share of the project usage the client asked for, sent as the same client request so each
-    /// region checks the same token. A region that does not hold the project adds nothing; null when one cannot answer.
-    /// </summary>
-    public async Task<List<ProjectUsage>?> ProjectAsync(HttpContext context, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ProjectUsage>?> ProjectAsync(HttpContext context, CancellationToken cancellationToken)
     {
         var path = context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent();
         var answers = await AskAsync(peer =>
@@ -59,8 +40,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
         return answers?.Where(answer => answer is not null).Select(answer => answer!).ToList();
     }
 
-    /// <summary>Every other region's units of <paramref name="organizations"/> in <paramref name="month"/> (<c>yyyy-MM</c>); null when one cannot answer.</summary>
-    public async Task<Dictionary<string, UsageTotals>?> MonthsAsync(IReadOnlyCollection<string> organizations, string month, CancellationToken cancellationToken)
+    public async Task<IReadOnlyDictionary<string, UsageTotals>?> MonthsAsync(IReadOnlyCollection<string> organizations, string month, CancellationToken cancellationToken)
     {
         var sums = new Dictionary<string, UsageTotals>(StringComparer.Ordinal);
         foreach (var organization in organizations)
@@ -99,8 +79,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
         return sums;
     }
 
-    /// <summary>Every other region's own page of allowance usage after <paramref name="after"/>; null when one cannot answer.</summary>
-    public async Task<List<AllowanceUsagePage>?> AllowancesAsync(string? after, string? month, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<AllowanceUsagePage>?> AllowancesAsync(string? after, string? month, CancellationToken cancellationToken)
     {
         var query = new StringBuilder("/v1/usage/allowances?");
         if (after is not null)
@@ -119,11 +98,6 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
         return answers?.Select(answer => answer!).ToList();
     }
 
-    /// <summary>
-    /// Merges every node's own allowance page into one page of at most <paramref name="size"/> organizations. Every node
-    /// pages its organizations in id order, so up to the smallest last id of a node with more to page, every page is
-    /// complete: the merged page ends there, summing each organization's units over the nodes that hold it.
-    /// </summary>
     internal static AllowanceUsagePage MergeAllowances(AllowanceUsagePage local, IReadOnlyList<AllowanceUsagePage> others, int size)
     {
         var pages = others.Prepend(local).ToList();
@@ -151,11 +125,9 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
         return local with { Items = items, Next = more && items.Count > 0 ? items[^1].OrganizationId : null };
     }
 
-    /// <summary>The client's project usage: this node's share plus every other region's, with the organization's units of every region.</summary>
     internal static ProjectUsage MergeProject(ProjectUsage local, IReadOnlyList<ProjectUsage> others, UsageTotals organization)
     {
         var all = others.Prepend(local).ToList();
-        // A replica region lists the database too, with the reads it served: its counts add to the home's, its copy adds no storage.
         var items = all.SelectMany(usage => usage.Items).GroupBy(item => item.DatabaseId, StringComparer.Ordinal)
             .Select(copies => copies.Aggregate((sum, item) => sum with
             {
@@ -208,9 +180,8 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
         return request;
     }
 
-    // Asks every other region's node at once. An answer of `status` counts as nothing; any other failure fails the whole.
     private async Task<T?[]?> AskAsync<T>(
-        Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type,
+        Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, JsonTypeInfo<T> type,
         CancellationToken cancellationToken)
         where T : class
     {
@@ -228,7 +199,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
     }
 
     private async Task<(bool Answered, T? Value)> AskOneAsync<T>(
-        RegionPeer peer, Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type,
+        RegionPeer peer, Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, JsonTypeInfo<T> type,
         CancellationToken cancellationToken)
         where T : class
     {

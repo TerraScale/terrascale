@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary><c>POST …/databases/{database}/backups/{backup}/restore</c>: restores a backup into a new database.</summary>
 internal sealed class RestoreBackupEndpoint(IManagementService management, IManagedBackupService backups) : Endpoint<NameRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ProjectApiRoute.Database + "/backups/{backup}/restore");
@@ -29,7 +27,6 @@ internal sealed class RestoreBackupEndpoint(IManagementService management, IMana
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

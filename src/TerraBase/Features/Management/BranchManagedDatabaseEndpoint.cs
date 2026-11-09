@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -6,10 +7,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>POST …/databases/{database}/branches</c>: creates a database as a snapshot copy of another.</summary>
 internal sealed class BranchManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<ForkRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ProjectApiRoute.Database + "/branches");
@@ -30,7 +29,6 @@ internal sealed class BranchManagedDatabaseEndpoint(IManagementService managemen
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(ForkRequest request, CancellationToken cancellationToken) =>
         BranchAsync(HttpContext, request, management, options, ManagementRoute.Value(HttpContext, "database"), cancellationToken);
 
@@ -43,7 +41,7 @@ internal sealed class BranchManagedDatabaseEndpoint(IManagementService managemen
         {
             return placement switch
             {
-                Done => throw new System.Diagnostics.UnreachableException(),
+                Done => throw new UnreachableException(),
                 DatabaseRegions.Misdirected elsewhere => elsewhere,
                 NotFound error => ManagementRoute.DatabaseNotFound(error),
                 Unavailable error => ErrorResponse.From(error),

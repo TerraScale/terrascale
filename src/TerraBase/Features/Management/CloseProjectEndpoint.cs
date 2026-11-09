@@ -5,13 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>
-/// <c>PUT /admin/projects/{project}/closure</c>: ts-auth's project closure handoff (docs/terrabase/project-closure.md).
-/// Served only on the internal listener, behind the peer credential, as <c>PUT /admin/projects/{project}/plan</c> is.
-/// </summary>
 internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<ProjectClosureRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put("/admin/projects/{project}/closure");
@@ -29,7 +24,6 @@ internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<P
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(ProjectClosureRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

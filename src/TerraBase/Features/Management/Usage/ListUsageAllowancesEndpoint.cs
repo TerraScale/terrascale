@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -5,14 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>
-/// <c>GET /v1/usage/allowances</c>: every organization's billed operation units this UTC month, for the dashboard's allowance
-/// notices. Served only on the internal listener, which requires the shared peer credential, as
-/// <c>PUT /admin/projects/{project}/plan</c> is.
-/// </summary>
 internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage peers, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/usage/allowances");
@@ -26,7 +21,6 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var after = HttpContext.Request.Query["after"].ToString();
@@ -46,14 +40,14 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
 
         HttpContext.Response.Headers.CacheControl = "no-store";
         var nodeOnly = PeerUsage.NodeOnly(HttpContext);
-        var others = nodeOnly ? Task.FromResult<List<AllowanceUsagePage>?>([]) : peers.AllowancesAsync(after.Length > 0 ? after : null, previous ? month : null, cancellationToken);
+        var others = nodeOnly ? Task.FromResult<IReadOnlyList<AllowanceUsagePage>?>([]) : peers.AllowancesAsync(after.Length > 0 ? after : null, previous ? month : null, cancellationToken);
         var local = await usage.ListAllowanceUsageAsync(after.Length > 0 ? after : null, previous, cancellationToken);
         if (local is not AllowanceUsagePage page)
         {
             return local switch
             {
                 Unavailable error => ErrorResponse.From(error),
-                AllowanceUsagePage => throw new System.Diagnostics.UnreachableException(),
+                AllowanceUsagePage => throw new UnreachableException(),
             };
         }
 

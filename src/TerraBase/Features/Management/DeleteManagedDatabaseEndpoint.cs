@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -7,7 +8,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>DELETE …/databases/{database}</c>: deletes a database and its data.</summary>
 internal sealed class DeleteManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
@@ -38,7 +38,7 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
         {
             return placement switch
             {
-                Done => throw new System.Diagnostics.UnreachableException(),
+                Done => throw new UnreachableException(),
                 DatabaseRegions.Misdirected elsewhere => elsewhere,
                 NotFound error => ManagementRoute.DatabaseNotFound(error),
                 Unavailable error => ErrorResponse.From(error),

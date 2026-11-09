@@ -4,10 +4,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
-/// <summary>
-/// The platform operator: the internal listener authenticates the peer credential and acts as the user it names.
-/// It bootstraps the Management API before ts-auth exists.
-/// </summary>
 public sealed class OperatorTests
 {
     private const string UserHeader = "X-TerraBase-User-Id";
@@ -31,7 +27,6 @@ public sealed class OperatorTests
         await Assert.That(tokenOnClient.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
-    // The code and message of an error body; the message is absent when it would say nothing.
     private static Task<HttpResponseMessage> SendAsync(
         HttpClient client, HttpMethod method, string path, string? bearer, string? user, object? body = null) =>
         SendAsync(client, method, path, bearer, user is null ? [] : [user], body);
@@ -47,7 +42,6 @@ public sealed class OperatorTests
 
         if (users.Length > 0)
         {
-            // Sent verbatim, so an invalid value reaches the server's own check instead of the client's.
             if (!request.Headers.TryAddWithoutValidation(UserHeader, users))
             {
                 throw new InvalidOperationException("the user header could not be added");

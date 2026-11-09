@@ -94,7 +94,6 @@ internal sealed partial class EngineManagementService
             return false;
         }
 
-        // An expired database mid-home-move is deleted after its move settles; the sweep retries.
         if (await HomeMovePendingAsync(transaction, storage.DatabaseId!, cancellationToken).ConfigureAwait(false))
         {
             return false;

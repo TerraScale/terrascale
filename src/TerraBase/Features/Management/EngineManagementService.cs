@@ -405,8 +405,6 @@ internal sealed partial class EngineManagementService(
             };
         }
 
-        // The fan-out must use the placement the commit acted on: a placement change committing in between would
-        // otherwise leave the regions it added un-notified until their own sweeps.
         ManagedDatabase? committed = null;
         Conflict? moveRefusal = null;
         bool Unregistered(ManagedDatabase record)
@@ -438,9 +436,6 @@ internal sealed partial class EngineManagementService(
         };
     }
 
-    // The home tells the regions that hold the database's record directly, so their catalogs and every merged listing
-    // drop it within seconds. Best effort and bounded: a region that misses the push forgets the database on its own
-    // sweep, and the merged listing serves only what a reachable home still lists.
     private async ValueTask<DeleteDatabaseResult> ForgetReplicaRegionsAsync(TenantContext storage, ManagedDatabase record, CancellationToken cancellationToken)
     {
         try
@@ -460,7 +455,6 @@ internal sealed partial class EngineManagementService(
         }
         catch (Exception error)
         {
-            // The delete already committed: the push must not turn its answer into a 500 or skip key destruction.
             logger.ZLogWarning(error, $"Telling replica regions to forget deleted database {storage.DatabaseId:@Database} failed ({error.GetType().Name:@Error}); their own sweeps forget it");
         }
 
@@ -552,8 +546,6 @@ internal sealed partial class EngineManagementService(
             return refused;
         }
 
-        // A home move and a delete cannot both win: while this region holds the move's marker it still owns the
-        // record, so the delete is refused; once the move settles, the delete follows the database's new home.
         if (await HomeMovePendingAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false))
         {
             return MoveInProgress;
@@ -562,8 +554,6 @@ internal sealed partial class EngineManagementService(
         return new DeletableDatabase(tenant with { DatabaseId = database.Id }, database);
     }
 
-    // Re-reads the database inside the commit transaction, so the record it returns — and its placement — is the one
-    // the delete acted on, not whatever an earlier read outside the transaction saw.
     private async ValueTask<UnregisterResult> UnregisterDatabaseAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, string region, CancellationToken cancellationToken)
     {
@@ -675,13 +665,9 @@ internal sealed partial class EngineManagementService(
         };
     }
 
-    /// <inheritdoc />
     public async ValueTask<RestorePrecheckResult> PrecheckRestoreAsync(
         string userId, string organizationId, string projectId, string? name, CancellationToken cancellationToken)
     {
-        // The same checks AddDatabaseAsync makes, before a restore spends its replay: the allowance every copy answers
-        // and, for a caller-chosen name, that the name is free. An automatic name is chosen after the replay, so it is
-        // checked there. The registration re-checks both when it commits.
         var precheck = await PrecheckAsync(
             transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken),
             name, await AllowanceAsync(organizationId, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
@@ -957,8 +943,6 @@ internal sealed partial class EngineManagementService(
             return ManagementErrors.NotFound;
         }
 
-        // A restore without a chosen name picks its candidate names only after its replay, so the precheck leaves the
-        // names to the registration, which checks each candidate as it copies.
         if (name is not null && await CatalogTables.DatabaseNamedAsync(transaction, tenant.ProjectId!, name, cancellationToken).ConfigureAwait(false) is not null)
         {
             return ManagementErrors.NameTaken;

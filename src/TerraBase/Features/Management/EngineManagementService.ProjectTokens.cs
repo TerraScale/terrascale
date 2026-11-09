@@ -11,8 +11,6 @@ namespace TerraBase.Features.Management;
 
 internal sealed partial class EngineManagementService : IProjectCatalog
 {
-    // Every project-token request resolves its project here (twice: admission and authorization), so the read is reused while
-    // the catalog has not committed since it began, like the database lookups.
     private readonly ConcurrentDictionary<(string Project, string, string), (long Sequence, ProjectMapping Mapping)> _projectMappings = new();
 
     public async ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, string? createIn, CancellationToken cancellationToken)
@@ -133,7 +131,6 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 return organization;
             }
 
-            // Created as enrollment creates it (ResolveProjectAsync), which then adopts it with this plan.
             organization = (organization ?? new Organization(organizationId, organizationId, OperatorHandler.KeyId, time.GetUtcNow())) with { Plan = plan };
             _ = await CatalogTables.PutOrganizationAsync(transaction, organization, cancellationToken).ConfigureAwait(false);
             await PublishPlanAsync(transaction, organizationId, plan, cancellationToken).ConfigureAwait(false);

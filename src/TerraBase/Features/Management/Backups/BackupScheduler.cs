@@ -2,7 +2,6 @@ using ZLogger;
 
 namespace TerraBase.Features.Management.Backups;
 
-/// <summary>Once a minute, takes the scheduled backups that are due and applies retention.</summary>
 internal sealed class BackupScheduler(IManagedBackupService backups, TimeProvider time, ILogger<BackupScheduler> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -25,7 +24,6 @@ internal sealed class BackupScheduler(IManagedBackupService backups, TimeProvide
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
-                // A failed pass must not stop the host; the next tick retries.
                 logger.ZLogWarning(error, $"Backup scheduler pass failed");
             }
         }

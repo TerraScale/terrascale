@@ -7,16 +7,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>Database as returned by the client API.</summary>
-/// <param name="Id">Database id (a canonical uppercase ULID), for keys narrowed to it.</param>
-/// <param name="ProjectId">Owning project.</param>
-/// <param name="Name">Database name, unique within the project.</param>
 public sealed record DatabaseBody(string Id, string ProjectId, string Name);
 
-/// <summary><c>PUT /v1/projects/{project}/databases/{database}</c>: creates a database in a project (idempotent).</summary>
-public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
+internal sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(DatabaseRoute.Template);
@@ -33,7 +27,6 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
         Metadata(ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         DatabaseRoute.CheckDatabase(HttpContext) switch
         {
@@ -52,7 +45,6 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
         var project = DatabaseRoute.Project(HttpContext);
         if (key.DatabaseId is not null)
         {
-            // Only its own database exists for such a key, and it already does.
             return await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
             {
                 TenantContext own => TypedResults.Ok(Body(own, name.Value)),

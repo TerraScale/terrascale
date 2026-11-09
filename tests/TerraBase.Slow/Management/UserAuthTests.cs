@@ -6,7 +6,6 @@ using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
 
-/// <summary>ts-auth access tokens against a real clock, and from the real ts-auth application of this monorepo.</summary>
 public sealed class UserAuthTests
 {
     [Test]

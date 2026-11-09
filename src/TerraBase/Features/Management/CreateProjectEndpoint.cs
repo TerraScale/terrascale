@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary><c>POST …/organizations/{organization}/projects</c>: creates a project.</summary>
 internal sealed class CreateProjectEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(ManagementRoute.Projects);
@@ -26,7 +24,6 @@ internal sealed class CreateProjectEndpoint(IManagementService management) : End
         Metadata(ListenerMetadata.Management);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken) =>
         ManagementRoute.CheckDisplayName(request) switch
         {

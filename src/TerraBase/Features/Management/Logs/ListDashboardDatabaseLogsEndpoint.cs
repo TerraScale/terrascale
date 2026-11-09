@@ -7,13 +7,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Logs;
 
-/// <summary>
-/// <c>GET /v1/usage/projects/{project}/databases/{databaseId}/logs</c>: the public database logs for the dashboard. Served only on
-/// the internal listener, which requires the shared peer credential, as <c>GET /v1/usage/allowances</c> is.
-/// </summary>
 internal sealed class ListDashboardDatabaseLogsEndpoint(IProjectCatalog projects, SystemCatalog catalog, IRequestLogs logs) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/usage/projects/{project}/databases/{databaseId}/logs");
@@ -30,7 +25,6 @@ internal sealed class ListDashboardDatabaseLogsEndpoint(IProjectCatalog projects
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var (project, organization, error) = await GetDashboardProjectAnalyticsEndpoint.OrganizationAsync(HttpContext, projects, cancellationToken).ConfigureAwait(false);

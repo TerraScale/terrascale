@@ -5,13 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-/// <summary>The count an internal peer request reads.</summary>
 public sealed record HomeCountBody(long Databases);
 
-/// <summary>
-/// <c>GET /v1/sync/organizations/{organization}/databases/count</c>: the live databases this region homes for an
-/// organization. Internal listener only, behind the peer credential; the authoritative answer for an allowance check.
-/// </summary>
 internal sealed class HomeDatabaseCountEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
