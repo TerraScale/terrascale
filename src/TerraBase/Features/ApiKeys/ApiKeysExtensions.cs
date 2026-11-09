@@ -19,10 +19,7 @@ public static class ApiKeysExtensions
             authorization.AddPolicy(scope, policy => policy
                 .AddAuthenticationSchemes("TerraBaseBearer", UserAuthExtensions.OperatorScheme)
                 .RequireAuthenticatedUser()
-                .RequireAssertion(context => context.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, scope)
-                    || context.Resource is HttpContext http && http.Features.Get<LegacyManagementRoute>() is not null
-                        && context.User.Identities.Any(identity => identity.IsAuthenticated
-                            && identity.AuthenticationType is UserAuthExtensions.TokenScheme or UserAuthExtensions.OperatorScheme)));
+                .RequireAssertion(context => context.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, scope)));
         }
 
         return services;

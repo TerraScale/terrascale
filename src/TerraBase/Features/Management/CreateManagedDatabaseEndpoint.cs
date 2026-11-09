@@ -92,11 +92,6 @@ internal sealed class CreateManagedDatabaseEndpoint(
             };
         }
 
-        if (HttpContext.Features.Get<LegacyManagementRoute>() is not null)
-        {
-            return await CreateAsync(name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false);
-        }
-
         var restricted = HttpContext.User.FindFirst("database")?.Value;
         if (restricted is not null && restricted != name)
         {

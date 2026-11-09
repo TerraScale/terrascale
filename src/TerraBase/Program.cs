@@ -148,7 +148,6 @@ try
     app.UseTerraBasePressure();
     app.UseTerraBaseUsage();
     app.UseTerraBaseBadRequests();
-    app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
     app.UseWebSockets();
     app.UseTerraBaseClientCors();

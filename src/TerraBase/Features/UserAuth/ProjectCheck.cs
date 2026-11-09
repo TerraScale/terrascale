@@ -99,22 +99,14 @@ internal static class ProjectCheck
         }
 
         if (UserAuthExtensions.Identity(context.User)?.FindFirst("project_id") is not null
-            && (context.Features.Get<LegacyManagementRoute>() is not null
-                || context.Request.Path.StartsWithSegments(ManagementRoute.Prefix, StringComparison.OrdinalIgnoreCase)
+            && (context.Request.Path.StartsWithSegments(ManagementRoute.Prefix, StringComparison.OrdinalIgnoreCase)
                 || context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "legacyCreateDatabase"))
         {
             await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
             return;
         }
 
-        if (context.Features.Get<LegacyManagementRoute>() is not null && context.User.Identity?.IsAuthenticated == true
-            && UserAuthExtensions.Identity(context.User) is null && !context.User.IsOperator())
-        {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            return;
-        }
-
-        if (context.GetEndpoint() is not null && context.Features.Get<LegacyManagementRoute>() is null
+        if (context.GetEndpoint() is not null
             && context.Request.RouteValues["project"] is string project
             && !context.Request.RouteValues.ContainsKey("organization") && context.User.Identity?.IsAuthenticated == true)
         {

@@ -146,8 +146,7 @@ internal static class QosExtensions
             return await ResolvePlanAsync(context, key.OrganizationId).ConfigureAwait(false);
         }
         if (context.User.Identity?.IsAuthenticated == true
-            && (context.Request.RouteValues["organization"] as string
-                ?? context.Features.Get<LegacyManagementRoute>()?.OrganizationId) is string organizationId)
+            && context.Request.RouteValues["organization"] as string is string organizationId)
         {
             return await context.RequestServices.GetRequiredService<IManagementService>()
                 .GetOrganizationAsync(context.User.UserId(), organizationId, context.RequestAborted).ConfigureAwait(false) switch

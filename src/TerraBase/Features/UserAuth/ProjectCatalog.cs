@@ -13,13 +13,6 @@ internal static class ProjectCatalog
     internal static async Task InvokeAsync(HttpContext context, Func<Task> next)
     {
         var managementRoute = context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null;
-        if (context.Features.Get<LegacyManagementRoute>() is { } legacy)
-        {
-            context.Request.RouteValues["organization"] = legacy.OrganizationId;
-            await next().ConfigureAwait(false);
-            return;
-        }
-
         if (context.Request.RouteValues["project"] is not string project || context.Request.RouteValues.ContainsKey("organization")
             || UserAuthExtensions.Identity(context.User) is not { } jwt)
         {

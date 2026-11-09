@@ -11,7 +11,6 @@ public static class ManagementRouteValidation
         {
             if (context.GetEndpoint() is { } endpoint
                 && (endpoint.Metadata.GetMetadata<ProjectManagementRoute>() is not null
-                    || context.Features.Get<LegacyManagementRoute>() is not null
                     || context.Request.Path.StartsWithSegments(ManagementRoute.Prefix, StringComparison.OrdinalIgnoreCase)))
             {
                 await (ManagementRoute.CheckRouteIds(context) switch
