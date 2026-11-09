@@ -146,4 +146,6 @@ await using var reader = await command.ExecuteReaderAsync();
 
 :::
 
-Npgsql connects with its default settings: its startup type loading is answered by the server. Prefer the [SDKs](/guides/sdks) inside applications; the wire fits tools, dashboards and ORMs that already speak Postgres. For SQL without a driver, see [SQL over HTTP](/guides/sql-http).
+Npgsql connects with its default settings: its startup type loading is answered by the server. Prefer the [SDKs](/guides/sdks) inside applications; the wire fits tools and dashboards. For SQL without a driver, see [SQL over HTTP](/guides/sql-http).
+
+ORMs that need Postgres catalog introspection aren't supported yet; use the SQL API or an SDK.

@@ -15,7 +15,6 @@ Use the [quickstart](/pt-br/getting-started/) to establish one working applicati
 - [Authentication capabilities](/pt-br/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/pt-br/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
 - [Connect with psql and Postgres drivers](/pt-br/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
-- [Use Drizzle ORM](/pt-br/guides/orm-drizzle), [Use Prisma ORM](/pt-br/guides/orm-prisma) and [Use SQLAlchemy](/pt-br/guides/orm-sqlalchemy) (being updated for SQL).
 - [SQL over HTTP](/pt-br/guides/sql-http): run SQL statements with any HTTP client.
 - [Errors and safe retries](/pt-br/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/pt-br/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
