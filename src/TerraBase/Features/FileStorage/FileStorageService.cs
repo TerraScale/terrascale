@@ -361,8 +361,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
                 continue;
             }
             try { await SweepAsync(stoppingToken).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (OperationCanceledException) { }
             catch (Exception error) when (StoreFailure(error) || error is QueryCapacityException)
             {
                 CleanupIncomplete(logger, null);
@@ -374,7 +372,18 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(20));
-        var token = budget.Token;
+        try
+        {
+            await SweepPageAsync(budget.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+    }
+
+    private async ValueTask SweepPageAsync(CancellationToken token)
+    {
         if (_sweepKind is null)
         {
             var database = await engine.OpenSystemDatabaseAsync(token).ConfigureAwait(false);
