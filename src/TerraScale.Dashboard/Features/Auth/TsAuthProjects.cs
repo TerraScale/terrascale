@@ -24,7 +24,6 @@ namespace TerraScale.Dashboard.Features.Auth
         Task<TsAuthProjectClientSecret> RotateClientSecretAsync(SessionRecord session, string projectId, string clientId, string proof, CancellationToken cancellationToken);
         Task DeleteClientAsync(SessionRecord session, string projectId, string clientId, CancellationToken cancellationToken);
         Task<IReadOnlyList<TsAuthWebhookEndpoint>> ListWebhookEndpointsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
-        // A webhook endpoint's signing secret is in this answer only; never log or store it.
         Task<TsAuthWebhookEndpoint> CreateWebhookEndpointAsync(SessionRecord session, string projectId, TsAuthCreateWebhookEndpoint request, string proof, CancellationToken cancellationToken);
         Task<TsAuthWebhookSecret> RotateWebhookSecretAsync(SessionRecord session, string projectId, string webhookEndpointId, string proof, CancellationToken cancellationToken);
         Task DeleteWebhookEndpointAsync(SessionRecord session, string projectId, string webhookEndpointId, CancellationToken cancellationToken);

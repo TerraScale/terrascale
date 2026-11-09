@@ -81,9 +81,6 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
         private sealed class ErrorBodyLimitException : Exception;
 
-        // Fixed error identities from the source-pinned C# platform and legacy contracts and
-        // the OAuth error vocabulary. Codes never carry producer free text; only a 409 keeps
-        // ts-auth's own bounded message so conflicts name their cause.
         private static readonly HashSet<string> KnownErrorCodes = new(StringComparer.Ordinal)
         {
             "already_member",
