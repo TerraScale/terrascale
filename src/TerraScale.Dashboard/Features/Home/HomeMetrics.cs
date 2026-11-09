@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Home
                 if (batch.State == AnalyticsSourceState.Unavailable)
                 {
                     ServiceSloTelemetry.MarkBad();
-                    result.AnalyticsError = "Analytics measurements could not be loaded. Retry this page.";
+                    result.AnalyticsError = "Analytics measurements could not be loaded.";
                     return;
                 }
 
@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Home
             catch (Exception error) when (MeasurementFailure(error, cancellationToken))
             {
                 ServiceSloTelemetry.MarkFailure(error);
-                result.AnalyticsError = "Analytics measurements could not be loaded. Retry this page.";
+                result.AnalyticsError = "Analytics measurements could not be loaded.";
             }
         }
 

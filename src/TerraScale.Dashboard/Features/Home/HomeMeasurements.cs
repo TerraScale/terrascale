@@ -17,9 +17,9 @@ namespace TerraScale.Dashboard.Features.Home
         public IReadOnlyList<string> ActivityTicks { get; set; } = [];
         public IReadOnlyList<string> ActivityLabels { get; set; } = [];
         public DateTimeOffset ObservedAt { get; set; }
-        public string ActivityNote { get; set; } = "Reads and writes are metered by TerraBase for browser sessions signed in through TerraScale.";
-        public string AnalyticsError { get; set; } = "Analytics scope is unavailable.";
-        public string AnalyticsEmpty { get; set; } = "No analytics measurements for this period.";
+        public string ActivityNote { get; set; } = "";
+        public string AnalyticsError { get; set; } = "";
+        public string AnalyticsEmpty { get; set; } = "No analytics yet.";
         public string RegionError { get; set; } = "";
         public bool RegionsPending { get; set; }
         public IReadOnlyList<HomeRequestPoint> RequestPoints { get; set; } = [];
@@ -91,7 +91,6 @@ namespace TerraScale.Dashboard.Features.Home
             if (context.Project.Databases.Count == 0)
             {
                 result.ActivityMeasured = true;
-                result.ActivityNote = "No activity yet.";
                 return;
             }
             try
@@ -109,7 +108,6 @@ namespace TerraScale.Dashboard.Features.Home
                 }
                 catch (TerraBaseNotFoundException)
                 {
-                    result.ActivityNote = "No activity reported yet.";
                     return;
                 }
                 using var data = JsonSerializer.SerializeToDocument(usage, UsageJson.Default.TerraBaseProjectUsage);
@@ -157,7 +155,6 @@ namespace TerraScale.Dashboard.Features.Home
 
                 result.Activity = [.. points.OrderBy(point => point.Start)];
                 result.ActivityMeasured = true;
-                result.ActivityNote = "Reads and writes metered by TerraBase.";
             }
             catch (Exception error) when (error is AccountAccessException or TerraBaseException or HttpRequestException or IOException or JsonException or OverflowException or FormatException or KeyNotFoundException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {

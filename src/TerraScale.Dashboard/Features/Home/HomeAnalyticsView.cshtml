@@ -4,7 +4,7 @@
 @using TerraScale.Dashboard.Features.Home
 @using TerraScale.Dashboard.Common.Formatting
 <section class="ts-card" id="analytics-summary" aria-labelledby="analytics-summary-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="analytics-summary-title">Key analytics</h2></div></header><div class="ts-card-body">
-@if (Model.Measurement.AnalyticsError.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Analytics unavailable</p><p class="ts-alert-body">@Model.Measurement.AnalyticsError</p></div> }
+@if (Model.Measurement.AnalyticsError.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@Model.Measurement.AnalyticsError <a class="ts-link" href="/?range=@Model.Range">Retry</a></p></div> }
 else if (Model.Measurement.Analytics is not { } data) { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("BarChart3", 16)</span><p class="ts-empty-title">@Model.Measurement.AnalyticsEmpty</p></div> }
 else
 {
