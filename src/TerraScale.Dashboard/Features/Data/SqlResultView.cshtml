@@ -5,9 +5,9 @@
 <section class="ts-card ts-card-flush" id="sql-result" aria-labelledby="sql-result-title" data-sql-result>
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-result-title">Query result</h2></div></header>
 <div class="ts-card-body ts-stack-sm">
-<p class="ts-meta">@ValueFormat.Plural(result.Rows.Count, "row") · @ValueFormat.Plural(result.RowsAffected, "row") affected@(result.LastInsertRowId is { } id && result.RowsAffected > 0 ? " · last insert rowid " + id : "")</p>
-@if(result.Columns.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">Statement ran.</p></div>}
+@if(result.Columns.Count == 0){<p class="ts-meta" role="status" aria-live="polite">@ValueFormat.Plural(result.RowsAffected, "row") affected@(result.LastInsertRowId is { } id && result.RowsAffected > 0 ? " · last insert rowid " + id : "")</p>}
 else{
+<p class="ts-meta">@ValueFormat.Plural(result.Rows.Count, "row")</p>
 <p role="status" aria-live="polite" aria-atomic="true" data-sql-range>Rows @(shown.Length == 0 ? 0 : 1)–@shown.Length.ToString("N0", CultureInfo.InvariantCulture) of @result.Rows.Count.ToString("N0", CultureInfo.InvariantCulture)</p>
 @if(shown.Length == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No rows matched.</p></div>}
 else{<div class="ts-table-wrap ts-data-result-wrap" role="region" tabindex="0" aria-labelledby="sql-result-title"><table class="ts-table ts-data-result"><thead><tr>@foreach(var column in result.Columns){<th scope="col" title="@column.Decltype">@column.Name</th>}</tr></thead><tbody>@foreach(var row in shown){<tr>@foreach(var cell in row){<td class="@(cell.ValueKind == JsonValueKind.Number ? "ts-num" : null)" data-kind="@(cell.ValueKind == JsonValueKind.Null ? "null" : cell.ValueKind == JsonValueKind.Number ? "number" : "string")">@(cell.ValueKind == JsonValueKind.String ? cell.GetString() : cell.GetRawText())</td>}</tr>}</tbody></table></div>}

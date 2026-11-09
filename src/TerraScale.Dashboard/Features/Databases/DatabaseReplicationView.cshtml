@@ -7,7 +7,7 @@
 @if(Model.Replication is { Error.Length: > 0 } failed){<div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@failed.Error</p></div>}
 @if(Model.Replication?.Status is { } replication){
 <dl class="ts-db-facts"><div><dt>Home region</dt><dd>@DatabasesPage.RegionDisplay(replication.HomeRegion)</dd></div></dl>
-@if(replication.Replicas.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No replica regions.</p></div>}
+@if(replication.Replicas.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No replica regions.</p><div class="ts-empty-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="#placement">Add a replica region</a></div></div>}
 else{<div class="ts-table-wrap" role="region" aria-label="Replica regions" tabindex="0"><table class="ts-table"><thead><tr><th scope="col">Replica region</th><th scope="col" class="ts-num">Lag</th><th scope="col">Last pulled</th><th scope="col">Last verified</th></tr></thead><tbody>
 @foreach(var replica in replication.Replicas){<tr data-replica-region="@replica.Region"><th scope="row">@DatabasesPage.RegionDisplay(replica.Region)</th><td class="ts-num">@TerraScale.Dashboard.Common.Formatting.MetricFormat.Latency(replica.LagMs)</td><td>@if(replica.LastPulledAt is { } pulled){<time datetime="@pulled.ToString("O", System.Globalization.CultureInfo.InvariantCulture)">@DatabaseReplication.Timestamp(pulled)</time>}else{<span>—</span>}</td><td>@if(replica.LastVerified is { } verified){<time datetime="@verified.ToString("O", System.Globalization.CultureInfo.InvariantCulture)">@DatabaseReplication.Timestamp(verified)</time>}else{<span>not yet verified</span>}</td></tr>}
 </tbody></table></div>}

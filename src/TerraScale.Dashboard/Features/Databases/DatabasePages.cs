@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Html;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.Dashboard.Common.UI;
@@ -169,11 +170,11 @@ namespace TerraScale.Dashboard.Features.Databases
         public bool CanPlace => Context.CanManage && Database.Status == "ready" && !PlatformDatabases.IsPlatform(Context.Organization?.Id);
         public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
             : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
-        public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
+        public (string Tone, string Title, HtmlString Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
         {
-            "success" => ("success", Database.Name + " is ready", "It serves " + Placement + ". Create a table in the SQL editor, or connect with psql."),
-            "danger" => ("danger", Database.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."),
-            _ => ("info", Database.Name + " is being created", "The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests.")
+            "success" => ("success", Database.Name + " is ready", new HtmlString("<a class=\"ts-link\" href=\"" + DatabaseService.Path(Database.Id, "sql") + "\">Open SQL editor</a> to create a table.")),
+            "danger" => ("danger", Database.Name + " could not be created", new HtmlString("The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing.")),
+            _ => ("info", Database.Name + " is being created", new HtmlString("The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests."))
         };
     }
 
