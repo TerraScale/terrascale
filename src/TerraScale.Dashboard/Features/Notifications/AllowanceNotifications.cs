@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
 
@@ -17,9 +18,11 @@ namespace TerraScale.Dashboard.Features.Notifications
                 Id = Id,
                 OrganizationId = OrganizationId,
                 BillingMonth = BillingMonth,
-                Type = "allowance-" + Metric,
-                Title = $"{(Metric == "operations" ? "Operations" : "Storage")} allowance: {Threshold}% reached",
-                Body = string.Create(CultureInfo.InvariantCulture, $"{Used:N0} of {Allowance:N0} {(Metric == "operations" ? "operation units" : "bytes")} used for {BillingMonth}. Review usage and your plan."),
+                Type = Metric == "spend" ? "spend-cap" : "allowance-" + Metric,
+                Title = Metric == "spend" ? "Monthly spending alert reached" : $"{(Metric == "operations" ? "Operations" : "Storage")} allowance: {Threshold}% reached",
+                Body = Metric == "spend"
+                    ? string.Create(CultureInfo.InvariantCulture, $"Month-to-date paid usage {TerraScale.Dashboard.Common.Formatting.MoneyFormat.Money(Used)} reached the {TerraScale.Dashboard.Common.Formatting.MoneyFormat.Money(Allowance)} spending alert for {BillingMonth}. Report only; services remain active.")
+                    : string.Create(CultureInfo.InvariantCulture, $"{Used:N0} of {Allowance:N0} {(Metric == "operations" ? "operation units" : "bytes")} used for {BillingMonth}. Review usage and your plan."),
                 Severity = Threshold == 100 ? "danger" : "warning",
                 Status = "Unread",
                 Url = "/usage",
@@ -123,6 +126,16 @@ namespace TerraScale.Dashboard.Features.Notifications
                         current.Alerts.Add(new(AccountService.NewId(), item.OrganizationId, billingMonth, "operations", threshold, used, limits.MonthlyOperations, clock.GetUtcNow()));
                     }
                 }
+
+                if (item.Operations is { } spent && organization.InternalBilling is null && PlanCatalog.For(organization) is { PriceCents: > 0 } plan &&
+                    organization.SpendCapCents > 0 && !current.Alerts.Any(alert => alert.BillingMonth == billingMonth && alert.Metric == "spend"))
+                {
+                    var monthToDateCents = OperationUnitOverage.Cents(OperationUnitOverage.Units(plan, spent));
+                    if (monthToDateCents >= organization.SpendCapCents)
+                    {
+                        current.Alerts.Add(new(AccountService.NewId(), item.OrganizationId, billingMonth, "spend", 100, monthToDateCents, organization.SpendCapCents, clock.GetUtcNow()));
+                    }
+                }
                 try
                 {
                     await state.PutAsync(Table, item.OrganizationId, JsonSerializer.SerializeToElement(current),
@@ -168,7 +181,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         {
             var saved = AccountService.Read<AllowanceNotificationState>(row);
             if (row.Id != organizationId || saved.OrganizationId != organizationId || saved.Alerts is null || saved.Alerts.Count > 4 ||
-                saved.Alerts.Any(alert => !TerraScaleIds.IsValid(alert.Id) || alert.OrganizationId != organizationId || alert.Metric is not ("operations" or "storage") || alert.Threshold is not (80 or 100)))
+                saved.Alerts.Any(alert => !TerraScaleIds.IsValid(alert.Id) || alert.OrganizationId != organizationId || alert.Metric is not ("operations" or "storage" or "spend") || alert.Threshold is not (80 or 100)))
             {
                 throw new IOException("Allowance alert identity is invalid.");
             }

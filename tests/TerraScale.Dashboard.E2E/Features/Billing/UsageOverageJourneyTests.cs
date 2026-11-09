@@ -1,7 +1,10 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using TerraScale.Dashboard.E2E.Demo;
 using TerraScale.Dashboard.E2E.Features.Databases;
+using TerraScale.Dashboard.Features.Notifications;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
@@ -70,6 +73,46 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That((await ReportAsync(client, 10_000_000)).Length).IsEqualTo(0);
             await Assert.That(await UsageAsync(client)).IsEqualTo("Free stops new writes at its 50,000 operation units a month; reads keep working. No usage charges.");
             await AssertSpendingAsync(client, "Free stops new writes at its included operation allowance; reads keep working. No usage charges.");
+        }
+
+        [Test]
+        public async Task StripeBilledOrganizationSavesReportOnlySpendAlertAndRecordsTheNoticeOnce()
+        {
+            using var client = fixture.CreateClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+            var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
+            using var checkout = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
+            { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" });
+            using var completed = await client.GetAsync(checkout.Headers.Location);
+            using var callback = await client.GetAsync(completed.Headers.Location);
+            await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            using var me = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
+            var organizationId = me.RootElement.GetProperty("organizationId").GetString()!;
+
+            var settings = WebUtility.HtmlDecode(await client.GetStringAsync("/usage?tab=settings"));
+            await Assert.That(settings).Contains("Monthly alert (USD)").Because("A Stripe-billed organization sees the spending alert form.");
+            await Assert.That(settings).Contains("Customer hard spending caps are unavailable.");
+            var capCsrf = await HttpJourney.CsrfAsync(client, "/usage?tab=settings");
+            using var saved = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/usage/spending-cap", new()
+            { ["_csrf"] = capCsrf, ["spendCap"] = "1.00" });
+            await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(saved.Headers.Location!.OriginalString).IsEqualTo("/usage?tab=settings&saved=ok");
+
+            var backend = (TestAllowanceNotifications)fixture.Service<IAllowanceNotificationBackend>();
+            var notifications = fixture.Service<AllowanceNotifications>();
+            backend.Observe(new AllowanceUsageObservation(organizationId, StarterAllowance + 300_000, null));
+            await notifications.RunOnceAsync(CancellationToken.None);
+            backend.Observe(new AllowanceUsageObservation(organizationId, StarterAllowance + 2_000_000, null));
+            await notifications.RunOnceAsync(CancellationToken.None);
+            var row = await fixture.Service<IDashboardState>().GetAsync(AllowanceNotifications.Table, organizationId, CancellationToken.None);
+            var spendAlerts = AllowanceNotifications.Read(row!, organizationId).Alerts.Where(alert => alert.Metric == "spend").ToArray();
+            await Assert.That(spendAlerts.Length).IsEqualTo(1).Because("Crossing the threshold repeatedly records the notice once per month.");
+            await Assert.That(spendAlerts[0].Used).IsEqualTo(150L).Because("300,000 operation units over Starter's allowance are $1.50 at $5.00 per million.");
+            await Assert.That(spendAlerts[0].Allowance).IsEqualTo(100L);
+
+            var inbox = WebUtility.HtmlDecode(await client.GetStringAsync("/notifications"));
+            await Assert.That(inbox).Contains("Monthly spending alert reached");
+            await Assert.That(inbox).Contains("$1.50 reached the $1.00 spending alert");
         }
 
         private static async Task AssertSpendingAsync(HttpClient client, string disclosure)

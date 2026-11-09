@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
             using var legacyBilling = await client.GetAsync("/usage?tab=billing&status=paid");
             await Assert.That(legacyBilling.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(legacyBilling.Headers.Location!.OriginalString).IsEqualTo("/organization?tab=billing&status=paid");
-            using var noCsrf = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/usage/internal-spending-cap", new() { ["spendCap"] = "100.00" });
+            using var noCsrf = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/usage/spending-cap", new() { ["spendCap"] = "100.00" });
             await Assert.That(noCsrf.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             using var after = JsonDocument.Parse(await client.GetStringAsync("/__test/reporting/probe"));
             await Assert.That(after.RootElement.GetProperty("requests").GetArrayLength()).IsEqualTo(requestsBefore);

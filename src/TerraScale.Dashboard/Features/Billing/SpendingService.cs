@@ -15,14 +15,9 @@ namespace TerraScale.Dashboard.Features.Billing
             return Snapshot(fresh.Organization!);
         }
 
-        public async Task SetInternalCapAsync(AccountContext context, long capCents, CancellationToken cancellationToken)
+        public async Task SetCapAsync(AccountContext context, long capCents, CancellationToken cancellationToken)
         {
             context = await FreshAsync(context, cancellationToken);
-            if (context.Organization!.InternalBilling is null)
-            {
-                throw new AccountAccessException("Internal billing is unavailable.", 404);
-            }
-
             if (!context.CanManage)
             {
                 throw new AccountAccessException("Organization management is required.");
@@ -33,25 +28,20 @@ namespace TerraScale.Dashboard.Features.Billing
                 throw new AccountAccessException("Report-only cap must be zero or positive US cents.", 400);
             }
 
-            if (context.Organization.SpendCapCents == capCents)
+            if (context.Organization!.SpendCapCents == capCents)
             {
                 return;
             }
 
             await accounts.UpdateOrganizationAsync(context, org =>
             {
-                if (org.InternalBilling is null)
-                {
-                    throw new AccountAccessException("Internal billing is unavailable.", 404);
-                }
-
                 if (!org.CanManage(context.UserId))
                 {
                     throw new AccountAccessException("Organization management is required.");
                 }
 
                 org.SpendCapCents = capCents;
-                org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "billing.internal_report_cap_updated", org.Name, "report-only cap", time.GetUtcNow()));
+                org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "billing.spend_cap_updated", org.Name, "report-only cap", time.GetUtcNow()));
             }, cancellationToken);
         }
 
@@ -63,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Billing
         }
         public static SpendingSnapshot Snapshot(OrganizationRecord org)
         {
-            if (org.InternalBilling is not null && org.SpendCapCents < 0)
+            if (org.SpendCapCents < 0)
             {
                 throw new IOException("Stored spending cap is invalid.");
             }
@@ -82,7 +72,7 @@ namespace TerraScale.Dashboard.Features.Billing
                         if (database.ProjectId != project.Id) { throw new IOException("Stored database scope is invalid."); } return new SpendingDatabase(database.Id, database.Name, database.Region);
                     })]);
             }).ToArray();
-            return new(org.Id, org.InternalBilling is null ? 0 : org.SpendCapCents, projects);
+            return new(org.Id, org.SpendCapCents, projects);
         }
     }
 }

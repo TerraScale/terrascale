@@ -130,7 +130,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 using var context = await browser.GetAsync("/api/v1/dashboard/context");
                 await CheckAsync(context.StatusCode == HttpStatusCode.ServiceUnavailable,
                     "Native account context rejects a well-formed organization payload returned under a foreign producer json key");
-                using var spending = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new()
+                using var spending = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/spending-cap", new()
                 { ["_csrf"] = csrf, ["spendCap"] = "200.00" });
                 await CheckAsync(spending.StatusCode == HttpStatusCode.ServiceUnavailable,
                     "The actual spending form cannot authorize or write through a misbound organization read");
@@ -157,7 +157,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         private static async Task CapAsync(HttpClient browser, string value)
         {
             var csrf = await HttpJourney.CsrfAsync(browser, "/usage?tab=settings");
-            using var response = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new()
+            using var response = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/spending-cap", new()
             { ["_csrf"] = csrf, ["spendCap"] = value });
             await CheckAsync(response.StatusCode == HttpStatusCode.SeeOther && response.Headers.Location?.OriginalString == "/usage?tab=settings&saved=ok",
                 "The actual native owner spending form commits the organization cap");

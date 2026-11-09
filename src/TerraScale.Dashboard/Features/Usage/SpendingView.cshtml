@@ -1,10 +1,10 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Usage.UsagePage>
 @using TerraScale.Dashboard.Features.Usage
 @using TerraScale.Dashboard.Features.Billing
-@if (Model.InternalBill is not null)
+@if (Model.SpendingAlert)
 {
     <div class="ts-stack-lg">
-        <form id="spending-controls" class="ts-stack ts-spending-form" method="post" action="/api/v1/dashboard/usage/internal-spending-cap" data-submit-once>
+        <form id="spending-controls" class="ts-stack ts-spending-form" method="post" action="/api/v1/dashboard/usage/spending-cap" data-submit-once>
             <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
             <section class="ts-card" aria-labelledby="organization-controls-title">
                 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-controls-title">Spending alert</h2></div></header>
@@ -13,6 +13,14 @@
             @if (Model.Shell.Context.CanManage) { <div><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Save", 16)<span>Save spending alert</span></button></div> }
             else { <p class="ts-meta">Only organization owners and admins can change the spending alert.</p> }
         </form>
+        @if (Model.InternalBill is null)
+        {
+            var plan = PlanCatalog.For(Model.Selection.Context.Organization!);
+            <section class="ts-card" aria-labelledby="spending-title"><div class="ts-card-body ts-stack-sm"><h2 class="ts-card-title" id="spending-title">Spending and overages</h2>
+            <p class="ts-meta">Operation units above @plan!.Name's included allowance are billed at @OperationUnitOverage.Rate operation units. Writes stop at @plan.Allowances.MonthlyWriteCap.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) units a month.</p>
+            <p class="ts-meta">Customer hard spending caps are unavailable. The alert above is report-only: crossing it sends a notice and never blocks writes.</p>
+            <div><a class="ts-link" href="/organization?tab=billing">Manage billing and upgrade</a></div><div><a class="ts-link" href="@Model.ProjectHref(Model.Selection.Context.Project?.Id ?? "")">View plan usage</a></div></div></section>
+        }
     </div>
 }
 else
