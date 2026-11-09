@@ -188,11 +188,6 @@ namespace TerraScale.Dashboard.E2E
             throw ReadOnly();
         }
 
-        public Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken ct)
-        {
-            throw ReadOnly();
-        }
-
         public Task<ProducerRestoreOperation> StartRestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken ct)
         {
             throw ReadOnly();

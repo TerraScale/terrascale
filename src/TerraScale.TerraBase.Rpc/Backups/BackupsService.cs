@@ -153,8 +153,14 @@ namespace TerraScale.TerraBase.Rpc.Backups
         /// <inheritdoc />
         public async UnaryResult<JsonElement> RestorePointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request)
         {
+            return await CompletedAsync(projectId, database, await StartRestorePointInTimeAsync(projectId, database, request));
+        }
+
+        /// <inheritdoc />
+        public async UnaryResult<JsonElement> StartRestorePointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request)
+        {
             var answer = await api.SendAsync(Context, "POST", RestPaths.Database(projectId, database) + "/point-in-time/restore", RestApi.Json(request, BackupsJson.Default.TerraBasePointInTimeRequest));
-            return await CompletedAsync(projectId, database, RestApi.Read(answer, BackupsJson.Default.JsonElement));
+            return RestApi.Read(answer, BackupsJson.Default.JsonElement);
         }
 
         /// <inheritdoc />

@@ -160,12 +160,26 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             await SqlAsync("UPDATE users SET score = 2");
             using (var restored = await HttpJourney.PostFormAsync(client, path, form))
             {
+                var location = restored.Headers.Location?.PathAndQuery ?? "";
+                var operation = location.StartsWith(path + "?restore=", StringComparison.Ordinal) ? location[(path + "?restore=").Length..] : "";
                 await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+                await Assert.That(TerraScaleIds.IsValid(operation)).IsTrue();
+                var completed = await BackupJourneyTests.RestoreCompletedAsync(client, id, operation);
+                var pitrId = completed.GetProperty("targetDatabaseId").GetString()!;
+                using (var status = await client.GetAsync(path + "?restore=" + operation))
+                {
+                    var html = await status.Content.ReadAsStringAsync();
+                    await Assert.That(status.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                    await Assert.That(html).Contains("id=\"restore-status\"").And.Contains("href=\"/databases/" + pitrId + "\"").And.Contains("pitr-copy");
+                }
             }
 
-            var second = await CallAsync("restore_database_point_in_time", new { databaseId = id, pointInTime = form["point"], name = "pitr-copy-two", confirmName = "pitr-copy-two", destination = "customer" });
+            var secondStart = await CallAsync("restore_database_point_in_time", new { databaseId = id, pointInTime = form["point"], name = "pitr-copy-two", confirmName = "pitr-copy-two", destination = "customer" });
+            await Assert.That(secondStart.GetProperty("status").GetString() is "running" or "completed").IsTrue();
+            var secondDone = await BackupJourneyTests.RestoreCompletedAsync(client, id, secondStart.GetProperty("operationId").GetString()!);
+            var second = secondDone;
             var current = await CallAsync("execute_sql", new { databaseId = id, sql = "SELECT score FROM users" });
-            var historical = await CallAsync("execute_sql", new { databaseId = second.GetProperty("databaseId").GetString(), sql = "SELECT score FROM users" });
+            var historical = await CallAsync("execute_sql", new { databaseId = second.GetProperty("targetDatabaseId").GetString(), sql = "SELECT score FROM users" });
             await Assert.That(current.GetProperty("rows")[0][0].GetInt32()).IsEqualTo(2);
             await Assert.That(historical.GetProperty("rows")[0][0].GetInt32()).IsEqualTo(1);
             using var role = await producer.PostAsJsonAsync("/__test/control", new { command = "role", value = "member" });
