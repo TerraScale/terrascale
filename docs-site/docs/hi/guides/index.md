@@ -16,6 +16,7 @@ Use the [quickstart](/hi/getting-started/) to establish one working application 
 - [Authentication](/hi/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
 - [Connect with psql and Postgres drivers](/hi/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
 - [SQL over HTTP](/hi/guides/sql-http): run SQL statements with any HTTP client.
+- [Use Drizzle ORM](/hi/guides/orm-drizzle): run Drizzle's SQLite dialect over the JavaScript SDK.
 - [Errors and safe retries](/hi/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/hi/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
 - [Functions](/hi/guides/functions) (being updated for SQL).

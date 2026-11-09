@@ -339,6 +339,12 @@ list methods keep it in their existing options. Failures retain `kind: "transpor
 `request_aborted` identifies caller cancellation, `request_timeout` the SDK deadline,
 and `transport_error` an ordinary transport failure. Abort details carry a sanitized cause.
 
+`@terrascale/sdk/drizzle` exports `drizzleProxy(database)`, the two callbacks
+Drizzle's `sqlite-proxy` driver expects, built from a root database handle. The
+SDK takes no `drizzle-orm` dependency; each query is one `execute` call and a
+Drizzle batch is one atomic `batch` request. `drizzle-kit push` and schema
+introspection are not supported.
+
 The retired `./local`, `./postgres`, `./schema`, `./sql`, `./tanstack` and `./codegen`
 entrypoints and the `terrascale-local` and `terrascale-models` CLIs are gone. SQL runs on the root database
 handle. React/Svelte exports retain generic observer, hook and store utilities. Their

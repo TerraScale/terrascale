@@ -2,6 +2,10 @@
 
 ## Unreleased — SQL only
 
+`@terrascale/sdk/drizzle` exports `drizzleProxy(database)`, the two callbacks
+Drizzle's `sqlite-proxy` driver expects, mapped from a root database handle's
+`execute` and atomic `batch`. The SDK adds no `drizzle-orm` dependency.
+
 TerraScale is SQL-only. The JSON data API is removed without a replacement shim,
 with its handles, `db.transaction()`, filters and queries, shapes and replicas,
 `db.changes()`, `db.export()`, imports, indexes, inferred and declared schemas,
