@@ -29,7 +29,7 @@ Use the [quickstart](/ar/getting-started/) to establish one working application 
 - [Dashboard usage](/ar/guides/dashboard): customer account and database workflow.
 - [Connect an AI assistant with MCP](/ar/guides/mcp): sign in or use a personal access token to connect an assistant.
 - [Single sign-on](/ar/guides/single-sign-on): connect your identity provider over OIDC for a verified email domain (Team and Enterprise).
-- [Import an existing database](/ar/guides/import) and [Export from PostgreSQL](/ar/guides/import-postgresql) (being updated for SQL).
+- [Import data](/ar/guides/import): load rows into a database with batched SQL statements.
 
 The [zero-configuration contract](/ar/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 
