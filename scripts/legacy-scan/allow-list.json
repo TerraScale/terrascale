@@ -1,4 +1,5 @@
 [
+  {"path": "^sdk/dotnet/src/TerraScale\\.DotNet/TerraBase/Data/", "repo": "terrascale", "terms": ["collections"], "match": "\\b\\w*DbParameterCollection\\b", "reason": "ADO.NET requires deriving from DbParameterCollection; unrelated to the retired collections API."},
   {"path": "^ops/e2e/journey\\.py$", "terms": ["document-feeds"], "match": "\\.feed\\(", "reason": "Python stdlib html.parser.HTMLParser.feed call that parses the hosted sign-in pages; unrelated to the retired document feed surface."},
   {"path": "(^|/)AGENTS\\.md$", "reason": "Human-owned agent instructions are governance, not product surfaces."},
   {"path": "^scripts/legacy-scan/", "repo": "terrascale", "reason": "Scanner policy and process fixtures necessarily name forbidden terms."},

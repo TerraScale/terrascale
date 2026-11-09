@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <PackageReference Include="TUnit" />
+    <PackageReference Include="Dapper" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
