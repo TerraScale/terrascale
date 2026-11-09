@@ -83,7 +83,7 @@ namespace TerraScale.Dashboard.Features.Data
             }
             catch (Exception error) when (SqlWorkspace.Unavailable(error) && !cancellationToken.IsCancellationRequested)
             {
-                throw new SqlWorkspaceUnavailable(error);
+                throw new SqlWorkspaceUnavailableException(error);
             }
 
             if (row is not { } stored)

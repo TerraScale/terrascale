@@ -39,7 +39,7 @@ public sealed class DatabaseConflicts(DataService data)
         return new(items, result.Rows.Count > limit ? items[^1].Id : null, result.Rows.Count > limit, limit);
     }
 
-    private static DatabaseConflict Read(IReadOnlyList<JsonElement> row, IReadOnlyDictionary<string, int> indexes)
+    private static DatabaseConflict Read(IReadOnlyList<JsonElement> row, Dictionary<string, int> indexes)
     {
         string? Text(string name)
         {

@@ -190,7 +190,7 @@ namespace TerraScale.Dashboard.Features.Data
                             (sql, history) = (workspace.Draft, workspace.History);
                         }
                     }
-                    catch (SqlWorkspaceUnavailable)
+                    catch (SqlWorkspaceUnavailableException)
                     {
                         history = [];
                     }

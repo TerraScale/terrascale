@@ -33,8 +33,8 @@ namespace TerraScale.Dashboard.Features.Auth
                 throw new JsonException("ts-auth device authorization response is invalid.");
             }
 
-            await output.WriteLineAsync("Approve CLI access: " + complete);
-            await output.WriteLineAsync("User code: " + code);
+            output.WriteLine("Approve CLI access: " + complete);
+            output.WriteLine("User code: " + code);
             await output.FlushAsync(cancellationToken);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(TimeSpan.FromSeconds(expires));

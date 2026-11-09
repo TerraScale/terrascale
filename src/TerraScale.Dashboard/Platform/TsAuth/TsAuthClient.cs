@@ -33,7 +33,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
         public TsAuthProjectsClient Projects { get; }
 
-        internal string ManagementRoute(string relative)
+        internal static string ManagementRoute(string relative)
         {
             return "/v1/terrascale" + relative;
         }
@@ -143,7 +143,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         }
 
         private async Task<bool> SendForAccountDeletionCoreAsync(HttpMethod method, string route,
-            AuthenticationHeaderValue? authorization, string deletionReceipt, CancellationToken cancellationToken, string? deletionAuthorization)
+            AuthenticationHeaderValue? authorization, string deletionReceipt, string? deletionAuthorization, CancellationToken cancellationToken)
         {
             ValidateDeletionReceipt(deletionReceipt);
 

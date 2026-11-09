@@ -122,12 +122,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 TsAuthIntegrationJsonContext.Default.TsAuthTokenResponse, cancellationToken);
         }
 
-        private string InstanceRoute(string relative)
+        private static string InstanceRoute(string relative)
         {
             return "/terrascale" + relative;
         }
 
-        private string TokenRoute()
+        private static string TokenRoute()
         {
             return InstanceRoute("/oauth/token");
         }

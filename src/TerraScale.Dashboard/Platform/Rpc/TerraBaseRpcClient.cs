@@ -156,7 +156,7 @@ namespace TerraScale.Dashboard.Platform.Rpc
                 var started = Stopwatch.GetTimestamp();
                 var call = continuation(request, context);
                 var response = ServerTiming.RpcAsync(context.Method.ServiceName + "/" + context.Method.Name, Mutates(context.Method.Name),
-                    () => Await(call.ResponseAsync, context.Method, started));
+                    () => Await<TRequest, TResponse>(call.ResponseAsync, context.Method, started));
                 return new AsyncUnaryCall<TResponse>(response, call.ResponseHeadersAsync, call.GetStatus, call.GetTrailers, call.Dispose);
             }
 
@@ -170,7 +170,7 @@ namespace TerraScale.Dashboard.Platform.Rpc
                     method.StartsWith("Stream", StringComparison.Ordinal) || method.StartsWith("Export", StringComparison.Ordinal));
             }
 
-            private async Task<TResponse> Await<TResponse>(Task<TResponse> response, IMethod method, long started)
+            private async Task<TResponse> Await<TRequest, TResponse>(Task<TResponse> response, Method<TRequest, TResponse> method, long started)
             {
                 var outcome = "ok";
                 try

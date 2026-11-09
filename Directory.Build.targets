@@ -83,4 +83,7 @@
          then tears down: about 13% of the suite's CPU. The reflection engine resolves the same graph. -->
     <RuntimeHostConfigurationOption Include="Microsoft.Extensions.DependencyInjection.DisableDynamicEngine" Value="true" />
   </ItemGroup>
+  <PropertyGroup Condition="'$(IsDashboardArea)' == 'true' and '$(TargetFramework)' == 'netstandard2.0'">
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+  </PropertyGroup>
 </Project>

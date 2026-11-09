@@ -49,12 +49,12 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
         internal Task<bool> SendForAccountDeletionAsync(HttpMethod method, string route, AuthenticationHeaderValue? authorization, string receipt, CancellationToken caller, string? deletionAuthorization = null)
         {
-            return WithDeadlineAsync(token => SendForAccountDeletionCoreAsync(method, route, authorization, receipt, token, deletionAuthorization), caller);
+            return WithDeadlineAsync(token => SendForAccountDeletionCoreAsync(method, route, authorization, receipt, deletionAuthorization, token), caller);
         }
 
-        private static Task WithDeadlineAsync(Func<CancellationToken, Task> operation, CancellationToken caller)
+        private static async Task WithDeadlineAsync(Func<CancellationToken, Task> operation, CancellationToken caller)
         {
-            return WithDeadlineAsync(async token => { await operation(token).ConfigureAwait(false); return true; }, caller);
+            await WithDeadlineAsync(async token => { await operation(token).ConfigureAwait(false); return true; }, caller).ConfigureAwait(false);
         }
 
         private static async Task<T> WithDeadlineAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken caller)

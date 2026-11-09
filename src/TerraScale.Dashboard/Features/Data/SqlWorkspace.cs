@@ -7,9 +7,9 @@ namespace TerraScale.Dashboard.Features.Data
         string Draft, IReadOnlyList<string> History, string HistoryEpoch = "", SqlRunReceipt? Receipt = null);
     public sealed record SqlWorkspaceSnapshot(SqlWorkspaceRecord Record, string Version);
 
-    public sealed class SqlWorkspaceUnavailable : Exception
+    public sealed class SqlWorkspaceUnavailableException : Exception
     {
-        public SqlWorkspaceUnavailable(Exception error) : base("The SQL workspace is unavailable.", error) { }
+        public SqlWorkspaceUnavailableException(Exception error) : base("The SQL workspace is unavailable.", error) { }
     }
 
     // Ownership-only erasure; SqlRuns keeps each user's latest run receipt here.
