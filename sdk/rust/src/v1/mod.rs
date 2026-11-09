@@ -40,7 +40,11 @@ pub use agent::{
     CreateDatabaseOptions, ForkDatabaseOptions, ManagedDatabase, ScopedKey, ScopedKeyAccess,
     ScopedKeyOptions, MOVE_HOME_TIMEOUT,
 };
-pub use backups::RestoredDatabase;
+pub use backups::{
+    Backup, BackupList, BackupPolicy, BackupPolicyRequest, PointInTimePlan, PointInTimeRequest,
+    ProjectBackupDestination, ProjectBackupDestinationRequest, RestoreOperation, RestoreWindow,
+    RestoredDatabase,
+};
 pub use buckets::{BucketRules, FileBucket, FileBucketPage, ReadWriteGrants};
 pub use client::{
     Client, ClientBuilder, RetryPolicy, DEFAULT_BASE_URL, DEFAULT_MAX_RESPONSE_BYTES,

@@ -3,7 +3,7 @@
 #[path = "support/project_http.rs"]
 mod http;
 use http::{reply, Fixture, PROJECT};
-use terrascale::v1::Client;
+use terrascale::v1::{Client, PointInTimeRequest};
 
 const REWOUND: &str = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"orders","branchedFrom":null,"createdAt":"2026-11-08T00:00:00Z","homeRegion":null,"replicaRegions":null,"placementVersion":3,"allRegions":false}"#;
 
@@ -16,10 +16,11 @@ async fn rewind_point_in_time_posts_the_instant_and_destination() {
         .unwrap();
     let rewound = client
         .database("orders")
-        .rewind_point_in_time(&serde_json::json!({
-            "pointInTime": "2026-11-07T23:59:00Z",
-            "destination": "customer"
-        }))
+        .rewind_point_in_time(&PointInTimeRequest {
+            point_in_time: "2026-11-07T23:59:00Z".into(),
+            destination: Some("customer".into()),
+            name: None,
+        })
         .await
         .unwrap();
     let seen = fixture.requests.lock().unwrap();
@@ -31,7 +32,7 @@ async fn rewind_point_in_time_posts_the_instant_and_destination() {
     );
     assert_eq!(
         seen[0].body,
-        br#"{"destination":"customer","pointInTime":"2026-11-07T23:59:00Z"}"#.to_vec()
+        br#"{"pointInTime":"2026-11-07T23:59:00Z","destination":"customer"}"#.to_vec()
     );
     assert_eq!(rewound.name, "orders");
     assert_eq!(rewound.placement_version, 3);
