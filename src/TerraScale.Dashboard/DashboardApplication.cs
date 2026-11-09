@@ -1,5 +1,6 @@
 using TerraScale.Endpoints;
 using RequestIdentity = TerraScale.Dashboard.Platform.Http.RequestIdentity;
+using ExceptionFrames = TerraScale.Dashboard.Platform.Http.ExceptionFrames;
 using TerraScale.Dashboard.Platform.Observability;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -413,7 +414,7 @@ namespace TerraScale.Dashboard
                 }
                 catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
                 {
-                    app.Logger.DashboardRequestFailed(error.GetType().Name);
+                    app.Logger.DashboardRequestFailed((context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", ExceptionFrames.Describe(error));
                     context.Response.Clear();
                     await RequestError.Response(context, StatusCodes.Status500InternalServerError).ExecuteAsync(context);
                 }

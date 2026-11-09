@@ -53,6 +53,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                 await http.Response.WriteAsync("started", http.RequestAborted);
                 throw new InvalidOperationException("https://probe.invalid/?token=" + secret);
             });
+            app.MapGet("/api/logging-fault/{token}", (HttpContext http) => Fault(http.Request.Path));
             await app.StartAsync();
             using var client = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = TestHttps.Validate, AllowAutoRedirect = false, CookieContainer = new() })
             { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
@@ -70,6 +71,11 @@ namespace TerraScale.Dashboard.E2E.Platform
             using (var response = await client.SendAsync(request))
             {
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            }
+
+            using (var response = await client.GetAsync("/api/logging-fault/" + secret))
+            {
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
             }
 
             var disconnected = false;
@@ -104,8 +110,15 @@ namespace TerraScale.Dashboard.E2E.Platform
             await Assert.That(records.Any(record => record.Category == "ServerTiming" && record.Text.Contains("/api/logging/{token}", StringComparison.Ordinal) && record.Text.Contains("200", StringComparison.Ordinal))).IsTrue();
             await Assert.That(records.Any(record => record.Category == "ServerTiming" && record.Text.Contains("RequestId=", StringComparison.Ordinal))).IsTrue();
             await Assert.That(records.Any(record => record.Category.StartsWith("Microsoft.AspNetCore.", StringComparison.Ordinal) && record.Level == LogLevel.Error && record.Text.Contains("ErrorType=InvalidOperationException", StringComparison.Ordinal))).IsTrue();
+            await Assert.That(records.Any(record => record.Level == LogLevel.Error && record.Text.Contains("Dashboard request failed on /api/logging-fault/{token}: ArgumentException at ", StringComparison.Ordinal) &&
+                record.Text.Contains(nameof(SensitiveLoggingJourneyTests) + "." + nameof(Fault), StringComparison.Ordinal))).IsTrue();
             await Assert.That(records.Any(record => record.Level == LogLevel.Warning && record.Text.Contains("get_overview", StringComparison.Ordinal) && record.Text.Contains("503", StringComparison.Ordinal))).IsTrue();
             await Assert.That(records.Any(record => record.Level == LogLevel.Warning && record.Text.Contains("Checkout for organization", StringComparison.Ordinal) && record.Text.Contains(providerError ? "StripeException" : "HttpRequestException", StringComparison.Ordinal))).IsTrue();
+        }
+
+        private static IResult Fault(string path)
+        {
+            throw new ArgumentException("https://probe.invalid" + path);
         }
 
         private sealed class Upstream : HttpMessageHandler

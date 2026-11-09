@@ -7,8 +7,8 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "Dashboard dependency failed on {Route} ({ErrorType} {Status})")]
         internal static partial void DashboardDependencyFailedOn(this ILogger logger, object? route, object? errorType, object? status);
 
-        [LoggerMessage(EventId = 2, Level = LogLevel.Error, Message = "Dashboard request failed ({ErrorType})")]
-        internal static partial void DashboardRequestFailed(this ILogger logger, object? errorType);
+        [LoggerMessage(EventId = 2, Level = LogLevel.Error, Message = "Dashboard request failed on {Route}: {Failure}")]
+        internal static partial void DashboardRequestFailed(this ILogger logger, object? route, object? failure);
 
         [LoggerMessage(EventId = 3, Level = LogLevel.Warning, Message = "Audit event was not recorded ({ErrorType})")]
         internal static partial void AuditEventWasNotRecorded(this ILogger logger, object? errorType);
