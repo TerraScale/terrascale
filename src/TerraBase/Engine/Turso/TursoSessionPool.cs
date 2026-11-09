@@ -41,9 +41,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
     private readonly LinkedList<TursoDatabaseStore> _writers = new();
     private readonly Dictionary<TursoDatabaseStore, LinkedListNode<TursoDatabaseStore>> _writerNodes = [];
 
-    /// <summary>The engine-wide bound on idle sessions.</summary>
-    public int MaxIdle => maxIdle;
-
     internal int MaxWriters => maxWriters;
 
     internal int OpenWriters
@@ -122,27 +119,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
             {
                 return _rented.Count + _opening + _closing;
             }
-        }
-    }
-
-    /// <summary>Idle sessions of every database.</summary>
-    public int IdleCount
-    {
-        get
-        {
-            lock (_gate)
-            {
-                return _idle.Count;
-            }
-        }
-    }
-
-    /// <summary>Idle sessions of <paramref name="store"/>.</summary>
-    public int IdleCountOf(TursoDatabaseStore store)
-    {
-        lock (_gate)
-        {
-            return CountOf(store);
         }
     }
 

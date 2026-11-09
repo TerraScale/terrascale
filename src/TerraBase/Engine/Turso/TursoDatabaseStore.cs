@@ -162,8 +162,6 @@ internal sealed partial class TursoDatabaseStore(
 
     internal TimeSpan QueryBudget { get; init; } = DefaultQueryBudget;
 
-    internal int IdleCount => pool.IdleCountOf(this);
-
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(
         bool write, CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
         await BeginAsync(write, durable: false, cancellationToken, file: file, line: line).ConfigureAwait(false);
@@ -871,14 +869,6 @@ internal sealed partial class TursoDatabaseStore(
     private readonly Lock _queueGate = new();
     private bool _batching;
 
-    private int _batched;
-
-    internal int BatchedWrites => Volatile.Read(ref _batched);
-
-    internal Action? AfterGroupCommit { get; set; }
-
-    internal Action? AfterTursoCommit { get; set; }
-
     internal int Statistics => Volatile.Read(ref _statistics);
 
     internal int QueuedWrites
@@ -960,12 +950,9 @@ internal sealed partial class TursoDatabaseStore(
                     _batching = false;
                     return;
                 }
-
-                _batched = batch.Count;
             }
 
             deferred = await io.WithAdmissionAsync(() => CommitBatchAsync(batch)).ConfigureAwait(false);
-            Volatile.Write(ref _batched, 0);
         }
     }
 
@@ -1049,7 +1036,6 @@ internal sealed partial class TursoDatabaseStore(
                 if (kept.Count > 0)
                 {
                     commit = await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
-                    AfterGroupCommit?.Invoke();
                 }
             }
         }

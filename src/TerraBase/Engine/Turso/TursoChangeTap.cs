@@ -31,11 +31,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     public async ValueTask AcknowledgeAsync(long position, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(position);
-        if (BeforeTrim is { } beforeTrim)
-        {
-            await beforeTrim(cancellationToken).ConfigureAwait(false);
-        }
-
         await _store.WithWriterAsync(writer =>
         {
             if (position > _anchor)
@@ -52,14 +47,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     private Dictionary<long, (string Type, string Name)> _schema = [];
 
     private (long First, long Latest, bool Ordered)? _open;
-
-    internal Func<CancellationToken, Task>? AfterSnapshotPinned { get; set; }
-
-    internal Func<CancellationToken, Task>? BeforeTrim { get; set; }
-
-    internal Func<CancellationToken, Task>? BeforeSnapshotEnd { get; set; }
-
-    internal Func<CancellationToken, Task>? AfterSnapshotBegin { get; set; }
 
     private TursoChangeTap(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, TursoConnection reader, int lineage)
     {
@@ -130,7 +117,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
             return read;
         }).ConfigureAwait(false);
     }
-
     public async ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(destination);
@@ -152,11 +138,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
                 await lane.RunAsync(() => Execute("BEGIN;"), cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    if (AfterSnapshotBegin is { } begun)
-                    {
-                        await begun(cancellationToken).ConfigureAwait(false);
-                    }
-
                     await lane.RunAsync(() => Execute("SELECT count(*) FROM sqlite_schema;"), cancellationToken).ConfigureAwait(false);
                 }
                 catch
@@ -182,11 +163,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
 
             try
             {
-                if (AfterSnapshotPinned is { } pinned)
-                {
-                    await pinned(cancellationToken).ConfigureAwait(false);
-                }
-
                 var targetConnection = await _store.Encryption.CreateAsync(snapshotPath, _io, cancellationToken).ConfigureAwait(false);
                 await _io.RunAsync(() => TursoCopy.Write(_reader, targetConnection, cancellationToken), cancellationToken).ConfigureAwait(false);
             }
@@ -203,11 +179,6 @@ internal sealed class TursoChangeTap : IWalTap, ICdcBackupRetention
     {
         try
         {
-            if (BeforeSnapshotEnd is { } ending)
-            {
-                await ending(CancellationToken.None).ConfigureAwait(false);
-            }
-
             await _io.RunAsync(() => Execute("ROLLBACK;"), CancellationToken.None).ConfigureAwait(false);
         }
         catch

@@ -268,7 +268,6 @@ internal sealed partial class TursoStorageTransaction(
 
             var result = new CommitResult(offset);
             Committed = result;
-            Follow("the after-commit hook", store.AfterTursoCommit);
             return result;
         }, cancellationToken).ConfigureAwait(false);
 

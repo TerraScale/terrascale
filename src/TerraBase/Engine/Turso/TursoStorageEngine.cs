@@ -49,9 +49,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     private readonly List<TaskCompletionSource> _awaitingRelease = [];
 
-    internal int InitializationsAwaitingRelease => _awaitingRelease.Count;
-
-    internal bool CreationHeld => _creation.CurrentCount == 0;
     private readonly CancellationTokenSource _stopping = new();
 
     private const int MaxPendingIntents = 1000;
@@ -104,10 +101,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private long? _probeCompleted;
 
     internal TimeProvider ReadinessClock { get; set; } = TimeProvider.System;
-
-    internal Func<Task>? BeforeReadinessProbe { get; set; }
-
-    internal Task ReadinessProbeTask => Volatile.Read(ref _probe) ?? Task.CompletedTask;
 
     private static readonly StoragePressure UnknownStoragePressure = new(null, []);
     private StoragePressure _storagePressure = UnknownStoragePressure;
@@ -271,11 +264,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     {
         try
         {
-            if (BeforeReadinessProbe is { } beforeProbe)
-            {
-                await beforeProbe().ConfigureAwait(false);
-            }
-
             using var probe = new FileStream(
                 Path.Combine(_dataDirectory, $".ready.{EntityIds.New()}.probe"), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
             return true;
@@ -680,11 +668,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         DeleteIfEmpty(Path.Combine(_dataDirectory, key.Organization));
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
-                    if (existed)
-                    {
-
-                    }
-
                     return existed;
                 }
 
