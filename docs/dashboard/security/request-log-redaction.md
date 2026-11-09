@@ -11,6 +11,10 @@ fields and standard HTTP methods. Unknown methods become `[other]`. Only valid
 server request IDs and hexadecimal trace/span IDs survive scopes. Application
 records retain their explicit operational messages; exception sinks record the
 exception type and, for Stripe failures, HTTP status instead of provider text.
+An unexpected request failure (HTTP 500) is logged once as `Dashboard request failed on
+<route template>: <type> at <frames>`, with up to 12 frames as `Type.Method:line` for the
+exception and up to two inner exceptions. Frames name code, never values, so a failure is
+traceable from its request ID without logging the exception message.
 New logging calls must follow the same rule: never log arbitrary exception objects,
 messages, request values or user input. Route templates must remain static metadata.
 
