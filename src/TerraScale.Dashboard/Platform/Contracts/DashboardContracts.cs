@@ -11,6 +11,8 @@ using TerraScale.Dashboard.Platform.Assets;
 
 namespace TerraScale.Dashboard.Platform.Contracts
 {
+    public sealed record IntegrationEndpointGroup(string EndpointGroupName) : IEndpointGroupNameMetadata;
+
     public static class DashboardContracts
     {
         public static IServiceCollection AddDashboardContracts(this IServiceCollection services)
@@ -18,6 +20,48 @@ namespace TerraScale.Dashboard.Platform.Contracts
             services.AddOpenApi("integration", options =>
             {
                 options.ShouldInclude = description => description.GroupName == "integration";
+                options.AddOperationTransformer((operation, context, _) =>
+                {
+                    foreach (var segment in (context.Description.RelativePath ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (segment.Length > 2 && segment.StartsWith('{') && segment.EndsWith('}') && !segment.Contains("**", StringComparison.Ordinal))
+                        {
+                            var name = segment[1..^1];
+                            operation.Parameters ??= [];
+                            if (operation.Parameters.All(parameter => parameter.Name != name))
+                            {
+                                operation.Parameters.Add(new OpenApiParameter
+                                {
+                                    Name = name,
+                                    In = ParameterLocation.Path,
+                                    Required = true,
+                                    Schema = new OpenApiSchema { Type = JsonSchemaType.String }
+                                });
+                            }
+                        }
+                    }
+
+                    if (context.Description.ActionDescriptor.EndpointMetadata.OfType<CursorPagingParameters>().Any())
+                    {
+                        CursorContract.AddParameters(operation);
+                    }
+
+                    if (operation.Responses is not null)
+                    {
+                        foreach (var response in operation.Responses.Values.OfType<OpenApiResponse>())
+                        {
+                            foreach (var media in response.Content?.Values ?? [])
+                            {
+                                if (media is OpenApiMediaType concrete && concrete.Schema is { OneOf: { Count: 2 } variants } && variants[0].Type == JsonSchemaType.Null)
+                                {
+                                    concrete.Schema = variants[1];
+                                }
+                            }
+                        }
+                    }
+
+                    return Task.CompletedTask;
+                });
                 options.AddDocumentTransformer((openApi, _, _) =>
                 {
                     openApi.Info.Title = "TerraScale Dashboard integration API";

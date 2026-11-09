@@ -16,6 +16,8 @@ using TerraScale.Dashboard.Features.Support;
 using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Features.AuthenticationManagement;
 using TerraScale.Dashboard.Features.Admin;
+using TerraScale.Dashboard.Features.ApiKeys;
+using TerraScale.Dashboard.Features.Observability;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Features.Settings;
@@ -95,7 +97,31 @@ namespace TerraScale.Dashboard
             builder.Services.AddSingleton<IProfileTokens>(services => services.GetRequiredService<AccessTokens>());
             builder.Services.AddDashboardMcp();
             builder.Services.AddDashboardContracts();
-            builder.Services.AddTerraScaleEndpoints([EndpointRegistration.Create<DatabaseTtlEndpoint>()]);
+            builder.Services.AddTerraScaleEndpoints(
+            [
+                EndpointRegistration.Create<DatabaseTtlEndpoint>(),
+                EndpointRegistration.Create<HealthzEndpoint>(),
+                EndpointRegistration.Create<ReadyzEndpoint>(),
+                EndpointRegistration.Create<HealthReadyEndpoint>(),
+                EndpointRegistration.Create<HealthLiveEndpoint>(),
+                EndpointRegistration.Create<AdminPageEndpoint>(),
+                EndpointRegistration.Create<AdminSectionEndpoint>(),
+                EndpointRegistration.Create<AdminUserEndpoint>(),
+                EndpointRegistration.Create<AdminOrganizationEndpoint>(),
+                EndpointRegistration.Create<AdminProjectEndpoint>(),
+                EndpointRegistration.Create<AdminEstateActionEndpoint>(),
+                EndpointRegistration.Create<AdminPlansEndpoint>(),
+                EndpointRegistration.Create<AdminPlanVisibilityEndpoint>(),
+                EndpointRegistration.Create<AdminPlanDeleteEndpoint>(),
+                EndpointRegistration.Create<ApiKeysPageEndpoint>(),
+                EndpointRegistration.Create<ListDashboardCredentialsEndpoint>(),
+                EndpointRegistration.Create<CreateDashboardCredentialEndpoint>(),
+                EndpointRegistration.Create<RevokeDashboardCredentialEndpoint>(),
+                EndpointRegistration.Create<RevokeDashboardCredentialByIdEndpoint>(),
+                EndpointRegistration.Create<RotateDashboardCredentialEndpoint>(),
+                EndpointRegistration.Create<SetCredentialAllowedCidrsEndpoint>(),
+                EndpointRegistration.Create<SetProjectAllowedCidrsEndpoint>(),
+            ]);
             builder.Services.AddTransient<ServerTiming.Handler>();
             builder.Services.AddTransient<RequestIdentity.Handler>();
             builder.Services.AddTransient<PlatformTransport.PreferHttp2>();
@@ -268,17 +294,11 @@ namespace TerraScale.Dashboard
             app.Use((context, next) => stateInitializer is null or { Initialized: true } || context.Request.Path.StartsWithSegments("/healthz") ||
                 context.Request.Path.StartsWithSegments("/readyz") || context.Request.Path.StartsWithSegments("/health")
                 ? next(context) : throw new IOException("Dashboard state is initializing."));
-            app.MapGet("/healthz", () => Results.Text("ok"));
-            // ts-orch probes /readyz and ts-status probes /health/ready; both name the failing dependency.
-            app.MapGet("/readyz", (DependencyReadiness readiness, HttpContext context, CancellationToken cancellationToken) => readiness.CheckAsync(context, cancellationToken));
-            app.MapGet("/health/ready", (DependencyReadiness readiness, HttpContext context, CancellationToken cancellationToken) => readiness.CheckAsync(context, cancellationToken));
-            app.MapGet("/health/live", (DependencyReadiness readiness) => Results.Json(new { status = "ok", region = readiness.Region, version = readiness.Revision }));
             app.MapAuth();
             app.MapAccountFeatures();
             app.MapOnboarding();
             app.MapDatabaseFeatures();
             app.MapAuthenticationManagement();
-            app.MapAdmin();
             app.MapHome();
             app.MapAnalytics();
             app.MapUsage();
