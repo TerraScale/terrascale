@@ -245,9 +245,10 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_password", "refused");
+            var copy = SignInFlow.Copy(this.HttpContext);
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Password, SignInFlow.Tenant(this.HttpContext), address, next,
-                HostedTheme.Of(this.HttpContext).Passcode ? "Check both and try again, or email yourself a sign-in code." : "Check both and try again, or reset your password.")
-            { ErrorTitle = "Wrong email or password" }, StatusCodes.Status401Unauthorized);
+                HostedTheme.Of(this.HttpContext).Passcode ? copy.ErrorWrongCredentialsPasscode : copy.ErrorWrongCredentialsReset)
+            { ErrorTitle = copy.ErrorWrongCredentialsTitle }, StatusCodes.Status401Unauthorized);
         }
 
         AuthMetrics.SignIn("hosted_password", "succeeded");
@@ -318,18 +319,19 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
+        var copy = SignInFlow.Copy(this.HttpContext);
         if (Users.NormalizeEmail(address) is null)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
-                "Enter a valid email address.")
-            { ErrorTitle = "Check your details" }, StatusCodes.Status400BadRequest);
+                copy.ErrorEnterValidEmail)
+            { ErrorTitle = copy.ErrorCheckDetailsTitle }, StatusCodes.Status400BadRequest);
         }
 
         if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
                 PasswordPolicy.Message(problem))
-            { ErrorTitle = "Choose another password" }, StatusCodes.Status400BadRequest);
+            { ErrorTitle = copy.ErrorChoosePasswordTitle }, StatusCodes.Status400BadRequest);
         }
 
         if (await SignInFlow.SsoAsync(this.HttpContext, address, next, cancellationToken) is { } sso)
@@ -395,7 +397,7 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, SignInFlow.Tenant(this.HttpContext), address, next)
         {
             PendingToken = form.PendingToken,
-            Notice = $"We sent a new code to {address}.",
+            Notice = SignInFlow.Copy(this.HttpContext).NoticeResendSent.Replace("{email}", address),
         });
     }
 }
@@ -567,7 +569,7 @@ public sealed class ResendResetEndpoint(HostedAuth hosted, AuthOptions options) 
 
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next)
         {
-            Notice = $"If an account exists for {address}, we emailed it a new code.",
+            Notice = SignInFlow.Copy(this.HttpContext).NoticeResetSent.Replace("{email}", address),
         });
     }
 }
@@ -604,11 +606,12 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
+        var copy = SignInFlow.Copy(this.HttpContext);
         if (PasswordPolicy.Check(form.Password, address) is not PasswordProblem.None and var problem)
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next,
                 PasswordPolicy.Message(problem))
-            { ErrorTitle = "Choose another password" }, StatusCodes.Status400BadRequest);
+            { ErrorTitle = copy.ErrorChoosePasswordTitle }, StatusCodes.Status400BadRequest);
         }
 
         var (reset, wait) = await hosted.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext),
@@ -625,12 +628,13 @@ internal static class SignInFlow
     public static IResult Limited(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null, string? challenge = null)
     {
         var seconds = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds));
+        var copy = Copy(context);
         context.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
         context.Response.Headers.CacheControl = "no-store";
         return SignInPageModel.Render(context,
-            new SignInPageModel(step, Tenant(context), email, next, $"Try again in {RetryWait(seconds)}.")
+            new SignInPageModel(step, Tenant(context), email, next, copy.ErrorTryAgainIn.Replace("{wait}", RetryWait(copy, seconds)))
             {
-                ErrorTitle = "Too many attempts",
+                ErrorTitle = copy.ErrorTooManyTitle,
                 Limited = true,
                 PendingToken = pendingToken,
                 Challenge = challenge,
@@ -646,12 +650,13 @@ internal static class SignInFlow
     public static IResult BudgetExhausted(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null)
     {
         var seconds = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds));
+        var copy = Copy(context);
         context.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
         context.Response.Headers.CacheControl = "no-store";
         return SignInPageModel.Render(context,
-            new SignInPageModel(step, Tenant(context), email, next, $"You've requested several codes. Use the latest code you received, or try again in {RetryWait(seconds)}.")
+            new SignInPageModel(step, Tenant(context), email, next, copy.ErrorBudgetExhausted.Replace("{wait}", RetryWait(copy, seconds)))
             {
-                ErrorTitle = "Too many codes this hour",
+                ErrorTitle = copy.ErrorTooManyCodesTitle,
                 CodeBudgetExhausted = true,
                 WaitSeconds = seconds,
                 PendingToken = pendingToken,
@@ -660,16 +665,23 @@ internal static class SignInFlow
     }
 
     /// <summary>A whole-second wait for people: seconds below two minutes, whole minutes above.</summary>
-    public static string RetryWait(long seconds) => seconds > 120
-        ? $"{(long)Math.Ceiling(seconds / 60.0)} minutes"
-        : $"{seconds} seconds";
+    public static string RetryWait(HostedPageCopy copy, long seconds) => seconds > 120
+        ? copy.RetryWaitMinutes.Replace("{minutes}", ((long)Math.Ceiling(seconds / 60.0)).ToString(CultureInfo.InvariantCulture))
+        : copy.RetryWaitSeconds.Replace("{seconds}", seconds.ToString(CultureInfo.InvariantCulture));
 
-    public static IResult WrongCode(HttpContext context, SignInStep step, string email, string? next, string? pendingToken = null) =>
-        SignInPageModel.Render(context, new SignInPageModel(step, Tenant(context), email, next, "This code is wrong, expired, or already used. Check the latest email, or request a new code.")
+    public static string RetryWait(long seconds) => RetryWait(HostedCopies.English, seconds);
+
+    public static HostedPageCopy Copy(HttpContext context) => HostedCopies.For(AuthEmails.Locale(context.Request.Headers.AcceptLanguage));
+
+    public static IResult WrongCode(HttpContext context, SignInStep step, string email, string? next, string? pendingToken = null)
+    {
+        var copy = Copy(context);
+        return SignInPageModel.Render(context, new SignInPageModel(step, Tenant(context), email, next, copy.ErrorWrongCode)
         {
-            ErrorTitle = "That code is wrong or expired",
+            ErrorTitle = copy.ErrorWrongCodeTitle,
             PendingToken = pendingToken,
         }, StatusCodes.Status401Unauthorized);
+    }
 
     /// <summary>
     /// The hosted page for a transient failure: keeps the visitor on their step with the address they entered and the
@@ -706,10 +718,10 @@ internal static class SignInFlow
             email = string.Empty;
         }
 
-        return SignInPageModel.Render(context, new SignInPageModel(step, Tenant(context), email, next,
-            "Something went wrong on our side. Nothing was sent yet. Try again in a moment.")
+        var copy = Copy(context);
+        return SignInPageModel.Render(context, new SignInPageModel(step, Tenant(context), email, next, copy.ErrorTransient)
         {
-            ErrorTitle = "Sign-in is unavailable right now",
+            ErrorTitle = copy.ErrorTransientTitle,
             PendingToken = string.IsNullOrEmpty(pending) ? null : pending,
         }, StatusCodes.Status503ServiceUnavailable);
     }
