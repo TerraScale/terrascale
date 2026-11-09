@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,7 +19,7 @@ public sealed class TerraBaseProviderTests(TerraBaseFixture fixture)
         using var http = new HttpClient(counter);
         var database = await server.CreateDatabaseAsync(http, cancellationToken);
         await using var services = new ServiceCollection()
-            .AddDbContextPool<AppDbContext>(options => options.UseTerraBase(database).ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning)))
+            .AddDbContextPool<AppDbContext>(options => options.UseTerraBase(database))
             .BuildServiceProvider();
 
         await using (var scope = services.CreateAsyncScope())
@@ -28,7 +27,7 @@ public sealed class TerraBaseProviderTests(TerraBaseFixture fixture)
             var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             await context.Database.MigrateAsync(cancellationToken);
             await context.Database.MigrateAsync(cancellationToken);
-            await Assert.That(await context.Database.GetAppliedMigrationsAsync(cancellationToken)).IsEquivalentTo([InitialSchema.Id]);
+            await Assert.That(await context.Database.GetAppliedMigrationsAsync(cancellationToken)).IsEquivalentTo(context.Database.GetMigrations());
             await Assert.That(context.GetService<IMigrator>().GenerateScript()).Contains("CREATE UNIQUE INDEX \"IX_Accounts_Email\" ON \"Accounts\" (\"Email\");");
         }
 
@@ -68,6 +67,8 @@ public sealed class TerraBaseProviderTests(TerraBaseFixture fixture)
                 .Include(row => row.Sessions.Where(session => session.ExpiresAt > now).OrderBy(session => session.Device))
                 .SingleAsync(row => row.Email == "ada@example.com", cancellationToken);
             await Assert.That(loaded.Sessions.Select(session => session.Device)).IsEquivalentTo(["laptop", "phone"]);
+            await Assert.That(loaded.Sessions.All(session => session.ExpiresAt.Kind == DateTimeKind.Utc)).IsTrue();
+            await Assert.That(loaded.Sessions.Single(session => session.Device == "laptop").ExpiresAt).IsEqualTo(now.AddDays(1));
             await Assert.That(loaded.Preferences).IsEqualTo(new Preferences("dark", 50));
             await Assert.That(loaded.CreatedAt).IsEqualTo(account.CreatedAt);
             await Assert.That(loaded.CreatedAt.Offset).IsEqualTo(TimeSpan.FromHours(-3));
@@ -129,7 +130,7 @@ public sealed class TerraBaseProviderTests(TerraBaseFixture fixture)
         var id = server.NewId();
         await using (var context = new AppDbContext(options))
         {
-            context.Accounts.Add(NewAccount(id, "grace@example.com"));
+            context.Accounts.Add(server.NewAccount(id, "grace@example.com"));
             await context.SaveChangesAsync(cancellationToken);
         }
 
@@ -141,18 +142,18 @@ public sealed class TerraBaseProviderTests(TerraBaseFixture fixture)
             await context.SaveChangesAsync(cancellationToken);
         }
 
-        stale.Accounts.AddRange([NewAccount(server.NewId(), "a@example.com"), NewAccount(server.NewId(), "b@example.com"), NewAccount(server.NewId(), "c@example.com")]);
+        stale.Accounts.AddRange(Enumerable.Range(0, 300).Select(i => server.NewAccount(server.NewId(), $"bulk{i}@example.com")));
         stale.Sessions.Add(new Session { Id = server.NewId(), AccountId = id, Device = "laptop", ExpiresAt = DateTime.UtcNow.AddDays(1) });
         staleAccount.Status = AccountStatus.Suspended;
         staleAccount.Version = server.NewId();
         var before = counter.Executed;
         var conflict = await Assert.That(() => stale.SaveChangesAsync(cancellationToken)).Throws<DbUpdateConcurrencyException>();
-        await Assert.That(counter.Executed - before).IsEqualTo(1);
+        await Assert.That(counter.Executed - before).IsEqualTo(0);
         await Assert.That(conflict!.Entries.Single().Entity).IsSameReferenceAs(staleAccount);
 
         await using (var context = new AppDbContext(options))
         {
-            context.Accounts.AddRange([NewAccount(server.NewId(), "d@example.com"), NewAccount(server.NewId(), "grace@example.com")]);
+            context.Accounts.AddRange([server.NewAccount(server.NewId(), "d@example.com"), server.NewAccount(server.NewId(), "grace@example.com")]);
             var duplicate = await Assert.That(() => context.SaveChangesAsync(cancellationToken)).Throws<DbUpdateException>();
             await Assert.That(duplicate!.InnerException).IsTypeOf<TerraBaseSqlException>();
             await Assert.That(((TerraBaseSqlException)duplicate.InnerException!).Code).IsEqualTo(TerraBaseSqlErrorCodes.UniqueViolation);
@@ -164,14 +165,5 @@ public sealed class TerraBaseProviderTests(TerraBaseFixture fixture)
             await Assert.That(await context.Accounts.Where(row => row.Id == id).Select(row => row.Status).SingleAsync(cancellationToken)).IsEqualTo(AccountStatus.Pending);
             await Assert.That(await context.Sessions.CountAsync(cancellationToken)).IsEqualTo(0);
         }
-
-        Account NewAccount(string accountId, string email) => new()
-        {
-            Id = accountId,
-            Email = email,
-            Version = server.NewId(),
-            CreatedAt = DateTimeOffset.UtcNow,
-            Preferences = new("system", 25),
-        };
     }
 }

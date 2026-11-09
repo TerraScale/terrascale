@@ -26,6 +26,12 @@
     <ItemGroup Condition="'@(_DashboardStripePackage)' != ''">
       <_NewtonsoftPackage Remove="@(_NewtonsoftPackage)" Condition="'%(_NewtonsoftPackage.NuGetPackageId)' == 'Newtonsoft.Json'" />
     </ItemGroup>
+    <Error Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign')) and ('$(IsPackable)' != 'false' or '$(IsPublishable)' != 'false')" Text="An Entity Framework Core design host is never packed or published: set IsPackable and IsPublishable to false." />
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)scripts/efcore/check-design-host.py&quot; &quot;$(ProjectAssetsFile)&quot;" Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))" />
+    <ItemGroup Condition="$(MSBuildProjectName.EndsWith('.EntityFrameworkDesign'))">
+      <_NewtonsoftPackage Remove="@(_NewtonsoftPackage)" Condition="'%(_NewtonsoftPackage.NuGetPackageId)' == 'Newtonsoft.Json'" />
+    </ItemGroup>
+    <Error Condition="'@(ProjectReference)' != '' and $([System.String]::Copy('@(ProjectReference)').Contains('.EntityFrameworkDesign.csproj'))" Text="Entity Framework Core design hosts carry design-time tooling; no project references one." />
     <Error Condition="'@(_NewtonsoftPackage)' != ''" Text="Newtonsoft packages are banned ('@(_NewtonsoftPackage->Distinct())'). Use System.Text.Json; remove the package or the dependency that brings it in." />
   </Target>
 

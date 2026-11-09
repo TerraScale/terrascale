@@ -41,6 +41,8 @@ public sealed class Session
     public required string Device { get; set; }
 
     public required DateTime ExpiresAt { get; set; }
+
+    public DateTime? RevokedAt { get; set; }
 }
 
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)

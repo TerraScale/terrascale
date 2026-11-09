@@ -26,6 +26,15 @@ public sealed class TerraBaseServer : IAsyncDisposable
 
     public string NewId() => ids.NewId();
 
+    public Account NewAccount(string id, string email) => new()
+    {
+        Id = id,
+        Email = email,
+        Version = NewId(),
+        CreatedAt = DateTimeOffset.UtcNow,
+        Preferences = new("system", 25),
+    };
+
     public async Task StartAsync()
     {
         var binary = Environment.GetEnvironmentVariable("TERRABASE_BINARY");
@@ -77,6 +86,19 @@ public sealed class TerraBaseServer : IAsyncDisposable
 
     public async Task<TerraBaseSqlDatabase> CreateDatabaseAsync(HttpClient sql, CancellationToken cancellationToken)
     {
+        var (project, apiKey) = await CreateProjectDatabaseAsync(cancellationToken);
+        return new TerraBaseSqlClient(sql, new TerraBaseSqlClientOptions { BaseAddress = publicAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) })
+            .Database(project, "app");
+    }
+
+    public async Task<TerraBaseSqlDatabase> CreatePeerDatabaseAsync(CancellationToken cancellationToken)
+    {
+        var (project, _) = await CreateProjectDatabaseAsync(cancellationToken);
+        return new TerraBaseSqlClient(peer!, new TerraBaseSqlClientOptions { BaseAddress = internalAddress }).Database(project, "app");
+    }
+
+    private async Task<(string Project, string ApiKey)> CreateProjectDatabaseAsync(CancellationToken cancellationToken)
+    {
         var peerClient = peer ?? throw new InvalidOperationException("TerraBase has not started.");
         var user = NewId();
         var management = new TerraBaseManagementClient(peerClient, new TerraBaseManagementClientOptions { BaseAddress = internalAddress });
@@ -94,11 +116,9 @@ public sealed class TerraBaseServer : IAsyncDisposable
         response.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         var apiKey = body.RootElement.GetProperty("secret").GetString()!;
-        ValueTask<string> Token(CancellationToken _) => ValueTask.FromResult(apiKey);
-        await new TerraBaseDatabaseClient(Http, new TerraBaseDatabaseClientOptions { BaseAddress = publicAddress, AccessTokenProvider = Token })
+        await new TerraBaseDatabaseClient(Http, new TerraBaseDatabaseClientOptions { BaseAddress = publicAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) })
             .Database(project.Id, "app").CreateAsync(cancellationToken);
-        return new TerraBaseSqlClient(sql, new TerraBaseSqlClientOptions { BaseAddress = publicAddress, AccessTokenProvider = Token })
-            .Database(project.Id, "app");
+        return (project.Id, apiKey);
     }
 
     public async ValueTask DisposeAsync()
