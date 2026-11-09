@@ -33,7 +33,7 @@ if (( code != 0 )); then
     body=$(printf '%s\n' \
       "Failed on \`${SOURCE_SHA:-$GITHUB_SHA}\` in the Slow job: $RUN_URL" "" \
       "Environment: \`$GITHUB_JOB ($AREA)\` job on GitHub-hosted runner, Dockerfile stage \`test-slow-$AREA\`, Release build." \
-      "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
+      "Reproduce: \`nice -n 19 make $target TESTS=\"${test%%(*}\"\`" \
       "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
     number=$(jq -r --arg t "$title" "first(.[] | select(.title == \$t) | .number) // empty" <<< "$open")
     if [[ -n $number ]]; then

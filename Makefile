@@ -7,6 +7,7 @@ RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
 # Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
 TEST_ARGS ?=
+TESTS ?=
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
@@ -90,7 +91,7 @@ libs-build: restore
 libs-test: libs-build
 	# Independent assemblies run together; each runner keeps TUnit's default parallelism.
 	@set -e; pids=""; for p in $(LIBS_TEST_PROJECTS); do \
-		python3 scripts/ci/fast-budget.py $$(basename $$(dirname $$p)) -- dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS) & pids="$$pids $$!"; \
+		python3 scripts/ci/fast-budget.py $$(basename $$(dirname $$p)) -- python3 scripts/ci/tunit.py 1 -- dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- & pids="$$pids $$!"; \
 	done; trap 'kill $$pids 2>/dev/null || true' EXIT INT TERM; \
 	status=0; for pid in $$pids; do wait $$pid || status=$$?; done; trap - EXIT INT TERM; exit $$status
 
@@ -124,12 +125,12 @@ auth-fast-build: turso-native
 	dotnet build scripts/auth/fast.slnx --configuration $(CONFIGURATION) --no-restore --nologo -m
 
 auth-test-fast: auth-fast-build
-	TERRABASE_BINARY=$(TERRABASE_BINARY) python3 scripts/ci/fast-budget.py auth -- dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS)
+	TERRABASE_BINARY=$(TERRABASE_BINARY) python3 scripts/ci/fast-budget.py auth -- python3 scripts/ci/tunit.py 1 -- dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build --
 
 auth-test-slow: auth-build turso-native
 	dotnet restore src/TerraBase/TerraBase.csproj --locked-mode
 	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
-	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+	TERRABASE_BINARY=$(TERRABASE_BINARY) python3 scripts/ci/tunit.py 1 -- dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build --
 
 auth-check: auth-audit auth-openapi-check
 
@@ -173,13 +174,13 @@ terrabase-test-fast: restore turso-native
 	dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration $(CONFIGURATION) --no-restore
 	# The independent driver and integration assemblies run in parallel; preserve both exit codes.
 	@set -e; \
-	python3 scripts/ci/fast-budget.py turso -- dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 4 $(TEST_ARGS) & driver=$$!; \
+	python3 scripts/ci/fast-budget.py turso -- python3 scripts/ci/tunit.py 4 -- dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build -- & driver=$$!; \
 	trap 'kill $$driver 2>/dev/null || true' EXIT INT TERM; \
-	status=0; python3 scripts/ci/fast-budget.py terrabase -- dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS) || status=$$?; \
+	status=0; python3 scripts/ci/fast-budget.py terrabase -- python3 scripts/ci/tunit.py 1 -- dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- || status=$$?; \
 	wait $$driver || status=$$?; trap - EXIT INT TERM; exit $$status
 
 terrabase-test-slow: terrabase-build
-	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+	python3 scripts/ci/tunit.py 1 -- dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build --
 
 TERRABASE_E2E_RUN = dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --
 
