@@ -19,7 +19,19 @@ using TerraBase.Features.UserAuth;
 
 namespace TerraBase.Features.Sql;
 
-internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDisposable
+internal sealed class SqlSocket(
+    HttpContext context,
+    WebSocket socket,
+    IHostApplicationLifetime lifetime,
+    ISqlService sql,
+    IAuthorizationService authorization,
+    ITenantDirectory tenants,
+    TerraBaseOptions options,
+    IMemoryBudget memory,
+    TimeProvider time,
+    IQosAdmission admission,
+    IUsageMeter usage,
+    IRequestLogs logs) : IDisposable
 {
     private const int FirstBufferBytes = 16 * 1024;
     private const int MaxTokenLength = 8 * 1024;
@@ -36,7 +48,6 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
     private static readonly SqlError UnknownType = new(SqlErrors.InvalidRequest, "type is execute, begin, commit or rollback");
 
     private readonly SemaphoreSlim _send = new(1, 1);
-    private readonly IServiceProvider _services = context.RequestServices;
     private readonly CancellationTokenSource _revoked = new();
     private readonly List<IDisposable> _watches = [];
     private ISqlSession? _session;
@@ -51,7 +62,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
 
     public async Task RunAsync(TenantContext? database, bool canWrite, CancellationToken cancellationToken)
     {
-        var stopping = _services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
+        var stopping = lifetime.ApplicationStopping;
         await using var leaving = stopping.Register(() => _ = CloseAsync(WebSocketCloseStatus.EndpointUnavailable, "the server is restarting")).ConfigureAwait(false);
         await using var cutOff = _revoked.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the credential was revoked")).ConfigureAwait(false);
         (_database, _canWrite) = (database, canWrite);
@@ -60,7 +71,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
             return;
         }
 
-        _session = _services.GetRequiredService<ISqlService>().Open(Database, _canWrite);
+        _session = sql.Open(Database, _canWrite);
         _session.Prefer(SqlExecuteEndpoint.Preference(context.Request.Headers[SqlExecuteEndpoint.WriteHeader]) ?? WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))
         {
@@ -141,14 +152,13 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
             return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unauthorized, refused.Code + ": " + refused.Message), cancellationToken).ConfigureAwait(false);
         }
 
-        var authorization = _services.GetRequiredService<IAuthorizationService>();
         if (!(await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlRead).ConfigureAwait(false)).Succeeded)
         {
             return await RefuseAsync(request.Id, SqlErrors.Auth with { Message = "SQL needs the sql:read scope" }, cancellationToken).ConfigureAwait(false);
         }
 
         _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded;
-        switch (await DatabaseRoute.CheckTenantAsync(context, _services.GetRequiredService<ITenantDirectory>(), cancellationToken).ConfigureAwait(false))
+        switch (await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false))
         {
             case TenantContext found:
                 _database = found;
@@ -159,7 +169,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
                 return await RefuseAsync(request.Id, UnknownDatabase, cancellationToken).ConfigureAwait(false);
         }
 
-        var region = _services.GetRequiredService<TerraBaseOptions>().Region;
+        var region = options.Region;
         switch (await DatabaseRegions.RecordAsync(context, (string)context.Request.RouteValues["project"]!, (string)context.Request.RouteValues["database"]!)
             .ConfigureAwait(false))
         {
@@ -185,7 +195,6 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
 
     private async ValueTask<(byte[] Bytes, int Length, IMemoryReservation Reservation)?> ReceiveAsync(int maxBytes, CancellationToken cancellationToken)
     {
-        var memory = _services.GetRequiredService<IMemoryBudget>();
         var reservation = memory.TryReserve(MemoryLane.Foreground, FirstBufferBytes, _database);
         if (reservation is null)
         {
@@ -270,7 +279,6 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
             return true;
         }
 
-        var time = _services.GetRequiredService<TimeProvider>();
         var started = time.GetTimestamp();
         switch (await AuthorizeAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -289,14 +297,14 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         try
         {
             var tenant = new TenantContext(Database.OrganizationId, Database.Plan);
-            using var lease = _services.GetRequiredService<IQosAdmission>().TryEnter(tenant, out var retryAfter);
+            using var lease = admission.TryEnter(tenant, out var retryAfter);
             if (lease is null)
             {
                 var busy = new SqlError(SqlErrors.TenantBusy, $"organization request budget exceeded; retry after {retryAfter}s");
-                return await FinishAsync(request.Id, new SqlBatchFailure(busy, 0), frame.Length, time, started, operations, cancellationToken).ConfigureAwait(false);
+                return await FinishAsync(request.Id, new SqlBatchFailure(busy, 0), frame.Length, started, operations, cancellationToken).ConfigureAwait(false);
             }
 
-            using var scope = QosContext.Enter(tenant, _services.GetRequiredService<IMemoryBudget>());
+            using var scope = QosContext.Enter(tenant, memory);
             Session.BeginRequest();
             SqlBatchOutcome outcome;
             try
@@ -312,7 +320,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
                 await Session.EndRequestAsync().ConfigureAwait(false);
             }
 
-            return await FinishAsync(request.Id, outcome, frame.Length, time, started, operations, cancellationToken).ConfigureAwait(false);
+            return await FinishAsync(request.Id, outcome, frame.Length, started, operations, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -329,14 +337,13 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         }
 
         context.User = authenticated.Principal;
-        var authorization = _services.GetRequiredService<IAuthorizationService>();
         if (!(await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlRead).ConfigureAwait(false)).Succeeded
             || (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded != _canWrite)
         {
             return CredentialRevoked;
         }
 
-        return await DatabaseRoute.CheckTenantAsync(context, _services.GetRequiredService<ITenantDirectory>(), cancellationToken).ConfigureAwait(false) switch
+        return await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false) switch
         {
             TenantContext found when found.DatabaseId == Database.DatabaseId && found.OrganizationId == Database.OrganizationId => null,
             Unavailable error => error,
@@ -393,7 +400,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         };
 
     private async ValueTask<bool> FinishAsync(
-        long? id, SqlBatchOutcome outcome, long received, TimeProvider time, long started, RequestLogOperations operations, CancellationToken cancellationToken)
+        long? id, SqlBatchOutcome outcome, long received, long started, RequestLogOperations operations, CancellationToken cancellationToken)
     {
         var (sent, status) = outcome switch
         {
@@ -402,11 +409,11 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
             SqlBatchFailure failure => (await SendErrorAsync(id, failure, cancellationToken).ConfigureAwait(false), failure.Error.Status),
         };
         var elapsed = time.GetElapsedTime(started);
-        _services.GetRequiredService<IUsageMeter>().RecordRequest(Database, "OTHER", status, elapsed, received, sent);
+        usage.RecordRequest(Database, "OTHER", status, elapsed, received, sent);
         if (context.GetEndpoint() is RouteEndpoint { RoutePattern.RawText: { } route })
         {
             var (statements, errors) = operations.Statements(Database);
-            _services.GetRequiredService<IRequestLogs>().Record(Database, "OTHER", route, status, elapsed, operations.Count(Database),
+            logs.Record(Database, "OTHER", route, status, elapsed, operations.Count(Database),
                 EntityIds.New().ToString(), statements, errors);
         }
 

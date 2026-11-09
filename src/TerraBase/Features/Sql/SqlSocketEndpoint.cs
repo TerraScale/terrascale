@@ -1,7 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Connections;
+using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Management;
+using TerraBase.Features.Management.Logs;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -10,7 +15,17 @@ using System.Net.WebSockets;
 
 namespace TerraBase.Features.Sql;
 
-internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
+internal sealed class SqlSocketEndpoint(
+    IHostApplicationLifetime lifetime,
+    ISqlService sql,
+    IAuthorizationService authorization,
+    ITenantDirectory tenants,
+    TerraBaseOptions options,
+    IMemoryBudget memory,
+    TimeProvider time,
+    IQosAdmission admission,
+    IUsageMeter usage,
+    IRequestLogs logs) : EndpointWithoutRequest<IResult>
 {
     public const string Protocol = "terrascale.sql.v1";
 
@@ -81,7 +96,7 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
             KeepAliveInterval = KeepAlive,
             KeepAliveTimeout = KeepAlive,
         });
-        using var connection = new SqlSocket(HttpContext, socket);
+        using var connection = new SqlSocket(HttpContext, socket, lifetime, sql, authorization, tenants, options, memory, time, admission, usage, logs);
         try
         {
             await connection.RunAsync(database, canWrite, cancellationToken);
