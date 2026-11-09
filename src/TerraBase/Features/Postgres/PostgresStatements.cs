@@ -385,7 +385,7 @@ internal static partial class PostgresStatements
             : set.Groups[2].Value is ['\'', .. var quoted, '\''] ? quoted.Replace("''", "'", StringComparison.Ordinal) : set.Groups[2].Value;
         if (setting is null)
         {
-            return new PgError("0A000", "SET supports only client_encoding, DateStyle, TimeZone, extra_float_digits, application_name, search_path and terrascale.write");
+            return new PgError("0A000", $"SET supports only {string.Join(", ", Settable[..^1])} and {Settable[^1]}");
         }
 
         if (setting == "client_encoding" && !value.Replace("-", "", StringComparison.Ordinal).Equals("UTF8", StringComparison.OrdinalIgnoreCase))

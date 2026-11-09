@@ -214,46 +214,45 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             var secret = new PgReader(body).CString();
             var database = parameters.GetValueOrDefault("database") ?? parameters.GetValueOrDefault("user") ?? "";
             var access = await AuthorizeAsync(secret, database, client, relayed, cancellationToken).ConfigureAwait(false);
-            if (access is PgError error)
+            switch (access)
             {
-                output.Error(error.Code, error.Message, fatal: true);
-                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                return default;
-            }
+                case PgError error:
+                    output.Error(error.Code, error.Message, fatal: true);
+                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    return default;
+                case HomeNode home:
+                    return (null, new Relay(home, PostgresRelay.Startup(parameters, secret), client));
+                case Authorized authorized:
+                    var sql = services.GetRequiredService<ISqlService>().Open(authorized.Database, authorized.CanWrite);
+                    var project = database.IndexOf('/', StringComparison.Ordinal) is var slash && slash >= 0 ? database[..slash] : null;
+                    Session session;
+                    do
+                    {
+                        session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
+                            parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
+                        {
+                            Key = authorized.Key,
+                            Until = authorized.Until,
+                            Project = project,
+                        };
+                    }
+                    while (!_sessions.TryAdd(session.ProcessId, session));
 
-            if (access is HomeNode home)
-            {
-                return (null, new Relay(home, PostgresRelay.Startup(parameters, secret), client));
-            }
+                    try
+                    {
+                        await GreetAsync(session, output, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        _sessions.TryRemove(session.ProcessId, out _);
+                        await sql.DisposeAsync().ConfigureAwait(false);
+                        throw;
+                    }
 
-            var authorized = access is Authorized granted ? granted : throw new InvalidOperationException();
-            var sql = services.GetRequiredService<ISqlService>().Open(authorized.Database, authorized.CanWrite);
-            var project = database.IndexOf('/', StringComparison.Ordinal) is var slash && slash >= 0 ? database[..slash] : null;
-            Session session;
-            do
-            {
-                session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
-                    parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
-                {
-                    Key = authorized.Key,
-                    Until = authorized.Until,
-                    Project = project,
-                };
+                    return (session, null);
+                default:
+                    return default;
             }
-            while (!_sessions.TryAdd(session.ProcessId, session));
-
-            try
-            {
-                await GreetAsync(session, output, cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                _sessions.TryRemove(session.ProcessId, out _);
-                await sql.DisposeAsync().ConfigureAwait(false);
-                throw;
-            }
-
-            return (session, null);
         }
     }
 
@@ -453,8 +452,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     case 'H':
                         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                         break;
-                    case 'P' or 'B' or 'D' or 'E' or 'C' when !failed:
-                        if (await ExtendedAsync(session, (char)type, message, output, cancellationToken).ConfigureAwait(false) is { } refused)
+                    case 'P' or 'B' or 'D' or 'E' or 'C':
+                        if (!failed && await ExtendedAsync(session, (char)type, message, output, cancellationToken).ConfigureAwait(false) is { } refused)
                         {
                             Fail(session, output, refused);
                             if (refused.Fatal)
@@ -467,8 +466,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                             failed = true;
                         }
 
-                        break;
-                    case 'P' or 'B' or 'D' or 'E' or 'C':
                         break;
                     default:
                         throw new InvalidDataException("unsupported message type");
@@ -605,7 +602,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                 if (session.Statements.Count >= MaxNamed && !session.Statements.ContainsKey(statementName))
                 {
-                    return new PgError("54000", "at most 256 prepared statements per session");
+                    return new PgError("54000", $"at most {MaxNamed} prepared statements per session");
                 }
 
                 var parsedStatement = parsed is [var single] ? single : new PgStatement(PgKind.Empty, "", "", 0);
@@ -631,7 +628,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 var args = new SqlValue[values.Length];
                 for (var i = 0; i < values.Length; i++)
                 {
-                    if (PostgresStatements.Decode(bound.Oids[i], formats.Length == 0 ? 0 : formats[Math.Min(i, formats.Length - 1)], values[i]) is not { } value)
+                    if (PostgresStatements.Decode(bound.Oids[i], Format(formats, i), values[i]) is not { } value)
                     {
                         return new PgError("22P02", $"invalid value for parameter ${i + 1}, or an unsupported binary type");
                     }
@@ -641,7 +638,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                 if (session.Portals.Count >= MaxNamed && !session.Portals.ContainsKey(portalName))
                 {
-                    return new PgError("54000", "at most 256 portals per session");
+                    return new PgError("54000", $"at most {MaxNamed} portals per session");
                 }
 
                 session.Portals[portalName] = new Portal(bound.Statement, args, resultFormats) { Columns = bound.Columns, Described = bound.Described };
@@ -1055,15 +1052,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         All,
     }
 
-    private sealed class Exchange(long started, long written, string requestId)
+    private sealed record Exchange(long Started, long Written, string RequestId)
     {
-        public string RequestId => requestId;
-
         public RequestLogOperations Operations { get; } = new();
-
-        public long Started => started;
-
-        public long Written => written;
 
         public long Received { get; set; }
 
@@ -1071,28 +1062,20 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         public TenantContext? Database { get; set; }
     }
-    private sealed class Prepared(PgStatement statement, int[] oids)
+
+    private sealed record Prepared(PgStatement Statement, int[] Oids)
     {
-        public PgStatement Statement => statement;
-
-        public int[] Oids => oids;
-
         public PgColumn[]? Columns { get; set; }
 
         public bool Described { get; set; }
     }
 
-    private sealed class Portal(PgStatement statement, SqlValue[] args, short[] formats)
+    private sealed record Portal(PgStatement Statement, SqlValue[] Args, short[] Formats)
     {
-        public PgStatement Statement => statement;
-
-        public SqlValue[] Args => args;
-
-        public short[] Formats => formats;
-
         public PgColumn[]? Columns { get; set; }
 
         public bool Described { get; set; }
+
         public PgOutcome? Pending { get; set; }
     }
     private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, IPAddress? Client, ISqlSession Sql, Dictionary<string, string> Settings)
