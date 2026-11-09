@@ -16,7 +16,6 @@ public sealed class BackupRequiredTests
         var directory = Directory.CreateTempSubdirectory("terrabase-backup-required-").FullName;
         try
         {
-            // Like RegionTests, run the real binary; the child inherits the suite's low CPU priority.
             var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
             start.Environment["DOTNET_ENVIRONMENT"] = "Production";
             start.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
@@ -27,7 +26,6 @@ public sealed class BackupRequiredTests
 
             if (unrelatedAwsVariables)
             {
-                // Other tooling's AWS variables are not an attached bucket: still "no backup", not a partial backup setting.
                 start.Environment["AWS_REGION"] = "us-east-1";
                 start.Environment["AWS_ACCESS_KEY_ID"] = "unrelated";
             }

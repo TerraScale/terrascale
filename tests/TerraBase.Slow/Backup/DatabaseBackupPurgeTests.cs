@@ -24,7 +24,6 @@ public sealed class DatabaseBackupPurgeTests
         var database = await api.CreateManagedDatabaseAsync();
         var neighbor = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "neighbor");
         var prefix = Prefix(database);
-        // Tigris lists an unversioned bucket's objects as version "null" and truncates with only NextKeyMarker (2026-10-28).
         for (var index = 0; index < 257; index++)
         {
             state.S3.SeedObject(false, prefix + (index < 129 ? "nodes/node-a/" : "nodes/node-b/") + index.ToString("D4", CultureInfo.InvariantCulture), [1]);
