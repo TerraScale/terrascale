@@ -28,12 +28,22 @@ def gh(*args):
     return json.loads(subprocess.check_output(['gh', *args], text=True))
 
 
-# A dashboard commit qualifies once its own Images run exists and has not failed: that run's
-# Dashboard Fast job gates its release, so the gate never waits for CI to finish.
+# A dashboard commit qualifies once its own Images run exists and its Dashboard Fast has not
+# failed: that job gates its release, so the gate never waits for CI to finish. A failed release
+# step keeps the commit qualified, so heal and reruns retry it instead of falling back to an
+# older commit.
 @functools.cache
 def qualified(sha):
     runs = images_runs(sha)
-    return bool(runs) and not all(run['status'] == 'completed' and run['conclusion'] != 'success' for run in runs)
+    return bool(runs) and not all(run['status'] == 'completed' and run['conclusion'] != 'success'
+                                  and dashboard_fast_failed(run) for run in runs)
+
+
+def dashboard_fast_failed(run):
+    pages = gh('api', '--paginate', '--slurp',
+               f'repos/{REPO}/actions/runs/{run["databaseId"]}/jobs?filter=latest&per_page=100')
+    return any(job['name'].startswith('test') and job['conclusion'] not in ('success', 'skipped', None)
+               for page in pages for job in page['jobs'])
 
 
 def ci(sha):
