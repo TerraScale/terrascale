@@ -477,7 +477,7 @@ internal sealed class EngineManagedBackupService(
 
     public async ValueTask RecoverInterruptedRestoresAsync(CancellationToken cancellationToken)
     {
-        var running = await catalog.ReadAsync<List<RestoreOperationRecord>?>(
+        var running = await catalog.ReadAsync<IReadOnlyList<RestoreOperationRecord>?>(
             async transaction => await SystemCatalog.ListAllAsync(transaction, RestoreCatalog.Kind, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken)
                 .ConfigureAwait(false),
             static _ => null, cancellationToken).ConfigureAwait(false);

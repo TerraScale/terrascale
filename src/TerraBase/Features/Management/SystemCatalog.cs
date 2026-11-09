@@ -176,7 +176,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         return new ManagementPage<T>(items, page.HasMore ? id(items[^1]) : null);
     }
 
-    public static async ValueTask<List<T>> ListAllAsync<T>(
+    public static async ValueTask<IReadOnlyList<T>> ListAllAsync<T>(
         IStorageTransaction transaction, string kind, JsonTypeInfo<T> type, CancellationToken cancellationToken)
     {
         var items = new List<T>();
