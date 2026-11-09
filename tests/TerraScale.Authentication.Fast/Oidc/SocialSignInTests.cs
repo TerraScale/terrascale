@@ -114,6 +114,76 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task A_password_user_connects_a_provider_after_reauthentication_and_a_second_account_cannot_take_it()
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        using var providers = new FakeSocialProviders();
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: providers.Route);
+        var (project, token) = await this.ProjectAsync(oidc);
+        await oidc.OkAsync(HttpMethod.Put, $"/v1/{project}/providers/google", token, Configuration("google", providers));
+
+        var users = oidc.Server.App.Services.GetRequiredService<Users>();
+        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
+        var email = this.faker.Internet.Email(provider: "example.test").ToLowerInvariant();
+        var user = (await users.CreateAsync(project, email, "argon2id", CancellationToken.None))!;
+
+        var staleSession = await sessions.CreateAsync(user);
+        clock.Advance(TimeSpan.FromMinutes(16));
+        using (var stale = await PostAsync(oidc, project, staleSession.Token))
+        {
+            await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(await stale.Content.ReadAsStringAsync()).Contains("Sign in again");
+        }
+
+        var providerEmail = this.faker.Internet.Email(provider: "example.test").ToLowerInvariant();
+        var session = await sessions.CreateAsync(user);
+        string code;
+        string state;
+        using (var connect = await PostAsync(oidc, project, session.Token))
+        {
+            await Assert.That(connect.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            var social = connect.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith($"tsauth_social_{project}=", StringComparison.Ordinal)).Split(';')[0];
+            code = providers.Approve(connect.Headers.Location!, providerEmail, subject: "12345");
+            state = QueryHelpers.ParseQuery(connect.Headers.Location!.Query)["state"].ToString();
+            using var callback = await CallbackAsync(oidc, project, "google", code, state, $"{social}; tsauth_session_{project}={session.Token}");
+            await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            await Assert.That(callback.Headers.Location!.ToString()).IsEqualTo($"/ui/{project}/security");
+        }
+
+        var linked = (await users.GetAsync(project, user.Id))!;
+        await Assert.That(linked.Email).IsEqualTo(email);
+        await Assert.That(linked.LinkedProviders.Single().Subject).IsEqualTo("12345");
+
+        var rival = (await users.CreateAsync(project, this.faker.Internet.Email(provider: "example.test").ToLowerInvariant(), "argon2id", CancellationToken.None))!;
+        var rivalSession = await sessions.CreateAsync(rival);
+        using (var connect = await PostAsync(oidc, project, rivalSession.Token))
+        {
+            await Assert.That(connect.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            var social = connect.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith($"tsauth_social_{project}=", StringComparison.Ordinal)).Split(';')[0];
+            code = providers.Approve(connect.Headers.Location!, providerEmail, subject: "12345");
+            state = QueryHelpers.ParseQuery(connect.Headers.Location!.Query)["state"].ToString();
+            using var callback = await CallbackAsync(oidc, project, "google", code, state, $"{social}; tsauth_session_{project}={rivalSession.Token}");
+            await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(await callback.Content.ReadAsStringAsync()).Contains("already connected to another account");
+        }
+
+        await Assert.That((await users.GetAsync(project, rival.Id))!.LinkedProviders).IsEmpty();
+        await Assert.That((await users.FindByProviderAsync(project, linked.LinkedProviders.Single(), CancellationToken.None))!.Id).IsEqualTo(user.Id);
+        await Assert.That(await SignInAsync(oidc, providers, project, "google", providerEmail, subject: "12345")).IsNotNull();
+    }
+
+    private static Task<HttpResponseMessage> PostAsync(OidcHarness oidc, string project, string session)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/ui/{project}/security/social/connect")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["provider"] = "google" }),
+        };
+        request.Headers.Add("Cookie", $"tsauth_session_{project}={session}");
+        request.Headers.Add("Origin", OidcHarness.PublicOrigin);
+        return oidc.Client.SendAsync(request);
+    }
+
+    [Test]
     public async Task A_linked_provider_emails_a_single_use_unlink_code()
     {
         var oidc = await fixture.SharedAsync();

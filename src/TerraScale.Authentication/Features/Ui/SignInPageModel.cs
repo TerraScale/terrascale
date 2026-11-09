@@ -172,6 +172,10 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The account's enrolled passkeys.</summary>
     public IReadOnlyList<PasskeyCredentialEntry> Passkeys { get; init; } = [];
 
+    public IReadOnlyList<LinkedProvider> LinkedProviders { get; init; } = [];
+
+    public IReadOnlyList<string> ConnectableProviders { get; init; } = [];
+
     /// <summary>A success message shown above the page.</summary>
     public string? Notice { get; init; }
 

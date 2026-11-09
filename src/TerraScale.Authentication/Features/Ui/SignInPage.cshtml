@@ -383,6 +383,22 @@ else
 <button type="submit"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@Model.Copy.SetUpAuthenticator</button>
 </form>
 }
+@foreach (var identity in Model.LinkedProviders)
+{
+<form method="post" action="/ui/@Model.Slug/security/social/unlink">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="provider" value="@identity.Provider">
+<button type="submit" class="secondary">@Model.Copy.Remove @TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(identity.Provider)</button>
+</form>
+}
+@foreach (var provider in Model.ConnectableProviders.Where(name => Model.LinkedProviders.All(identity => identity.Provider != name)))
+{
+<form method="post" action="/ui/@Model.Slug/security/social/connect">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="provider" value="@provider">
+<button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg>@string.Format(CultureInfo.InvariantCulture, Model.Copy.ConnectProvider, TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(provider))</button>
+</form>
+}
 <dl class="facts" aria-label="@Model.Copy.PasskeysAria">
 @if (Model.Passkeys.Count == 0)
 {
