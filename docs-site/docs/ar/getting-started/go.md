@@ -31,7 +31,7 @@ The SQL methods live on `Database` in the module; the latest tag carries them:
 ```bash
 mkdir quickstart && cd quickstart
 go mod init example.com/quickstart
-go get terrascale.tech/sdk@v0.0.20
+go get terrascale.tech/sdk@v0.0.27
 ```
 
 The root module is enough: it pulls in the `v1` and `tsauth` packages the quickstart imports.

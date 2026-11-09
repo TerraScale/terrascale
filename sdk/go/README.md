@@ -18,7 +18,7 @@ should use ULID keys from `v1.NewID()` and avoid `AUTOINCREMENT`.
 
 ## Source and module availability
 
-Install the module with `go get terrascale.tech/sdk@v0.0.15`; the tag carries the
+Install the module with `go get terrascale.tech/sdk@v0.0.27`; the tag carries the
 current SQL API (`Database.Execute`, `Query`, `Batch` and the WebSocket session).
 Follow the [CLI installation instructions](docs/cli-releases.md) for the released
 executable. The historical `history/ts-go/*` releases predate the SQL-only API;
