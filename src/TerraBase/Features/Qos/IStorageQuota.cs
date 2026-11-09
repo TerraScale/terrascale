@@ -63,34 +63,15 @@ public sealed class StorageQuotaLease : IDisposable
             return new Done();
         }
 
-        long used;
         try
         {
-            var counted = await _measure(cancellationToken).ConfigureAwait(false);
-            if (counted is not long bytes)
-            {
-                return counted switch
-                {
-                    Unavailable error => error,
-                    long => throw new System.Diagnostics.UnreachableException(),
-                };
-            }
-
-            used = bytes;
+            return StorageQuotaRule.Growth(_limit, delta, await _measure(cancellationToken).ConfigureAwait(false));
         }
         catch (QueryCapacityException)
         {
             return StorageQuota.AccountingUnavailable;
         }
-        if (used > _limit || delta > _limit - used)
-        {
-            return new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota");
-        }
-
-        return new Done();
     }
-
-    /// <summary>Updates the bounded usage cache only after the database commit succeeds.</summary>
     public void Committed(long delta) => _committed(delta);
 
     /// <summary>Releases write admission; safe to call more than once.</summary>
@@ -131,31 +112,14 @@ public sealed class StorageQuotaGroupLease : IDisposable
             return new Done();
         }
 
-        long used;
         try
         {
-            var counted = await _measure(organizationId, cancellationToken).ConfigureAwait(false);
-            if (counted is not long bytes)
-            {
-                return counted switch
-                {
-                    Unavailable error => error,
-                    long => throw new System.Diagnostics.UnreachableException(),
-                };
-            }
-
-            used = bytes;
+            return StorageQuotaRule.Growth(limit, delta, await _measure(organizationId, cancellationToken).ConfigureAwait(false));
         }
         catch (QueryCapacityException)
         {
             return StorageQuota.AccountingUnavailable;
         }
-        if (used > limit || delta > limit - used)
-        {
-            return new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota");
-        }
-
-        return new Done();
     }
 
     /// <summary>Releases all stripes in reverse acquisition order; safe to call more than once.</summary>
@@ -169,4 +133,15 @@ public sealed class StorageQuotaGroupLease : IDisposable
             }
         }
     }
+}
+
+static file class StorageQuotaRule
+{
+    internal static StorageQuotaCheck Growth(long limit, long delta, StorageQuotaBytesResult counted) => counted switch
+    {
+        long used => used > limit || delta > limit - used
+            ? new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota")
+            : new Done(),
+        Unavailable error => error,
+    };
 }
