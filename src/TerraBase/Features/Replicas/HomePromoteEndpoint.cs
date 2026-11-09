@@ -24,7 +24,7 @@ internal sealed class HomePromoteEndpoint(HomeMoves moves) : Endpoint<HomePromot
     }
 
     public override async ValueTask<IResult> HandleAsync(HomePromoteRequest request, CancellationToken cancellationToken) =>
-        HomeMoveRoute.Of(HttpContext) is not { } database ? ErrorResponse.From(new NotFound("the database does not exist"))
+        ReplicaRoutes.Database(HttpContext) is not { } database ? ErrorResponse.From(new NotFound("the database does not exist"))
         : await moves.PromoteAsync(database, request, cancellationToken).ConfigureAwait(false) switch
         {
             HomePromoteAnswer answer => TypedResults.Json(answer, TerraBaseJsonContext.Default.HomePromoteAnswer),

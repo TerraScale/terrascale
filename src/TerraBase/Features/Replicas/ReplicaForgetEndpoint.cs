@@ -1,6 +1,5 @@
 using TerraBase.Errors;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
@@ -30,13 +29,11 @@ internal sealed class ReplicaForgetEndpoint(RegionReplication replication, IRepl
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var (organization, project, id) = (Value("organization"), Value("project"), Value("database"));
-        if (!EntityIds.IsValid(organization) || !EntityIds.IsValid(project) || !EntityIds.IsValid(id))
+        if (ReplicaRoutes.Database(HttpContext) is not { } database)
         {
             return ErrorResponse.From(new NotFound("the database does not exist"));
         }
 
-        var database = new TenantContext(organization, PlanTier.Hobby, project, id);
         await replication.DeleteShreddedAsync(database, cancellationToken).ConfigureAwait(false);
         return await catalog.ForgetAsync(database, cancellationToken).ConfigureAwait(false) switch
         {
@@ -45,6 +42,4 @@ internal sealed class ReplicaForgetEndpoint(RegionReplication replication, IRepl
             _ => throw new InvalidOperationException(),
         };
     }
-
-    private string Value(string name) => HttpContext.Request.RouteValues[name] as string ?? string.Empty;
 }

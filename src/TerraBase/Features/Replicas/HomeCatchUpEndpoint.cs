@@ -22,7 +22,7 @@ internal sealed class HomeCatchUpEndpoint(HomeMoves moves) : EndpointWithoutRequ
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        HomeMoveRoute.Of(HttpContext) is not { } database ? ErrorResponse.From(new NotFound("the database does not exist"))
+        ReplicaRoutes.Database(HttpContext) is not { } database ? ErrorResponse.From(new NotFound("the database does not exist"))
         : await moves.CatchUpAsync(database, cancellationToken).ConfigureAwait(false) ? TypedResults.NoContent()
         : ErrorResponse.From(HomeMoves.ReplicaNotReady);
 }

@@ -2,8 +2,6 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
-using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
@@ -26,13 +24,10 @@ internal sealed class HeldRevisionEndpoint(TerraBaseOptions options, IDatabaseRe
 
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var (organization, project, id) = (Value("organization"), Value("project"), Value("database"));
         HttpContext.Response.Headers.CacheControl = "no-store";
-        return ValueTask.FromResult(EntityIds.IsValid(organization) && EntityIds.IsValid(project) && EntityIds.IsValid(id)
-            && replicas.HeldRevision(new TenantContext(organization, PlanTier.Hobby, project, id)) is { } held
+        return ValueTask.FromResult(ReplicaRoutes.Database(HttpContext) is { } database
+            && replicas.HeldRevision(database) is { } held
             ? TypedResults.Json(new HeldRevisionAnswer(options.Region, held.ToString()), TerraBaseJsonContext.Default.HeldRevisionAnswer)
             : ErrorResponse.From(new NotFound("this node holds no replica of the database")));
     }
-
-    private string Value(string name) => HttpContext.Request.RouteValues[name] as string ?? string.Empty;
 }
