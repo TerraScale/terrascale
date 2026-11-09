@@ -27,4 +27,13 @@ Slice: `src/TerraBase/Features/Management/**`, tests `tests/TerraBase.Fast/Manag
 
 ## Worklog
 
-- [in progress] round 2 log
+- c22f4caa4 round 2 decision log written and pushed.
+- 254a680b7 RemoteDatabases.ForgetAsync takes TenantContext and builds the peer path with ReplicaRoutes.DatabasePath; EngineManagementService.ForgetReplicaRegionsAsync passes `storage` directly.
+- 6c47888ec deleted all 27 remaining comment lines (src/TerraBase/Features/Management 16, tests/TerraBase.Fast/Management 5, tests/TerraBase.Slow/Management 6); zero comments left in slice.
+- 0d04cc0fb replaced the two remaining fully qualified names with `using System.Globalization;` (ListUsageAllowancesEndpoint.cs, ShapeDeletionTests.cs).
+
+## Test runs
+
+- `dotnet build src/TerraBase/TerraBase.csproj`, `tests/TerraBase.Fast`, `tests/TerraBase.Slow`, `tests/TerraBase.E2E`: 0 warnings, 0 errors after every commit.
+- `make terrabase-test-fast`: all tests pass; the per-test 10 s budget is exceeded run-to-run by tests across every slice (Postgres wire, ApiKeys, Backup, Management) with times varying 9.5s→12.5s between runs — machine-load jitter from six parallel round-2 workers, not a behavior change (this slice's diff is comment deletions, a using directive, and a byte-identical path string). Flagged for the coordinator to re-run on a quiet box.
+
