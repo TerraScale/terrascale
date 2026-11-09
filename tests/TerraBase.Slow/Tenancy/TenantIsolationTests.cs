@@ -1,9 +1,12 @@
 using System.Net;
+using System.Net.WebSockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Management;
+using TerraBase.Features.Shapes;
+using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Testing;
@@ -198,7 +201,8 @@ public sealed class TenantIsolationTests
                 .Replace("{function}", "hello", StringComparison.Ordinal)
                 .Replace("{bucket}", Id, StringComparison.Ordinal)
                 .Replace("{file}", Id, StringComparison.Ordinal)
-                .Replace("{version}", "v3", StringComparison.Ordinal);
+                .Replace("{version}", "v3", StringComparison.Ordinal)
+                .Replace("{operation}", Id, StringComparison.Ordinal);
             // A new route parameter needs a value here.
             await Assert.That(path).DoesNotContain("{");
             using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(path, UriKind.Relative));
@@ -222,12 +226,49 @@ public sealed class TenantIsolationTests
             }
 
             var client = projectManagement ? projectToken : IsManagement(pattern) ? dashboard : data;
+            if (method == "CONNECT")
+            {
+                sent.Add(($"{method} {path}", await UpgradeAsync(client, path, TUnit.Core.TestContext.Current!.Execution.CancellationToken)));
+                continue;
+            }
+
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
                 TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             sent.Add(($"{method} {path}", response.StatusCode));
         }
 
         return sent;
+    }
+
+    private static async Task<HttpStatusCode> UpgradeAsync(HttpClient client, string path, CancellationToken cancellationToken)
+    {
+        using var socket = new ClientWebSocket();
+        socket.Options.CollectHttpResponseDetails = true;
+        var authorization = client.DefaultRequestHeaders.Authorization;
+        if (authorization is not null)
+        {
+            socket.Options.SetRequestHeader("Authorization", authorization.Scheme + " " + authorization.Parameter);
+        }
+
+        if (path.EndsWith("/sql/ws", StringComparison.Ordinal))
+        {
+            socket.Options.AddSubProtocol(SqlSocketEndpoint.Protocol);
+        }
+
+        if (path.EndsWith("/shape/ws", StringComparison.Ordinal))
+        {
+            socket.Options.AddSubProtocol(GetShapeHintEndpoint.Protocol);
+        }
+
+        try
+        {
+            await socket.ConnectAsync(new UriBuilder(new Uri(client.BaseAddress!, path)) { Scheme = "ws" }.Uri, cancellationToken);
+            return HttpStatusCode.SwitchingProtocols;
+        }
+        catch (WebSocketException) when (socket.HttpStatusCode != 0)
+        {
+            return socket.HttpStatusCode;
+        }
     }
 
     private static async Task<string> SeedAsync(ManagementApi api, Tenant tenant, HttpClient dashboard)
