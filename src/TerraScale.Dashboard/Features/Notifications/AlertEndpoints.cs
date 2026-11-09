@@ -26,65 +26,58 @@ namespace TerraScale.Dashboard.Features.Notifications
 
     public static class AlertEndpoints
     {
-        public static IEndpointRouteBuilder MapAlerts(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules)
         {
-            endpoints.MapGet("/notifications/alerts", async (HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules) =>
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
-
-                if (context.Project is null)
-                {
-                    return HttpRedirects.SeeOther("/");
-                }
-
-                return await PageAsync(http, context, rules);
-            });
-            foreach (var action in new[] { "", "delete", "threshold" })
-            {
-                endpoints.MapPost(action.Length == 0 ? "/api/v1/notifications/alerts" : "/api/v1/notifications/alerts/{id}/" + action, async (HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules) =>
-                {
-                    http.Response.Headers.CacheControl = "no-store";
-                    var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                    if (context is null)
-                    {
-                        return Results.Unauthorized();
-                    }
-
-                    var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                    if (!Csrf.Validate(http, form))
-                    {
-                        return Results.BadRequest("Invalid form token.");
-                    }
-
-                    try
-                    {
-                        var id = http.Request.RouteValues["id"]?.ToString() ?? "";
-                        if (action == "delete")
-                        {
-                            await rules.DeleteAsync(context, id, http.RequestAborted);
-                        }
-                        else if (action == "threshold")
-                        {
-                            await rules.UpdateThresholdAsync(context, id, form["threshold"], http.RequestAborted);
-                        }
-                        else
-                        {
-                            var (rule, secret) = await rules.CreateAsync(context, form, http.RequestAborted);
-                            // The signing secret is in this response only.
-                            http.Response.Headers["Referrer-Policy"] = "no-referrer";
-                            return await PageAsync(http, context, rules, created: rule, secret: secret, status: 201);
-                        }
-                    }
-                    catch (AccountAccessException error) { return await PageAsync(http, context, rules, error.Message, error.StatusCode); }
-                    catch (ArgumentException error) { return await PageAsync(http, context, rules, error.Message, 422); }
-                    return HttpRedirects.SeeOther("/notifications/alerts");
-                });
+                return AccountRequest.LoginRedirect(http);
             }
-            return endpoints;
+
+            if (context.Project is null)
+            {
+                return HttpRedirects.SeeOther("/");
+            }
+
+            return await PageAsync(http, context, rules);
+        }
+
+        internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, AlertRules rules, string action)
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.BadRequest("Invalid form token.");
+            }
+
+            try
+            {
+                var id = http.Request.RouteValues["id"]?.ToString() ?? "";
+                if (action == "delete")
+                {
+                    await rules.DeleteAsync(context, id, http.RequestAborted);
+                }
+                else if (action == "threshold")
+                {
+                    await rules.UpdateThresholdAsync(context, id, form["threshold"], http.RequestAborted);
+                }
+                else
+                {
+                    var (rule, secret) = await rules.CreateAsync(context, form, http.RequestAborted);
+                    http.Response.Headers["Referrer-Policy"] = "no-referrer";
+                    return await PageAsync(http, context, rules, created: rule, secret: secret, status: 201);
+                }
+            }
+            catch (AccountAccessException error) { return await PageAsync(http, context, rules, error.Message, error.StatusCode); }
+            catch (ArgumentException error) { return await PageAsync(http, context, rules, error.Message, 422); }
+            return HttpRedirects.SeeOther("/notifications/alerts");
         }
 
         private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, AlertRules rules, string error = "", int status = 200, AlertRule? created = null, string? secret = null)

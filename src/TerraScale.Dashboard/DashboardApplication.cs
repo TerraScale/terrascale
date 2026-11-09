@@ -27,13 +27,17 @@ using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Features.Settings;
 using TerraScale.Dashboard.Features.FileStorage;
+using TerraScale.Dashboard.Features.Functions;
+using TerraScale.Dashboard.Features.Logs;
+using TerraScale.Dashboard.Features.Organizations.Sso;
+using TerraScale.Dashboard.Features.Organizations.Wizard;
+using TerraScale.Dashboard.Platform.Contracts;
 using TerraScale.Dashboard.Platform.Assets;
 using TerraScale.Dashboard.Platform.Development;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.Dashboard.Platform.Contracts;
 using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard
@@ -218,6 +222,41 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<SupportRequestEndpoint>(),
                 EndpointRegistration.Create<ProjectInvitationsPageEndpoint>(),
                 EndpointRegistration.Create<RevokeProjectInvitationEndpoint>(),
+                EndpointRegistration.Create<AnalyticsPageEndpoint>(),
+                EndpointRegistration.Create<DatabaseGrantsEndpoint>(),
+                EndpointRegistration.Create<DatabaseGrantsDeleteEndpoint>(),
+                EndpointRegistration.Create<DatabasePlacementEndpoint>(),
+                EndpointRegistration.Create<DatabaseMoveHomeEndpoint>(),
+                EndpointRegistration.Create<DatabaseSettingsPageEndpoint>(),
+                EndpointRegistration.Create<RenameDatabaseEndpoint>(),
+                EndpointRegistration.Create<FunctionsPageEndpoint>(),
+                EndpointRegistration.Create<DeleteFunctionEndpoint>(),
+                EndpointRegistration.Create<HomePageEndpoint>(),
+                EndpointRegistration.Create<HomeRegionsEndpoint>(),
+                EndpointRegistration.Create<DatabaseLogsPageEndpoint>(),
+                EndpointRegistration.Create<LogDrainEndpoint>(),
+                EndpointRegistration.Create<LogDrainDeleteEndpoint>(),
+                EndpointRegistration.Create<AlertsPageEndpoint>(),
+                EndpointRegistration.Create<CreateAlertEndpoint>(),
+                EndpointRegistration.Create<DeleteAlertEndpoint>(),
+                EndpointRegistration.Create<AlertThresholdEndpoint>(),
+                EndpointRegistration.Create<ProjectSettingsPageEndpoint>(),
+                EndpointRegistration.Create<ProjectRenameEndpoint>(),
+                EndpointRegistration.Create<ProjectMembersPageEndpoint>(),
+                EndpointRegistration.Create<ProjectGrantPostEndpoint>(),
+                EndpointRegistration.Create<OrganizationSsoSaveEndpoint>(),
+                EndpointRegistration.Create<OrganizationSsoVerifyEndpoint>(),
+                EndpointRegistration.Create<OrganizationSsoDeleteEndpoint>(),
+                EndpointRegistration.Create<NewOrganizationEndpoint>(),
+                EndpointRegistration.Create<StoragePageEndpoint>(),
+                EndpointRegistration.Create<StorageBucketEndpoint>(),
+                EndpointRegistration.Create<StorageRulesEndpoint>(),
+                EndpointRegistration.Create<StorageDeleteBucketEndpoint>(),
+                EndpointRegistration.Create<StorageUploadEndpoint>(),
+                EndpointRegistration.Create<StorageCompleteEndpoint>(),
+                EndpointRegistration.Create<StorageDeleteFileEndpoint>(),
+                EndpointRegistration.Create<StorageDownloadEndpoint>(),
+                EndpointRegistration.Create<ReferenceScriptEndpoint>(),
             ]);
             builder.Services.AddTransient<ServerTiming.Handler>();
             builder.Services.AddTransient<RequestIdentity.Handler>();
@@ -394,12 +433,7 @@ namespace TerraScale.Dashboard
             app.MapAuth();
             app.MapOnboarding();
             app.MapDatabaseFeatures();
-            app.MapHome();
-            app.MapAnalytics();
             app.MapSettings();
-            app.MapFileStorage();
-            app.MapAlerts();
-            app.MapOrganizations();
             app.MapBilling();
             app.MapBillingPlanChanges();
             app.MapMcpOAuth();
