@@ -46,7 +46,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         private readonly Lazy<Task<(TerraBaseStorage TerraBase, string Database)>> storage = new(async () =>
         {
             var terraBase = await TerraBaseStorage.SharedAsync();
-            return (terraBase, (await terraBase.CreateDatabaseAsync(CancellationToken.None)).Project);
+            return (terraBase, await terraBase.CreateDatabaseAsync(CancellationToken.None));
         });
 
         public DemoEnvironment()

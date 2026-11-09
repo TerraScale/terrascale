@@ -7,6 +7,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -16,15 +18,20 @@ namespace TerraScale.Dashboard.E2E.Demo;
 
 public sealed class TerraBaseStorage : IAsyncDisposable
 {
-    private const string Database = "dashboard";
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(60);
     private static readonly Lock SharedGate = new();
-    private static Task<TerraBaseStorage>? shared;
+    private const int PoolSize = 4;
+    private static Task<TerraBaseStorage>[]? shared;
+    private static int next;
     private readonly string directory = Directory.CreateTempSubdirectory("ts-dashboard-terrabase-").FullName;
     private readonly ConcurrentQueue<string> output = new();
     private readonly TerraScaleIdGenerator ids = new();
     private readonly HttpClient peer = new(new PeerCredential(TestIdentity.PeerSecret) { InnerHandler = TerraBaseHttp.CreateHandler() });
     private readonly HttpClient databases = new(TerraBaseHttp.CreateHandler());
+    private readonly Lock projectGate = new();
+    private Task<TerraBaseDatabaseClient>? project;
+    private Task<IReadOnlyList<TerraBaseSqlStatement>>? schema;
+    private string? projectId;
     private Process? process;
 
     public Uri InternalAddress { get; private set; } = null!;
@@ -35,22 +42,26 @@ public sealed class TerraBaseStorage : IAsyncDisposable
     {
         lock (SharedGate)
         {
-            return shared ??= StartAsync();
+            shared ??= [.. Enumerable.Range(0, PoolSize).Select(_ => StartAsync())];
+            return shared[next++ % PoolSize];
         }
     }
 
     public static async Task DisposeSharedAsync()
     {
-        Task<TerraBaseStorage>? running;
+        Task<TerraBaseStorage>[]? running;
         lock (SharedGate)
         {
             running = shared;
             shared = null;
         }
 
-        if (running is { IsCompletedSuccessfully: true })
+        foreach (var server in running ?? [])
         {
-            await (await running).DisposeAsync();
+            if (server.IsCompletedSuccessfully)
+            {
+                await (await server).DisposeAsync();
+            }
         }
     }
 
@@ -69,13 +80,52 @@ public sealed class TerraBaseStorage : IAsyncDisposable
         }
     }
 
-    public async Task<(string Project, string Database)> CreateDatabaseAsync(CancellationToken cancellationToken)
+    public async Task<string> CreateDatabaseAsync(CancellationToken cancellationToken)
+    {
+        var project = await Project().WaitAsync(cancellationToken);
+        var name = "dashboard-" + ids.NewId().ToLowerInvariant();
+        await project.Database(projectId!, name).CreateAsync(cancellationToken);
+        await Database(name).BatchAsync(await SchemaAsync(), cancellationToken);
+        return name;
+    }
+
+    private TerraBaseSqlDatabase Database(string name)
+    {
+        return new TerraBaseSqlClient(peer, new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(projectId!, name);
+    }
+
+    private Task<IReadOnlyList<TerraBaseSqlStatement>> SchemaAsync()
+    {
+        lock (projectGate)
+        {
+            return schema ??= Task.Run<IReadOnlyList<TerraBaseSqlStatement>>(() =>
+            {
+                using var db = new DashboardDbContext(new DbContextOptionsBuilder<DashboardDbContext>().UseTerraBase(Database("schema")).Options);
+                var script = db.GetService<IMigrator>().GenerateScript();
+                return [.. script.Split(";" + Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(statement => statement.TrimEnd(';'))
+                    .Where(statement => statement.Length > 0 && statement is not ("BEGIN TRANSACTION" or "COMMIT"))
+                    .Select(statement => new TerraBaseSqlStatement(statement))];
+            });
+        }
+    }
+
+    private Task<TerraBaseDatabaseClient> Project()
+    {
+        lock (projectGate)
+        {
+            return project ??= CreateProjectAsync();
+        }
+    }
+
+    private async Task<TerraBaseDatabaseClient> CreateProjectAsync()
     {
         var user = ids.NewId();
         var management = new TerraBaseManagementClient(peer, new TerraBaseManagementClientOptions { BaseAddress = InternalAddress });
-        var organization = await management.CreateOrganizationAsync(user, "Dashboard " + user, cancellationToken);
-        await management.SetPlanAsync(user, organization.Id, TerraBasePlan.Enterprise, cancellationToken);
-        var project = await management.CreateProjectAsync(user, organization.Id, "Dashboard", cancellationToken);
+        var organization = await management.CreateOrganizationAsync(user, "Dashboard " + user, CancellationToken.None);
+        await management.SetPlanAsync(user, organization.Id, TerraBasePlan.Enterprise, CancellationToken.None);
+        var created = await management.CreateProjectAsync(user, organization.Id, "Dashboard", CancellationToken.None);
+        projectId = created.Id;
         var key = new JsonObject { ["name"] = "dashboard", ["scopes"] = new JsonArray("sql:read", "sql:write"), ["organizationId"] = organization.Id };
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(InternalAddress, "admin/api-keys"))
         {
@@ -83,30 +133,24 @@ public sealed class TerraBaseStorage : IAsyncDisposable
             VersionPolicy = HttpVersionPolicy.RequestVersionExact,
             Content = new StringContent(key.ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        using var response = await peer.SendAsync(request, cancellationToken);
+        using var response = await peer.SendAsync(request, CancellationToken.None);
         response.EnsureSuccessStatusCode();
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(CancellationToken.None));
         var apiKey = body.RootElement.GetProperty("secret").GetString()!;
-        await new TerraBaseDatabaseClient(databases, new TerraBaseDatabaseClientOptions { BaseAddress = PublicAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) })
-            .Database(project.Id, Database).CreateAsync(cancellationToken);
-        await using (var db = Open(project.Id))
-        {
-            await db.Database.MigrateAsync(cancellationToken);
-        }
-
-        return (project.Id, Database);
+        return new TerraBaseDatabaseClient(databases, new TerraBaseDatabaseClientOptions { BaseAddress = PublicAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) });
     }
 
-    public DashboardDbContext Open(string project)
+    public DashboardDbContext Open(string database)
     {
         return new(new DbContextOptionsBuilder<DashboardDbContext>()
-            .UseTerraBase(new TerraBaseSqlClient(peer, new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(project, Database)).Options);
+            .UseTerraBase(new TerraBaseSqlClient(peer, new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(projectId!, database)).Options);
     }
 
-    public void Use(IServiceCollection services, string project)
+    public void Use(IServiceCollection services, string database)
     {
+        var project = projectId!;
         services.Replace(ServiceDescriptor.Singleton(provider => new TerraBaseSqlClient(provider.GetRequiredService<DashboardStorage.Transport>().Client,
-            new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(project, Database)));
+            new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(project, database)));
     }
 
     public async ValueTask DisposeAsync()
