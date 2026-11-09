@@ -4,7 +4,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 
-namespace TerraBase.Fast.Catalog;
+namespace TerraBase.Slow.Catalog;
 
 public sealed class SqlCatalogTests
 {

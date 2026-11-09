@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Primitives;
 
-namespace TerraBase.Fast.Tenancy;
+namespace TerraBase.Slow.Tenancy;
 
 public sealed class DatabaseEncryptionTests
 {

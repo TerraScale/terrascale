@@ -10,7 +10,7 @@ using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 
-namespace TerraBase.Fast.Tenancy;
+namespace TerraBase.Slow.Tenancy;
 
 public sealed class TenantIsolationTests
 {
