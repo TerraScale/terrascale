@@ -10,7 +10,6 @@ public sealed record UsagePoint(DateTimeOffset Start, long Reads, long Writes);
 public sealed record DatabaseUsage(
     string DatabaseId, long StorageBytes, long LogicalBytes, long Reads, long Writes, UsagePeriod Period, IReadOnlyList<UsagePoint> Series);
 
-// Operation units of the current UTC month: https://terrascale.tech/pricing.json metering.operationUnit.
 public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long OrganizationUnits, long OrganizationReadUnits);
 
 public sealed record ProjectUsage(

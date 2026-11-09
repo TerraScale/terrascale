@@ -4,7 +4,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Fast.Management;
 
-// TerraBase's side of the ts-auth token contract in every region (decision 0007).
 public sealed class AuthTokenContractTests
 {
     private static readonly string[] Regions = ["gru", "sjc", "fra"];

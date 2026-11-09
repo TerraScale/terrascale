@@ -198,7 +198,6 @@ public sealed class CompleteShreddingTests
         await Assert.That(() => api.Server.Services.GetRequiredService<DataKeys>().CurrentAsync(scope, token)).Throws<DatabaseShreddedException>();
         await Assert.That(() => keys.CurrentAsync(snapshotScope, token)).Throws<DatabaseShreddedException>();
 
-        // A durable entry survives both an interrupted object delete and a refused Cloudflare request.
         var services = api.Server.Services;
         var custody = services.GetRequiredService<KeyCustody>();
         var objectKey = "v1/shapes/h1-0000000000000000/" + new string('a', 64);
