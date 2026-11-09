@@ -5,7 +5,6 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>Only master-wrapped data keys reach disk; unwrapping stays outside the blocking I/O workers.</summary>
 internal sealed class DatabaseKeys(IMasterKey master)
 {
     internal const string Suffix = ".key";

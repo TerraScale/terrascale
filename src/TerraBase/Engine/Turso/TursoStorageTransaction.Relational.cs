@@ -353,7 +353,6 @@ internal sealed partial class TursoStorageTransaction
         return new SqlStatementException(failure, reported, ended, error);
     }
 
-    /// <summary>The kind and client-safe message of a failed customer statement.</summary>
     internal static (SqlFailure Failure, string Message) Classify(TursoDatabaseHandle native, TursoException error)
     {
         var message = error.Message;

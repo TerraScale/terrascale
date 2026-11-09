@@ -110,7 +110,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
 
     internal void CloseIdleOf(TursoDatabaseStore store) => CloseIdle(store);
 
-    /// <summary>Connections not idle in the pool: held by transactions, being opened, or being closed.</summary>
     public int OpenCount
     {
         get
@@ -179,11 +178,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    /// <summary>
-    /// Takes the most recently pooled idle session of <paramref name="store"/>, or <see langword="null"/>
-    /// when it has none; the caller then opens one and passes it to <see cref="Adopt"/>, or calls
-    /// <see cref="OpenFailed"/>. Throws when the store is closed or the pool stopped.
-    /// </summary>
     public TursoSession? Rent(TursoDatabaseStore store)
     {
         lock (_gate)
@@ -210,10 +204,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    /// <summary>
-    /// Counts an opening for a session that must be new, never an idle one: the store's writer
-    /// (<see cref="TursoDatabaseStore"/>). The caller then calls <see cref="Adopt"/> or <see cref="OpenFailed"/>.
-    /// </summary>
     public void OpenNew(TursoDatabaseStore store)
     {
         lock (_gate)
@@ -225,10 +215,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    /// <summary>
-    /// Hands a newly opened <paramref name="session"/> to its renter, or closes it and throws when
-    /// <paramref name="store"/> was closed, or the pool stopped, while it opened.
-    /// </summary>
     public TursoSession Adopt(TursoDatabaseStore store, TursoSession session)
     {
         lock (_gate)
@@ -264,17 +250,12 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         throw new ObjectDisposedException(store.GetType().FullName);
     }
 
-    /// <summary>Ends an opening that <see cref="Rent"/> started and that produced no session.</summary>
     public void OpenFailed(TursoDatabaseStore store) => Update(() =>
     {
         _opening--;
         Closed(store);
     });
 
-    /// <summary>
-    /// Returns an untouched session without eviction or connection disposal. On failure the caller still owns it.
-    /// Safe on a request thread when cancelled queued work never started using the connection.
-    /// </summary>
     public bool TryReturn(TursoDatabaseStore store, TursoSession session)
     {
         lock (_gate)
@@ -290,7 +271,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    /// <summary>Pools a session whose work has ended, or closes it; may close the least recently pooled session.</summary>
     public void Return(TursoDatabaseStore store, TursoSession session)
     {
         TursoSession? evicted = null;
@@ -326,7 +306,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    /// <summary>Closes a rented session instead of pooling it.</summary>
     public void Discard(TursoSession session)
     {
         lock (_gate)
@@ -338,11 +317,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         Close(session);
     }
 
-    /// <summary>
-    /// Stops renting and pooling and closes idle sessions on the calling I/O worker. Completes only once every
-    /// rented session is returned and closed and every opening finishes; no active connection is closed by force.
-    /// Closing failures are reported after all counted sessions have ended.
-    /// </summary>
     public Task StopAsync()
     {
         List<TursoSession> idle;
@@ -374,7 +348,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         return closed;
     }
 
-    /// <summary>Closes <paramref name="store"/>: its idle sessions are closed and it rents and pools no more.</summary>
     public void Close(TursoDatabaseStore store)
     {
         lock (_gate)
@@ -385,10 +358,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         CloseIdle(store);
     }
 
-    /// <summary>
-    /// Pauses <paramref name="store"/> for a healthy rewrite and closes its idle sessions: renters wait for
-    /// <see cref="Resume"/>, external readers are refused, and returned sessions close instead of pooling.
-    /// </summary>
     public void Pause(TursoDatabaseStore store)
     {
         lock (_gate)
@@ -400,7 +369,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         CloseIdle(store);
     }
 
-    /// <summary>Stops new pooled readers before draining existing readers, while writers and rewrite replay can continue.</summary>
     public void PauseReaders(TursoDatabaseStore store)
     {
         lock (_gate)
@@ -410,7 +378,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    /// <summary>Ends <see cref="Pause"/>: waiting renters retry.</summary>
     public void Resume(TursoDatabaseStore store)
     {
         TaskCompletionSource? paused;
@@ -425,10 +392,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         readers?.TrySetResult();
     }
 
-    /// <summary>
-    /// Connections of <paramref name="store"/> held by a transaction, opening or closing, besides <paramref name="writer"/>: what
-    /// a drain would still wait for. A healthy rewrite waits for none before it takes the writer, so no writer queues behind it.
-    /// </summary>
     public int BusyOf(TursoDatabaseStore store, TursoSession? writer)
     {
         lock (_gate)
@@ -438,7 +401,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    /// <summary>Native closes of <paramref name="store"/>'s connections that failed in this process: they may still be open.</summary>
     public int FailedClosesOf(TursoDatabaseStore store)
     {
         lock (_gate)
@@ -447,7 +409,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    /// <summary>Counts a failed native close of a connection <paramref name="store"/>'s owner opened outside the pool.</summary>
     public void RecordFailedClose(TursoDatabaseStore store)
     {
         lock (_gate)
@@ -456,10 +417,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    /// <summary>
-    /// Completes once no connection of <paramref name="store"/> is open, opening or closing, external readers included, or
-    /// early when one of its native closes fails (<see cref="FailedClosesOf"/>).
-    /// </summary>
     public Task DrainedAsync(TursoDatabaseStore store)
     {
         lock (_gate)
@@ -605,7 +562,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
     }
 }
 
-/// <summary>A healthy rewrite paused the store; retry once <see cref="Resumed"/> completes.</summary>
 internal sealed class StorePausedException(Task resumed) : Exception("the database is being rewritten")
 {
     public Task Resumed { get; } = resumed;

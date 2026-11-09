@@ -19,7 +19,6 @@ internal sealed record CapturedRowChange(
     public const int Delete = -1;
 }
 
-/// <summary>The capture's row id and undecoded before and after records, in the storage engine capture image format.</summary>
 internal sealed record CapturedImages(long RowId, byte[]? Before, byte[]? After, long ChangeId = 0);
 
 internal sealed record SqlStatementShape(IReadOnlyList<string?> Parameters, IReadOnlyList<SqlStatementColumn> Columns);

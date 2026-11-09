@@ -2,7 +2,6 @@ using System.Diagnostics;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>Opt-in, bounded native-call timing for integration diagnostics.</summary>
 internal sealed class TursoRunnerDiagnostics
 {
     private const int Capacity = 64;

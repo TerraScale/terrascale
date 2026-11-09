@@ -2,13 +2,8 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
 
-/// <summary>Opens a database and begins a transaction on it as one step.</summary>
 internal static class DatabaseTransactions
 {
-    /// <summary>
-    /// Begins a transaction on the database, or returns <see langword="null"/> when it does not exist, also when
-    /// a delete closed it between the open and the begin.
-    /// </summary>
     extension(IStorageEngine engine)
     {
         internal async ValueTask<IStorageTransaction?> BeginTransactionAsync(

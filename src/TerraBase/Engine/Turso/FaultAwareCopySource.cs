@@ -6,7 +6,6 @@ using Turso.Raw.Public;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>Marks damage at the synchronous source boundaries of <see cref="TursoCopy"/>, without observing target writes.</summary>
 internal sealed class FaultAwareCopySource(string connectionString, Action<Exception> damaged) : TursoConnection(connectionString)
 {
     public override void Open() => Observe(base.Open);

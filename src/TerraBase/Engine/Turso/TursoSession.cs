@@ -8,10 +8,6 @@ using Turso.Raw.Public.Handles;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// One open connection with its per-connection settings applied and its statements prepared once,
-/// reused across transactions by <see cref="TursoDatabaseStore"/>.
-/// </summary>
 internal sealed class TursoSession(SqliteConnection connection) : IDisposable
 {
     // Keyed by statement text; the statements are constants, so this holds a handful of entries.
@@ -43,22 +39,14 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         NativeHandle?.GetValue(connection) as TursoDatabaseHandle
         ?? throw new InvalidOperationException("the Turso driver no longer exposes its native connection handle");
 
-    /// <summary>The store's statistics generation when this connection opened (<see cref="TursoDatabaseStore.StatisticsChanged"/>).</summary>
     public int Statistics { get; set; }
 
-    /// <summary>Turns change capture on for this connection: every later commit lands in <c>turso_cdc</c> with before and after images.</summary>
     internal const string CaptureOn = "PRAGMA capture_data_changes_conn('full');";
 
-    /// <summary>Turns change capture off for this connection.</summary>
     internal const string CaptureOff = "PRAGMA capture_data_changes_conn('off');";
 
-    /// <summary>The message of the error <see cref="ThrowIfStopped"/> aborts a statement with.</summary>
     internal const string StoppedMessage = "terrabase: statement stopped";
 
-    /// <summary>
-    /// Sets what <c>tb_qos_scan</c> charges each row's stored bytes to and what <c>tb_sql_row</c> charges each evaluated row
-    /// combination to: each returns true once the query's budget is spent.
-    /// </summary>
     public void Charge(Func<long, bool>? scan, Func<bool>? row)
     {
         _scanCharge = scan;
@@ -92,13 +80,8 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         }, isDeterministic: false);
     }
 
-    /// <summary>
-    /// Sets what the per-row functions (<c>tb_qos_scan</c>, <c>tb_sql_row</c>) check: once it returns true they fail
-    /// the running statement. Native FTS also checks the shared request budget inside loading and posting traversal.
-    /// </summary>
     public void StopWhen(Func<bool>? stop) => _stop = stop;
 
-    /// <summary>Fails the running statement once <see cref="StopWhen"/>'s condition holds; call from a per-row function.</summary>
     public void ThrowIfStopped()
     {
         if (_stop?.Invoke() == true)
@@ -107,14 +90,11 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    /// <summary>Whether <paramref name="error"/> is a statement <see cref="ThrowIfStopped"/> failed.</summary>
     public static bool Stopped(SqliteException error) => error.SqliteErrorCode == 9
         || error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
-    /// <summary>Whether <paramref name="error"/> is lock contention; Turso reports every local error with code 1.</summary>
     public static bool Busy(SqliteException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
 
-    /// <summary>The bytes of a TEXT or BLOB column: Turso's reader refuses <c>GetFieldValue&lt;byte[]&gt;</c> on TEXT.</summary>
     public static byte[] Bytes(SqliteDataReader reader, int ordinal) => reader.GetValue(ordinal) switch
     {
         byte[] bytes => bytes,
@@ -142,10 +122,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             """);
     }
 
-    /// <summary>
-    /// Opens a connection on the <see cref="TursoIoPool"/> and applies <paramref name="pragmas"/>, its
-    /// per-connection settings, under the cancellable busy handling of <see cref="ExecuteAsync"/>.
-    /// </summary>
     public static async Task<TursoSession> OpenAsync(TursoRunner io, string connectionString, string pragmas, CancellationToken cancellationToken, TursoDatabaseStore? store = null)
     {
         var connection = new SqliteConnection(connectionString)
@@ -195,12 +171,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    /// <summary>
-    /// Opens <paramref name="connection"/> on the existing database file <paramref name="path"/>. Turso ignores
-    /// <c>Mode=ReadWrite</c> and creates a missing file, but only <c>InitializeAsync</c> may create one: a store opened
-    /// as its database is deleted must not leave an empty file behind. Every database file holds at least its schema, so
-    /// an empty one is such a file.
-    /// </summary>
     public static void OpenExisting(DbConnection connection, string path)
     {
         if (!File.Exists(path))
@@ -244,10 +214,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    /// <summary>
-    /// Returns the prepared command for <paramref name="sql"/>, bound to <paramref name="transaction"/>
-    /// and without parameters. The provider keeps a command's statements prepared while its text is unchanged.
-    /// </summary>
     public SqliteCommand Command(string sql, SqliteTransaction transaction) => Kept(_commands, sql, transaction);
 
     /// <summary>
@@ -274,13 +240,8 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         _full = full;
     }
 
-    /// <summary><see cref="Command"/> for a statement naming one table.</summary>
     public SqliteCommand TableCommand(string sql, SqliteTransaction transaction) => Kept(_tableCommands, sql, transaction);
 
-    /// <summary>
-    /// Between transactions: releases the table statements' parameters, so an idle session retains no bound JSON (a reset
-    /// statement holds no bindings), and drops the statements once a session holds more than it should keep.
-    /// </summary>
     public void TrimTableCommands()
     {
         _checked = null;
@@ -316,10 +277,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    /// <summary>
-    /// After a write transaction that did not commit: its own DDL may have recompiled kept statements against a schema
-    /// that was rolled back, so the next transaction drops them.
-    /// </summary>
     public void ForgetSchema() => _schema = -1;
 
     private static void Drop(Dictionary<string, SqliteCommand> commands)
@@ -358,10 +315,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     private static readonly FieldInfo? NativeHandle =
         typeof(SqliteConnection).GetField("_database", BindingFlags.NonPublic | BindingFlags.Instance);
 
-    /// <summary>
-    /// Releases a quiescent connection without graceful close or checkpoint. The native handle is closed even when
-    /// disposing a command or the provider's own close throws, so the session holds no file open afterward.
-    /// </summary>
     public void Dispose()
     {
         var handle = NativeHandle?.GetValue(connection) as TursoDatabaseHandle;

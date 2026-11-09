@@ -408,11 +408,6 @@ internal sealed partial class TursoShapeReader(
         return new ShapeBody(body, ShapeNumber(covered), fresh && covered == head, retained);
     }
 
-    /// <summary>
-    /// Projects the region's pending local transactions through the shape (PIVOT F7). Transactions the pages already settle
-    /// (a <c>_ts_applied</c> row, or for a forwarded write a head past its commit) are returned as held. A row a pending local transaction inserted is keyed
-    /// <c>~&lt;transaction&gt;.&lt;row id&gt;</c> until the home confirms it, so it never collides with a home row id.
-    /// </summary>
     internal ShapeProvisional ReadProvisional(ShapeSealDefinition shape, IReadOnlyList<ProvisionalTransaction> pending, IMemoryBudget memory, CancellationToken cancellationToken)
     {
         var held = new HashSet<string>(StringComparer.Ordinal);
@@ -605,7 +600,6 @@ internal sealed partial class TursoShapeReader(
         changes.Write("}"u8);
     }
 
-    /// <summary>The region transactions one home commit settles: its <c>_ts_applied</c> inserts (PIVOT F7).</summary>
     private sealed class ShapeSettled
     {
         private readonly List<string> _confirmed = [];

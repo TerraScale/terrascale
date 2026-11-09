@@ -9,13 +9,8 @@ public static class StorageWork
 {
     private static readonly AsyncLocal<bool> BulkFlow = new();
 
-    /// <summary>Whether the calling flow is bulk work.</summary>
     internal static bool IsBulk => BulkFlow.Value;
 
-    /// <summary>
-    /// Marks the calling flow as bulk work until disposed. Only for flows that hold no database writer while they read:
-    /// a writer held while a bulk call waits for its share of threads would stall that database's writes.
-    /// </summary>
     public static IDisposable Bulk()
     {
         var previous = BulkFlow.Value;

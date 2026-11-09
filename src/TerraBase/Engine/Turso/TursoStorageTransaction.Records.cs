@@ -5,11 +5,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// The system database's records are plain rows of <c>_tb_records</c>, one per kind and id, holding the JSON body and the
-/// commit offset of the transaction that last wrote it as its version. A delete removes the row; nothing else is kept.
-/// Kinds are rows of <c>_tb_record_kinds</c>. Client databases keep no records.
-/// </summary>
 internal sealed partial class TursoStorageTransaction
 {
     // Kinds this write transaction found or created; forgotten when it drops one or rolls back to a savepoint.

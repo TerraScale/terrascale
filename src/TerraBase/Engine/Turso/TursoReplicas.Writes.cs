@@ -25,10 +25,6 @@ internal sealed partial class TursoReplicas
 
         private TursoDatabaseHandle? _writer;
 
-        /// <summary>
-        /// True while the replica may hold local rows its pulled revision does not: set by a local commit, and after a pull
-        /// by whether the overlay re-applied anything. Verification skips such a replica instead of rebuilding it.
-        /// </summary>
         internal bool Local { get; private set; }
 
         public async Task<IReplicaWriter?> BeginWriteAsync(CancellationToken cancellationToken)
