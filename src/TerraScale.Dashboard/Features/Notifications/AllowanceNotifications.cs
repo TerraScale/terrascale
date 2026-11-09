@@ -128,11 +128,12 @@ namespace TerraScale.Dashboard.Features.Notifications
                 }
 
                 if (item.Operations is { } spent && organization.InternalBilling is null && PlanCatalog.For(organization) is { PriceCents: > 0 } plan &&
-                    organization.SpendCapCents > 0 && !current.Alerts.Any(alert => alert.BillingMonth == billingMonth && alert.Metric == "spend"))
+                    organization.SpendCapCents > 0 && !current.Alerts.Any(alert => alert.BillingMonth == billingMonth && alert.Metric == "spend" && alert.Allowance == organization.SpendCapCents))
                 {
                     var monthToDateCents = OperationUnitOverage.Cents(OperationUnitOverage.Units(plan, spent));
                     if (monthToDateCents >= organization.SpendCapCents)
                     {
+                        current.Alerts.RemoveAll(alert => alert.BillingMonth == billingMonth && alert.Metric == "spend");
                         current.Alerts.Add(new(AccountService.NewId(), item.OrganizationId, billingMonth, "spend", 100, monthToDateCents, organization.SpendCapCents, clock.GetUtcNow()));
                     }
                 }

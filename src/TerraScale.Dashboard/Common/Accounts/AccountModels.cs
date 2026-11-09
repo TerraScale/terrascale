@@ -232,6 +232,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             ["member.left"] = "info",
             ["ownership.canceled"] = "info",
             ["billing.internal_report_cap_updated"] = "warning",
+            ["billing.spend_cap_updated"] = "warning",
             ["member.role_changed"] = "warning",
             ["member.removed"] = "warning",
             ["ownership.requested"] = "warning",

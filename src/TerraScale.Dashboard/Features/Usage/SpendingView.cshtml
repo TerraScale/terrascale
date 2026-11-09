@@ -8,7 +8,7 @@
             <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
             <section class="ts-card" aria-labelledby="organization-controls-title">
                 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-controls-title">Spending alert</h2></div></header>
-                <div class="ts-card-body"><fieldset class="ts-stack" disabled="@(Model.Shell.Context.CanManage ? null : "disabled")"><legend class="ts-sr-only">Spending alert</legend><div class="ts-spending-control">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.SpendingFieldView, SpendingField>(new("organization-spend-cap", "spendCap", "Monthly alert (USD)", (Model.Spending.OrganizationCapCents <= 0 ? "" : (Model.Spending.OrganizationCapCents / 100m).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)))))</div></fieldset></div>
+                <div class="ts-card-body"><fieldset class="ts-stack" disabled="@(Model.Shell.Context.CanManage ? null : "disabled")"><legend class="ts-sr-only">Spending alert</legend><div class="ts-spending-control">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.SpendingFieldView, SpendingField>(new("organization-spend-cap", "spendCap", "Monthly alert (USD), usage charges beyond your plan", (Model.Spending.OrganizationCapCents <= 0 ? "" : (Model.Spending.OrganizationCapCents / 100m).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)))))</div></fieldset></div>
             </section>
             @if (Model.Shell.Context.CanManage) { <div><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Save", 16)<span>Save spending alert</span></button></div> }
             else { <p class="ts-meta">Only organization owners and admins can change the spending alert.</p> }
@@ -18,7 +18,7 @@
             var plan = PlanCatalog.For(Model.Selection.Context.Organization!);
             <section class="ts-card" aria-labelledby="spending-title"><div class="ts-card-body ts-stack-sm"><h2 class="ts-card-title" id="spending-title">Spending and overages</h2>
             <p class="ts-meta">Operation units above @plan!.Name's included allowance are billed at @OperationUnitOverage.Rate operation units. Writes stop at @plan.Allowances.MonthlyWriteCap.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) units a month.</p>
-            <p class="ts-meta">Customer hard spending caps are unavailable. The alert above is report-only: crossing it sends a notice and never blocks writes.</p>
+            <p class="ts-meta">Customer hard spending caps are unavailable. The alert above watches usage charges beyond the plan: crossing it sends a notice and never blocks writes.</p>
             <div><a class="ts-link" href="/organization?tab=billing">Manage billing and upgrade</a></div><div><a class="ts-link" href="@Model.ProjectHref(Model.Selection.Context.Project?.Id ?? "")">View plan usage</a></div></div></section>
         }
     </div>

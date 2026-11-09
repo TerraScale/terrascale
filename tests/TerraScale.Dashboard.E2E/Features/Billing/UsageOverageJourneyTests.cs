@@ -110,9 +110,23 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(spendAlerts[0].Used).IsEqualTo(150L).Because("300,000 operation units over Starter's allowance are $1.50 at $5.00 per million.");
             await Assert.That(spendAlerts[0].Allowance).IsEqualTo(100L);
 
+            var raiseCsrf = await HttpJourney.CsrfAsync(client, "/usage?tab=settings");
+            using var raised = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/usage/spending-cap", new()
+            { ["_csrf"] = raiseCsrf, ["spendCap"] = "2.00" });
+            await Assert.That(raised.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            backend.Observe(new AllowanceUsageObservation(organizationId, StarterAllowance + 500_000, null));
+            await notifications.RunOnceAsync(CancellationToken.None);
+            await notifications.RunOnceAsync(CancellationToken.None);
+            row = await fixture.Service<IDashboardState>().GetAsync(AllowanceNotifications.Table, organizationId, CancellationToken.None);
+            spendAlerts = AllowanceNotifications.Read(row!, organizationId).Alerts.Where(alert => alert.Metric == "spend").ToArray();
+            await Assert.That(spendAlerts.Length).IsEqualTo(1).Because("A raised cap re-arms the alert and the higher crossing is recorded once.");
+            await Assert.That(spendAlerts[0].Used).IsEqualTo(250L);
+            await Assert.That(spendAlerts[0].Allowance).IsEqualTo(200L);
+
             var inbox = WebUtility.HtmlDecode(await client.GetStringAsync("/notifications"));
             await Assert.That(inbox).Contains("Monthly spending alert reached");
             await Assert.That(inbox).Contains("$1.50 reached the $1.00 spending alert");
+            await Assert.That(inbox).Contains("$2.50 reached the $2.00 spending alert");
         }
 
         private static async Task AssertSpendingAsync(HttpClient client, string disclosure)
