@@ -1,3 +1,4 @@
+using System.IO.Pipelines;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 using TerraBase.Configuration;
@@ -110,7 +111,7 @@ internal sealed class HomeSessionEndpoint(
         };
     }
 
-    private async Task ServeAsync(TenantContext database, string origin, bool canWrite, System.IO.Pipelines.PipeReader input, System.IO.Pipelines.PipeWriter output,
+    private async Task ServeAsync(TenantContext database, string origin, bool canWrite, PipeReader input, PipeWriter output,
         CancellationToken cancellationToken)
     {
         var session = sql.Open(database, canWrite);
@@ -193,6 +194,6 @@ internal sealed class HomeSessionEndpoint(
         return new HomeSessionAnswer(session.IsAutocommit, Result: new HomeSessionResult(result.Columns, result.Rows, result.RowsAffected, result.LastInsertRowid));
     }
 
-    private static ValueTask AnswerAsync(System.IO.Pipelines.PipeWriter output, HomeSessionAnswer answer, CancellationToken cancellationToken) =>
+    private static ValueTask AnswerAsync(PipeWriter output, HomeSessionAnswer answer, CancellationToken cancellationToken) =>
         HomeSessionFrames.WriteAsync(output, answer, TerraBaseJsonContext.Default.HomeSessionAnswer, cancellationToken);
 }

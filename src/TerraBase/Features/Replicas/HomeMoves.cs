@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Diagnostics.Metrics;
 using System.Net;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
@@ -96,7 +98,7 @@ internal sealed class HomeMoves(
         {
             if (peer is null || caughtUpAnswer is not { IsSuccessStatusCode: true })
             {
-                logger.ZLogWarning($"A home move to {marker.Target:@Target} stopped: its replica did not catch up ({(caughtUpAnswer is null ? "no answer" : ((int)caughtUpAnswer.StatusCode).ToString(System.Globalization.CultureInfo.InvariantCulture)):@Answer})");
+                logger.ZLogWarning($"A home move to {marker.Target:@Target} stopped: its replica did not catch up ({(caughtUpAnswer is null ? "no answer" : ((int)caughtUpAnswer.StatusCode).ToString(CultureInfo.InvariantCulture)):@Answer})");
                 await moves.AbortHomeMoveAsync(marker, CancellationToken.None).ConfigureAwait(false);
                 return ReplicaNotReady;
             }
@@ -381,7 +383,7 @@ internal sealed class HomeMoves(
         {
             if (detached is not null)
             {
-                TerraBase.Engine.Turso.TursoReplicas.DeleteDetached(detached);
+                TursoReplicas.DeleteDetached(detached);
             }
         }
     }

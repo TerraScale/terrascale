@@ -1,8 +1,10 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
+using System.Net.Http.Headers;
 using System.Threading.Channels;
 using TerraBase.Configuration;
 using TerraBase.Features.HomePush;
+using static TerraBase.Features.HomePush.HomePush;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -195,7 +197,7 @@ internal sealed class InRegionAck(
         {
             var database = new TenantContext(held.Organization!, PlanTier.Hobby, held.Project, held.Database);
             var plain = await crypto.OpenAsync(database, held.Payload!, cancellationToken).ConfigureAwait(false);
-            if (plain is null || !TerraBase.Features.HomePush.HomePush.TryDecode(plain, out var transaction))
+            if (plain is null || !TryDecode(plain, out var transaction))
             {
                 return true; // Shredded or unauthentic: it must never be replayed.
             }
@@ -243,7 +245,7 @@ internal sealed class InRegionAck(
     private static ByteArrayContent Json(byte[] json)
     {
         var content = new ByteArrayContent(json);
-        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         return content;
     }
 

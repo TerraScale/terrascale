@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.LocalAck;
 
@@ -129,7 +130,7 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
         }
     }
 
-    internal async Task DeleteDatabaseAsync(TerraBase.Tenancy.TenantContext database, CancellationToken cancellationToken)
+    internal async Task DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken)
     {
         foreach (var origin in await OriginsAsync(cancellationToken).ConfigureAwait(false))
         {
