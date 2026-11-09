@@ -24,7 +24,7 @@ public sealed record FunctionBody(string Name, string? Source, string? Cron, Dat
 /// <param name="DurationMs">Run time in milliseconds.</param>
 /// <param name="Lines">Console lines, at most 50 of 1 KiB.</param>
 /// <param name="Error">Error message, or null.</param>
-public sealed record FunctionLogBody(string Id, DateTimeOffset At, string Trigger, string Status, long DurationMs, string[] Lines, string? Error);
+public sealed record FunctionLogBody(string Id, DateTimeOffset At, string Trigger, string Status, long DurationMs, IReadOnlyList<string> Lines, string? Error);
 
 /// <summary>A handler's HTTP answer.</summary>
 /// <param name="Status">HTTP status.</param>

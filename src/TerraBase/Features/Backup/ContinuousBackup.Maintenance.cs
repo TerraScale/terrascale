@@ -52,7 +52,7 @@ internal sealed partial class ContinuousBackup
     private async Task RetainAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var retained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        lock (file)
+        lock (file.RetainGate)
         {
             file.Retaining = retained;
         }
@@ -62,7 +62,7 @@ internal sealed partial class ContinuousBackup
         }
         finally
         {
-            lock (file)
+            lock (file.RetainGate)
             {
                 file.Retaining = null;
             }
@@ -422,7 +422,7 @@ internal sealed partial class ContinuousBackup
                 else
                 {
                     var rebuilt = await _engine.ChecksumAsync(restored.Path, cancellationToken).ConfigureAwait(false);
-                    if (!live.AsSpan().SequenceEqual(rebuilt))
+                    if (!live.SequenceEqual(rebuilt))
                     {
                         error = "the restored database differs from the live one";
                     }

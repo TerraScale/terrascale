@@ -1076,7 +1076,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             while (true)
             {
                 Task? retained;
-                lock (file)
+                lock (file.RetainGate)
                 {
                     retained = file.Retaining?.Task;
                     if (retained is null)
@@ -1284,6 +1284,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public Task? Retiring { get; set; }
         public bool FinalRefreshed { get; set; }
         public bool FinalCustomer { get; set; }
+        public Lock RetainGate { get; } = new();
         public BackupTarget Target { get; set; } = target;
         public ProjectBackupDestinationRecord? Configuration { get; set; }
         public DateTimeOffset NextConfiguration { get; set; } = DateTimeOffset.MinValue;

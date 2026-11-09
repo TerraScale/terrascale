@@ -15,7 +15,7 @@ public sealed record CreateFileUploadRequest(string? Name, string? ContentType, 
 /// <summary>A file's customer-visible metadata. IDs and ownership cannot be overwritten.</summary>
 public sealed record FileObject(string Id, string Name, string ContentType, long Size, string Sha256, JsonElement Metadata, string Status, DateTimeOffset UploadExpiresAt, DateTimeOffset? DeleteAfter = null);
 /// <summary>A short-lived bearer capability. Send every returned header exactly; never log the URL.</summary>
-public sealed record FileSignedUrl(string Id, string Url, DateTimeOffset ExpiresAt, Dictionary<string, string> Headers);
+public sealed record FileSignedUrl(string Id, string Url, DateTimeOffset ExpiresAt, IReadOnlyDictionary<string, string> Headers);
 /// <summary>A bounded page in ID order.</summary>
 public sealed record FileBucketPage(IReadOnlyList<FileBucket> Items, string? Next);
 /// <summary>A bounded page filtered by read permission before pagination.</summary>

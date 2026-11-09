@@ -21,10 +21,10 @@ namespace TerraBase.Features.Backup;
 /// </remarks>
 internal sealed class DataKeys : IDisposable
 {
-    private readonly IObjectStore store;
-    private readonly IMasterKey master;
-    private readonly TimeProvider time;
-    private readonly bool freshKey;
+    private readonly IObjectStore _store;
+    private readonly IMasterKey _master;
+    private readonly TimeProvider _time;
+    private readonly bool _freshKey;
     private readonly KeyCacheRevocations? _revocations;
     private long _generation;
     private readonly Dictionary<string, int> _pendingScopes = new(StringComparer.Ordinal);
@@ -33,15 +33,15 @@ internal sealed class DataKeys : IDisposable
     public DataKeys(IObjectStore store, IMasterKey master, TimeProvider time, BackupSettings settings,
         bool freshKey = false, SemaphoreSlim? reads = null, KeyCacheRevocations? revocations = null)
     {
-        this.store = store;
-        this.master = master;
-        this.time = time;
-        this.freshKey = freshKey;
+        _store = store;
+        _master = master;
+        _time = time;
+        _freshKey = freshKey;
         _readSlots = reads ?? new(MaxReads, MaxReads);
         _waitForReadSlot = reads is null;
         _rotation = TimeSpan.FromDays(settings.KeyRotationDays);
-        _current = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
-        _keys = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
+        _current = new(new MemoryCacheOptions { Clock = new CacheClock(_time) });
+        _keys = new(new MemoryCacheOptions { Clock = new CacheClock(_time) });
         _revocations = revocations;
         if (revocations is not null)
         {
@@ -75,7 +75,7 @@ internal sealed class DataKeys : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (_current.TryGetValue(scope, out CurrentKey? current) && current is not null && Fresh(current.Id))
         {
-            if (time.GetUtcNow() - current.CheckedAt >= RefreshInterval)
+            if (_time.GetUtcNow() - current.CheckedAt >= RefreshInterval)
             {
                 lock (_cacheAdmission)
                 {
@@ -129,11 +129,11 @@ internal sealed class DataKeys : IDisposable
             _current.TryGetValue(scope, out CurrentKey? previous);
             var id = previous?.Id;
             // Customer shipping starts with its own durable key, including when it mirrors both buckets.
-            if (!freshKey)
+            if (!_freshKey)
             {
                 var after = id is null ? null : BackupLayout.Key(scope, id);
                 var prefix = BackupLayout.Keys(scope);
-                await foreach (var item in store.ListAsync(prefix, after, cancellationToken).ConfigureAwait(false))
+                await foreach (var item in _store.ListAsync(prefix, after, cancellationToken).ConfigureAwait(false))
                 {
                     if (item.Key.Length == 0)
                     {
@@ -144,7 +144,7 @@ internal sealed class DataKeys : IDisposable
                     if (candidate == BackupLayout.ShreddedName)
                     {
                         // A deleted database's keys are destroyed; it never gets a new one.
-                        throw new DatabaseShreddedException((await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false))?.ShreddedAt);
+                        throw new DatabaseShreddedException((await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false))?.ShreddedAt);
                     }
 
                     if (TryParseKey(candidate, out var candidateKey) && NotFuture(candidateKey))
@@ -162,14 +162,14 @@ internal sealed class DataKeys : IDisposable
             else
             {
                 // Customer shipping skips the listing: check the deletion record before creating a key.
-                if (freshKey && await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
+                if (_freshKey && await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
                 {
                     throw new DatabaseShreddedException(priorShred.ShreddedAt);
                 }
 
-                var (generated, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
+                var (generated, wrapped) = await _master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
                 key = generated;
-                id = EntityIds.New(time).ToString();
+                id = EntityIds.New(_time).ToString();
                 try
                 {
                     if (wrapped.Length is 0 or > MaxWrappedKeyBytes)
@@ -178,7 +178,7 @@ internal sealed class DataKeys : IDisposable
                     }
 
                     using var content = new MemoryStream(Encoding.ASCII.GetBytes(wrapped));
-                    await store.PutAsync(BackupLayout.Key(scope, id), content, cancellationToken).ConfigureAwait(false);
+                    await _store.PutAsync(BackupLayout.Key(scope, id), content, cancellationToken).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -188,9 +188,9 @@ internal sealed class DataKeys : IDisposable
             }
 
             // A deletion may race key generation. Remove our late publication before refusing it.
-            if (await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
+            if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
             {
-                _ = await store.DeleteAsync(BackupLayout.Key(scope, id), cancellationToken).ConfigureAwait(false);
+                _ = await _store.DeleteAsync(BackupLayout.Key(scope, id), cancellationToken).ConfigureAwait(false);
                 CryptographicOperations.ZeroMemory(key);
                 throw new DatabaseShreddedException(shredded.ShreddedAt);
             }
@@ -200,7 +200,7 @@ internal sealed class DataKeys : IDisposable
             {
                 CheckGeneration(generation);
                 Cache(_keys, (scope, id), key);
-                Cache(_current, scope, new CurrentKey(id, key, time.GetUtcNow()));
+                Cache(_current, scope, new CurrentKey(id, key, _time.GetUtcNow()));
             }
             return (id, key);
         }
@@ -220,7 +220,7 @@ internal sealed class DataKeys : IDisposable
         ReadKeyAsync(scope, id, cancellationToken);
 
     public Task<ShredRecord?> ShreddedAsync(string scope, CancellationToken cancellationToken) =>
-        ShredRecords.ReadAsync(store, scope, cancellationToken);
+        ShredRecords.ReadAsync(_store, scope, cancellationToken);
 
     private async Task<byte[]> ReadKeyAsync(string scope, string id, CancellationToken cancellationToken)
     {
@@ -243,7 +243,7 @@ internal sealed class DataKeys : IDisposable
 
             // Warm decodes never perform network I/O. A cold read must consult permanent custody
             // authority before unwrapping; DELETE synchronously evicts every peer before acknowledging.
-            if (await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
+            if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
             {
                 Forget(scope);
                 throw new DatabaseShreddedException(priorShred.ShreddedAt);
@@ -265,7 +265,7 @@ internal sealed class DataKeys : IDisposable
                 try
                 {
                     string? wrapped = null;
-                    if (!await store.ReadAsync(BackupLayout.Key(scope, id), async (content, readToken) =>
+                    if (!await _store.ReadAsync(BackupLayout.Key(scope, id), async (content, readToken) =>
                         {
                             var length = await content.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, readToken).ConfigureAwait(false);
                             if (length > MaxWrappedKeyBytes)
@@ -275,7 +275,7 @@ internal sealed class DataKeys : IDisposable
                             wrapped = Encoding.ASCII.GetString(buffer, 0, length);
                         }, cancellationToken).ConfigureAwait(false) || string.IsNullOrEmpty(wrapped))
                     {
-                        if (await ShredRecords.ReadAsync(store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
+                        if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
                         {
                             throw new DatabaseShreddedException(shredded.ShreddedAt);
                         }
@@ -283,7 +283,7 @@ internal sealed class DataKeys : IDisposable
                         throw new InvalidDataException("a backup object names a data key the bucket does not hold");
                     }
 
-                    var key = await master.UnwrapAsync(wrapped, cancellationToken).ConfigureAwait(false);
+                    var key = await _master.UnwrapAsync(wrapped, cancellationToken).ConfigureAwait(false);
                     try
                     {
                         lock (_cacheAdmission)
@@ -441,7 +441,7 @@ internal sealed class DataKeys : IDisposable
 
     private CurrentKey? Current(string scope) =>
         _current.TryGetValue(scope, out CurrentKey? current) && current is not null
-            && time.GetUtcNow() - current.CheckedAt < RefreshInterval && Fresh(current.Id)
+            && _time.GetUtcNow() - current.CheckedAt < RefreshInterval && Fresh(current.Id)
             ? current
             : null;
 
@@ -450,16 +450,16 @@ internal sealed class DataKeys : IDisposable
 
     // Compare raw ULIDs before converting Time: a valid 48-bit timestamp may exceed DateTimeOffset's range.
     // Maximum randomness includes every key created in the current millisecond.
-    private bool NotFuture(Ulid key) => key.CompareTo(Ulid.NewUlid(time.GetUtcNow(),
+    private bool NotFuture(Ulid key) => key.CompareTo(Ulid.NewUlid(_time.GetUtcNow(),
         [255, 255, 255, 255, 255, 255, 255, 255, 255, 255])) <= 0;
 
     private bool Fresh(string id) => TryParseKey(id, out var key) && NotFuture(key)
-        && time.GetUtcNow() - key.Time is var age && age >= TimeSpan.Zero && age < _rotation;
+        && _time.GetUtcNow() - key.Time is var age && age >= TimeSpan.Zero && age < _rotation;
 
     private sealed record CurrentKey(string Id, byte[] Key, DateTimeOffset CheckedAt);
 
-    private sealed class CacheClock(TimeProvider time) : ISystemClock
+    private sealed class CacheClock(TimeProvider _time) : ISystemClock
     {
-        public DateTimeOffset UtcNow => time.GetUtcNow();
+        public DateTimeOffset UtcNow => _time.GetUtcNow();
     }
 }
