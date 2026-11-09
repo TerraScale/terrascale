@@ -232,9 +232,6 @@ internal sealed class HomeMoves(
         }
     }
 
-    public async Task<bool> CatchUpAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false);
-
     public async Task<PromoteResult> PromoteAsync(TenantContext database, HomePromoteRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

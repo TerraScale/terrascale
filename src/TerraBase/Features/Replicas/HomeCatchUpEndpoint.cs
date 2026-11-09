@@ -4,7 +4,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed class HomeCatchUpEndpoint(HomeMoves moves) : EndpointWithoutRequest<IResult>
+internal sealed class HomeCatchUpEndpoint(RegionReplication replication) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -23,6 +23,6 @@ internal sealed class HomeCatchUpEndpoint(HomeMoves moves) : EndpointWithoutRequ
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ReplicaRoutes.Database(HttpContext) is not { } database ? ErrorResponse.From(new NotFound("the database does not exist"))
-        : await moves.CatchUpAsync(database, cancellationToken).ConfigureAwait(false) ? TypedResults.NoContent()
+        : await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false) ? TypedResults.NoContent()
         : ErrorResponse.From(HomeMoves.ReplicaNotReady);
 }
