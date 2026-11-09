@@ -98,7 +98,7 @@ case SignInStep.Email:
 {
 <button type="submit" class="@(Model.Theme.Passcode ? "secondary" : "")" formaction="/ui/@Model.Slug/sign-in/password"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@(Model.Theme.Passcode ? Model.Copy.UsePassword : Model.Copy.ContinuePassword)</button>
 }
-<button type="button" id="passkey-sign-in" class="secondary" hidden data-options="/ui/@Model.Slug/sign-in/passkey/options" data-verify="/ui/@Model.Slug/sign-in/passkey"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-lock-keyhole"></use></svg>@Model.Copy.Passkey</button>
+<button type="button" id="passkey-sign-in" class="secondary" hidden data-i18n="@Model.Copy.PasskeyI18n" data-options="/ui/@Model.Slug/sign-in/passkey/options" data-verify="/ui/@Model.Slug/sign-in/passkey"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-lock-keyhole"></use></svg>@Model.Copy.Passkey</button>
 </div>
 </form>
 @if (Model.Slug != TerraScale.Authentication.Features.Oidc.OidcIssuer.InstanceId && Model.Theme.Providers.Count > 0)
@@ -156,7 +156,7 @@ case SignInStep.Code:
 <input type="hidden" name="email" value="@Model.Email">
 @if (Model.CodeBudgetExhausted)
 {
-<button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-label="@Model.Copy.SendNewCode">@string.Format(CultureInfo.InvariantCulture, Model.Copy.SendNewCodeIn, Model.WaitSeconds)</button>
+<button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-wait-format="@Model.Copy.CountdownIn" data-label="@Model.Copy.SendNewCode">@string.Format(CultureInfo.InvariantCulture, Model.Copy.SendNewCodeIn, Model.WaitSeconds)</button>
 }
 else
 {
@@ -239,7 +239,7 @@ case SignInStep.SignUpCode:
 <input type="hidden" name="pending_token" value="@Model.PendingToken">
 @if (Model.CodeBudgetExhausted)
 {
-<button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-label="@Model.Copy.ResendCode">@string.Format(CultureInfo.InvariantCulture, Model.Copy.ResendCodeIn, Model.WaitSeconds)</button>
+<button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-wait-format="@Model.Copy.CountdownIn" data-label="@Model.Copy.ResendCode">@string.Format(CultureInfo.InvariantCulture, Model.Copy.ResendCodeIn, Model.WaitSeconds)</button>
 }
 else
 {
@@ -279,7 +279,7 @@ case SignInStep.ResetCode:
 <input type="hidden" name="email" value="@Model.Email">
 @if (Model.CodeBudgetExhausted)
 {
-<button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-label="@Model.Copy.SendNewCode">@string.Format(CultureInfo.InvariantCulture, Model.Copy.SendNewCodeIn, Model.WaitSeconds)</button>
+<button type="submit" class="secondary" disabled data-wait-seconds="@Model.WaitSeconds" data-wait-format="@Model.Copy.CountdownIn" data-label="@Model.Copy.SendNewCode">@string.Format(CultureInfo.InvariantCulture, Model.Copy.SendNewCodeIn, Model.WaitSeconds)</button>
 }
 else
 {
@@ -411,7 +411,7 @@ else
 <button type="submit" class="secondary">@Model.Copy.Remove</button>
 </form>
 }
-<form id="passkey-add" data-options="/ui/@Model.Slug/security/passkeys/options" data-verify="/ui/@Model.Slug/security/passkeys/verify">
+<form id="passkey-add" data-i18n="@Model.Copy.PasskeyI18n" data-options="/ui/@Model.Slug/security/passkeys/options" data-verify="/ui/@Model.Slug/security/passkeys/verify">
 <div class="field">
 <label for="passkey-name">@Model.Copy.PasskeyName</label>
 <input id="passkey-name" name="name" maxlength="100" autocomplete="off" placeholder="YubiKey 5C">
