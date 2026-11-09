@@ -1,5 +1,6 @@
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.SignIn;
@@ -49,7 +50,7 @@ internal static class StepUpHosted
 
                 using (var reservation = services.GetRequiredService<SignInMail>().Reserve())
                 {
-                    await reservation.EnqueueStepUpAsync(user, id);
+                    await reservation.EnqueueStepUpAsync(user, id, AuthEmails.Locale(context.Request.Headers.AcceptLanguage));
                 }
 
                 notice = "One verification code was requested. Check your email; restart from the application if it expires.";

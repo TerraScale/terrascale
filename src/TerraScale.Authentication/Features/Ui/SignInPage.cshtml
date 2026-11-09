@@ -17,7 +17,7 @@ else
 {
 <p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a code.</p>
 }
-<p class="sub">Using a recovery code after repeated requests signs out your other sessions.</p>
+<p class="sub">Using a recovery code after repeated requests signs out every session.</p>
 break;
 case SignInStep.SignOutConfirm:
 <p class="sub">An application asked to sign you out of @Model.Brand.</p>
@@ -31,7 +31,7 @@ else
 {
 <p class="sub">We emailed a code to <strong>@Model.Email</strong>.</p>
 }
-<p class="sub">For an existing account, recovery after repeated code requests signs out your older sessions.</p>
+<p class="sub">For an existing account, recovery after repeated code requests signs out every session.</p>
 break;
 case SignInStep.ResetCode:
 @if (Model.CodeBudgetExhausted)
@@ -44,7 +44,7 @@ else
 }
 break;
 case SignInStep.ResetDone:
-<p class="sub">You were signed out everywhere.</p>
+<p class="sub">You were signed out of every session.</p>
 break;
 case SignInStep.DeviceConfirm:
 <p class="sub">Approve only if you started this sign-in and the code matches your terminal.</p>
@@ -372,7 +372,7 @@ case SignInStep.Security:
 <label for="disable-code">Authenticator or recovery code</label>
 <input id="disable-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
 </div>
-<p class="hint">Turning it off signs out every session.</p>
+<p class="hint">Turning it off signs out your other sessions.</p>
 <button type="submit" class="secondary">Turn off two-factor authentication</button>
 </form>
 }
@@ -420,7 +420,7 @@ else
 </form>
 break;
 case SignInStep.TotpSetup:
-<img src="@Model.QrCode" alt="QR code to add TerraScale to your authenticator app" width="240" height="240">
+<img src="@Model.QrCode" alt="QR code to add @Model.Brand to your authenticator app" width="240" height="240">
 <dl class="facts"><div><dt>Setup key</dt><dd><code>@Model.Secret</code></dd></div></dl>
 <form method="post" action="/ui/@Model.Slug/security/totp/confirm">
 <input type="hidden" name="next" value="@Model.Next">
@@ -428,7 +428,7 @@ case SignInStep.TotpSetup:
 <label for="totp-code">Code from the app</label>
 <input id="totp-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
 </div>
-<p class="hint">Turning it on signs you out everywhere else.</p>
+<p class="hint">Turning it on signs out your other sessions.</p>
 <button type="submit">Turn on two-factor authentication</button>
 </form>
 <div class="row"><a href="/ui/@Model.Slug/security"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Cancel</a></div>
