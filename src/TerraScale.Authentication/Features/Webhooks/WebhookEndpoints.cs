@@ -30,8 +30,6 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
 {
     public const int MaxPerProject = 3;
 
-    private const string CounterKey = "count";
-
     public static readonly TimeSpan DualSecretWindow = TimeSpan.FromHours(24);
 
     public static readonly FrozenSet<string> LifecycleEvents = new[]
@@ -41,7 +39,8 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
 
     public async Task<(WebhookEndpointRecord Endpoint, string Secret)> CreateAsync(string projectId, string url, IReadOnlyList<string> eventTypes, CancellationToken cancellationToken)
     {
-        var (count, counterVersion) = await this.CounterAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var (counter, counterVersion) = await this.CounterAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var count = counter?.Count ?? (await this.ListAsync(projectId, cancellationToken).ConfigureAwait(false)).Count;
         if (count >= MaxPerProject)
         {
             throw new ApiException(409, "webhook_endpoint_limit", $"A project registers at most {MaxPerProject} webhook endpoints.");
@@ -54,24 +53,24 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
         List<StoreOperation> operations =
         [
             counterVersion is null
-                ? AuthStore.Create(AuthStore.WebhookEndpointTable, projectId, CounterKey, Counter(projectId, count + 1))
-                : AuthStore.Replace(AuthStore.WebhookEndpointTable, projectId, CounterKey, Counter(projectId, count + 1), counterVersion),
+                ? AuthStore.Create(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, count + 1))
+                : AuthStore.Replace(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, counter!.Count + 1), counterVersion),
             AuthStore.Create(AuthStore.WebhookEndpointTable, projectId, id,
                 JsonSerializer.SerializeToElement(endpoint, WebhookStoreJson.Default.WebhookEndpointRecord)),
         ];
         if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is not null)
         {
-            throw new ApiException(409, "webhook_endpoint_limit", $"A project registers at most {MaxPerProject} webhook endpoints.");
+            throw new ApiException(409, "version_conflict", "The project's webhook endpoints changed concurrently; read them again and retry.");
         }
 
         return (endpoint, secret);
     }
 
-    private async Task<(int Count, string? Version)> CounterAsync(string projectId, CancellationToken cancellationToken)
+    private async Task<(WebhookEndpointCounter? Counter, string? Version)> CounterAsync(string projectId, CancellationToken cancellationToken)
     {
-        var row = await store.GetAsync(AuthStore.WebhookEndpointTable, projectId, CounterKey, cancellationToken).ConfigureAwait(false);
+        var row = await store.GetAsync(AuthStore.WebhookEndpointCounterTable, projectId, projectId, cancellationToken).ConfigureAwait(false);
         return row?.Body.Deserialize(WebhookStoreJson.Default.WebhookEndpointCounter) is { ProjectId: var owner } counter && owner == projectId
-            ? (counter.Count, row.Version) : (0, null);
+            ? (counter, row.Version) : (null, null);
     }
 
     private static JsonElement Counter(string projectId, int count) =>
@@ -82,7 +81,7 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
         List<WebhookEndpointRecord> endpoints = [];
         await foreach (var row in store.QueryAsync(AuthStore.WebhookEndpointTable, projectId, "/instanceId", projectId, cancellationToken).ConfigureAwait(false))
         {
-            if (row.Body.TryGetProperty("eventTypes", out _) && row.Body.Deserialize(WebhookStoreJson.Default.WebhookEndpointRecord) is { InstanceId: var instanceId } endpoint && instanceId == projectId)
+            if (row.Body.Deserialize(WebhookStoreJson.Default.WebhookEndpointRecord) is { InstanceId: var instanceId } endpoint && instanceId == projectId)
             {
                 endpoints.Add(endpoint);
             }
@@ -99,13 +98,13 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
             return false;
         }
 
-        var (count, counterVersion) = await this.CounterAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var (counter, counterVersion) = await this.CounterAsync(projectId, cancellationToken).ConfigureAwait(false);
         List<StoreOperation> operations = [AuthStore.Delete(AuthStore.WebhookEndpointTable, projectId, id, row.Version)];
-        if (counterVersion is not null && count > 0)
+        if (counter is { Count: > 0 } && counterVersion is not null)
         {
-            operations.Add(count == 1
-                ? AuthStore.Delete(AuthStore.WebhookEndpointTable, projectId, CounterKey, counterVersion)
-                : AuthStore.Replace(AuthStore.WebhookEndpointTable, projectId, CounterKey, Counter(projectId, count - 1), counterVersion));
+            operations.Add(counter.Count == 1
+                ? AuthStore.Delete(AuthStore.WebhookEndpointCounterTable, projectId, projectId, counterVersion)
+                : AuthStore.Replace(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, counter.Count - 1), counterVersion));
         }
 
         return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null;
