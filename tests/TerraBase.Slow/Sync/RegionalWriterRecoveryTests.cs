@@ -248,9 +248,8 @@ public sealed partial class RegionalWriterCrashTests
             _ = await homes.PutAsync("node." + conflict.Node, JsonSerializer.SerializeToUtf8Bytes(new NodeLease(conflict.Node, conflict.Home, conflict.Session), TerraBaseJsonContext.Default.NodeLease), cancellationToken: token);
             _ = await homes.PutAsync("home." + conflict.DatabaseId, JsonSerializer.SerializeToUtf8Bytes(conflict, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
         }
-        await drill.Source.StartAsync(token);
-        await drill.Target.StartAsync(token);
         var elapsed = Stopwatch.StartNew();
+        await Task.WhenAll(drill.Source.StartAsync(token), drill.Target.StartAsync(token));
         await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
         await Assert.That(elapsed.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
         Console.WriteLine($"DRILL isolated foreign and third-node DBs: healthy writer recovered_ms={elapsed.Elapsed.TotalMilliseconds:F3}");
