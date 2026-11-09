@@ -11,12 +11,14 @@ title: Getting started
 
 Create an account in the [TerraScale dashboard](https://dash.terrascale.tech/register), then create a database and an API key.
 
+Fastest path: install the [CLI](/ru/cli), run `ts auth login`, then `ts init` — it creates the database, the scoped API key and a ready-to-use `.env` in one command.
+
 ## Create an account, a database and an API key
 
 1. Open [dash.terrascale.tech/register](https://dash.terrascale.tech/register), select **Create account**, and enter the code sent to your email.
 2. Finish setup: choose a plan (or continue without a payment method), then name your first project and pick its region.
 3. Open **Databases**, select **New database**, enter a name starting with a lowercase letter and containing up to 63 lowercase letters, digits, underscores or hyphens (reserved names con, prn, aux, nul, com0–com9 and lpt0–lpt9 are rejected), and select **Create database**.
-4. Open **API keys** and select **Create key**. Name it, limit **Database** to that database, choose **Read and write**. Copy the key when the dashboard shows it and keep it in your secret manager.
+4. Open **API keys** and select **Create key**. Name it, limit **Database** to that database, check **sql:read** and **sql:write**. Copy the key when the dashboard shows it and keep it in your secret manager.
 
 The key has the form `<key ID>_<secret>`. It is a client credential, not a bearer token: the API answers `401` when you send it directly.
 

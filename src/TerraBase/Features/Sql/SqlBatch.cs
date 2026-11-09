@@ -120,9 +120,9 @@ internal static class SqlBatch
         return new SqlExecuteBody(results);
     }
 
-    public static SqlErrorBody Body(SqlBatchFailure failure)
+    public static SqlErrorBody Body(SqlBatchFailure failure, string? requestId = null)
     {
         ArgumentNullException.ThrowIfNull(failure);
-        return new SqlErrorBody(new SqlErrorDetail(failure.Error.Code, failure.Error.Message, failure.Statement, failure.Error.Sqlstate));
+        return new SqlErrorBody(new SqlErrorDetail(failure.Error.Code, failure.Error.Message, failure.Statement, failure.Error.Sqlstate, requestId, ErrorDocs.Url(failure.Error.Code)));
     }
 }

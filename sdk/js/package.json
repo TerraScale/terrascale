@@ -34,6 +34,10 @@
       "types": "./types/ts-auth.d.ts",
       "import": "./src/ts-auth.js"
     },
+    "./drizzle": {
+      "types": "./types/drizzle.d.ts",
+      "import": "./src/drizzle.js"
+    },
     "./react": {
       "types": "./types/react/index.d.ts",
       "import": "./src/react/index.js"
@@ -41,6 +45,10 @@
     "./svelte": {
       "types": "./types/svelte/index.d.ts",
       "import": "./src/svelte/index.js"
+    },
+    "./prisma": {
+      "types": "./types/prisma.d.ts",
+      "import": "./src/prisma.js"
     }
   },
   "files": [

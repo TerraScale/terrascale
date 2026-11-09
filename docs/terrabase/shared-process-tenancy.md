@@ -22,10 +22,14 @@ node and shared fairly between organizations.
 | Engine time replenished per second | 0.5 s | 1 s | 2 s | unlimited |
 | Engine time burst | 3 s | 6 s | 15 s | unlimited |
 
-- Every SQL statement runs with a native timeout of min(the plan's statement timeout, the request's remaining time,
+- Every SQL statement runs with a native timeout of min(the plan's statement timeout, the request's remaining execution,
   the transaction's remaining life) and answers `query_canceled` (57014) when it passes it: `the request exceeded its
   5 s time limit; split the batch or narrow the query` when the request deadline tripped, `query too expensive: it
-  exceeds the work budget` when the engine's work or scan budget did.
+  exceeds the work budget` when the engine's work or scan budget did. The 5 s request budget counts only statement and
+  commit execution: admission, session-gate and storage-queue waits pause it, and each such wait keeps its own bounded
+  refusal (`429 tenant_busy`, `503`/busy unavailable, or the storage queue's `StorageBusyException`). Interactive
+  transactions stay wall-clock 5 s. A call forwarded to the database's home region answers or fails within 15 s wall
+  (`unavailable`).
 - Each statement's execution time is charged to its organization. An organization whose engine time is spent gets
   `429 tenant_busy` with `Retry-After` (PostgreSQL wire: `53300`) until it replenishes.
 - One organization runs on at most `max(1, min(threads / 2, threads − 2))` storage I/O workers at once, so a runaway

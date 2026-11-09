@@ -2,6 +2,21 @@
 
 ## Unreleased — SQL only
 
+`@terrascale/sdk/prisma` maps refused SQL statements to Prisma's driver-adapter
+error kinds by SQLSTATE: unique, not-null and foreign-key violations, missing
+tables and missing columns surface as P2002/P2011/P2003/P2021/P2022; other
+refusals keep the server's message. Both the HTTPS query path and interactive
+transactions share the mapping.
+
+`@terrascale/sdk/drizzle` exports `drizzleProxy(database)`, the two callbacks
+Drizzle's `sqlite-proxy` driver expects, mapped from a root database handle's
+`execute` and atomic `batch`. The SDK adds no `drizzle-orm` dependency.
+
+`deleteOrganization` and `startOwnershipTransfer` now require
+`options.stepUpProof` and send it as `X-TerraScale-Step-Up-Proof`, matching the
+purpose-bound, organization-bound proofs ts-auth requires since #1341. The proof
+is single-use and these mutations are never retried.
+
 TerraScale is SQL-only. The JSON data API is removed without a replacement shim,
 with its handles, `db.transaction()`, filters and queries, shapes and replicas,
 `db.changes()`, `db.export()`, imports, indexes, inferred and declared schemas,
@@ -11,6 +26,14 @@ entrypoint and the `terrascale-models` CLI. Database placement is one region:
 `replicaRegions`, `allRegions`, `databases.update` and the replication reads are
 removed. SQL over HTTPS and WebSocket, live SQL table shapes, the database
 catalog, backups, usage and file buckets remain.
+
+The new `@terrascale/sdk/prisma` export exposes `PrismaTerraScale`, a driver
+adapter factory over a `V1Database` for the ORM's driver-adapters interface:
+`queryRaw`, `executeRaw`, `executeScript`, typed column mapping and the last
+insert id, with queries running over HTTPS. `startTransaction` runs interactive
+transactions over the SQL WebSocket session: `begin`, per-statement
+`queryRaw`/`executeRaw`, savepoints, and `commit`/`rollback`, each transaction
+limited to 5 seconds by the server; only `SERIALIZABLE` isolation is accepted.
 
 ## 0.0.19 — public-client refresh
 

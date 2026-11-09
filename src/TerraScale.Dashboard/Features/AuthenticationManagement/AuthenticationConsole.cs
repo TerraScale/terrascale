@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 ["settings" or "branding" or "configuration" or "clients"] or ["danger", "users" or "sessions" or "clients"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
-                ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete"] => true,
+                ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] => true,
                 _ => false
             };
             if (!known)
@@ -109,7 +109,26 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
                         var created = await projects.CreateClientAsync(session, project, request, intent.Challenge.Proof, cancel);
                         return await PageAsync(http, context, projects, "clients", created: created);
-                    case ["clients", var id, _]: await projects.DeleteClientAsync(session, project, id, cancel); break;
+                    case ["clients", var id, "edit"]:
+                        var update = ClientUpdate(form["name"], form["redirect_uris"].ToString().Split('\n'));
+                        var editIntent = StepUpFlow.Intent(http, context, "update_oauth_client");
+                        if (editIntent is null)
+                        {
+                            return await StepUpFlow.StartAsync(http, context, "update_oauth_client", "ts-auth");
+                        }
+
+                        await projects.UpdateClientAsync(session, project, id, update, editIntent.Challenge.Proof, cancel);
+                        break;
+                    case ["clients", var id, "rotate"]:
+                        var rotateIntent = StepUpFlow.Intent(http, context, "rotate_oauth_client");
+                        if (rotateIntent is null)
+                        {
+                            return await StepUpFlow.StartAsync(http, context, "rotate_oauth_client", "ts-auth");
+                        }
+
+                        var rotated = await projects.RotateClientSecretAsync(session, project, id, rotateIntent.Challenge.Proof, cancel);
+                        return await PageAsync(http, context, projects, "clients", rotated: rotated);
+                    case ["clients", var id, "delete"]: await projects.DeleteClientAsync(session, project, id, cancel); break;
                     case ["sessions", var id, _]: await projects.RevokeSessionAsync(session, project, id, cancel); break;
                     case ["users", var id, "delete"]: await projects.DeleteUserAsync(session, project, id, cancel); break;
                     case ["users", var id, var action]: await projects.SetUserDisabledAsync(session, project, id, action == "disable", cancel); break;
@@ -221,6 +240,22 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return new(name.Trim(), type, uris);
         }
 
+        public static TsAuthProjectClientUpdate ClientUpdate(string? name, IEnumerable<string> redirectUris)
+        {
+            var uris = redirectUris.Select(uri => uri.Trim()).Where(uri => uri.Length > 0).ToArray();
+            if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 64)
+            {
+                throw new AccountAccessException("Name the application in up to 64 characters.", 422);
+            }
+
+            if (uris.Length is < 1 or > 10)
+            {
+                throw new AccountAccessException("Add 1 to 10 redirect URIs, one per line.", 422);
+            }
+
+            return new(name.Trim(), uris);
+        }
+
         [GeneratedRegex("^#[0-9a-f]{6}$")]
         private static partial Regex Color();
 
@@ -251,7 +286,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200,
-            TsAuthProjectOAuthClient? created = null)
+            TsAuthProjectOAuthClient? created = null, TsAuthProjectClientSecret? rotated = null)
         {
             var section = AuthenticationSection.Find(key)!;
             if (key == "branding")
@@ -261,7 +296,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
             var query = http.Request.Query;
             var page = new AuthenticationPage(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section,
-                query["q"].ToString(), query["after"].ToString(), query["user"].ToString(), error, created)
+                query["q"].ToString(), query["after"].ToString(), query["user"].ToString(), error, created, rotated)
             { Draft = status >= 400 && http.Request.HasFormContentType ? await http.Request.ReadFormAsync(http.RequestAborted) : null, Saved = query["saved"] == "1" };
             var (session, project, cancel) = (context.Session, context.Project!.Id, http.RequestAborted);
             try
@@ -296,7 +331,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
     }
 
     public sealed record AuthenticationPage(ShellModel Shell, AuthenticationSection Section, string Search, string After, string User, string Error,
-        TsAuthProjectOAuthClient? Created)
+        TsAuthProjectOAuthClient? Created, TsAuthProjectClientSecret? Rotated)
     {
         public AccountContext Context => Shell.Context;
         public TsAuthProjectSettings? Settings { get; init; }

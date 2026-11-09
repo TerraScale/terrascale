@@ -3,9 +3,9 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
-    public sealed class InternalSpendingCapEndpoint(DashboardSessions sessions, AccountService accounts, SpendingService spending) : EndpointWithoutRequest<IResult>
+    public sealed class SpendingCapEndpoint(DashboardSessions sessions, AccountService accounts, SpendingService spending) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/usage/internal-spending-cap");
+        public override void Configure() => Post("/api/v1/dashboard/usage/spending-cap");
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
@@ -22,11 +22,6 @@ namespace TerraScale.Dashboard.Features.Usage
                 return Results.BadRequest("Invalid form token.");
             }
 
-            if (context.Organization?.InternalBilling is null)
-            {
-                return Results.NotFound();
-            }
-
             if (!context.CanManage)
             {
                 return Results.Text("Organization management is required.", statusCode: 403);
@@ -37,7 +32,7 @@ namespace TerraScale.Dashboard.Features.Usage
                 return HttpRedirects.SeeOther("/usage?tab=settings&saved=invalid");
             }
 
-            try { await spending.SetInternalCapAsync(context, capCents, http.RequestAborted); }
+            try { await spending.SetCapAsync(context, capCents, http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
             return HttpRedirects.SeeOther("/usage?tab=settings&saved=ok");
         }

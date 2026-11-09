@@ -35,6 +35,9 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
     // issues 60-second project tokens: a key exchanges about every 50 seconds.
     private static readonly TimeSpan RenewBefore = TimeSpan.FromSeconds(10);
     private static readonly JsonWebTokenHandler Tokens = new();
+
+    private static readonly NotFound Refused =
+        new("the API key, project or database was not found, or the key may not use it; check the key, the project id and the database name");
     private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
 
     // Keyed by the SHA-256 of the key, never the key itself. One exchange per key at a time: the sessions and watches
@@ -51,7 +54,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
     {
         if (options.AuthIssuer is not { } issuer || !IsKey(secret) || project is not null && !EntityIds.IsValid(project))
         {
-            return new NotFound();
+            return Refused;
         }
 
         var cacheKey = ValidatedTokens.KeyOf(secret) + (project is null ? string.Empty : "/" + project);
@@ -145,14 +148,14 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
 
             if (response.StatusCode != HttpStatusCode.OK)
             {
-                return new NotFound();
+                return Refused;
             }
 
             token = (await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthTokenResponse, cancellationToken).ConfigureAwait(false))?.AccessToken;
         }
         catch (JsonException)
         {
-            return new NotFound();
+            return Refused;
         }
         catch (HttpRequestException)
         {
@@ -167,7 +170,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             Interlocked.Decrement(ref _inFlight);
         }
 
-        return token is null ? new NotFound() : await ValidateAsync(token, project, cancellationToken).ConfigureAwait(false);
+        return token is null ? Refused : await ValidateAsync(token, project, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<TsAuthKeyResult> ValidateAsync(string token, string? project, CancellationToken cancellationToken)
@@ -189,7 +192,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             || !jwt.TryGetPayloadValue<string>("project_id", out var granted) || !EntityIds.IsValid(granted) || granted != (project ?? granted)
             || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
         {
-            return new NotFound();
+            return Refused;
         }
 
         // key_id and key_gen come together from a ts-auth that serves key status; neither from an older one. Like the
@@ -197,23 +200,23 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         if (jwt.TryGetPayloadValue<object>("key_id", out var rawId) && rawId is not string
             || jwt.TryGetPayloadValue<object>("key_gen", out var rawGeneration) && rawGeneration is not string)
         {
-            return new NotFound();
+            return Refused;
         }
 
         var hasKey = jwt.TryGetPayloadValue<string>("key_id", out var keyId);
         if ((hasKey | jwt.TryGetPayloadValue<string>("key_gen", out var generation)) && (!hasKey || keyId != subject || !KeyToken.IsGeneration(generation)))
         {
-            return new NotFound();
+            return Refused;
         }
 
         if (jwt.TryGetPayloadValue<object>("database", out var restriction) && restriction is not string)
         {
-            return new NotFound();
+            return Refused;
         }
         var database = jwt.TryGetPayloadValue<string>("database", out var name) ? name : null;
         if (database is not null && !EntityIds.IsValid(database))
         {
-            return new NotFound();
+            return Refused;
         }
         var scopes = jwt.TryGetPayloadValue<string>("scope", out var scope) && scope.Length <= 4096
             ? scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal)
@@ -225,7 +228,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             {
                 if (IpAllowlists.Parse(cidrs) is not { } networks)
                 {
-                    return new NotFound();
+                    return Refused;
                 }
 
                 allowlists.Add(networks);

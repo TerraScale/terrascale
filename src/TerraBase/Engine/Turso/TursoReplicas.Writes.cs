@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Tenancy;
 using Turso.Raw.Public;
 using Turso.Raw.Public.Value;
@@ -172,6 +173,7 @@ internal sealed partial class TursoReplicas
 
             private SqlStatementResult Execute(SqlStatement statement, CancellationToken cancellationToken)
             {
+                var started = Stopwatch.GetTimestamp();
                 try
                 {
                     var (prepared, consumed) = TursoStorageTransaction.Prepare(native, statement.Sql, statement.First);
@@ -182,7 +184,7 @@ internal sealed partial class TursoReplicas
                         using (cancellationToken.Register(static state => TursoBindings.Interrupt((TursoDatabaseHandle)state!), native))
                         {
                             var (columns, rows, affected, truncated) = Reader.Step(prepared, statement, cancellationToken);
-                            return new SqlStatementResult(columns, rows, affected, 0, 0, truncated, consumed);
+                            return new SqlStatementResult(columns, rows, affected, 0, 0, truncated, consumed, Stopwatch.GetElapsedTime(started));
                         }
                     }
                     finally

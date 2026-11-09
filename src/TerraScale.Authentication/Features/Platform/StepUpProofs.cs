@@ -252,10 +252,10 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
     private static bool Pair(string purpose, string audience) => audience switch
     {
         "ts-dashboard" => purpose is "delete_account" or "create_pat",
-        "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "delete_passkey" or "create_api_key" or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "enroll_totp",
+        "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "change_plan" or "delete_passkey" or "create_api_key" or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "enroll_totp",
         _ => false,
     };
-    private static bool Bound(string purpose) => purpose is "delete_organization" or "start_ownership_transfer";
+    private static bool Bound(string purpose) => purpose is "delete_organization" or "start_ownership_transfer" or "change_plan";
     private static JsonElement Serialize(StepUpRecord value) => JsonSerializer.SerializeToElement(value, StepUpJson.Default.StepUpRecord);
     private static StoreOperation Current(UserRecord user) => AuthStore.Require(AuthStore.UserTable, user.InstanceId, user.Id,
         JsonSerializer.SerializeToElement(new JsonObject

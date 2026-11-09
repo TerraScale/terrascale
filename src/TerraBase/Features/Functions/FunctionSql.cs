@@ -4,7 +4,7 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Functions;
 
-internal sealed class FunctionSql(ISqlSession session)
+internal sealed class FunctionSql(ISqlSession session, string? requestId)
 {
     public const int MaxCalls = 256;
 
@@ -80,7 +80,7 @@ internal sealed class FunctionSql(ISqlSession session)
             SqlResult => """{"results":[]}""",
         };
 
-    private static string Failure(SqlError error) => Failure(new SqlBatchFailure(error, 0));
+    private string Failure(SqlError error) => Failure(new SqlBatchFailure(error, 0));
 
-    private static string Failure(SqlBatchFailure failure) => JsonSerializer.Serialize(SqlBatch.Body(failure), TerraBaseJsonContext.Default.SqlErrorBody);
+    private string Failure(SqlBatchFailure failure) => JsonSerializer.Serialize(SqlBatch.Body(failure, requestId), TerraBaseJsonContext.Default.SqlErrorBody);
 }

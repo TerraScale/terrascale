@@ -92,6 +92,7 @@ namespace TerraScale.Dashboard.Features.Backups
             string accessKeyId, string secretKey, CancellationToken cancellationToken);
         Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
         Task<ProducerRestoreOperation> StartRestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken);
+        Task<ProducerRestoreOperation> StartRestorePointInTimeAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, DateTimeOffset pointInTime, string? name, long? ttlSeconds, CancellationToken cancellationToken);
         Task<ProducerRestoreOperation> RestoreOperationAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string operationId, CancellationToken cancellationToken);
         Task<ManagedDatabase> RestoreTargetAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string targetName, CancellationToken cancellationToken);
     }

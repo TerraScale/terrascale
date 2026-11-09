@@ -2,9 +2,9 @@
   "repository": "https://github.com/TerraScale/terrascale",
   "state": "Reviewed contract on auth PR #767; merge and activation are held for the dashboard companion.",
   "sources_sha256": {
-    "src/TerraScale.Authentication/Features/Platform/StepUpProofs.cs": "1a27418f711b27ac42f8d7471bb5ab9ff9c1c614633ec609c207c07b689139ae",
+    "src/TerraScale.Authentication/Features/Platform/StepUpProofs.cs": "7d9c18180fae109bdaf906b20822377aab5d4b3284084079b33344a8994d22ab",
     "src/TerraScale.Authentication/Features/Platform/RequestStepUpEndpoint.cs": "6ff3b1da82545da5493f7069eb1743ecaa2654d31998c92d768269224512ac6e",
-    "src/TerraScale.Authentication/Features/Platform/ConsumeStepUpEndpoint.cs": "1b97801939bad9ad06462aa75387be8601ab5136a52f726e4c3c5215e9fcaf2f",
+    "src/TerraScale.Authentication/Features/Platform/ConsumeStepUpEndpoint.cs": "8a68be596eed47484806a723516f13b238eeb5cad7f32364d7125995525ab2c4",
     "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "7b37866901cdf811de215f80ecd8455a837e98aa5aefbf16b1b3ab5c3f25b4d1",
     "src/TerraScale.Authentication/Features/Platform/ApiKeyEndpoints.cs": "f6b9bd9dec569f20ac9aedd4c6a65379068882d95e1b4c34d450f844595e52f5",
     "src/TerraScale.Authentication/Features/ProjectTenants/CreateProjectClientEndpoint.cs": "6fca63ecf9814e4f117d60c32462404562cb2ea86b49e4d136903e56d9ec02ec",

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -15,11 +16,14 @@ var commandSyntax = map[string]string{
 	"projects info": "projects info <name|id>", "projects rename": "projects rename <name|id> <new-name>",
 	"orgs delete": "orgs delete <name|id>", "projects delete": "projects delete <name|id>",
 	"usage": "usage [<database>]", "completion": "completion bash|zsh|fish",
+	"init":    "init [<database>]",
 	"db list": "db list", "db create": "db create <database>", "db delete": "db delete <database>",
-	"db branch create": "db branch create <name> --from <database> [--ttl 7d]",
+	"db branch create": "db branch create <name> -from <database> [-ttl 7d]",
 	"db branch list":   "db branch list", "db branch delete": "db branch delete <name>",
 	"db branch url": "db branch url <name>",
 	"db branch":     "db branch <source> <new-database>", "db info": "db info <database>",
+	"db export": "db export <database> [-o <file>] [-force]", "db url": "db url <database>",
+	"db import":    "db import <database> <file|-> [-from <n>]",
 	"db placement": "db placement <database> (-replica-regions <a,b> | -all-regions)", "db move-home": "db move-home <database> <region>",
 	"db regions":       "db regions <database>",
 	"db rename":        "db rename <database> <new-name>",
@@ -35,9 +39,9 @@ var commandSyntax = map[string]string{
 	"functions deploy":   "functions deploy <database> <file.js|directory>", "functions list": "functions list <database>",
 	"functions invoke": "functions invoke <database> <name>", "functions logs": "functions logs <database> <name>",
 	"functions delete": "functions delete <database> <name>", "sql": "sql <database> <statement|->",
-	"schema pull":  "schema pull [--database <database>]",
-	"schema diff":  "schema diff <schema.sql> [--database <database>]",
-	"schema apply": "schema apply <schema.sql> [--database <database>] [--dry-run] [--allow-drop]",
+	"schema pull":  "schema pull <database>",
+	"schema diff":  "schema diff <database> <schema.sql>",
+	"schema apply": "schema apply <database> <schema.sql> [-dry-run] [-allow-drop]",
 	"migrate new":  "migrate new <name>",
 	"migrate up":   "migrate up <database>", "migrate status": "migrate status <database>",
 	"migrate diff": "migrate diff <database> [<base-database>]", "keys list": "keys list",
@@ -46,9 +50,40 @@ var commandSyntax = map[string]string{
 }
 
 var helpFlags = map[string]string{
-	"--json":             "typed JSON output; streams use NDJSON record/complete/error events",
-	"-project <name|id>": "select a project (before the command)",
-	"-org <name|id>":     "select an organization (before the command)",
+	"-json":              "typed JSON output; streams use NDJSON record/complete/error events",
+	"-project <name|id>": "select a project",
+	"-org <name|id>":     "select an organization",
+}
+
+func closestCommand(input string) string {
+	best, bestDistance := "", len(input)+len("schema apply")+1
+	for _, name := range slices.Sorted(maps.Keys(commands)) {
+		d := editDistance(input, name)
+		if d < bestDistance && 3*d <= len(input)+len(name) {
+			best, bestDistance = name, d
+		}
+	}
+	return best
+}
+
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
 }
 
 func helpSyntax(name string) string {
@@ -74,7 +109,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions":
+			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "home-region", "replica-regions", "lang":
 				if !equal {
 					i++
 				}
@@ -139,7 +174,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 	for _, name := range names {
 		entries = append(entries, "  "+name+"  "+options[name])
 	}
-	_, err := fmt.Fprintf(out, "%s\n\nGlobal options (before or after the command; -- ends options): -project <name|id>, -org <name|id>.\n--json selects typed output. Exit status: 0 success, 1 failure, 2 invalid arguments.\n", strings.Join(entries, "\n"))
+	_, err := fmt.Fprintf(out, "%s\n\nGlobal options (before or after the command; -- ends options): -project <name|id>, -org <name|id>.\nSingle (-x) and double (--x) dash forms are equivalent for every option. -json selects typed output. Exit status: 0 success, 1 failure, 2 invalid arguments.\n", strings.Join(entries, "\n"))
 	return true, err
 }
 
@@ -169,20 +204,24 @@ func helpOptions(name string) map[string]string {
 	}
 	switch {
 	case name == "db branch create":
-		options["--from <database>"] = "source database; snapshot and later writes are independent"
-		options["--ttl <duration>"] = "whole seconds from 60s to 365d; default 7d"
-		options["--expected-id <ULID>"] = "server-enforced source identity"
+		options["-from <database>"] = "source database; snapshot and later writes are independent"
+		options["-ttl <duration>"] = "whole seconds from 60s to 365d; default 7d"
+		options["-expected-id <ULID>"] = "server-enforced source identity"
 	case name == "db branch url":
-		options["--expected-id <ULID>"] = "require this branch identity before issuing a scoped key"
+		options["-expected-id <ULID>"] = "require this branch identity before issuing a scoped key"
+		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
+	case name == "db url":
 		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
 	case strings.HasPrefix(name, "schema "):
-		options["--database <name|id>"] = "target database; defaults to the saved context database"
 		if name == "schema apply" {
-			options["--dry-run"] = "print the plan without writes"
-			options["--allow-drop"] = "consent to DROP operations"
+			options["-dry-run"] = "print the plan without writes"
+			options["-allow-drop"] = "consent to DROP operations"
 		}
 	case name == "db branch":
 		options["-expected-id <ULID>"] = "require the inspected source ID; unsupported servers fail closed; no unguarded fallback"
+	case name == "init":
+		options["-lang <js|go|python|dotnet|rust>"] = "pick the SDK snippet; otherwise detected from the directory's files"
+		options["-yes"] = "create the database and API key without asking"
 	case name == "db delete" || name == "db branch delete":
 		options["-expected-id <ULID>"] = "server-enforced identity match; unsupported servers fail closed; no name-only fallback"
 		options["-yes"] = "explicit consent to permanent deletion; otherwise type the target in a terminal"

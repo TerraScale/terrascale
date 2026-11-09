@@ -74,40 +74,45 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
 
             using var armed = await HttpJourney.PostFormAsync(owner, "/__test/billing/plans/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "source-race" });
             await Assert.That(armed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-            var held = McpAsync(replica, secret, "tools/call", new
-            { name = "change_plan", arguments = new { organizationId = personalId, projectId = personalProject, plan = "pro", interval = "monthly" } });
+            var resume = await ConfirmedCallbackAsync("/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" });
+            var held = owner.GetAsync(resume);
             var released = false;
             try
             {
                 using var waiting = await owner.GetAsync("/__test/billing/plans/source-race-wait").WaitAsync(TimeSpan.FromSeconds(5));
                 await Assert.That(waiting.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-                var competing = await McpAsync(owner, secret, "tools/call", new
-                { name = "change_plan", arguments = new { organizationId = personalId, plan = "team", interval = "monthly" } });
-                await Assert.That(competing.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
-                await Assert.That(competing.ToString()).Contains("Another billing change is in progress.");
+                using var competing = await HttpJourney.PostConfirmedFormAsync(owner, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "team", ["interval"] = "monthly" });
+                await Assert.That(competing.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+                await Assert.That(await competing.Content.ReadAsStringAsync()).Contains("Another billing change is in progress.");
                 using var release = await HttpJourney.PostFormAsync(owner, "/__test/billing/plans/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "release-source-race" });
                 await Assert.That(release.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
                 released = true;
-                var refused = await held;
-                await Assert.That(refused.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
-                await Assert.That(refused.ToString()).Contains("The subscription changed in Stripe.");
+                using var refused = await held;
+                await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+                await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("The subscription changed in Stripe.");
                 using var beforeRetry = JsonDocument.Parse(await owner.GetStringAsync("/__test/billing/plans/probe"));
                 await Assert.That(beforeRetry.RootElement.GetProperty("mutations").EnumerateArray().Count(item => item.GetString()!.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))).IsEqualTo(0);
-                var changed = await ToolAsync("change_plan", new { organizationId = personalId, plan = "pro", interval = "monthly" }, useReplica: true);
-                await Assert.That(changed.GetProperty("outcome").GetString()).IsEqualTo("pending");
+                var mcpRefused = await McpAsync(owner, secret, "tools/call", new
+                { name = "change_plan", arguments = new { organizationId = personalId, plan = "pro", interval = "monthly" } });
+                await Assert.That(mcpRefused.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
+                await Assert.That(mcpRefused.ToString()).Contains("Confirm this in the dashboard");
+                using var changed = await HttpJourney.PostConfirmedFormAsync(owner, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" });
+                await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+                await Assert.That(changed.Headers.Location!.OriginalString).Contains("billing=pending");
                 using var realized = JsonDocument.Parse(await owner.GetStringAsync("/api/v1/dashboard/context"));
                 await Assert.That(realized.RootElement.GetProperty("organizations").EnumerateArray()
                     .Single(org => org.GetProperty("id").GetString() == personalId).GetProperty("planId").GetString())
                     .IsEqualTo("7CNW2H87JE68ATZX224CV2G625");
-                var replay = await ToolAsync("change_plan", new { organizationId = personalId, plan = "pro", interval = "monthly" });
-                await Assert.That(replay.GetProperty("outcome").GetString()).IsEqualTo("current");
+                using var replay = await HttpJourney.PostConfirmedFormAsync(owner, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" });
+                await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+                await Assert.That(replay.Headers.Location!.OriginalString.Contains("&billing=", StringComparison.Ordinal)).IsFalse().Because("the replayed change is already the current plan");
             }
             finally
             {
                 if (!released)
                 {
                     using var release = await HttpJourney.PostFormAsync(owner, "/__test/billing/plans/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "release-source-race" });
-                    try { await held; } catch (HttpRequestException) { }
+                    try { using var ignored = await held; } catch (HttpRequestException) { }
                 }
             }
             using var creation = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/organization/new-organization", new()
@@ -118,12 +123,17 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             var downgrade = await ToolAsync("preview_plan_change", new { organizationId = personalId, plan = "starter", interval = "annual" });
             await Assert.That(downgrade.GetProperty("immediate").GetBoolean()).IsFalse();
             await Assert.That(downgrade.GetProperty("amountDueCents").GetInt64()).IsEqualTo(0L);
-            var scheduled = await ToolAsync("change_plan", new { organizationId = personalId, plan = "starter", interval = "annual" }, useReplica: true);
-            await Assert.That(scheduled.GetProperty("outcome").GetString()).IsEqualTo("scheduled");
+            var mcpUndoRefused = await McpAsync(owner, secret, "tools/call", new { name = "undo_plan_change", arguments = new { organizationId = personalId } });
+            await Assert.That(mcpUndoRefused.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
+            await Assert.That(mcpUndoRefused.ToString()).Contains("Confirm this in the dashboard");
+            using var scheduled = await HttpJourney.PostConfirmedFormAsync(owner, "/billing/change?organizationId=" + personalId, new() { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "annual" });
+            await Assert.That(scheduled.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(scheduled.Headers.Location!.OriginalString).Contains("billing=scheduled");
             var scheduledBilling = await ToolAsync("get_billing", new { organizationId = personalId });
             await Assert.That(scheduledBilling.GetProperty("scheduledChange").GetProperty("planKey").GetString()).IsEqualTo("starter");
-            var undone = await ToolAsync("undo_plan_change", new { organizationId = personalId });
-            await Assert.That(undone.GetProperty("outcome").GetString()).IsEqualTo("undone");
+            using var undone = await HttpJourney.PostConfirmedFormAsync(owner, "/billing/change/undo?organizationId=" + personalId, new() { ["_csrf"] = csrf });
+            await Assert.That(undone.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(undone.Headers.Location!.OriginalString).Contains("billing=undone");
             using var unchanged = JsonDocument.Parse(await owner.GetStringAsync("/api/v1/auth/me"));
             await Assert.That(unchanged.RootElement.GetProperty("organizationId").GetString()).IsEqualTo(businessId);
             using var selectPersonal = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/switch-organization", new()
@@ -186,6 +196,20 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 var result = response.GetProperty("result");
                 await Assert.That(result.TryGetProperty("isError", out var error) && error.GetBoolean()).IsFalse().Because(response.ToString());
                 return result.GetProperty("structuredContent");
+            }
+
+            async Task<string> ConfirmedCallbackAsync(string path, Dictionary<string, string> body)
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(body) };
+                request.Headers.Add("Origin", owner.BaseAddress!.GetLeftPart(UriPartial.Authority));
+                request.Headers.Add("Sec-Fetch-Mode", "navigate");
+                using var started = await owner.SendAsync(request);
+                await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Redirect).Because(path);
+                var hosted = started.Headers.Location!;
+                await Assert.That(hosted.AbsolutePath.StartsWith("/ui/terrascale/step-up/", StringComparison.Ordinal)).IsTrue();
+                using var approved = await owner.GetAsync("/__test/step-up/" + hosted.Segments.Last() + "?approve=yes");
+                await Assert.That(approved.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+                return approved.Headers.Location!.PathAndQuery;
             }
             static async Task ErrorAsync(HttpClient client, string secret, string name, object arguments)
             {

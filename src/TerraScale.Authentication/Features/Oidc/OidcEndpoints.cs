@@ -451,14 +451,14 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
         Post("/{slug}/oauth/revoke");
         Name("oauth_revoke");
         Summary("Revocation endpoint");
-        Description("RFC 7009, application/x-www-form-urlencoded token (and optionally token_type_hint); the client authenticates as at the token endpoint and may revoke only its own tokens. Revoking a refresh or access token ends its whole sign-in: every refresh token of it is refused and ts-auth stops accepting its access tokens, while access tokens validated offline (TerraBase) stay valid until they expire, at most 5 minutes. An unknown, expired or already revoked token also answers 200.");
+        Description("RFC 7009, application/x-www-form-urlencoded token (and optionally token_type_hint); the client authenticates as at the token endpoint and may revoke only its own tokens: confidential clients with client_secret_basic or client_secret_post, a public client (no secret registered) by sending only client_id in the form (RFC 7009 section 2.1). Revoking a refresh or access token ends its whole sign-in: every refresh token of it is refused and ts-auth stops accepting its access tokens, while access tokens validated offline (TerraBase) stay valid until they expire, at most 5 minutes. An unknown, expired or already revoked token also answers 200.");
         Tags("OAuth");
         // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
         Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
-        Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
+        Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic, PublicClientAlternative: true));
     }
 
     /// <inheritdoc />

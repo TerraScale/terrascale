@@ -48,7 +48,8 @@ public static class SecuritySchemes
 
 /// <summary>Declares an endpoint's security scheme in the OpenAPI document. It must match the server-side check.</summary>
 /// <param name="Scheme">One of the <see cref="SecuritySchemes"/> names.</param>
-public sealed record RequiresSecurity(string Scheme);
+/// <param name="PublicClientAlternative">The scheme is one alternative; a registered public client identified by <c>client_id</c> in the form (RFC 7009 §2.1) is the other.</param>
+public sealed record RequiresSecurity(string Scheme, bool PublicClientAlternative = false);
 
 /// <summary>
 /// Completes the generated OpenAPI document:
@@ -85,6 +86,10 @@ public static partial class OpenApiSetup
                 else if (metadata.OfType<RequiresSecurity>().LastOrDefault() is { } declared)
                 {
                     operation.Security = [Requirement(declared.Scheme, context.Document)];
+                    if (declared.PublicClientAlternative)
+                    {
+                        operation.Security.Add(new OpenApiSecurityRequirement());
+                    }
                 }
 
                 if (operation.OperationId is "delete_account" or "create_organization_api_key" or "create_project_api_key"

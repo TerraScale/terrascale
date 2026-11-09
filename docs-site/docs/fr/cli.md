@@ -49,7 +49,9 @@ go install terrascale.tech/sdk/cmd/ts@latest
 ```
 
 Release builds print `ts 0.0.X`; `go install` and source builds print `ts dev`.
-`ts help` (or `ts --help`) lists every command. Invalid arguments exit with
+`ts help` (or `ts --help`) lists every command. Options accept one or two
+dashes (`-json` or `--json`) and go before or after the command and its
+operands. Invalid arguments exit with
 status 2 and other failures with status 1.
 
 ### Upgrade
@@ -100,6 +102,25 @@ ts auth login
 ts projects create my-project
 ts -project my-project db create example
 ```
+
+### One command to a working setup
+
+`ts init` takes a signed-in developer from nothing to a working connection.
+It reuses the selected project's database `<db>` (or creates it with the
+project's default placement), creates one API key scoped to that database with
+`sql:read` and `sql:write`, writes a `.env` in the current directory (mode
+0600, never overwriting an existing file) and prints the install line and a
+first query snippet for the SDK it detects in the directory:
+
+```sh
+ts init            # uses main, or the project's only database
+ts init example    # reuse or create a named database
+```
+
+Pass `-lang <js|go|python|dotnet|rust>` to pick the snippet yourself, and
+`-yes` to create the database and key without the one confirmation. The key's
+secret is printed once and written to `.env` as `TERRASCALE_API_KEY`, next to
+`TERRASCALE_PROJECT_ID` and `TERRASCALE_DATABASE_NAME`.
 
 ## Sign in
 
@@ -153,7 +174,11 @@ ts db info example
 `db list` lists databases. `db info` prints one database's metadata as JSON,
 including its immutable ULID. `db export <db>` downloads a database as a SQL
 dump to stdout; `-o file` writes it atomically, leaving no file if the export
-is interrupted, and `-force` overwrites an existing file. `db rename <db> <new-name>`
+is interrupted, and `-force` overwrites an existing file. `db import <db>
+<file|->` loads such a dump, or any SQLite-dialect `.sql` file, back into a
+database in batches; `-` reads stdin. The import is not atomic: each batch
+commits on its own; on failure the CLI prints the first failed statement's
+number and `-from <n>` resumes past the first n-1 statements. `db rename <db> <new-name>`
 (the long form is `ts databases rename`) renames a database by name or ULID:
 
 ```sh
@@ -178,12 +203,15 @@ ts db branch list
 ts db branch delete preview
 ```
 
-`db branch url <name>` is the easiest way to get a Postgres connection URL: it
-issues a scoped secret URL for that one database, valid for at most 7 days.
-It requires an API key, so run it with `TERRASCALE_API_KEY` set:
+`db branch url <name>` is the easiest way to get a connection URL for the
+Postgres wire endpoint, which serves SQLite-dialect SQL: it issues a scoped
+secret URL for that one database, valid for at most 7 days. It requires an API
+key, so run it with `TERRASCALE_API_KEY` set. `db url <db>` does the same for
+a regular database:
 
 ```sh
 TERRASCALE_API_KEY=... ts db branch url preview
+TERRASCALE_API_KEY=... ts db url example
 ```
 
 ### Placement
@@ -203,7 +231,7 @@ ts db regions example
 
 Database deletion asks you to type the database name in a terminal before it
 deletes data. For an unattended script, explicitly consent
-with `ts -project my-project -yes db delete example`. Keep `-yes` before the command.
+with `ts -project my-project -yes db delete example`.
 
 ## Backups
 
@@ -348,14 +376,14 @@ See [Schema migrations](/fr/guides/migrations) for the file format, history and 
 ## Schema files
 
 ```sh
-ts --database example schema pull
-ts --database example schema diff schema.sql
-ts --database example schema apply schema.sql
+ts schema pull example
+ts schema diff example schema.sql
+ts schema apply example schema.sql
 ```
 
 `schema pull` writes `schema.sql` from the database, `schema diff` prints the
 DDL needed to reach the file, and `schema apply` applies it atomically;
-`--dry-run` previews and `--allow-drop` consents to DROP operations.
+`-dry-run` previews and `-allow-drop` consents to DROP operations.
 
 ## API keys
 
@@ -387,7 +415,7 @@ CLI without confirmation.
 ### Key lifetime and allowed networks
 
 Keys default to no expiry and read/write scopes. Prefer an expiry and a database
-restriction. Put key-creation flags before the command:
+restriction. Key-creation options go before or after the command:
 
 ```sh
 ts -expires 30d -allow-cidr 203.0.113.0/24 keys create app 01JD2V5QANWG7Z4KQVKJFM8RHT

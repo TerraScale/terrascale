@@ -31,7 +31,7 @@
     @if (Model.InternalBill is null)
     {
     <section class="ts-billing-plans" aria-labelledby="available-plans-title"><header class="ts-billing-plans-head"><div><h2 class="ts-card-title" id="available-plans-title">Available plans</h2></div></header>
-        <p class="ts-meta">@PlanCatalog.OperationUnitDefinition @PlanCatalog.AllowanceDefinition</p>
+        <p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/pricing#what-is-billed" @(ExternalLink.Attributes)>How billing works →@(ExternalLink.Hint)</a></p>
         <div class="ts-billing-grid">@foreach (var candidate in PlanCatalog.ComparisonPlans)
         {
             var selectable = Model.Plans.FirstOrDefault(item => item.Key == candidate.Key);

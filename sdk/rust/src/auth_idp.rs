@@ -3389,7 +3389,7 @@ struct ClientsEnvelope {
 #[derive(Serialize)]
 struct EmptyObject {}
 
-fn validation(code: &str, message: &str) -> Error {
+pub(crate) fn validation(code: &str, message: &str) -> Error {
     Error::new(ErrorKind::Validation, code, message)
 }
 
@@ -3558,7 +3558,7 @@ fn append_scope<'a>(pairs: &mut Vec<(&'a str, &'a str)>, scope: Option<&'a str>)
     Ok(())
 }
 
-fn validate_non_empty(value: &str, field: &str) -> Result<()> {
+pub(crate) fn validate_non_empty(value: &str, field: &str) -> Result<()> {
     if value.trim().is_empty() {
         return Err(validation(
             &format!("invalid_{field}"),
@@ -3568,7 +3568,7 @@ fn validate_non_empty(value: &str, field: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_page_limit(limit: u32, max: u32, family: &str) -> Result<()> {
+pub(crate) fn validate_page_limit(limit: u32, max: u32, family: &str) -> Result<()> {
     if !(1..=max).contains(&limit) {
         return Err(validation(
             "invalid_limit",
@@ -3628,7 +3628,7 @@ fn validate_template_name(name: &str) -> Result<()> {
 /// Validate a path id and percent-encode it for the URL. Dot segments are
 /// never valid ids, names, or domains; keeping one would let a caller mutate
 /// the route after normalization.
-fn path_id(value: &str, field: &str) -> Result<String> {
+pub(crate) fn path_id(value: &str, field: &str) -> Result<String> {
     validate_non_empty(value, field)?;
     let trimmed = value.trim();
     if trimmed == "." || trimmed == ".." {
@@ -3641,7 +3641,7 @@ fn path_id(value: &str, field: &str) -> Result<String> {
     Ok(percent_encode(trimmed))
 }
 
-fn percent_encode(value: &str) -> String {
+pub(crate) fn percent_encode(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {

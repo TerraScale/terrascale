@@ -118,6 +118,20 @@ namespace TerraScale.Dashboard.Features.Backups
             return operation;
         }
 
+        public async Task<ProducerRestoreOperation> StartRestorePointInTimeAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, DateTimeOffset pointInTime, string? name, long? ttlSeconds, CancellationToken cancellationToken)
+        {
+            var database = await NameAsync(scope, home, databaseId, cancellationToken);
+            var operation = await CallAsync(scope, home, ["databases:read", "databases:write"], client => client.StartRestorePointInTimeAsync(scope.ProjectId, database, new(pointInTime, name, null, ttlSeconds)).ResponseAsync,
+                BackupBackendJson.Default.ProducerRestoreOperation, cancellationToken, "restore");
+            if (!TerraScaleIds.IsValid(operation.OperationId) || operation.Status is not ("running" or "completed" or "failed") ||
+                operation.Status != "running" && operation.Database is null)
+            {
+                throw new HttpRequestException("Point-in-time restore returned an invalid operation.");
+            }
+
+            return operation;
+        }
+
         public async Task<ProducerRestoreOperation> RestoreOperationAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string operationId, CancellationToken cancellationToken)
         {
             var database = await NameAsync(scope, home, databaseId, cancellationToken);

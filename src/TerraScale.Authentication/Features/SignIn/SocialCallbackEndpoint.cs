@@ -81,6 +81,11 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
             identity = null;
         }
 
+        if (identity is not null && resumed.Link is { } link)
+        {
+            return await this.CompleteLinkAsync(context, provider, identity, link, cancellationToken);
+        }
+
         var user = identity is null ? null : await users.FromProviderAsync(tenant,
             new LinkedProvider(provider.Provider, identity.Issuer, identity.ClientId, identity.Subject),
             identity.Email, HostedTheme.Of(context).SignUp, cancellationToken);
@@ -94,11 +99,40 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_social", "refused");
-            return Failed(context, resumed.Next, StatusCodes.Status401Unauthorized, $"{SocialProviders.Label(provider.Provider)} could not complete this sign-in. Try an existing sign-in method; connecting another method requires proof of your existing account.");
+            return Failed(context, resumed.Next, StatusCodes.Status401Unauthorized, $"{SocialProviders.Label(provider.Provider)} could not complete this sign-in. Sign in with your password, then connect {SocialProviders.Label(provider.Provider)} from Security.");
         }
 
         AuthMetrics.SignIn("hosted_social", "succeeded");
         return await SignInFlow.SignedInAsync(context, sessions, session, resumed.Next, cancellationToken);
+    }
+
+    private async Task<IResult> CompleteLinkAsync(HttpContext context, SocialProviderRecord provider, SocialIdentity identity, SocialLink link,
+        CancellationToken cancellationToken)
+    {
+        var live = await SecurityFlow.LiveAsync(context, sessions, cancellationToken);
+        var linked = live is { } state && state.Session.TokenHash == link.SessionHash && state.User.Id == link.UserId
+            && state.User.AuthStamp == link.AuthStamp && state.User.AuthEpoch == link.AuthEpoch
+            ? await users.LinkProviderAsync(state.User,
+                new LinkedProvider(provider.Provider, identity.Issuer, identity.ClientId, identity.Subject), cancellationToken)
+            : null;
+        if (linked is true)
+        {
+            AuthMetrics.SignIn("hosted_social", "succeeded");
+            return Results.Redirect(SignInFlow.SecurityPath(SignInFlow.Tenant(context)));
+        }
+
+        var label = SocialProviders.Label(provider.Provider);
+        if (live is null)
+        {
+            AuthMetrics.SignIn("hosted_social", "refused");
+            return SecurityFlow.SignIn(context);
+        }
+
+        AuthMetrics.SignIn("hosted_social", "refused");
+        return await SecurityFlow.RefusedAsync(context, sessions, mfa, live.Value.User, linked is false
+            ? ("Provider already connected", $"This {label} account is already connected to another account.")
+            : ("Connect expired", $"Your account or session changed. Connect {label} again from Security."),
+            linked is false ? StatusCodes.Status409Conflict : StatusCodes.Status401Unauthorized, cancellationToken);
     }
 
     /// <summary>The page's configured provider, or null for a wrong slug, the platform or an unconfigured provider.</summary>

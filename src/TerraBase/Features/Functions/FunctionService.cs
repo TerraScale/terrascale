@@ -123,11 +123,12 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
             return logs.AsEnumerable().Reverse().Take(limit).ToArray();
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<FunctionResult> InvokeAsync(TenantContext tenant, string name, string trigger, string eventJson, CancellationToken cancellationToken) =>
-        await RunAsync(tenant, name, trigger, eventJson, cancellationToken).ConfigureAwait(false);
+    public async ValueTask<FunctionResult> InvokeAsync(TenantContext tenant, string name, string trigger, string eventJson, string? requestId,
+        CancellationToken cancellationToken) =>
+        await RunAsync(tenant, name, trigger, eventJson, cancellationToken, requestId).ConfigureAwait(false);
 
     internal async ValueTask<FunctionResult> RunAsync(TenantContext tenant, string name, string trigger, string eventJson,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? requestId = null)
     {
         if (await GetAsync(tenant, name, cancellationToken).ConfigureAwait(false) is not FunctionBody { Source: { } source })
         {
@@ -146,7 +147,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
         await using (session.ConfigureAwait(false))
         {
             session.BeginRequest();
-            run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, new FunctionSql(session), cancellationToken), cancellationToken)
+            run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, new FunctionSql(session, requestId), cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -157,7 +158,8 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
             [.. run.Lines], error);
         await RecordAsync(tenant, name, log, cancellationToken).ConfigureAwait(false);
         return error is null ? Response(run.Result!) : new FunctionResponse(500, "application/json",
-            JsonSerializer.SerializeToUtf8Bytes(new ErrorBody(new ErrorDetail("function_error", error)), TerraBaseJsonContext.Default.ErrorBody));
+            JsonSerializer.SerializeToUtf8Bytes(new ErrorBody(new ErrorDetail("function_error", error, RequestId: requestId,
+                DocsUrl: ErrorDocs.Url("function_error"))), TerraBaseJsonContext.Default.ErrorBody));
     }
 
     private async ValueTask RecordAsync(TenantContext tenant, string name, FunctionLogBody log, CancellationToken cancellationToken) =>

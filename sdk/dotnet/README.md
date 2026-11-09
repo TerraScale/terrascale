@@ -36,6 +36,13 @@ IReadOnlyList<TerraBaseSqlRecord> rows = await db.QueryAsync("SELECT id, name FR
 IReadOnlyList<Person> people = await db.QueryAsync("SELECT id, name FROM people", null, AppJson.Default.Person, ct);
 ```
 
+ADO.NET and Dapper: `TerraBaseDbConnection` wraps a `TerraBaseSqlDatabase` as a `DbConnection`, so
+`QueryAsync<T>`/`ExecuteAsync` from Dapper (or plain `DbCommand` readers) work over SQL REST autocommit
+statements (`ExecuteNonQueryAsync`, `ExecuteScalarAsync`, `ExecuteDbDataReaderAsync`; the sync overloads throw —
+the SDK is async-only). Parameters map to `?` positional or `@name`/`:name`/`$name` named arguments. Transactions
+run over the SQL WebSocket session: `BeginTransactionAsync`/`CommitAsync`/`RollbackAsync` (Serializable only; the
+sync transaction methods throw like the other sync paths).
+
 - `ApiKey` is a project or organization API key from the dashboard. The client exchanges it at ts-auth
   (`client_credentials`) for an access token to the project named in `Database(projectId, …)`, caches the token and
   renews it before it expires; concurrent calls share one exchange and the key goes only to ts-auth. Pass

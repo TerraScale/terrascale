@@ -35,6 +35,8 @@ assert not [item.get("Include") for item in ET.parse(app / "TerraScale.Dashboard
             if item.tag != "ProjectReference" and any(outside in (item.get("Include") or "") for outside in ("..", "$(RepositoryRoot)"))], \
     "The application must not include files from outside its project"
 
+assert (app / "Common/Accounts/pricing.json").read_bytes() == (root / "landing-site/static/pricing.json").read_bytes(), \
+    "src/TerraScale.Dashboard/Common/Accounts/pricing.json must equal landing-site/static/pricing.json; copy it"
 count = 0
 for source in [*app.rglob("*.cs"), *suite.rglob("*.cs")]:
     if {"bin", "obj", "vendor", "node_modules", "test-results", ".git"}.intersection(source.relative_to(root).parts):

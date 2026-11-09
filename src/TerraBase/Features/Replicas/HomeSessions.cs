@@ -311,9 +311,11 @@ internal sealed class HomeSqlSession(
 
             try
             {
+                using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                bounded.CancelAfter(SqlLimits.ForwardedRequestTime);
                 await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database) }, TerraBaseJsonContext.Default.HomeSessionCall,
-                    cancellationToken).ConfigureAwait(false);
-                var answer = await ReceiveAsync(cancellationToken).ConfigureAwait(false) ?? Break();
+                    bounded.Token).ConfigureAwait(false);
+                var answer = await ReceiveAsync(bounded.Token).ConfigureAwait(false) ?? Break();
                 local.Forwarded(database);
                 return answer;
             }

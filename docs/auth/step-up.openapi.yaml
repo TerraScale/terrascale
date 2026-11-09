@@ -25,7 +25,7 @@ paths:
         The existing hosted session never approves the proof. Fresh password or one explicitly requested
         email code, followed by fresh active MFA when enrolled, is required. GET never sends mail.
         Valid pairs are delete_account with ts-auth or ts-dashboard, create_pat with ts-dashboard,
-        and delete_organization, start_ownership_transfer, create_api_key, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client,
+        and delete_organization, start_ownership_transfer, change_plan, create_api_key, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client,
         change_email, add_passkey, enroll_totp or delete_passkey with ts-auth.
         return_uri must be /auth/step-up/callback on a registered dashboard redirect origin without
         query or fragment. Issuance is limited to ten requests per account per fifteen-minute window.
@@ -53,8 +53,11 @@ paths:
       tags: [Security]
       summary: Consume a dashboard step-up proof
       description: |
-        Accepts only ts-dashboard create_pat or delete_account. Atomically consumes the approved,
+        Accepts ts-dashboard create_pat, ts-auth change_plan, or ts-dashboard delete_account. Atomically consumes the approved,
         unexpired proof for the authenticated account and current authentication state before side effects.
+        change_plan consumes its proof single-use for the signed-in user and returns 204;
+        the dashboard binds the resume to the organization the proof was minted for via its
+        one-use encrypted, organization-pinned intent.
         Deletion requires a canonical random 32-byte unpadded base64url operation_receipt. Its response
         releases operation_grant only after commit and a final expiry check. Persist both capabilities
         privately before side effects. Auth DELETE continuation requires the exact receipt and grant
@@ -103,7 +106,7 @@ components:
       properties:
         purpose:
           type: string
-          enum: [delete_account, delete_organization, start_ownership_transfer, create_pat, create_api_key, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client, change_email, add_passkey, enroll_totp]
+          enum: [delete_account, delete_organization, start_ownership_transfer, change_plan, create_pat, create_api_key, rotate_api_key, create_oauth_client, update_oauth_client, rotate_oauth_client, change_email, add_passkey, enroll_totp]
         audience:
           type: string
           enum: [ts-auth, ts-dashboard]
@@ -112,7 +115,7 @@ components:
           format: uri
         organization_id:
           type: string
-          description: Required for and binds delete_organization and start_ownership_transfer proofs; refused for other purposes.
+          description: Required for and binds delete_organization, start_ownership_transfer and change_plan proofs; refused for other purposes.
     StepUpBody:
       type: object
       required: [proof, step_up_url, expires_at]

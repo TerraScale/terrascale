@@ -136,6 +136,49 @@ public sealed class Users(AuthStore store, TimeProvider clock)
         throw ApiException.Unavailable();
     }
 
+    public async Task<bool?> LinkProviderAsync(UserRecord caller, LinkedProvider identity, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(identity);
+        if (string.IsNullOrWhiteSpace(identity.Provider) || string.IsNullOrWhiteSpace(identity.Issuer)
+            || string.IsNullOrWhiteSpace(identity.ClientId) || string.IsNullOrWhiteSpace(identity.Subject))
+        {
+            return null;
+        }
+
+        var key = ProviderKey(identity);
+        for (var round = 0; round < 3; round++)
+        {
+            if (await this.GetVersionedAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
+                || current.User.AuthStamp != caller.AuthStamp || current.User.AuthEpoch != caller.AuthEpoch || current.User.Disabled
+                || !await store.AreCredentialsCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            if (current.User.LinkedProviders.Contains(identity))
+            {
+                return true;
+            }
+
+            var updated = current.User with { LinkedProviders = [.. current.User.LinkedProviders, identity] };
+            if (await store.TransactAsync([
+                AuthStore.Replace(AuthStore.UserTable, caller.InstanceId, caller.Id, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version),
+                AuthStore.Claim(caller.InstanceId, ProviderKind, key, caller.Id),
+            ], cancellationToken).ConfigureAwait(false) is null)
+            {
+                return true;
+            }
+
+            if (await store.FindUniqueOwnerAsync(caller.InstanceId, ProviderKind, key, cancellationToken).ConfigureAwait(false) is { } owner && owner != caller.Id)
+            {
+                return false;
+            }
+        }
+
+        throw ApiException.Unavailable();
+    }
+
     /// <summary>Unlinks a provider at the reauthenticated account version and revokes all prior sessions.</summary>
     public async Task<bool> UnlinkProviderAsync(UserRecord caller, string provider, CancellationToken cancellationToken)
     {

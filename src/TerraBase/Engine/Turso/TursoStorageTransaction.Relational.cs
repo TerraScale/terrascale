@@ -121,7 +121,8 @@ internal sealed partial class TursoStorageTransaction
             var rowid = Counter(native, "SELECT last_insert_rowid();");
             var grown = write ? Counter(native, "PRAGMA page_count;") - pages : 0L;
             changed = write && (grown != 0 || Counter(native, "SELECT total_changes();") != changes || Counter(native, "PRAGMA schema_version;") != schema);
-            return new SqlStatementResult(stepped.Columns, stepped.Rows, stepped.Affected, rowid, grown * PageSize(native), stepped.Truncated, consumed);
+            return new SqlStatementResult(stepped.Columns, stepped.Rows, stepped.Affected, rowid, grown * PageSize(native), stepped.Truncated, consumed,
+                Stopwatch.GetElapsedTime(started));
         }
         catch (TursoException error)
         {

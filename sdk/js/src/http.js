@@ -18,12 +18,21 @@ import { isValidId } from "./ids.js";
  *   readonly body?: TBody | undefined;
  *   readonly formBody?: URLSearchParams | string | undefined;
  *   readonly userinfoAccessToken?: string | undefined;
+ *   readonly projectAccessToken?: string | undefined;
  *   readonly resourceIntrospectionBasic?: string | undefined;
  *   readonly deletionReceipt?: string | undefined;
+ *   readonly stepUpProof?: string | undefined;
  *   readonly signal?: AbortSignal | undefined;
  * }} TsAuthRequest
  */
 const retryableStatuses = new Set([429, 502, 503, 504]);
+const stepUpRoutes = new Set([
+  "tsauth.platform.delete_organization",
+  "tsauth.platform.start_ownership_transfer",
+  "tsauth.projects.create_client",
+  "tsauth.projects.update_client",
+  "tsauth.projects.rotate_client_secret",
+]);
 const maximumResponseBytes = 4 * 1024 * 1024;
 
 /** Private transport for the named hosted identity and OIDC operations. */
@@ -91,16 +100,28 @@ export class TsAuthHttp {
               throw new TypeError("Deletion receipts belong only to named account deletion operations.");
             headers.set("X-TerraScale-Deletion-Receipt", options.deletionReceipt);
           }
+          if (options.stepUpProof !== undefined) {
+            if (!(stepUpRoutes.has(options.routeName)) ||
+                typeof options.stepUpProof !== "string" || options.stepUpProof.length < 1 || options.stepUpProof.length > 8192 ||
+                /[\s\p{Cc}]/u.test(options.stepUpProof))
+              throw new TypeError("Step-up proofs belong only to named proof-required organization and project client operations.");
+            headers.set("X-TerraScale-Step-Up-Proof", options.stepUpProof);
+          }
           if (receiptRead && (options.deletionReceipt === undefined || this.#accessToken !== undefined ||
               options.userinfoAccessToken !== undefined || options.resourceIntrospectionBasic !== undefined))
             throw new TypeError("Account deletion reads require a receipt without bearer credentials.");
           const oidc = options.routeName.startsWith("tsauth.oidc.");
-          const token = oidc
+          const project = options.projectAccessToken !== undefined;
+          if (project && !/^tsauth\.projects\.[a-z0-9_]+$/u.test(options.routeName))
+            throw new TypeError("Project sign-in tokens belong only to named project tenant operations.");
+          const token = oidc || project
             ? undefined
             : await withCancellation(
                 resolveAccessToken(this.#accessToken),
                 signal,
               );
+          if (project)
+            headers.set("authorization", `Bearer ${options.projectAccessToken}`);
           if (token !== undefined && token.length > 0)
             headers.set(
               "authorization",

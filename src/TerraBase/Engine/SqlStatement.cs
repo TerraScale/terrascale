@@ -7,7 +7,7 @@ internal sealed record SqlStatementColumn(string Name, string? DeclType);
 
 internal sealed record SqlStatementResult(
     IReadOnlyList<SqlStatementColumn> Columns, IReadOnlyList<object?[]> Rows, long RowsAffected, long LastInsertRowid, long GrowthBytes,
-    bool Truncated, int Consumed);
+    bool Truncated, int Consumed, TimeSpan Execution = default);
 
 internal sealed record CapturedRowChange(
     string Table, int Type, IReadOnlyList<string> Columns, object?[]? Before, object?[]? After, bool[]? Updated, CapturedImages? Images = null)

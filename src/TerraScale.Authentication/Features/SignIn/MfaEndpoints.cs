@@ -6,6 +6,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
@@ -421,13 +422,19 @@ internal static class SecurityFlow
         var (enabled, remaining) = await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken);
         var passkeys = await context.RequestServices.GetRequiredService<Features.WebAuthn.PasskeyCredentials>()
             .ListAsync(user, cancellationToken);
-        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Security, SignInFlow.Tenant(context), Error: error?.Message, Next: next)
+        var tenant = SignInFlow.Tenant(context);
+        var configured = Tenancy.IsProject(tenant)
+            ? (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, cancellationToken)).Providers?.Select(record => record.Provider).ToArray() ?? []
+            : [];
+        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Security, tenant, Error: error?.Message, Next: next)
         {
             ErrorTitle = error?.Title,
             Account = user.Email,
             MfaEnabled = enabled,
             RecoveryRemaining = remaining,
             Passkeys = passkeys,
+            LinkedProviders = user.LinkedProviders,
+            ConnectableProviders = configured,
             Notice = notice,
         }, statusCode);
     }

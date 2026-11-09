@@ -217,7 +217,7 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<AuditEventsEndpoint>(),
                 EndpointRegistration.Create<AuditExportEndpoint>(),
                 EndpointRegistration.Create<UsagePageEndpoint>(),
-                EndpointRegistration.Create<InternalSpendingCapEndpoint>(),
+                EndpointRegistration.Create<SpendingCapEndpoint>(),
                 EndpointRegistration.Create<SupportPageEndpoint>(),
                 EndpointRegistration.Create<SupportRequestEndpoint>(),
                 EndpointRegistration.Create<ProjectInvitationsPageEndpoint>(),

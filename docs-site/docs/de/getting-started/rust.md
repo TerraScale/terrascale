@@ -15,7 +15,7 @@ Run a complete SQL workflow against your TerraScale database in about five minut
 ## Prerequisites
 
 - Rust 1.99 or newer
-- A TerraScale account, a project with a database, and an API key. Follow steps 1–4 of [Getting started](/de/getting-started/): the key needs **Read and write** access to that database.
+- A TerraScale account, a project with a database, and an API key. Follow steps 1–4 of [Getting started](/de/getting-started/): the key needs the **sql:read** and **sql:write** scopes on that database.
 - The **Current project** ID (a ULID) from the dashboard's **Organization** page, and the API key. Export both:
 
 ```bash
@@ -167,5 +167,6 @@ Replica reads are eventually consistent; see [regions](/de/concepts/regions).
 - [SDK reference](/de/guides/sdks) — the five SDKs and their install commands
 - [JavaScript](/de/getting-started/javascript), [C#](/de/getting-started/csharp), [Go](/de/getting-started/go) and [Python](/de/getting-started/python) quickstarts
 - [SQL over HTTP](/de/guides/sql-http) for the raw HTTP interface and [concepts](/de/concepts/sql) for the SQL dialect
+- [Typed SQL with the Rust SDK](/de/guides/rust-sql) for typed `query_as` selects, session transactions and batches
 
 </div>

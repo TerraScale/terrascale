@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from fake import Fake
+from fake import PROJECT, Fake
 
-from terrascale import AsyncTerraScale, TerraScale, new_id
+from terrascale import AsyncTerraScale, TerraScale, models, new_id
 
 
 def test_api_key_lifecycle(ts: TerraScale, fake: Fake) -> None:
@@ -37,3 +37,39 @@ async def test_project_client_create_and_rotate(ats: AsyncTerraScale, fake: Fake
     page = await ats.list_project_clients()
     assert [c.client_id for c in page.items] == [created.client_id]
     assert page.items[0].client_secret is None
+
+
+def test_project_user_admin(ts: TerraScale, fake: Fake) -> None:
+    page = ts.list_users(search="example.com", limit=50)
+    assert [u.email for u in page.items] == ["ada@example.com"]
+    assert page.items[0].disabled is False
+    assert page.next_cursor is None
+    request = fake.requests[-1]
+    assert request.method == "GET"
+    assert request.url.path == f"/v1/{PROJECT}/users"
+    assert dict(request.url.params) == {"q": "example.com", "limit": "50"}
+    assert request.headers["authorization"].startswith("Bearer tok-")
+    user_id = page.items[0].id
+    disabled = ts.disable_user(user_id)
+    assert disabled.disabled is True
+    request = fake.requests[-1]
+    assert (request.method, request.url.path) == ("POST", f"/v1/{PROJECT}/users/{user_id}/disable")
+
+
+def test_project_sessions_and_providers(ts: TerraScale, fake: Fake) -> None:
+    page = ts.list_sessions(user_id="01J" + "V" * 23, limit=10)
+    assert [s.email for s in page.items] == ["ada@example.com"]
+    assert page.items[0].expires_at == "2026-11-18T00:00:00Z"
+    assert page.next_cursor is None
+    request = fake.requests[-1]
+    assert (request.method, request.url.path) == ("GET", f"/v1/{PROJECT}/sessions")
+    assert dict(request.url.params) == {"user": "01J" + "V" * 23, "limit": "10"}
+    assert request.headers["authorization"].startswith("Bearer tok-")
+    ts.revoke_session(page.items[0].id)
+    request = fake.requests[-1]
+    assert (request.method, request.url.path) == ("DELETE", f"/v1/{PROJECT}/sessions/{page.items[0].id}")
+    assert fake.sessions == {}
+    settings = ts.set_provider("google", models.ProjectProviderUpdate(client_id="google-client"))
+    assert settings.providers[0].provider == "google"
+    request = fake.requests[-1]
+    assert (request.method, request.url.path) == ("PUT", f"/v1/{PROJECT}/providers/google")

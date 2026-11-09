@@ -21,11 +21,23 @@ from .auth import (
     create_api_key_call,
     create_project_client_call,
     delete_project_client_call,
+    delete_provider_call,
+    delete_user_call,
+    disable_user_call,
+    enable_user_call,
+    export_users_call,
+    get_settings_call,
+    get_user_call,
     list_api_keys_call,
     list_project_clients_call,
+    list_sessions_call,
+    list_users_call,
     revoke_api_key_call,
+    revoke_session_call,
     rotate_project_client_secret_call,
+    set_provider_call,
     update_project_client_call,
+    update_settings_call,
 )
 from .client import _error, _settings
 from .errors import CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes
@@ -341,6 +353,69 @@ class AsyncTerraScale:
         """Delete a registered client."""
         await self._send(delete_project_client_call(self._issuer, project if project is not None else self.project,
                                                     client_id))
+
+    async def get_settings(self, *, project: str | None = None) -> models.ProjectSettings:
+        """Read the project's end-user sign-in settings; viewer access with the caller's sign-in token."""
+        return await self._send(get_settings_call(self._issuer, project if project is not None else self.project))
+
+    async def update_settings(self, update: models.ProjectSettingsUpdate, *, project: str | None = None,
+                             ) -> models.ProjectSettings:
+        """Update settings; omitted parts stay unchanged and admin access is required."""
+        return await self._send(
+            update_settings_call(self._issuer, project if project is not None else self.project, update))
+
+    async def list_users(self, *, search: str | None = None, limit: int | None = None, after: str | None = None,
+                         project: str | None = None) -> models.ProjectUserPage:
+        """List the project's end users in creation order; ``search`` matches an email substring."""
+        return await self._send(list_users_call(self._issuer, project if project is not None else self.project,
+                                                search, limit, after))
+
+    async def get_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
+        """Read one end user by id."""
+        return await self._send(get_user_call(self._issuer, project if project is not None else self.project,
+                                              user_id))
+
+    async def disable_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
+        """Disable a user; every session ends and refresh tokens stop at once."""
+        return await self._send(disable_user_call(self._issuer, project if project is not None else self.project,
+                                                  user_id))
+
+    async def enable_user(self, user_id: str, *, project: str | None = None) -> models.ProjectUser:
+        """Re-enable a disabled user."""
+        return await self._send(enable_user_call(self._issuer, project if project is not None else self.project,
+                                                 user_id))
+
+    async def delete_user(self, user_id: str, *, project: str | None = None) -> None:
+        """Delete a user's account; the address can sign up again."""
+        await self._send(delete_user_call(self._issuer, project if project is not None else self.project, user_id))
+
+    async def export_users(self, *, limit: int | None = None, after: str | None = None,
+                           project: str | None = None) -> models.ProjectUserExportPage:
+        """Fetch one audited directory-export page; pass the previous page's ``next_cursor`` as ``after``."""
+        return await self._send(export_users_call(self._issuer, project if project is not None else self.project,
+                                                  limit, after))
+
+    async def set_provider(self, provider: str, update: models.ProjectProviderUpdate, *,
+                           project: str | None = None) -> models.ProjectSettings:
+        """Configure a federated sign-in provider (google, github, apple or oidc); an omitted secret is kept."""
+        return await self._send(set_provider_call(self._issuer, project if project is not None else self.project,
+                                                  provider, update))
+
+    async def delete_provider(self, provider: str, *, project: str | None = None) -> models.ProjectSettings:
+        """Remove a federated sign-in provider; the answered settings no longer carry it."""
+        return await self._send(delete_provider_call(self._issuer, project if project is not None else self.project,
+                                                     provider))
+
+    async def list_sessions(self, *, user_id: str | None = None, limit: int | None = None,
+                            after: str | None = None, project: str | None = None) -> models.ProjectSessionPage:
+        """List live sessions, optionally of one user, in creation order."""
+        return await self._send(list_sessions_call(self._issuer, project if project is not None else self.project,
+                                                   user_id, limit, after))
+
+    async def revoke_session(self, session_id: str, *, project: str | None = None) -> None:
+        """Revoke one session; the session is signed out at once."""
+        await self._send(revoke_session_call(self._issuer, project if project is not None else self.project,
+                                             session_id))
 
 
 class AsyncDatabase:

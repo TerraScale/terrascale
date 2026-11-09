@@ -9,10 +9,6 @@ title: Change your sign-in email
 
 # Change your sign-in email
 
-::: info Availability
-This flow is upcoming. The account API, SDK and dashboard must ship together; this guide does not announce production availability.
-:::
-
 1. Open **Profile → Change sign-in email** in the dashboard and enter your new address.
 2. Choose **Verify identity and send code**. TerraScale asks for your password, or an explicitly requested email code for a passwordless account, plus a fresh two-factor code when enrolled. This confirmation expires within five minutes. Opening verification alone sends no email.
 3. After verification, your new address receives a **six-digit code valid for ten minutes**. Your current address receives a notice with a cancel link valid for the same period.

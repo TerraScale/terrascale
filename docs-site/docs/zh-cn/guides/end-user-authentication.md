@@ -27,7 +27,7 @@ Use your project's discovery document for app sign-in. It advertises only `autho
 
 Open **Authentication** for your project.
 
-1. **OAuth applications**: register your application with a name, its type and its redirect URIs, one per line. Use **public** for browser, mobile and desktop apps (no secret) and **confidential** for server-side apps. A confidential application's client secret is shown once, right after you create it; store it in your server's secret store. Register 1–10 absolute redirect URIs using `https`, or `http` on `localhost` and loopback addresses, without fragments or userinfo (an embedded username or password). Registration rejects invalid URIs with `400 invalid_request`; when the project's redirect allowlist is nonempty, each URI must also exactly match an entry there.
+1. **OAuth applications**: register your application with a name, its type and its redirect URIs, one per line. Use **public** for browser, mobile and desktop apps (no secret) and **confidential** for server-side apps. Creating a client through the API (`POST /v1/{project}/clients`) needs the project admin role, your TerraScale sign-in token and a fresh `create_oauth_client` step-up proof, like updating and rotating below (see [sensitive actions](/zh-cn/guides/sensitive-actions)). A confidential application's client secret is shown once, right after you create it; store it in your server's secret store. Register 1–10 absolute redirect URIs using `https`, or `http` on `localhost` and loopback addresses, without fragments or userinfo (an embedded username or password). Registration rejects invalid URIs with `400 invalid_request`; when the project's redirect allowlist is nonempty, each URI must also exactly match an entry there.
 2. **Sign-in methods**: choose email codes, passwords, or both, and whether people can create their own accounts. At least one of email codes and passwords stays on. A method you turn off disappears from the hosted pages.
 3. **Branding**: set the name, an `https` logo URL and a `#rrggbb` theme color. They style the hosted pages and the verification, sign-in and password-reset emails; without a name, both show your project's name. Optionally set `email_message` in `branding` through `PUT /v1/{project}/settings`: up to 500 plain-text characters, newlines allowed, added to those emails. A sent `branding` replaces the previous one, so send every branding field each time or omitted fields are cleared. HTML and placeholders such as `{{code}}` appear as literal text.
 4. **Configuration**: `redirect_urls` adds a project allowlist of at most 100 exact absolute URLs, without fragments or userinfo (`https`, or loopback `http`). A nonempty list further restricts each client's registered redirects; an empty list never permits unregistered redirects. `session_lifetime_seconds` is an absolute lifetime from original sign-in: 300–2592000 seconds (5 minutes–30 days), default 1209600 (14 days).
@@ -90,9 +90,10 @@ The hosted sign-in and sign-up pages show a **Continue with Google**, **Continue
 
 An end user signs in only with a provider that confirms a verified email address:
 
-- A user is matched to an existing account by that email, so email codes, passwords and social sign-in reach the same account.
-- A new email creates an account only if the project allows sign-up.
-- Disabled users and users with MFA cannot sign in this way.
+- Sign-in matches a previously linked provider identity (provider, issuer, client ID and subject); accounts are never linked by email.
+- A new identity whose email is new to the project creates an account only if the project allows sign-up. An identity whose email already belongs to an email/password account is refused; that user signs in with their password once, then connects the provider from the security page.
+- A signed-in user connects a configured provider, or disconnects one, on the account security page. Connecting needs a sign-in from the last 10 minutes, and a provider account already connected to any account in the project is refused.
+- Disabled users cannot sign in this way. Users with MFA continue to the hosted second-factor step.
 
 ### Manage providers through the API
 
@@ -115,9 +116,33 @@ Use a maintained OpenID Connect library with authorization-code and PKCE support
 
 The access token is a JWT with your project's issuer as `iss`, your client ID as `aud` and the user's ID as `sub`. Your API must verify its signature, issuer, audience and time validity; an ID token is for the client sign-in, not API authorization. `/oauth/userinfo` returns `sub`, and `email` with the `email` scope. Access tokens last 5 minutes.
 
+In Python, verify it with [PyJWT](https://pyjwt.readthedocs.io/) (install `pyjwt[crypto]`, which brings the `cryptography` package ES256 needs). `PyJWKClient` fetches and caches the project issuer's keys; every published key is ES256, and the JWKS URL is also the discovery document's `jwks_uri`:
+
+```python
+import jwt
+
+issuer = f"https://auth.terrascale.tech/{project_id}"
+jwks = jwt.PyJWKClient(f"{issuer}/.well-known/jwks.json")
+key = jwks.get_signing_key_from_jwt(access_token)
+claims = jwt.decode(access_token, key.key, algorithms=["ES256"],
+                    audience=client_id, issuer=issuer)
+```
+
+`jwt.decode` raises `jwt.InvalidTokenError` (such as `InvalidSignatureError`, `ExpiredSignatureError`, `InvalidAudienceError` or `InvalidIssuerError`) when any check fails; treat every subtype as one rejection.
+
 Refresh tokens rotate on every use. The initial project refresh token expires at **original sign-in (`auth_time`) + configured project session lifetime** (5 minutes–30 days, default 14 days). Rotation never extends the observed expiry; a policy reduction can shorten it further. Store each successor securely and stop using its predecessor. Keep tokens and client secrets out of URLs, logs and browser persistent storage. On sign-out, clear your app session, use `/oauth/logout` for hosted sign-out and `/oauth/revoke` for token revocation; these are separate from clearing local state.
 
-A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project tokens are for your own application: TerraScale's APIs do not accept them.
+A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project sign-in tokens are for your own application: TerraScale's APIs do not accept them. Your users reach data stored in TerraScale through short-lived scoped tokens your backend mints for them; see [Data access for your users](#data-access-for-your-users).
+
+## Data access for your users
+
+Project sign-in tokens never authorize calls to TerraScale APIs. When a signed-in user needs data held in a TerraScale database, your backend mints a scoped end-user access token and the browser uses only that:
+
+1. Your backend authenticates the user with your own sign-in (or the project sign-in above) and picks their user ID and roles. The asserted `user_id` is a canonical ULID and need not match a ts-auth account: your backend owns the mapping.
+2. Your backend mints the token with `POST /v1/terrascale/projects/{project}/end-user-tokens`, authenticating with a project API key that has both `sql:read` and `sql:write` and no database restriction. The request asserts the user ID, optionally the database and up to 32 table names, and optional roles.
+3. Your backend sends only the returned short-lived JWT (at most 15 minutes) to the browser and keeps the project API key on the server.
+
+TerraBase honors these tokens for shape reads when each table has a read grant. The full mint contract, limits and error behavior are in [scoped end-user access tokens](https://github.com/TerraScale/terrascale/blob/main/docs/auth/scoped-end-user-tokens.md); table grants are described in [shape read grants](https://github.com/TerraScale/terrascale/blob/main/docs/terrabase/shape-read-grants.md).
 
 ### Run the sample app
 
@@ -135,7 +160,8 @@ Copy `.env.example` to `.env` first and fill in your project issuer and OAuth cl
 
 The dashboard lists your project's users with search. For each user you can see their sessions, end a session, **disable** them or **delete** them. Disabling a user ends every session and stops their refresh tokens at once; access tokens already issued stay valid until they expire, at most 5 minutes. Deleting a user removes the account; the address can sign up again.
 
-For automation, the [.NET SDK project administration client](https://github.com/TerraScale/terrascale/blob/main/sdk/dotnet/src/TerraScale.DotNet/AuthService/TerraScaleAuthProjects.cs), `TerraScaleAuthClient.Projects`, exposes settings read/update, provider set/delete, user list/get/disable/enable/delete, session list/revoke and OAuth client list/create/update/delete with secret rotation. These `/v1/{project}` calls use your **TerraScale account sign-in token**, with viewer access for reads and admin for changes, not a project end-user token. This is separate from interactive OIDC login; other SDKs do not necessarily expose this management group. See [C# source installation](/zh-cn/getting-started/csharp) for the SDK.
+For automation, the [.NET SDK project administration client](https://github.com/TerraScale/terrascale/blob/main/sdk/dotnet/src/TerraScale.DotNet/AuthService/TerraScaleAuthProjects.cs), `TerraScaleAuthClient.Projects`, exposes settings read/update, provider set/delete, user list/get/disable/enable/delete, session list/revoke and OAuth client list/create/update/delete with secret rotation. These `/v1/{project}` calls use your **TerraScale account sign-in token**, with viewer access for reads and admin for changes, not a project end-user token. This is separate from interactive OIDC login; other SDKs do not necessarily expose this management group. See [C# source installation](/zh-cn/getting-started/csharp) for the SDK. The JavaScript SDK exposes the same routes through `tsAuth.projects` (`@terrascale/sdk/ts-auth`, [`sdk/js/src/ts-auth-projects.js`](https://github.com/TerraScale/terrascale/blob/main/sdk/js/src/ts-auth-projects.js)): `getSettings`, `updateSettings`, `listUsers`, `getUser`, `disableUser`, `enableUser`, `deleteUser`, `exportUsers`, `setProvider` and `deleteProvider` (configured providers are listed in the settings), `listSessions`, `revokeSession`, `listClients`, `createClient`, `updateClient`, `rotateClientSecret` and `deleteClient`, each taking the sign-in token and project id; the client write operations also take a step-up proof. The Python SDK exposes the same routes on the `TerraScale` client (`terrascale`, [`sdk/python/src/terrascale/auth.py`](https://github.com/TerraScale/terrascale/blob/main/sdk/python/src/terrascale/auth.py)): `get_settings`, `update_settings`, `list_users`, `get_user`, `disable_user`, `enable_user`, `delete_user` and `export_users`, plus `set_provider`, `delete_provider`, `list_sessions` and `revoke_session`, sent with the sign-in token as the client bearer token. The Rust SDK exposes the full group through `TerraScaleClient::projects()` (`terrascale` crate, [`sdk/rust/src/auth_projects.rs`](https://github.com/TerraScale/terrascale/blob/main/sdk/rust/src/auth_projects.rs)): `get_settings`, `update_settings`, `set_provider`, `delete_provider`, `list_users`, `get_user`, `disable_user`, `enable_user`, `delete_user`, `export_users`, `list_sessions`, `revoke_session`, `list_clients`, `create_client`, `update_client`, `rotate_client_secret` and `delete_client`, with the sign-in token and project id passed per call; the client write operations also take the step-up proof.rs`](https://github.com/TerraScale/terrascale/blob/main/sdk/rust/src/auth_projects.rs)), with the sign-in token and project id passed per call.
+>>>>>>> e6e554b7c (T206: Rust SDK project administration slice 2)
 
 ### Export the directory
 

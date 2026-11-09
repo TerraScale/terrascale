@@ -151,6 +151,111 @@ def delete_project_client_call(issuer: str | None, project: str, client_id: str)
                       success=(204,), base_url=_origin(issuer))
 
 
+def _tenant_path(project: str, *extra: str) -> list[str]:
+    return ["v1", validate_id(project, "project"), *extra]
+
+
+def _page_limit(limit: int | None) -> int | None:
+    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100):
+        raise ValueError("limit must be an integer between 1 and 100")
+    return limit
+
+
+def _cursor(after: str | None) -> str | None:
+    if after is not None and (not isinstance(after, str) or not after or len(after) > 8192):
+        raise ValueError("after must be a non-empty opaque cursor of at most 8192 characters")
+    return after
+
+
+def get_settings_call(issuer: str | None, project: str) -> _spec.Call:
+    return _spec.Call("GET", _tenant_path(project, "settings"),
+                      lambda r: models.ProjectSettings.from_json(r.json()), replay_safe=True, base_url=_origin(issuer))
+
+
+def update_settings_call(issuer: str | None, project: str, update: models.ProjectSettingsUpdate) -> _spec.Call:
+    return _spec.Call("PUT", _tenant_path(project, "settings"),
+                      lambda r: models.ProjectSettings.from_json(r.json()), body=update.to_body(),
+                      base_url=_origin(issuer))
+
+
+def list_users_call(issuer: str | None, project: str, search: str | None, limit: int | None,
+                    after: str | None) -> _spec.Call:
+    params = _spec._page_params(_page_limit(limit), _cursor(after))
+    if search is not None:
+        if not isinstance(search, str) or not search:
+            raise ValueError("search must be a non-empty email substring")
+        params["q"] = search
+    return _spec.Call("GET", _tenant_path(project, "users"),
+                      lambda r: models.ProjectUserPage.from_json(r.json()), params=params, replay_safe=True,
+                      base_url=_origin(issuer))
+
+
+def export_users_call(issuer: str | None, project: str, limit: int | None, after: str | None) -> _spec.Call:
+    return _spec.Call("GET", _tenant_path(project, "users", "export"),
+                      lambda r: models.ProjectUserExportPage.from_json(r.json()),
+                      params=_spec._page_params(_page_limit(limit), _cursor(after)), replay_safe=True,
+                      base_url=_origin(issuer))
+
+
+def get_user_call(issuer: str | None, project: str, user_id: str) -> _spec.Call:
+    return _spec.Call("GET", _tenant_path(project, "users", validate_id(user_id, "user id")),
+                      lambda r: models.ProjectUser.from_json(r.json()), replay_safe=True, base_url=_origin(issuer))
+
+
+def _user_state_call(issuer: str | None, project: str, user_id: str, action: str) -> _spec.Call:
+    return _spec.Call("POST", _tenant_path(project, "users", validate_id(user_id, "user id"), action),
+                      lambda r: models.ProjectUser.from_json(r.json()), base_url=_origin(issuer))
+
+
+def disable_user_call(issuer: str | None, project: str, user_id: str) -> _spec.Call:
+    return _user_state_call(issuer, project, user_id, "disable")
+
+
+def enable_user_call(issuer: str | None, project: str, user_id: str) -> _spec.Call:
+    return _user_state_call(issuer, project, user_id, "enable")
+
+
+def delete_user_call(issuer: str | None, project: str, user_id: str) -> _spec.Call:
+    return _spec.Call("DELETE", _tenant_path(project, "users", validate_id(user_id, "user id")), _spec._none,
+                      success=(204,), base_url=_origin(issuer))
+
+
+PROVIDERS = ("google", "github", "apple", "oidc")
+
+
+def _provider(value: str) -> str:
+    if value not in PROVIDERS:
+        raise ValueError(f"provider must be one of {', '.join(PROVIDERS)}")
+    return value
+
+
+def set_provider_call(issuer: str | None, project: str, provider: str,
+                      update: models.ProjectProviderUpdate) -> _spec.Call:
+    return _spec.Call("PUT", _tenant_path(project, "providers", _provider(provider)),
+                      lambda r: models.ProjectSettings.from_json(r.json()), body=update.to_body(),
+                      base_url=_origin(issuer))
+
+
+def delete_provider_call(issuer: str | None, project: str, provider: str) -> _spec.Call:
+    return _spec.Call("DELETE", _tenant_path(project, "providers", _provider(provider)),
+                      lambda r: models.ProjectSettings.from_json(r.json()), base_url=_origin(issuer))
+
+
+def list_sessions_call(issuer: str | None, project: str, user_id: str | None, limit: int | None,
+                       after: str | None) -> _spec.Call:
+    params = _spec._page_params(_page_limit(limit), _cursor(after))
+    if user_id is not None:
+        params["user"] = validate_id(user_id, "user id")
+    return _spec.Call("GET", _tenant_path(project, "sessions"),
+                      lambda r: models.ProjectSessionPage.from_json(r.json()), params=params, replay_safe=True,
+                      base_url=_origin(issuer))
+
+
+def revoke_session_call(issuer: str | None, project: str, session_id: str) -> _spec.Call:
+    return _spec.Call("DELETE", _tenant_path(project, "sessions", validate_id(session_id, "session id")),
+                      _spec._none, success=(204,), base_url=_origin(issuer))
+
+
 def _transport_error(attempts: int, exc: Exception) -> TokenError:
     detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
     return TokenError(0, "token_transport_error", f"token exchange failed after {attempts} attempt{'s' if attempts != 1 else ''}"

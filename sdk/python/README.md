@@ -105,6 +105,34 @@ transaction was open, every call except `rollback()` raises
 `transaction_rolled_back` until `rollback()`. After `close()` the session stays
 closed. Async calls may overlap.
 
+### SQLAlchemy
+
+Install the optional extra — SQLAlchemy stays out of the core dependency set —
+and address the engine as `terrascale://<project_id>/<database>`. The API key
+comes from `TERRASCALE_API_KEY`, as everywhere else, or from the URL password,
+which SQLAlchemy renders as `***` in reprs and logs:
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine("terrascale://01J.../app")            # TERRASCALE_API_KEY, TERRASCALE_PROJECT_ID
+engine = create_engine("terrascale://:<api_key>@01J.../app")  # or the key as the URL password
+with engine.connect() as conn:
+    conn.execute(text("INSERT INTO notes VALUES (?, ?)"), [new_id(), "hello"])
+    print(conn.execute(text("SELECT * FROM notes")).fetchall())
+```
+
+The dialect defaults to real transactions: the first statement after connect,
+commit or rollback implicitly opens a transaction over one SQL WebSocket
+session, `commit()` and `rollback()` end it, and `begin_nested()` maps to
+SAVEPOINT/RELEASE/ROLLBACK TO as plain SQL. Interactive transactions last at
+most 5 seconds on the server; past that the statement fails with
+`OperationalError` and the transaction was rolled back. For the one-request-
+per-statement HTTP path instead, set
+`create_engine(..., isolation_level="AUTOCOMMIT")` or
+`conn.execution_options(isolation_level="AUTOCOMMIT")`. `rowcount` maps to
+`rows_affected` and `lastrowid` to `last_insert_rowid`.
+
 ### Async
 
 ```python

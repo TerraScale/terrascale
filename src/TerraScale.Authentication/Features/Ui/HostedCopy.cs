@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TerraScale.Authentication.Features.Email;
 
 namespace TerraScale.Authentication.Features.Ui;
@@ -111,6 +112,7 @@ public sealed record HostedPageCopy(
     string Rename,
     string Remove,
     string AddPasskey,
+    string ConnectProvider,
     string QrAlt,
     string SetupKey,
     string CodeFromApp,
@@ -154,7 +156,34 @@ public sealed record HostedPageCopy(
     string ErrorTransientTitle,
     string ErrorTransient,
     string RetryWaitMinutes,
-    string RetryWaitSeconds);
+    string RetryWaitSeconds,
+    string ErrorPasswordLength,
+    string ErrorPasswordCommon,
+    string NoticeCredentialChanged,
+    string PasskeyNotAddedTitle,
+    string PasskeyNotAdded,
+    string PasskeyUnsupported,
+    string PasskeyNotCreated,
+    string PasskeySignInFailedTitle,
+    string PasskeySignInFailed,
+    string PasskeySignInAgain,
+    string PasskeyEmailRequiredTitle,
+    string PasskeyEmailRequired,
+    string CountdownIn)
+{
+    public string PasskeyI18n => JsonSerializer.Serialize(new Dictionary<string, string>
+    {
+        ["notAddedTitle"] = PasskeyNotAddedTitle,
+        ["notAdded"] = PasskeyNotAdded,
+        ["unsupported"] = PasskeyUnsupported,
+        ["notCreated"] = PasskeyNotCreated,
+        ["signInFailedTitle"] = PasskeySignInFailedTitle,
+        ["signInFailed"] = PasskeySignInFailed,
+        ["signInAgain"] = PasskeySignInAgain,
+        ["emailTitle"] = PasskeyEmailRequiredTitle,
+        ["emailBody"] = PasskeyEmailRequired
+    });
+}
 
 public static class HostedCopies
 {
@@ -267,6 +296,7 @@ public static class HostedCopies
         Rename: "Rename",
         Remove: "Remove",
         AddPasskey: "Add passkey",
+        ConnectProvider: "Connect {0}",
         QrAlt: "QR code to add {brand} to your authenticator app",
         SetupKey: "Setup key",
         CodeFromApp: "Code from the app",
@@ -310,7 +340,20 @@ public static class HostedCopies
         ErrorTransientTitle: "Sign-in is unavailable right now",
         ErrorTransient: "Something went wrong on our side. Nothing was sent yet. Try again in a moment.",
         RetryWaitMinutes: "{minutes} minutes",
-        RetryWaitSeconds: "{seconds} seconds");
+        RetryWaitSeconds: "{seconds} seconds",
+        ErrorPasswordLength: "Choose a password of 15 to 256 characters. A passphrase of a few words works well.",
+        ErrorPasswordCommon: "That password is too common or easy to guess. Choose a longer or less predictable one.",
+        NoticeCredentialChanged: "This credential expired, was already used, or lost a concurrent sign-in or rotation in another region. Sign in again or use the latest credential.",
+        PasskeyNotAddedTitle: "Passkey not added",
+        PasskeyNotAdded: "The passkey was not added.",
+        PasskeyUnsupported: "This browser cannot create passkeys.",
+        PasskeyNotCreated: "The passkey was not created.",
+        PasskeySignInFailedTitle: "Passkey sign-in failed",
+        PasskeySignInFailed: "The passkey sign-in failed.",
+        PasskeySignInAgain: "The passkey sign-in failed; start again.",
+        PasskeyEmailRequiredTitle: "Enter your email address",
+        PasskeyEmailRequired: "Enter your email address to sign in with a passkey.",
+        CountdownIn: "{0} in {1} s");
 
     public static readonly HostedPageCopy Portuguese = new(
         FooterNav: "Rodapé",
@@ -421,6 +464,7 @@ public static class HostedCopies
         Rename: "Renomear",
         Remove: "Remover",
         AddPasskey: "Adicionar passkey",
+        ConnectProvider: "Conectar {0}",
         QrAlt: "QR code para adicionar {brand} ao seu app autenticador",
         SetupKey: "Chave de configuração",
         CodeFromApp: "Código do app",
@@ -464,7 +508,20 @@ public static class HostedCopies
         ErrorTransientTitle: "O acesso está indisponível no momento",
         ErrorTransient: "Algo deu errado do nosso lado. Nada foi enviado ainda. Tente novamente em instantes.",
         RetryWaitMinutes: "{minutes} minutos",
-        RetryWaitSeconds: "{seconds} segundos");
+        RetryWaitSeconds: "{seconds} segundos",
+        ErrorPasswordLength: "Escolha uma senha de 15 a 256 caracteres. Uma frase de algumas palavras funciona bem.",
+        ErrorPasswordCommon: "Essa senha é comum demais ou fácil de adivinhar. Escolha uma mais longa ou menos previsível.",
+        NoticeCredentialChanged: "Esta credencial expirou, já foi usada ou perdeu um início de sessão ou rotação simultânea em outra região. Entre novamente ou use a credencial mais recente.",
+        PasskeyNotAddedTitle: "Passkey não adicionada",
+        PasskeyNotAdded: "A passkey não foi adicionada.",
+        PasskeyUnsupported: "Este navegador não pode criar passkeys.",
+        PasskeyNotCreated: "A passkey não foi criada.",
+        PasskeySignInFailedTitle: "Falha no acesso com passkey",
+        PasskeySignInFailed: "O acesso com passkey falhou.",
+        PasskeySignInAgain: "O acesso com passkey falhou; comece de novo.",
+        PasskeyEmailRequiredTitle: "Digite seu e-mail",
+        PasskeyEmailRequired: "Digite seu e-mail para entrar com uma passkey.",
+        CountdownIn: "{0} em {1} s");
 
     public static HostedPageCopy For(string locale) => locale == AuthEmails.Portuguese ? Portuguese : English;
 }

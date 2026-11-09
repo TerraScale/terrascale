@@ -16,7 +16,7 @@ const outputs = {
 
 Prices and limits come from the [published catalog](https://terrascale.tech/pricing.json).
 
-| Plan | Monthly price (USD) | Yearly price (USD) | Included write units | Write cap | SQL read fair use | Client egress | Storage |
+| Plan | Monthly price (USD) | Yearly price (USD) | Included operation units | Write cap | SQL read fair use | Client egress | Storage |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 ${plans.map((plan) => `| ${plan.name} | $${plan.priceMonthlyUsd} | ${yearly(plan)} | ${count(plan.limits.operationUnitsPerMonth)} | ${count(plan.limits.operationUnitCapPerMonth)} | ${count(plan.limits.sqlReadUnitsPerMonth)} | ${gb(plan.limits.egressGbPerMonth)}/month | ${plan.limits.storageGb} GB |`).join('\n')}
 
@@ -30,7 +30,7 @@ Starter, Pro and Team can be billed monthly or yearly; a year costs ten monthly 
 
 ${metering.allowances.definition}
 
-Overage rates on paid plans: $${rates.operationUnitsPerMillionUsd} per million write units and $${rates.storageGbRegionMonthUsd} per GB-month of storage.
+Overage rates on paid plans: $${rates.operationUnitsPerMillionUsd} per million operation units and $${rates.storageGbRegionMonthUsd} per GB-month of storage.
 
 When a plan's write cap or SQL read fair use is reached, the statement answers \`429 quota_exceeded\` (Postgres SQLSTATE \`53100\`) until the next UTC month or an upgrade.
 
@@ -67,7 +67,7 @@ These are the limits a request or a plan can hit. All SQL surfaces (HTTP, WebSoc
 | Rows changed per transaction | 1,024 | \`too_large\` (413) / 54000 |
 | Database file growth per transaction | 8 MiB | \`too_large\` (413) / 54000 |
 
-A query that stays inside result limits but scans or works past the plan's scan budget answers \`query_canceled\` (400) / 57014. Add indexes or a \`LIMIT\`, or narrow the query.
+A query that stays inside result limits but scans or works past the plan's scan budget answers \`query_canceled\` (400) / 57014 with \`query too expensive: it exceeds the work budget\`; add indexes or a \`LIMIT\`, or narrow the query. A request whose statements together spend more than 5 s executing answers \`query_canceled\` (400) / 57014 with \`the request exceeded its 5 s time limit; split the batch or narrow the query\`. Only statement and commit execution counts toward the 5 s; time spent admitted, queued or waiting on the organization's limits does not.
 
 ## Transactions
 
@@ -101,12 +101,13 @@ A transaction left open past the limit rolls back and answers \`transaction_roll
 | Scan budget, bytes scanned | 16 MiB | 64 MiB | 128 MiB | 128 MiB | No limit |
 | Live databases | 1 | 5 | 25 | 100 | No limit |
 | Storage ceiling | 0.1 GB | 5 GB | 100 GB | 100 GB | No limit |
+| Point-in-time retention | 1 day | 3 days | 7 days | 14 days | 30 days |
 
-Beyond the request, burst or concurrency limit, HTTP answers \`429 tenant_busy\` (SQLSTATE \`53300\`) with a \`Retry-After\` header; the Postgres wire answers SQLSTATE \`53300\`. Past the storage ceiling a write answers \`429 quota_exceeded\` (53100); past the database allowance a create answers \`409 database_limit\`.
+Beyond the request, burst or concurrency limit, HTTP answers \`429 tenant_busy\` (SQLSTATE \`53300\`) with a \`Retry-After\` header; the Postgres wire answers SQLSTATE \`53300\`. Past the storage ceiling a write answers \`429 quota_exceeded\` (53100) over SQL and \`429 storage_quota\` over file storage; neither sends \`Retry-After\`, and the file-storage message names the used and allowed gigabytes and the next step. Past the database allowance a create answers \`409 database_limit\`. A database's point-in-time restore window reaches back at most its plan's retention; see [backups and restore](/guides/backups-and-restore).
 
-## Monthly write units and SQL read fair use
+## Monthly operation units and SQL read fair use
 
-| Plan | Write units included | Write cap | SQL read fair use |
+| Plan | Operation units included | Write cap | SQL read fair use |
 | --- | --- | --- | --- |
 ${plans.map((plan) => `| ${plan.name} | ${count(plan.limits.operationUnitsPerMonth)} | ${count(plan.limits.operationUnitCapPerMonth)} | ${count(plan.limits.sqlReadUnitsPerMonth)} |`).join('\n')}
 

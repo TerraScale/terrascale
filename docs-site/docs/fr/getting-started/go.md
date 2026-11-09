@@ -15,7 +15,7 @@ Run a complete SQL workflow against your TerraScale database in about five minut
 ## Prerequisites
 
 - Go 1.25 or newer
-- A TerraScale account, a project with a database, and an API key. Follow steps 1–4 of [Getting started](/fr/getting-started/): the key needs **Read and write** access to that database.
+- A TerraScale account, a project with a database, and an API key. Follow steps 1–4 of [Getting started](/fr/getting-started/): the key needs the **sql:read** and **sql:write** scopes on that database.
 - The **Current project** ID (a ULID) from the dashboard's **Organization** page, and the API key. Export both:
 
 ```bash
@@ -155,5 +155,6 @@ refused: primary_key_violation statement 0 sqlstate "23505"
 - [SDK reference](/fr/guides/sdks) — the five SDKs and their install commands
 - [JavaScript](/fr/getting-started/javascript), [C#](/fr/getting-started/csharp) and [Python](/fr/getting-started/python) quickstarts
 - [SQL over HTTP](/fr/guides/sql-http) for the raw HTTP interface and [concepts](/fr/concepts/sql) for the SQL dialect
+- [Use GORM, sqlc and bun with Go](/fr/guides/orm-go) for ORMs and typed SQL over the SDK's `database/sql` driver
 
 </div>

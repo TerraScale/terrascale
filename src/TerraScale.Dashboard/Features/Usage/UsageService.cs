@@ -27,6 +27,8 @@ namespace TerraScale.Dashboard.Features.Usage
         // Set when a plan without overage billing has used its monthly operation units: TerraBase refuses new writes.
         public string WritesPaused { get; init; } = "";
         public InternalBill? InternalBill { get; init; }
+        public BillingPlan? Plan { get; init; }
+        public bool SpendingAlert => InternalBill is not null || Plan is { PriceCents: > 0 };
         public long? ScopeLogicalBytes => Scope?.LogicalBytes;
         public bool ScopeStorageMeasured => ScopeLogicalBytes is not null;
         public int ActiveDatabases => Selection.Context.Project?.Databases.Count ?? 0;
@@ -51,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Usage
             }
 
             var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
-            return string.Create(CultureInfo.InvariantCulture, $"Writes are paused: this organization used all {cap:N0} write units of the {plan.Name} plan for {month:MMMM yyyy}. Reads keep working, and writes resume on {month.AddMonths(1):MMMM d} (UTC).");
+            return string.Create(CultureInfo.InvariantCulture, $"Writes are paused: this organization used all {cap:N0} operation units of the {plan.Name} plan for {month:MMMM yyyy}. Reads keep working, and writes resume on {month.AddMonths(1):MMMM d} (UTC).");
         }
 
         public async Task<UsagePage> LoadAsync(ShellModel shell, UsageSelection selection, string tab, string saved, CancellationToken cancellationToken)
@@ -95,7 +97,7 @@ namespace TerraScale.Dashboard.Features.Usage
             var units = complete ? result.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
             var sqlReads = complete ? result.SqlReadUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
             var allowances = new[] {
-                Allowance("Write units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, units ?? 0, false, units is not null),
+                Allowance("Operation units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, units ?? 0, false, units is not null),
                 Allowance("SQL reads this month", "Not limited", limits.MonthlySqlReads is long.MaxValue ? 0 : limits.MonthlySqlReads, sqlReads ?? 0, false, sqlReads is not null, "read units/month"),
                 Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, organizationStorage ?? 0, true, organizationStorage is not null),
                 Allowance("Client egress this month", plan?.EgressAllowance ?? "Limit not published", limits.MonthlyEgressBytes, 0, true, false)
@@ -138,11 +140,12 @@ namespace TerraScale.Dashboard.Features.Usage
                 result.Scope.State == UsageSourceState.Unavailable ? "Usage is temporarily unavailable. Try again in a moment." : "", monthError, organizationStorage is not null)
             {
                 WritesPaused = writesPaused,
+                Plan = plan,
                 InternalBill = selection.Context.Organization!.InternalBilling is not null
                 ? InternalBillingService.Estimate(selection.Context.Organization, result, time.GetUtcNow()) : null
             };
 
-            UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured, string unit = "write units/month")
+            UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured, string unit = "operation units/month")
             {
                 return new(title, !bytes && limit > 0 ? ChartGeometry.Compact(limit) + " " + unit : allowance,
                 measured ? bytes ? MetricFormat.Bytes(used) : ChartGeometry.Compact(used) : "Not metered",

@@ -1,3 +1,4 @@
+using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Tenancy;
@@ -59,6 +60,7 @@ public sealed class StorageQuotaLease : IDisposable
             return StorageQuota.AccountingUnavailable;
         }
     }
+
     public void Committed(long delta) => _committed(delta);
 
     public void Dispose()
@@ -122,7 +124,9 @@ static file class StorageQuotaRule
     internal static StorageQuotaCheck Growth(long limit, long delta, StorageQuotaBytesResult counted) => counted switch
     {
         long used => used > limit || delta > limit - used
-            ? new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota")
+            ? new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
+                $"the organization storage quota would be exceeded: {used / 1_000_000_000m:F2} GB used of {limit / 1_000_000_000m:F2} GB on this plan; delete data or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing"),
+                "storage_quota")
             : new Done(),
         Unavailable error => error,
     };

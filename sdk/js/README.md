@@ -334,10 +334,63 @@ The optional live catalog check needs `TB_V1_MANAGEMENT_TOKEN` with `databases:r
 in addition to `TB_V1_URL` and `TB_V1_PROJECT`; data-only keys are insufficient.
 Entity pages reject null and primitive records; recovery-code pages contain strings.
 
+`tsAuth.projects` administers one project's hosted sign-in tenant over `/v1/{project}`
+with the caller's TerraScale account sign-in token: `getSettings`, `updateSettings`,
+`listUsers`, `getUser`, `disableUser`, `enableUser`, `deleteUser`, `exportUsers`,
+`setProvider`, `deleteProvider` (providers are listed in the settings),
+`listSessions`, `revokeSession`, `listClients`, `createClient`, `updateClient`,
+`rotateClientSecret` and `deleteClient`; the client write operations carry a
+step-up proof. Project OAuth clients are distinct from the instance-scoped
+`tsAuth.oauthClients`, which manages the tenant's own `/v1/{slug}/oauth/clients`
+with its management key.
+
 Hosted identity and OIDC network methods accept a final `{ signal }` argument;
 list methods keep it in their existing options. Failures retain `kind: "transport"`:
 `request_aborted` identifies caller cancellation, `request_timeout` the SDK deadline,
 and `transport_error` an ordinary transport failure. Abort details carry a sanitized cause.
+
+`@terrascale/sdk/drizzle` exports `drizzleProxy(database)`, the two callbacks
+Drizzle's `sqlite-proxy` driver expects, built from a root database handle. The
+SDK takes no `drizzle-orm` dependency; each query is one `execute` call and a
+Drizzle batch is one atomic `batch` request. `drizzle-kit push` and schema
+introspection are not supported.
+
+`@terrascale/sdk/prisma` exports `PrismaTerraScale`, a Prisma driver-adapter
+factory over a root database handle. It ships in the next SDK release; until
+then install it from source (this monorepo's `sdk/js`). The SDK takes no
+`@prisma/*` dependency. Use it as Prisma's SQLite adapter:
+
+```prisma
+datasource db {
+  provider = "sqlite"
+}
+```
+
+```js
+import { PrismaClient } from "@prisma/client";
+import { createTerraBaseClient } from "@terrascale/sdk";
+import { PrismaTerraScale } from "@terrascale/sdk/prisma";
+
+const db = createTerraBaseClient({
+  baseUrl: "https://api.terrascale.tech",
+  project: process.env.TERRASCALE_PROJECT_ID,
+  token: process.env.TERRASCALE_ACCESS_TOKEN,
+}).database("app");
+const prisma = new PrismaClient({ adapter: new PrismaTerraScale(db) });
+```
+
+No `previewFeatures` or `url` wiring is needed with Prisma 7: the adapter is
+passed to the client constructor. Queries run over the SQL API; interactive
+transactions (`prisma.$transaction(async tx => …)`) run over a dedicated SQL
+WebSocket session and the server ends each one after 5 seconds, so keep them
+short. Database errors map to Prisma's error kinds: unique, not-null and
+foreign-key violations, missing tables and missing columns surface as
+P2002/P2011/P2003/P2021/P2022; everything else keeps the server's message.
+Migrations are not run by Prisma: `prisma migrate dev` and `db push` (and the
+shadow database they need) are not supported. Instead generate SQL with
+`prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > migration.sql`
+(later diffs use `--from-migrations prisma/migrations`), then apply the script
+with `ts migrate` or the SQL API.
 
 The retired `./local`, `./postgres`, `./schema`, `./sql`, `./tanstack` and `./codegen`
 entrypoints and the `terrascale-local` and `terrascale-models` CLIs are gone. SQL runs on the root database
