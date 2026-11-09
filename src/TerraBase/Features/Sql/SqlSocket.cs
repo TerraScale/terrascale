@@ -136,7 +136,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
         }
 
         context.User = authenticated.Principal;
-        if (await UserAuthExtensions.AdmitSocketAsync(context, _revoked, _watches.Add).ConfigureAwait(false) is { } refused)
+        if (await SocketAdmission.AdmitSocketAsync(context, _revoked, _watches.Add).ConfigureAwait(false) is { } refused)
         {
             return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unauthorized, refused.Code + ": " + refused.Message), cancellationToken).ConfigureAwait(false);
         }
