@@ -61,6 +61,7 @@
             else if (mfa.Enabled) { <dl class="ts-kv"><dt>Status</dt><dd><span class="ts-badge ts-badge-success">Enabled</span></dd><dt>Recovery codes remaining</dt><dd class="ts-num">@mfa.RecoveryCodesRemaining</dd></dl><div class="ts-form-actions"><a class="ts-btn ts-btn-secondary" href="@mfa.ManageUrl">Manage two-factor</a></div> }
             else { <dl class="ts-kv"><dt>Status</dt><dd><span class="ts-badge ts-badge-warning">Not enabled</span></dd></dl><div class="ts-form-actions"><a class="ts-btn ts-btn-primary" href="@mfa.ManageUrl">Set up two-factor</a></div> }
         </div></section>
+        <section class="ts-card" id="profile-passkeys" aria-labelledby="profile-passkeys-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="profile-passkeys-title">Passkeys</h2></div></header><div class="ts-card-body"><div class="ts-form-actions"><a class="ts-btn ts-btn-secondary" href="@TerraScale.Dashboard.Features.Auth.TsAuthGateway.ManageMfaUrl">Manage passkeys</a></div></div></section>
     }
     else if (Model.Tab == "danger")
     {
