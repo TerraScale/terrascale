@@ -100,8 +100,6 @@ namespace TerraScale.Dashboard.Platform.Contracts
         public static IEndpointRouteBuilder MapDashboardContracts(this IEndpointRouteBuilder endpoints)
         {
             endpoints.MapTerraScaleOpenApi();
-            endpoints.MapGet("/reference/terrascale.js", ReferenceScript)
-                .ExcludeFromDescription();
             var reference = (RouteGroupBuilder)endpoints.MapScalarApiReference("/reference", (options, http) =>
             {
                 var nonce = System.Net.WebUtility.HtmlEncode((string)http.Items["nonce"]!);
@@ -129,7 +127,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
             return endpoints;
         }
 
-        private static IResult ReferenceScript(HttpContext context)
+        internal static IResult ReferenceScript(HttpContext context)
         {
             var encodings = context.Request.GetTypedHeaders().AcceptEncoding;
             var requested = encodings?.FirstOrDefault(value => value.Value.Equals("gzip", StringComparison.OrdinalIgnoreCase))

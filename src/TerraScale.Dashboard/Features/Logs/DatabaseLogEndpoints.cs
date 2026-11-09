@@ -17,56 +17,50 @@ namespace TerraScale.Dashboard.Features.Logs
             .AddSingleton<ILogDrainSource, LogDrainSource>().AddSingleton<LogDrains>().AddHostedService<LogDrainWorker>();
         }
 
-        public static IEndpointRouteBuilder MapDatabaseLogs(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases,
+            DatabaseLogBackend backend, LogDrains drains)
         {
-            endpoints.MapGet("/databases/{databaseId}/logs", async (HttpContext http, string databaseId, DashboardSessions sessions,
-                AccountService accounts, DatabaseService databases, DatabaseLogBackend backend, LogDrains drains) =>
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
-
-                return await PageAsync(http, context, databaseId, http.Request.Query["status"].ToString(), databases, backend, drains);
-            });
-            foreach (var delete in new[] { false, true })
-            {
-                endpoints.MapPost("/api/v1/dashboard/log-drain" + (delete ? "/delete" : ""), async (HttpContext http, DashboardSessions sessions,
-                    AccountService accounts, DatabaseService databases, DatabaseLogBackend backend, LogDrains drains) =>
-                {
-                    var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                    if (context is null)
-                    {
-                        return Results.Unauthorized();
-                    }
-
-                    var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                    if (!Csrf.Validate(http, form))
-                    {
-                        return Results.BadRequest("Invalid form token.");
-                    }
-
-                    var databaseId = form["databaseId"].ToString();
-                    try
-                    {
-                        if (delete)
-                        {
-                            await drains.DeleteAsync(context, http.RequestAborted);
-                        }
-                        else
-                        {
-                            await drains.SaveAsync(context, form["url"], form["headerName"], form["headerValue"], http.RequestAborted);
-                        }
-                    }
-                    catch (Exception error) when (error is AccountAccessException or ArgumentException)
-                    {
-                        return await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, error is AccountAccessException access ? access.StatusCode : 422);
-                    }
-                    return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "logs") + "#log-drain");
-                });
+                return AccountRequest.LoginRedirect(http);
             }
-            return endpoints;
+
+            return await PageAsync(http, context, http.Request.RouteValues["databaseId"]?.ToString() ?? "", http.Request.Query["status"].ToString(), databases, backend, drains);
+        }
+
+        internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases,
+            DatabaseLogBackend backend, LogDrains drains, bool delete)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.BadRequest("Invalid form token.");
+            }
+
+            var databaseId = form["databaseId"].ToString();
+            try
+            {
+                if (delete)
+                {
+                    await drains.DeleteAsync(context, http.RequestAborted);
+                }
+                else
+                {
+                    await drains.SaveAsync(context, form["url"], form["headerName"], form["headerValue"], http.RequestAborted);
+                }
+            }
+            catch (Exception error) when (error is AccountAccessException or ArgumentException)
+            {
+                return await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, error is AccountAccessException access ? access.StatusCode : 422);
+            }
+            return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "logs") + "#log-drain");
         }
 
         private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, string databaseId, string status, DatabaseService databases,

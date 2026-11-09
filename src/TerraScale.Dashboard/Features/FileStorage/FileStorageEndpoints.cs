@@ -16,80 +16,72 @@ namespace TerraScale.Dashboard.Features.FileStorage
             return services.AddSingleton<FileStorageService>();
         }
 
-        public static IEndpointRouteBuilder MapFileStorage(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, FileStorageService files)
         {
-            endpoints.MapMethods("/storage", ["GET", "HEAD"], async (HttpContext http, DashboardSessions sessions, AccountService accounts, FileStorageService files) =>
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
+                return AccountRequest.LoginRedirect(http);
+            }
+
+            return await PageAsync(http, context, files);
+        }
+
+        internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, FileStorageService files, string operation)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.BadRequest("Invalid form token.");
+            }
+
+            var bucket = form["bucket"].ToString();
+            var file = form["fileId"].ToString();
+            try
+            {
+                switch (operation)
                 {
-                    return AccountRequest.LoginRedirect(http);
+                    case "bucket": await files.CreateBucketAsync(context, form["name"].ToString(), Rules(form), http.RequestAborted); break;
+                    case "rules": await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted); break;
+                    case "delete-bucket": await files.DeleteBucketAsync(context, bucket, form["confirmName"].ToString(), http.RequestAborted); bucket = ""; break;
+                    case "upload":
+                        using (var metadata = JsonDocument.Parse(form["metadata"].ToString()))
+                        {
+                            if (!long.TryParse(form["size"], NumberStyles.None, CultureInfo.InvariantCulture, out var size))
+                            {
+                                throw new ArgumentException("Invalid file size.");
+                            }
+
+                            return Results.Json(await files.UploadAsync(context, bucket, new(form["name"].ToString(), form["contentType"].ToString(), size, form["sha256"].ToString(), metadata.RootElement.Clone()), http.RequestAborted), FileStorageJson.Default.TerraBaseFileUrl);
+                        }
+                    case "complete": await files.CompleteAsync(context, bucket, file, http.RequestAborted); return Results.NoContent();
+                    case "delete": await files.DeleteAsync(context, bucket, file, http.RequestAborted); break;
+                    case "download":
+                        var signed = await files.DownloadAsync(context, bucket, file, http.RequestAborted);
+                        http.Response.StatusCode = StatusCodes.Status303SeeOther;
+                        http.Response.Headers.Location = signed.Url;
+                        http.Response.Headers.CacheControl = "no-store";
+                        return Results.Empty;
+                }
+                return HttpRedirects.SeeOther("/storage" + (bucket.Length == 0 ? "" : "?bucket=" + Uri.EscapeDataString(bucket)));
+            }
+            catch (Exception error) when (Known(error, http))
+            {
+                var status = Status(error);
+                if (operation is "upload" or "complete")
+                {
+                    return Results.Problem(Message(error), statusCode: status);
                 }
 
-                return await PageAsync(http, context, files);
-            });
-            foreach (var action in new[] { "bucket", "rules", "delete-bucket", "upload", "complete", "delete", "download" })
-            {
-                var operation = action;
-                endpoints.MapPost("/api/v1/dashboard/storage/" + action, async (HttpContext http, DashboardSessions sessions, AccountService accounts, FileStorageService files) =>
-                {
-                    var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                    if (context is null)
-                    {
-                        return Results.Unauthorized();
-                    }
-
-                    var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                    if (!Csrf.Validate(http, form))
-                    {
-                        return Results.BadRequest("Invalid form token.");
-                    }
-
-                    var bucket = form["bucket"].ToString();
-                    var file = form["fileId"].ToString();
-                    try
-                    {
-                        switch (operation)
-                        {
-                            case "bucket": await files.CreateBucketAsync(context, form["name"].ToString(), Rules(form), http.RequestAborted); break;
-                            case "rules": await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted); break;
-                            case "delete-bucket": await files.DeleteBucketAsync(context, bucket, form["confirmName"].ToString(), http.RequestAborted); bucket = ""; break;
-                            case "upload":
-                                using (var metadata = JsonDocument.Parse(form["metadata"].ToString()))
-                                {
-                                    if (!long.TryParse(form["size"], NumberStyles.None, CultureInfo.InvariantCulture, out var size))
-                                    {
-                                        throw new ArgumentException("Invalid file size.");
-                                    }
-
-                                    return Results.Json(await files.UploadAsync(context, bucket, new(form["name"].ToString(), form["contentType"].ToString(), size, form["sha256"].ToString(), metadata.RootElement.Clone()), http.RequestAborted), FileStorageJson.Default.TerraBaseFileUrl);
-                                }
-                            case "complete": await files.CompleteAsync(context, bucket, file, http.RequestAborted); return Results.NoContent();
-                            case "delete": await files.DeleteAsync(context, bucket, file, http.RequestAborted); break;
-                            case "download":
-                                var signed = await files.DownloadAsync(context, bucket, file, http.RequestAborted);
-                                // Avoid redirect result logging: the Location is a private bearer capability.
-                                http.Response.StatusCode = StatusCodes.Status303SeeOther;
-                                http.Response.Headers.Location = signed.Url;
-                                http.Response.Headers.CacheControl = "no-store";
-                                return Results.Empty;
-                        }
-                        return HttpRedirects.SeeOther("/storage" + (bucket.Length == 0 ? "" : "?bucket=" + Uri.EscapeDataString(bucket)));
-                    }
-                    catch (Exception error) when (Known(error, http))
-                    {
-                        var status = Status(error);
-                        if (operation is "upload" or "complete")
-                        {
-                            return Results.Problem(Message(error), statusCode: status);
-                        }
-
-                        http.Response.StatusCode = status;
-                        return await PageAsync(http, context, files, Message(error), bucket);
-                    }
-                });
+                http.Response.StatusCode = status;
+                return await PageAsync(http, context, files, Message(error), bucket);
             }
-            return endpoints;
         }
 
         private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, FileStorageService files, string? error = null, string? bucket = null)

@@ -33,9 +33,6 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         public static IEndpointRouteBuilder MapOrganizations(this IEndpointRouteBuilder endpoints)
         {
-            endpoints.MapOrganizationWizard();
-            endpoints.MapOrganizationSso();
-            endpoints.MapProjectSettings();
             return endpoints;
         }
 

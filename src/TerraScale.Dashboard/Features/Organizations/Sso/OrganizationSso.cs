@@ -198,49 +198,42 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
 
     public static class OrganizationSsoEndpoints
     {
-        public static IEndpointRouteBuilder MapOrganizationSso(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts,
+            OrganizationSsoService sso, IWorkspacePlacement placement, string operation)
         {
-            foreach (var route in new[] { "", "/verify", "/delete" })
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                var operation = route;
-                endpoints.MapPost("/api/v1/dashboard/organization/sso" + operation,
-                    async (HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationSsoService sso, IWorkspacePlacement placement) =>
-                    {
-                        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                        if (context is null)
-                        {
-                            return Results.Unauthorized();
-                        }
-
-                        var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                        if (!Csrf.Validate(http, form))
-                        {
-                            return Results.BadRequest("Invalid form token.");
-                        }
-
-                        try
-                        {
-                            if (operation == "/verify")
-                            {
-                                await sso.VerifyAsync(context, http.RequestAborted);
-                            }
-                            else if (operation == "/delete")
-                            {
-                                await sso.DeleteAsync(context, http.RequestAborted);
-                            }
-                            else
-                            {
-                                await sso.SaveAsync(context, OrganizationSsoService.Parse(form), http.RequestAborted);
-                            }
-
-                            return HttpRedirects.SeeOther("/organization?tab=sso");
-                        }
-                        catch (AccountAccessException error) { return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, error.StatusCode, "sso"); }
-                        catch (Exception error) when (error is HttpRequestException or JsonException or IOException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-                        { return await OrganizationEndpoints.PageAsync(http, context, placement, "Single sign-on is unavailable right now. Try again shortly.", 503, "sso"); }
-                    });
+                return Results.Unauthorized();
             }
-            return endpoints;
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.BadRequest("Invalid form token.");
+            }
+
+            try
+            {
+                if (operation == "/verify")
+                {
+                    await sso.VerifyAsync(context, http.RequestAborted);
+                }
+                else if (operation == "/delete")
+                {
+                    await sso.DeleteAsync(context, http.RequestAborted);
+                }
+                else
+                {
+                    await sso.SaveAsync(context, OrganizationSsoService.Parse(form), http.RequestAborted);
+                }
+
+                return HttpRedirects.SeeOther("/organization?tab=sso");
+            }
+            catch (AccountAccessException error) { return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, error.StatusCode, "sso"); }
+            catch (Exception error) when (error is HttpRequestException or JsonException or IOException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+            { return await OrganizationEndpoints.PageAsync(http, context, placement, "Single sign-on is unavailable right now. Try again shortly.", 503, "sso"); }
         }
+
     }
 }

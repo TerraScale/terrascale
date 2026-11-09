@@ -24,61 +24,58 @@ namespace TerraScale.Dashboard.Features.Home
             return services.AddSingleton<IHomeMeasurements, TerraBaseHomeMeasurements>();
         }
 
-        public static IEndpointRouteBuilder MapHome(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements)
         {
-            endpoints.MapGet("/", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements) =>
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
+                return AccountRequest.LoginRedirect(http);
+            }
 
-                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: context.Role.Length == 0);
-                if (!context.Account.OnboardingCompleted)
-                {
-                    return Results.Redirect("/onboarding");
-                }
-
-                if (context.Organization is null)
-                {
-                    return Results.Problem("Selected organization is unavailable.", statusCode: 403);
-                }
-
-                if (context.Project is null)
-                {
-                    return Results.Redirect(context.Organization.Kind == "business" && !context.Organization.CanProvision(context.UserId) ? "/organization?newOrganization=payment" : "/organization?tab=projects&newProject=1");
-                }
-
-                var range = HomePage.NormalizeRange(http.Request.Query["range"]);
-                var tab = http.Request.Query["tab"] == "connect" ? "connect" : "overview";
-                var data = tab == "overview" ? await measurements.ReadPageAsync(context, range, http.RequestAborted) : new HomeMeasurement();
-                return HomeView.Create(new(ShellModel.For(http, context, tab == "connect" ? "Connect" : "Overview"), tab, range, data));
-            });
-            endpoints.MapGet("/overview/regions", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements) =>
+            context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: context.Role.Length == 0);
+            if (!context.Account.OnboardingCompleted)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
+                return Results.Redirect("/onboarding");
+            }
 
-                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: context.Role.Length == 0);
-                if (!http.Request.Query.ContainsKey("organizationId") || !http.Request.Query.ContainsKey("projectId"))
-                {
-                    return Results.BadRequest("Workspace identity is required.");
-                }
+            if (context.Organization is null)
+            {
+                return Results.Problem("Selected organization is unavailable.", statusCode: 403);
+            }
 
-                if (!context.Account.OnboardingCompleted || context.Organization is null || context.Project is null)
-                {
-                    return Results.Problem("Selected workspace is unavailable.", statusCode: 403);
-                }
+            if (context.Project is null)
+            {
+                return Results.Redirect(context.Organization.Kind == "business" && !context.Organization.CanProvision(context.UserId) ? "/organization?newOrganization=payment" : "/organization?tab=projects&newProject=1");
+            }
 
-                var data = await measurements.ReadRegionsAsync(context, http.RequestAborted);
-                await DatastarEvents.PatchElementsAsync(http, HomeRegionsView.Create(new(ShellModel.For(http, context, "Overview"), "overview", "24h", data)));
-                return Results.Empty;
-            });
-            return endpoints;
+            var range = HomePage.NormalizeRange(http.Request.Query["range"]);
+            var tab = http.Request.Query["tab"] == "connect" ? "connect" : "overview";
+            var data = tab == "overview" ? await measurements.ReadPageAsync(context, range, http.RequestAborted) : new HomeMeasurement();
+            return HomeView.Create(new(ShellModel.For(http, context, tab == "connect" ? "Connect" : "Overview"), tab, range, data));
+        }
+
+        internal static async Task<IResult> RegionsAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: context.Role.Length == 0);
+            if (!http.Request.Query.ContainsKey("organizationId") || !http.Request.Query.ContainsKey("projectId"))
+            {
+                return Results.BadRequest("Workspace identity is required.");
+            }
+
+            if (!context.Account.OnboardingCompleted || context.Organization is null || context.Project is null)
+            {
+                return Results.Problem("Selected workspace is unavailable.", statusCode: 403);
+            }
+
+            var data = await measurements.ReadRegionsAsync(context, http.RequestAborted);
+            await DatastarEvents.PatchElementsAsync(http, HomeRegionsView.Create(new(ShellModel.For(http, context, "Overview"), "overview", "24h", data)));
+            return Results.Empty;
         }
     }
 }

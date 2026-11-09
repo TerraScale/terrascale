@@ -4,48 +4,45 @@ namespace TerraScale.Dashboard.Features.Databases
 {
     public static class DatabaseSettingsEndpoints
     {
-        public static IEndpointRouteBuilder MapDatabaseSettings(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, string databaseId)
         {
-            endpoints.MapGet("/databases/{databaseId}/settings", async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, DatabaseService databases) =>
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
+                return AccountRequest.LoginRedirect(http);
+            }
 
-                await databases.SyncAsync(context, http.RequestAborted);
-                return Page(http, context, databaseId);
-            });
-            endpoints.MapPost("/api/v1/dashboard/databases/rename", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases) =>
+            await databases.SyncAsync(context, http.RequestAborted);
+            return Page(http, context, databaseId);
+        }
+
+        internal static async Task<IResult> RenameAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases)
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
             {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
+                return Results.Unauthorized();
+            }
 
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.BadRequest("Invalid form token.");
-                }
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return Results.BadRequest("Invalid form token.");
+            }
 
-                var id = form["databaseId"].ToString();
-                try
-                {
-                    var database = await databases.RenameAsync(context, id, form["name"].ToString(), form["confirmName"].ToString(), http.RequestAborted);
-                    return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings") + "?renamed=1") : Results.Json(database);
-                }
-                catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
-                {
-                    var message = DatabaseResults.Status(error) >= 500 ? "The rename result could not be confirmed. Reload Settings to check the current name before retrying." : DatabaseResults.Message(error);
-                    return DatabaseResults.WantsHtml(http) && DatabaseResults.Status(error) != 404
-                        ? Page(http, context, id, message, form["name"].ToString(), form["confirmName"].ToString(), DatabaseResults.Status(error))
-                        : DatabaseResults.PageFailure(http, context, error);
-                }
-            });
-            return endpoints;
+            var id = form["databaseId"].ToString();
+            try
+            {
+                var database = await databases.RenameAsync(context, id, form["name"].ToString(), form["confirmName"].ToString(), http.RequestAborted);
+                return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings") + "?renamed=1") : Results.Json(database);
+            }
+            catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
+            {
+                var message = DatabaseResults.Status(error) >= 500 ? "The rename result could not be confirmed. Reload Settings to check the current name before retrying." : DatabaseResults.Message(error);
+                return DatabaseResults.WantsHtml(http) && DatabaseResults.Status(error) != 404
+                    ? Page(http, context, id, message, form["name"].ToString(), form["confirmName"].ToString(), DatabaseResults.Status(error))
+                    : DatabaseResults.PageFailure(http, context, error);
+            }
         }
 
         internal static IResult Page(HttpContext http, AccountContext context, string id, string error = "", string name = "", string confirmation = "", int status = 200)
