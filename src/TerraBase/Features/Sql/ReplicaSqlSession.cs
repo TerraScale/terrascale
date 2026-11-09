@@ -50,9 +50,10 @@ internal sealed class ReplicaSqlSession(
             return await HomeAsync(command, admit, cancellationToken).ConfigureAwait(false);
         }
 
-        if (SqlScript.Classify(command.Sql) is not SqlStatementPlan plan)
+        var planned = SqlScript.Classify(command.Sql);
+        if (planned is not SqlStatementPlan plan)
         {
-            return SqlScript.Classify(command.Sql) is SqlError refused ? refused : SqlErrors.Error("the statement cannot be run");
+            return planned is SqlError refused ? refused : SqlErrors.Error("the statement cannot be run");
         }
 
         if (_readOnlyTransaction)
@@ -141,9 +142,10 @@ internal sealed class ReplicaSqlSession(
             return await DescribeAtHomeAsync(command, cancellationToken).ConfigureAwait(false);
         }
 
-        if (SqlScript.Classify(command.Sql) is not SqlStatementPlan plan)
+        var planned = SqlScript.Classify(command.Sql);
+        if (planned is not SqlStatementPlan plan)
         {
-            return SqlScript.Classify(command.Sql) is SqlError refused ? refused : SqlErrors.Error("the statement cannot be described");
+            return planned is SqlError refused ? refused : SqlErrors.Error("the statement cannot be described");
         }
 
         if (plan.Kind is not (SqlStatementKind.Read or SqlStatementKind.Write))
@@ -178,7 +180,6 @@ internal sealed class ReplicaSqlSession(
                 : _snapshot is { } snapshot ? await DescribeOnAsync(snapshot, plan, cancellationToken).ConfigureAwait(false) : Expired;
         }
 
-        // The replica's connections are read-only and refuse to prepare a write: writes are described where they run, at the home.
         if (plan.Kind == SqlStatementKind.Write)
         {
             return await DescribeAtHomeAsync(command, cancellationToken).ConfigureAwait(false);
@@ -353,7 +354,6 @@ internal sealed class ReplicaSqlSession(
             (var home, _) => await home!.DescribeAsync(command, cancellationToken).ConfigureAwait(false),
         };
 
-    // Whatever the home ran may have changed the database: later reads here need a pull that started after its answer.
     private async ValueTask<SqlOutcome> MarkAsync(SqlOutcome outcome)
     {
         _position = replicas.Position;
@@ -374,9 +374,6 @@ internal sealed class ReplicaSqlSession(
 
     private async ValueTask UsePrimaryAsync(CancellationToken cancellationToken)
     {
-        // Recovery can retain both a primary and a same-region replica. The
-        // admitted writer must read its primary, while followers keep their
-        // replica and R10 holds. Preserve any transaction's existing snapshot.
         if (!_primary && !_readOnlyTransaction && (_home is null || _home is SqlSession { IsAutocommit: true })
             && await service.UsePrimaryAsync(database, cancellationToken).ConfigureAwait(false))
         {

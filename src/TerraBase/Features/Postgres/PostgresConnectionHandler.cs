@@ -22,12 +22,16 @@ using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
+using TerraBase.Configuration;
+using TerraBase.Features.Catalog;
+using TerraBase.Features.Sql.Routing;
 
 namespace TerraBase.Features.Postgres;
 
 internal sealed class PostgresConnectionHandler(IServiceProvider services) : ConnectionHandler
 {
-    private const int Protocol30 = 196608, CancelCode = 80877102, SslCode = 80877103, GssCode = 80877104;
+    private const int CancelCode = 80877102, SslCode = 80877103, GssCode = 80877104;
+    private const int CleartextPassword = 3;
     private const int MaxStartupBytes = 10_000, MaxMessageBytes = 1024 * 1024, MaxNamed = 256;
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
     private static readonly PgError Denied = new("28P01", "password authentication failed");
@@ -179,11 +183,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 parameters[name] = packet.CString();
             }
 
-            if (code != Protocol30)
+            if (code != PostgresStatements.ProtocolVersion)
             {
                 var unknown = parameters.Keys.Where(name => name.StartsWith("_pq_.", StringComparison.Ordinal)).ToList();
                 output.Begin('v');
-                output.Int32(Protocol30);
+                output.Int32(PostgresStatements.ProtocolVersion);
                 output.Int32(unknown.Count);
                 unknown.ForEach(output.CString);
                 output.End();
@@ -196,7 +200,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private async ValueTask<(Session? Session, Relay? Relay)> AuthenticateAsync(PipeReader input, PgWriter output, Dictionary<string, string> parameters, IPAddress? client, bool relayed, CancellationToken cancellationToken)
     {
         output.Begin('R');
-        output.Int32(3); // AuthenticationCleartextPassword: the password is an API key.
+        output.Int32(CleartextPassword);
         output.End();
         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
         var (type, body, reservation) = await ReadMessageAsync(input, cancellationToken).ConfigureAwait(false);
@@ -210,46 +214,45 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             var secret = new PgReader(body).CString();
             var database = parameters.GetValueOrDefault("database") ?? parameters.GetValueOrDefault("user") ?? "";
             var access = await AuthorizeAsync(secret, database, client, relayed, cancellationToken).ConfigureAwait(false);
-            if (access is PgError error)
+            switch (access)
             {
-                output.Error(error.Code, error.Message, fatal: true);
-                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                return default;
-            }
+                case PgError error:
+                    output.Error(error.Code, error.Message, fatal: true);
+                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    return default;
+                case HomeNode home:
+                    return (null, new Relay(home, PostgresRelay.Startup(parameters, secret), client));
+                case Authorized authorized:
+                    var sql = services.GetRequiredService<ISqlService>().Open(authorized.Database, authorized.CanWrite);
+                    var project = database.IndexOf('/', StringComparison.Ordinal) is var slash && slash >= 0 ? database[..slash] : null;
+                    Session session;
+                    do
+                    {
+                        session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
+                            parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
+                        {
+                            Key = authorized.Key,
+                            Until = authorized.Until,
+                            Project = project,
+                        };
+                    }
+                    while (!_sessions.TryAdd(session.ProcessId, session));
 
-            if (access is HomeNode home)
-            {
-                return (null, new Relay(home, PostgresRelay.Startup(parameters, secret), client));
-            }
+                    try
+                    {
+                        await GreetAsync(session, output, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        _sessions.TryRemove(session.ProcessId, out _);
+                        await sql.DisposeAsync().ConfigureAwait(false);
+                        throw;
+                    }
 
-            var authorized = access is Authorized granted ? granted : throw new InvalidOperationException();
-            var sql = services.GetRequiredService<ISqlService>().Open(authorized.Database, authorized.CanWrite);
-            var project = database.IndexOf('/', StringComparison.Ordinal) is var slash && slash >= 0 ? database[..slash] : null;
-            Session session;
-            do
-            {
-                session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
-                    parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""))
-                {
-                    Key = authorized.Key,
-                    Until = authorized.Until,
-                    Project = project,
-                };
+                    return (session, null);
+                default:
+                    return default;
             }
-            while (!_sessions.TryAdd(session.ProcessId, session));
-
-            try
-            {
-                await GreetAsync(session, output, cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                _sessions.TryRemove(session.ProcessId, out _);
-                await sql.DisposeAsync().ConfigureAwait(false);
-                throw;
-            }
-
-            return (session, null);
         }
     }
 
@@ -340,9 +343,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            // The catalog record reached this region without the database: a home-only database homed elsewhere is served
-            // by relaying the whole session to its home (docs/terrabase/cross-region.md), never by opening the record here.
-            // Only a session this grant already authorizes relays; a restricted key is denied here, without the hop.
             TenantContext tenant when (restriction is null || restriction == tenant.DatabaseId)
                 && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until),
@@ -354,7 +354,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, bool relayed, CancellationToken cancellationToken)
     {
-        if (!services.GetRequiredService<TerraBase.Features.Catalog.ICatalogGate>().IsOpen)
+        if (!services.GetRequiredService<ICatalogGate>().IsOpen)
         {
             return new PgError("57P03", "this machine's catalog is not verified; retry");
         }
@@ -376,7 +376,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         return await Tenants.FindDatabaseAsync(key.OrganizationId, project, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            // As above: a record homed elsewhere serves its sessions from its home, when this key reaches it.
             TenantContext tenant when key.Reaches(tenant) && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite)),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
@@ -384,10 +383,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         };
     }
 
-    /// <summary>Whether <paramref name="tenant"/>'s record places its database in another region only, so its session is relayed there.</summary>
     private async ValueTask<HomeNode?> AwayAsync(TenantContext tenant, CancellationToken cancellationToken)
     {
-        var region = services.GetRequiredService<Configuration.TerraBaseOptions>().Region;
+        var region = services.GetRequiredService<TerraBaseOptions>().Region;
         return await services.GetRequiredService<IReplicaCatalog>().FindAsync(tenant, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
             && !placement.Includes(region)
             && await services.GetRequiredService<IHomeLocator>().LocateAsync(tenant.ProjectId!, tenant.DatabaseId, cancellationToken).ConfigureAwait(false) is { } home
@@ -417,7 +415,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 var exchange = session.Exchange ??= new Exchange(Time.GetTimestamp(), output.Written, EntityIds.New(Time).ToString());
                 RequestLogOperations.Current.Value = exchange.Operations;
                 exchange.Received += 5 + body.Length;
-                if (!services.GetRequiredService<TerraBase.Features.Catalog.ICatalogGate>().IsOpen)
+                if (!services.GetRequiredService<ICatalogGate>().IsOpen)
                 {
                     output.Error("57P03", "this machine's catalog is not verified; retry", fatal: true);
                     await output.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -449,8 +447,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     case 'H':
                         await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                         break;
-                    case 'P' or 'B' or 'D' or 'E' or 'C' when !failed:
-                        if (await ExtendedAsync(session, (char)type, message, output, cancellationToken).ConfigureAwait(false) is { } refused)
+                    case 'P' or 'B' or 'D' or 'E' or 'C':
+                        if (!failed && await ExtendedAsync(session, (char)type, message, output, cancellationToken).ConfigureAwait(false) is { } refused)
                         {
                             Fail(session, output, refused);
                             if (refused.Fatal)
@@ -463,8 +461,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                             failed = true;
                         }
 
-                        break;
-                    case 'P' or 'B' or 'D' or 'E' or 'C':
                         break;
                     default:
                         throw new InvalidDataException("unsupported message type");
@@ -601,7 +597,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                 if (session.Statements.Count >= MaxNamed && !session.Statements.ContainsKey(statementName))
                 {
-                    return new PgError("54000", "at most 256 prepared statements per session");
+                    return new PgError("54000", $"at most {MaxNamed} prepared statements per session");
                 }
 
                 var parsedStatement = parsed is [var single] ? single : new PgStatement(PgKind.Empty, "", "", 0);
@@ -627,7 +623,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 var args = new SqlValue[values.Length];
                 for (var i = 0; i < values.Length; i++)
                 {
-                    if (PostgresStatements.Decode(bound.Oids[i], formats.Length == 0 ? 0 : formats[Math.Min(i, formats.Length - 1)], values[i]) is not { } value)
+                    if (PostgresStatements.Decode(bound.Oids[i], Format(formats, i), values[i]) is not { } value)
                     {
                         return new PgError("22P02", $"invalid value for parameter ${i + 1}, or an unsupported binary type");
                     }
@@ -637,7 +633,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                 if (session.Portals.Count >= MaxNamed && !session.Portals.ContainsKey(portalName))
                 {
-                    return new PgError("54000", "at most 256 portals per session");
+                    return new PgError("54000", $"at most {MaxNamed} portals per session");
                 }
 
                 session.Portals[portalName] = new Portal(bound.Statement, args, resultFormats) { Columns = bound.Columns, Described = bound.Described };
@@ -666,7 +662,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                     output.Begin('t');
                     output.Int16(statement.Oids.Length);
-                    Array.ForEach(statement.Oids, oid => output.Int32(oid == 0 ? PostgresStatements.TextOid : oid));
+                    Array.ForEach(statement.Oids, oid => output.Int32(oid == 0 ? PgOid.Text : oid));
                     output.End();
                     Describe(output, columns, []);
                     return null;
@@ -798,7 +794,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             case PgKind.Set or PgKind.Show:
                 session.Settings["terrascale.write_route"] = session.Sql.LastRoute?.Header ?? "none";
                 var answered = PostgresStatements.RunCommand(statement.Kind, statement.Text, session.Settings);
-                session.Sql.Prefer(SqlExecuteEndpoint.Preference(session.Settings["terrascale.write"]) ?? Features.Sql.Routing.WriteOverride.Auto);
+                session.Sql.Prefer(SqlExecuteEndpoint.Preference(session.Settings["terrascale.write"]) ?? WriteOverride.Auto);
                 return answered;
             case PgKind.Catalog when PgCatalog.Functions(statement.Text, session.Database, session.User) is { } functions:
                 return new[] { functions };
@@ -979,7 +975,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             output.Int16(row.Count);
             for (var i = 0; i < row.Count; i++)
             {
-                var oid = columns is not null && i < columns.Length ? columns[i].Oid : PostgresStatements.TextOid;
+                var oid = columns is not null && i < columns.Length ? columns[i].Oid : PgOid.Text;
                 if (!PostgresStatements.TryEncode(row[i], oid, Format(formats, i) == 1 && PostgresStatements.Binary(oid), out var bytes))
                 {
                     return new PgError(row[i].Kind == SqlValueKind.Integer ? "22003" : "22P02", $"a value of column {i + 1} does not fit its type");
@@ -1051,15 +1047,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         All,
     }
 
-    private sealed class Exchange(long started, long written, string requestId)
+    private sealed record Exchange(long Started, long Written, string RequestId)
     {
-        public string RequestId => requestId;
-
         public RequestLogOperations Operations { get; } = new();
-
-        public long Started => started;
-
-        public long Written => written;
 
         public long Received { get; set; }
 
@@ -1067,28 +1057,20 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         public TenantContext? Database { get; set; }
     }
-    private sealed class Prepared(PgStatement statement, int[] oids)
+
+    private sealed record Prepared(PgStatement Statement, int[] Oids)
     {
-        public PgStatement Statement => statement;
-
-        public int[] Oids => oids;
-
         public PgColumn[]? Columns { get; set; }
 
         public bool Described { get; set; }
     }
 
-    private sealed class Portal(PgStatement statement, SqlValue[] args, short[] formats)
+    private sealed record Portal(PgStatement Statement, SqlValue[] Args, short[] Formats)
     {
-        public PgStatement Statement => statement;
-
-        public SqlValue[] Args => args;
-
-        public short[] Formats => formats;
-
         public PgColumn[]? Columns { get; set; }
 
         public bool Described { get; set; }
+
         public PgOutcome? Pending { get; set; }
     }
     private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, IPAddress? Client, ISqlSession Sql, Dictionary<string, string> Settings)

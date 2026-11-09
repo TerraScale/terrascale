@@ -58,7 +58,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                     Validation error => ErrorResponse.From(error),
                     NotFound error => ErrorResponse.From(error),
                     Unavailable error => ErrorResponse.From(error),
-                    _ => throw new System.Diagnostics.UnreachableException(),
+                    TenantContext => throw new System.Diagnostics.UnreachableException(),
                 };
             }
         }

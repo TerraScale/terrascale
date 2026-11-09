@@ -14,9 +14,10 @@ internal static partial class PgCatalog
     // Built-in base types a driver may name; "unknown" is a pseudo-type Npgsql also loads.
     private static readonly (int Oid, string Name)[] Types =
     [
-        (16, "bool"), (17, "bytea"), (20, "int8"), (21, "int2"), (23, "int4"), (25, "text"), (114, "json"), (700, "float4"),
-        (701, "float8"), (705, "unknown"), (1043, "varchar"), (1082, "date"), (1114, "timestamp"), (1184, "timestamptz"),
-        (1700, "numeric"), (2950, "uuid"), (3802, "jsonb"),
+        (PgOid.Bool, "bool"), (PgOid.Bytea, "bytea"), (PgOid.Int8, "int8"), (PgOid.Int2, "int2"), (PgOid.Int4, "int4"), (PgOid.Text, "text"),
+        (PgOid.Json, "json"), (PgOid.Float4, "float4"), (PgOid.Float8, "float8"), (PgOid.Unknown, "unknown"), (PgOid.Varchar, "varchar"),
+        (PgOid.Date, "date"), (PgOid.Timestamp, "timestamp"), (PgOid.Timestamptz, "timestamptz"), (PgOid.Numeric, "numeric"),
+        (PgOid.Uuid, "uuid"), (PgOid.Jsonb, "jsonb"),
     ];
 
     // \d+ adds storage, compression, statistics target and description.
@@ -30,21 +31,18 @@ internal static partial class PgCatalog
     public static bool IsTypeLoad(string sql) =>
         sql.Contains("FROM pg_type AS typ", StringComparison.Ordinal) && sql.Contains("pg_namespace", StringComparison.Ordinal);
 
-    /// <summary>The four results of the type-loading batch: no composite or enum types exist.</summary>
     public static PgResult[] TypeLoad() =>
     [
         new(Text("version"), [Row(PostgresStatements.Version)], "SELECT 1"),
         new(Text("nspname", "oid", "typname", "typtype", "typnotnull", "elemtypoid"),
-            [.. Types.Select(type => Row("pg_catalog", type.Oid.ToString(CultureInfo.InvariantCulture), type.Name, type.Oid == 705 ? "p" : "b", "f", null))],
+            [.. Types.Select(type => Row("pg_catalog", type.Oid.ToString(CultureInfo.InvariantCulture), type.Name, type.Oid == PgOid.Unknown ? "p" : "b", "f", null))],
             $"SELECT {Types.Length}"),
         new(Text("oid", "attname", "atttypid"), [], "SELECT 0"),
         new(Text("oid", "enumlabel"), [], "SELECT 0"),
     ];
 
-    /// <summary>Whether a statement reads the catalog or only calls session functions.</summary>
     public static bool IsCatalog(string sql) => CatalogPattern().IsMatch(sql) || FunctionsPattern().IsMatch(sql);
 
-    /// <summary><c>SELECT current_database(), current_schema, current_user, version()</c> in any combination; null otherwise.</summary>
     public static PgResult? Functions(string sql, string database, string user)
     {
         var match = FunctionsPattern().Match(sql);
@@ -64,7 +62,6 @@ internal static partial class PgCatalog
         })])], "SELECT 1");
     }
 
-    /// <summary>Answers a recognised psql query; table OIDs are <see cref="PostgresStatements.FirstTableOid"/> plus the table's position.</summary>
     public static PgOutcome Answer(string sql, string database, string user, IReadOnlyList<SqlTableInfo> tables)
     {
         var q = Spaces().Replace(sql, " ");
@@ -131,7 +128,6 @@ internal static partial class PgCatalog
 
     private static PgResult[] One(PgResult result) => [result];
 
-    // A listing whose columns are `expr AS "Label"`: each label's value, null when unknown.
     private static PgResult[] Aliased(string q, IEnumerable<Dictionary<string, string?>> rows)
     {
         var labels = AliasPattern().Matches(q[..Math.Max(0, q.IndexOf(" FROM ", StringComparison.Ordinal))]).Select(match => match.Groups[1].Value).ToArray();
@@ -139,7 +135,6 @@ internal static partial class PgCatalog
         return [new(Text(labels), values, $"SELECT {values.Length}")];
     }
 
-    // Whether every psql name pattern on `column` (`x.column OPERATOR(pg_catalog.~) '^(...)$'`) matches `value`.
     private static bool Visible(string q, string column, string value) => NamePattern().Matches(q)
         .Where(match => match.Groups[1].Value == column)
         .All(match =>
@@ -154,30 +149,29 @@ internal static partial class PgCatalog
             }
         });
 
-    // ListTablesAsync reports no DEFAULT, so psql's Default column stays empty.
     private static string TypeName(string? declared) => PostgresStatements.Oid(declared) switch
     {
-        20 => "bigint",
-        21 => "smallint",
-        23 => "integer",
-        701 => "double precision",
-        1700 => "numeric",
-        25 => "text",
-        1043 => "character varying",
-        16 => "boolean",
-        114 => "json",
-        3802 => "jsonb",
-        17 => "bytea",
-        2950 => "uuid",
-        1082 => "date",
-        1114 => "timestamp without time zone",
-        1184 => "timestamp with time zone",
+        PgOid.Int8 => "bigint",
+        PgOid.Int2 => "smallint",
+        PgOid.Int4 => "integer",
+        PgOid.Float8 => "double precision",
+        PgOid.Numeric => "numeric",
+        PgOid.Text => "text",
+        PgOid.Varchar => "character varying",
+        PgOid.Bool => "boolean",
+        PgOid.Json => "json",
+        PgOid.Jsonb => "jsonb",
+        PgOid.Bytea => "bytea",
+        PgOid.Uuid => "uuid",
+        PgOid.Date => "date",
+        PgOid.Timestamp => "timestamp without time zone",
+        PgOid.Timestamptz => "timestamp with time zone",
         _ => string.IsNullOrEmpty(declared) ? "text" : declared.ToLowerInvariant(),
     };
 
     private static IReadOnlyList<SqlValue> Row(params string?[] values) => [.. values.Select(value => value is null ? SqlValue.Null : SqlValue.Of(value))];
 
-    private static PgColumn[] Text(params string[] names) => [.. names.Select(name => new PgColumn(name, PostgresStatements.TextOid))];
+    private static PgColumn[] Text(params string[] names) => [.. names.Select(name => new PgColumn(name, PgOid.Text))];
 
     // A schema-qualified catalog name, or an unqualified catalog relation or view (pg_catalog is searched first). A user
     // table that only starts with pg_, such as pg_orders, is ordinary SQL.

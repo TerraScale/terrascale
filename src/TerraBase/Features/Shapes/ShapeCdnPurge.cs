@@ -67,7 +67,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
             if (page.Records.Count == QueueItems || page.HasMore)
             {
                 _purges.Add(1, new KeyValuePair<string, object?>("outcome", "dropped"));
-                return false; // The caller keeps its object and retries; no deletion loses its purge authority.
+                return false;
             }
             _ = await transaction.PutAsync(Outbox, id, JsonSerializer.SerializeToUtf8Bytes(new ShapeCdnPurgeWork(url, time.GetUtcNow()),
                 ShapeCdnPurgeJsonContext.Default.ShapeCdnPurgeWork), cancellationToken).ConfigureAwait(false);
@@ -120,7 +120,6 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
         await Parallel.ForEachAsync(page, new ParallelOptions { MaxDegreeOfParallelism = 32, CancellationToken = token }, async (record, cancellationToken) =>
         {
             var url = record.Work.Url;
-            // Queue is durable BEFORE R2 DELETE. Never purge early, which could allow a cache refill before DELETE.
             if (!await custody.Store.ReadAsync(new Uri(url).AbsolutePath[1..], static (_, _) => Task.CompletedTask, cancellationToken).ConfigureAwait(false))
             {
                 ready.Add((record.Id, url, url[8..(ObjectPrefix.Length + 20)]));
@@ -132,7 +131,6 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
             var success = await PurgeAsync(batch, token).ConfigureAwait(false);
             if (success)
             {
-                // API acceptance is not eviction proof. A stale 200, failed probe or outage keeps the durable work.
                 var client = http.CreateClient(VerificationClientName);
                 var unverified = 0;
                 await Parallel.ForEachAsync(ready, new ParallelOptions { MaxDegreeOfParallelism = 32, CancellationToken = token }, async (item, cancellationToken) =>
@@ -163,7 +161,6 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
     }
 
     private ShapeCdnPurgeWork ReadWork(ReadOnlySpan<byte> json) => json[0] == (byte)'"'
-        // Preserve already-durable work across deployment; these entries predate timestamped admission.
         ? new(JsonSerializer.Deserialize(json, ShapeCdnPurgeJsonContext.Default.String)!, time.GetUtcNow())
         : JsonSerializer.Deserialize(json, ShapeCdnPurgeJsonContext.Default.ShapeCdnPurgeWork)!;
 

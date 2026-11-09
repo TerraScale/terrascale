@@ -60,11 +60,6 @@ public interface ILocalCommitPath
 {
     bool Ready(TenantContext database);
 
-    /// <summary>
-    /// Whether the discovered regional quorum can acknowledge a local commit: one node when the region has no partner,
-    /// otherwise two healthy nodes, with a connected push stream and an admitted clock. Without it, only
-    /// <c>durability=home</c> writes commit locally; the others go home.
-    /// </summary>
     bool LocalAckAvailable { get; }
 }
 
@@ -259,7 +254,7 @@ internal sealed class WriteRouter(
                 return touched.Overlaps(table.ForeignKeyColumns) || touched.Overlaps(table.ReferencedColumns)
                     ? Home(WriteReasons.ForeignKeyChange)
                     : Local(WriteReasons.UpdateByKey);
-            default:
+            case "delete":
                 if (table.Referenced)
                 {
                     return Home(WriteReasons.ParentDelete);
@@ -267,6 +262,8 @@ internal sealed class WriteRouter(
 
                 return ByKey(facts, table) ? Local(WriteReasons.DeleteByKey) : Home(WriteReasons.NotByKey);
         }
+
+        return Home(WriteReasons.Unknown);
     }
 
     private static bool ByKey(SqlRouteFacts facts, TableFacts table)

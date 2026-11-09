@@ -8,6 +8,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
+using TerraBase.Features.Sql.Routing;
 
 namespace TerraBase.Features.Sql;
 
@@ -15,7 +16,7 @@ internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime,
     IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options, IHomeApply apply,
-    Routing.WriteRouter router, DatabaseFences fences, RegionalOwners owners) : ISqlService
+    WriteRouter router, DatabaseFences fences, RegionalOwners owners) : ISqlService
 {
     private const int MaxTables = 10_000;
 
@@ -23,7 +24,6 @@ internal sealed class SqlService(
     {
         ArgumentNullException.ThrowIfNull(database);
         ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite, apply, fences);
-        // Only a region holding a replica of the database serves it from one; its home always holds the file.
         return replicas.Holds(database)
             ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, transactionTime, database, canWrite, Local)
             : Local();
@@ -75,7 +75,7 @@ internal sealed class SqlService(
             }
             allowanceMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 
-            if (command.Args.Concat(command.Named.Values).Any(value => value.Kind == SqlValueKind.Real && !double.IsFinite(value.Real)))
+            if (SqlSession.HasNonFiniteArgs(command))
             {
                 return new ReplicaSqlFailure(SqlErrors.NonFinite, i);
             }
@@ -84,10 +84,8 @@ internal sealed class SqlService(
             try
             {
                 started = Stopwatch.GetTimestamp();
-                raw = await run(
-                    new SqlStatement(await SqlSession.RunTextAsync(plan, run).ConfigureAwait(false), [.. command.Args.Select(SqlSession.Bound)],
-                        command.Named.ToDictionary(pair => pair.Key, pair => SqlSession.Bound(pair.Value), StringComparer.Ordinal),
-                        SqlSession.MaxRows, SqlSession.MaxBytes, SqlLimits.MaxRequestTime)).ConfigureAwait(false);
+                raw = await run(SqlSession.Statement(await SqlSession.RunTextAsync(plan, run).ConfigureAwait(false), command, SqlLimits.MaxRequestTime))
+                    .ConfigureAwait(false);
                 nativeMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             }
             catch (SqlStatementException error)
@@ -105,15 +103,12 @@ internal sealed class SqlService(
                 return new ReplicaSqlFailure(SqlSession.TooManyRows, i);
             }
 
-            if (raw.Rows.Any(row => row.Any(value => value is double real && !double.IsFinite(real))))
+            if (SqlSession.HasNonFiniteRows(raw))
             {
                 return new ReplicaSqlFailure(SqlErrors.NonFinite, i);
             }
 
-            var result = new SqlResult(
-                [.. raw.Columns.Select(column => new SqlColumn(column.Name, column.DeclType))],
-                [.. raw.Rows.Select(row => (IReadOnlyList<SqlValue>)Array.ConvertAll(row, SqlSession.Value))],
-                plan.Kind == SqlStatementKind.Write ? raw.RowsAffected : 0, null);
+            var result = SqlSession.ToResult(plan, raw, lastInsertRowid: null);
             units += plan.ReadsTables && plan.Kind != SqlStatementKind.Write ? SqlSession.ReadUnits(result) : 0;
             results.Add(result);
         }
@@ -133,7 +128,6 @@ internal sealed class SqlService(
         ArgumentNullException.ThrowIfNull(database);
         if (replicas.Holds(database) && !await UsePrimaryAsync(database, cancellationToken).ConfigureAwait(false))
         {
-            // A replica region lists its replica's tables.
             var reader = await replicas.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
             if (reader is not null)
             {
@@ -173,7 +167,7 @@ internal sealed class SqlService(
                 break;
             }
 
-            var columns = await run(SqlSession.Internal($"PRAGMA table_xinfo(\"{name.Replace("\"", "\"\"", StringComparison.Ordinal)}\")")).ConfigureAwait(false);
+            var columns = await run(SqlSession.Internal($"PRAGMA table_xinfo({SqlScript.Quote(name)})")).ConfigureAwait(false);
             tables.Add(new SqlTableInfo(name, [.. columns.Rows.Select(column => new SqlTableColumn(
                 column[1] as string ?? "",
                 column[2] is string { Length: > 0 } type ? type : null,
@@ -287,9 +281,10 @@ internal sealed class SqlSession(
                 try
                 {
                     var text = SqlScript.IsSimple(remaining) ? remaining[..SqlScript.SimpleLength(remaining)] : remaining;
-                    if (SqlScript.Classify(text, bounded: false) is not SqlStatementPlan plan)
+                    var planned = SqlScript.Classify(text, bounded: false);
+                    if (planned is not SqlStatementPlan plan)
                     {
-                        return SqlScript.Classify(text, bounded: false) is SqlError refused ? refused : SqlErrors.Error("SQL syntax error in the script");
+                        return planned is SqlError refused ? refused : SqlErrors.Error("SQL syntax error in the script");
                     }
 
                     _consumed = 0;
@@ -331,9 +326,10 @@ internal sealed class SqlSession(
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (Plan(command.Sql) is not SqlStatementPlan plan)
+            var planned = Plan(command.Sql);
+            if (planned is not SqlStatementPlan plan)
             {
-                return Plan(command.Sql) is SqlError error ? error : SqlErrors.Error("the statement cannot be described");
+                return planned is SqlError error ? error : SqlErrors.Error("the statement cannot be described");
             }
 
             await ExpireIfDueAsync().ConfigureAwait(false);
@@ -394,6 +390,20 @@ internal sealed class SqlSession(
 
     internal static SqlStatement Internal(string sql) => new(sql, [], NoNamed, MaxRows, MaxBytes, SqlLimits.MaxRequestTime);
 
+    internal static SqlStatement Statement(string run, SqlCommand command, TimeSpan timeout, bool first = false) => new(
+        run, [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal), MaxRows, MaxBytes, timeout, first);
+
+    internal static SqlResult ToResult(SqlStatementPlan plan, SqlStatementResult raw, long? lastInsertRowid) => new(
+        [.. raw.Columns.Select(column => new SqlColumn(column.Name, column.DeclType))],
+        [.. raw.Rows.Select(row => (IReadOnlyList<SqlValue>)Array.ConvertAll(row, Value))],
+        plan.Kind == SqlStatementKind.Write ? raw.RowsAffected : 0, lastInsertRowid);
+
+    internal static bool HasNonFiniteArgs(SqlCommand command) =>
+        command.Args.Concat(command.Named.Values).Any(value => value.Kind == SqlValueKind.Real && !double.IsFinite(value.Real));
+
+    internal static bool HasNonFiniteRows(SqlStatementResult raw) =>
+        raw.Rows.Any(row => row.Any(value => value is double real && !double.IsFinite(real)));
+
     internal static async ValueTask<string> RunTextAsync(SqlStatementPlan plan, Func<SqlStatement, ValueTask<SqlStatementResult>> run)
     {
         if (plan.RunWithoutConflicts is not { } without)
@@ -407,9 +417,16 @@ internal sealed class SqlSession(
 
     private int _consumed;
 
-    private bool RequestExpired =>
-        Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue
-        && time.GetElapsedTime(started) > SqlLimits.MaxRequestTime;
+    private bool RequestExpired => RequestStarted is { } started && time.GetElapsedTime(started) > SqlLimits.MaxRequestTime;
+
+    private long? RequestStarted
+    {
+        get
+        {
+            var started = Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue);
+            return started == long.MaxValue ? null : started;
+        }
+    }
 
     private SqlPlanOutcome Plan(string sql)
     {
@@ -430,7 +447,7 @@ internal sealed class SqlSession(
             timeout = Min(timeout, limit);
         }
 
-        if (Math.Min(_transportStarted ?? long.MaxValue, _scriptStarted ?? long.MaxValue) is var started && started != long.MaxValue)
+        if (RequestStarted is { } started)
         {
             timeout = Min(timeout, SqlLimits.MaxRequestTime - time.GetElapsedTime(started));
         }
@@ -448,7 +465,7 @@ internal sealed class SqlSession(
     private async ValueTask<SqlOutcome> ExecuteLockedAsync(
         SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, bool first, CancellationToken cancellationToken)
     {
-        if (command.Args.Concat(command.Named.Values).Any(value => value.Kind == SqlValueKind.Real && !double.IsFinite(value.Real)))
+        if (HasNonFiniteArgs(command))
         {
             return SqlErrors.NonFinite;
         }
@@ -688,10 +705,8 @@ internal sealed class SqlSession(
         try
         {
             raw = await transaction.ExecuteStatementAsync(
-                new SqlStatement(await RunTextAsync(plan, statement => transaction.ExecuteStatementAsync(statement, cancellationToken)).ConfigureAwait(false),
-                    [.. command.Args.Select(Bound)], command.Named.ToDictionary(pair => pair.Key, pair => Bound(pair.Value), StringComparer.Ordinal),
-                    MaxRows, MaxBytes, StatementTimeout(), first),
-                cancellationToken).ConfigureAwait(false);
+                Statement(await RunTextAsync(plan, statement => transaction.ExecuteStatementAsync(statement, cancellationToken)).ConfigureAwait(false),
+                    command, StatementTimeout(), first), cancellationToken).ConfigureAwait(false);
         }
         catch (SqlStatementException error)
         {
@@ -722,16 +737,12 @@ internal sealed class SqlSession(
             return (TooManyChanges, false);
         }
 
-        if (raw.Rows.Any(row => row.Any(value => value is double real && !double.IsFinite(real))))
+        if (HasNonFiniteRows(raw))
         {
             return (SqlErrors.NonFinite, false);
         }
 
-        var result = new SqlResult(
-            [.. raw.Columns.Select(column => new SqlColumn(column.Name, column.DeclType))],
-            [.. raw.Rows.Select(row => (IReadOnlyList<SqlValue>)Array.ConvertAll(row, Value))],
-            plan.Kind == SqlStatementKind.Write ? raw.RowsAffected : 0,
-            plan.Verb == SqlWriteVerb.Insert && raw.RowsAffected > 0 ? raw.LastInsertRowid : null);
+        var result = ToResult(plan, raw, plan.Verb == SqlWriteVerb.Insert && raw.RowsAffected > 0 ? raw.LastInsertRowid : null);
         if (admit?.Invoke(result) is { } refused)
         {
             return (refused, false);

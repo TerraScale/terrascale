@@ -5,12 +5,14 @@ using System.Text.RegularExpressions;
 
 namespace TerraBase.Features.Postgres;
 
-internal static class PgNumeric
+internal static partial class PgNumeric
 {
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
-    private static readonly Regex Pattern = new(@"^-?\d+(\.\d+)?$", RegexOptions.Compiled);
 
-    public static bool Matches(string text) => Pattern.IsMatch(text);
+    public static bool Matches(string text) => Pattern().IsMatch(text);
+
+    [GeneratedRegex(@"^-?\d+(\.\d+)?$", RegexOptions.CultureInvariant)]
+    private static partial Regex Pattern();
 
     public static string? Decode(ReadOnlySpan<byte> b)
     {
@@ -67,7 +69,7 @@ internal static class PgNumeric
 
     public static byte[]? Encode(string text)
     {
-        if (!Pattern.IsMatch(text))
+        if (!Pattern().IsMatch(text))
         {
             return null;
         }
