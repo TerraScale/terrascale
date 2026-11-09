@@ -1172,7 +1172,7 @@ internal sealed partial class EngineManagementService(
 
             if (version is not null || await CatalogTables.ExistAsync(transaction, cancellationToken).ConfigureAwait(false))
             {
-                logger.ZLogError($"The management catalog has a format this build does not support; discard the affected data");
+                logger.ZLogError("The management catalog has a format this build does not support; discard the affected data");
                 return ManagementErrors.CatalogUnsupported;
             }
 
