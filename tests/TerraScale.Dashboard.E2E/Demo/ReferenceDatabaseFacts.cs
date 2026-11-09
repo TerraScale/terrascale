@@ -193,6 +193,11 @@ namespace TerraScale.Dashboard.E2E
             throw ReadOnly();
         }
 
+        public Task<ProducerRestoreOperation> StartRestorePointInTimeAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, DateTimeOffset pointInTime, string? name, long? ttlSeconds, CancellationToken ct)
+        {
+            throw ReadOnly();
+        }
+
         public Task<ProducerRestoreOperation> RestoreOperationAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string operationId, CancellationToken ct)
         {
             throw ReadOnly();

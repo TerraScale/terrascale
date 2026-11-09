@@ -91,7 +91,7 @@ Use your client's tool discovery (`tools/list`) for the current names, parameter
 
 `execute_sql` runs reads, writes and schema changes; `run_sql` accepts reads only.
 `get_database_schema` lists SQL tables and their declared columns. `create_database` and `fork_database`
-accept `ttlHours`. Backup and restore tools preserve the source database. See the complete
+accept `ttlHours`. With `pointInTime`, `fork_database` returns a running restore operation instead of waiting for the copy; poll `get_restore_status` for the new database. Backup and restore tools preserve the source database. See the complete
 [agent database workflow](/ja/guides/agent-databases#agent-workflow), including scoped-key minting over an API key connection.
 
 Creating, rotating or restricting API keys requires a fresh dashboard confirmation: an unattended assistant call returns `step_up_required`, and you finish the action from the dashboard's **API keys** page. Listing and revoking keys work from the assistant.

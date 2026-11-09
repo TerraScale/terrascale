@@ -136,7 +136,15 @@ namespace TerraScale.Dashboard.Features.Databases
             {
                 if (action == "branch")
                 {
-                    var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), form["pointInTime"].ToString());
+                    var pointInTime = form["pointInTime"].ToString();
+                    if (!string.IsNullOrWhiteSpace(pointInTime))
+                    {
+                        var recovery = http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Backups.WholeDatabaseRecovery>();
+                        var started = await recovery.StartForkAsync(context, id, pointInTime, form["name"].ToString(), DatabaseTtl.Seconds(DatabaseTtl.Hours(form["ttlHours"].ToString())), http.RequestAborted);
+                        return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "backups") + "?restore=" + started.OperationId) :
+                            Results.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
+                    }
+                    var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()));
                     return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(DatabaseOutput(branch), statusCode: 201);
                 }
                 await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);

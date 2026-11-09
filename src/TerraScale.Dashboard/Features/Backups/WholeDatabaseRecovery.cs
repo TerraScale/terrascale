@@ -83,19 +83,29 @@ namespace TerraScale.Dashboard.Features.Backups
 
         public async Task<BackupRestoreStart> StartRestoreAsync(AccountContext context, string databaseId, string destination, string point, string name, string confirmName, CancellationToken ct)
         {
-            (context, var source) = await SourceAsync(context, databaseId, ct);
-            DatabaseService.DemandProvision(context.Organization!, context.UserId);
-            DatabaseService.DemandRoom(context.Organization!);
             name = DatabaseService.ValidName(name);
-            DatabaseService.DemandName(context.Project!, name);
             if (confirmName != name)
             {
                 throw new AccountAccessException("Type the new database name exactly to confirm restore as a new database.", 422);
             }
 
+            return await StartAsync(context, databaseId, destination, point, name, null, ct);
+        }
+
+        public Task<BackupRestoreStart> StartForkAsync(AccountContext context, string databaseId, string point, string name, long? ttlSeconds, CancellationToken ct)
+        {
+            return StartAsync(context, databaseId, "platform", point, DatabaseService.ValidName(name), ttlSeconds, ct);
+        }
+
+        private async Task<BackupRestoreStart> StartAsync(AccountContext context, string databaseId, string destination, string point, string name, long? ttlSeconds, CancellationToken ct)
+        {
+            (context, var source) = await SourceAsync(context, databaseId, ct);
+            DatabaseService.DemandProvision(context.Organization!, context.UserId);
+            DatabaseService.DemandRoom(context.Organization!);
+            DatabaseService.DemandName(context.Project!, name);
             var instant = Instant(point, await WindowAsync(context, databaseId, destination, ct));
             var operation = await SafeAsync(async () => (await (await ClientAsync(context, source, ["databases:read", "databases:write"], ct))
-                .StartRestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, destination)))
+                .StartRestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, destination, ttlSeconds)))
                 .Deserialize(BackupBackendJson.Default.ProducerRestoreOperation) ?? throw new JsonException("Invalid restore operation."));
             if (!TerraScaleIds.IsValid(operation.OperationId) || operation.Status is not ("running" or "completed" or "failed") ||
                 operation.Status != "running" && operation.Database is null)

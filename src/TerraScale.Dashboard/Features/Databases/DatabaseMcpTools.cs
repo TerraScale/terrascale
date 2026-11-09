@@ -9,7 +9,7 @@ using static TerraScale.Dashboard.Platform.Mcp.McpScope;
 namespace TerraScale.Dashboard.Features.Databases
 {
     [McpServerToolType]
-    public sealed class DatabaseMcpTools(IHttpContextAccessor http, DatabaseService databases, BackupService backups, DatabaseConflicts conflicts)
+    public sealed class DatabaseMcpTools(IHttpContextAccessor http, DatabaseService databases, BackupService backups, WholeDatabaseRecovery recovery, DatabaseConflicts conflicts)
     {
         [McpServerTool(Name = "list_databases", Title = "List databases", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the databases in a project with their status and region.")]
         public async Task<McpDatabaseList> ListDatabases(string? organizationId = null, string? projectId = null,
@@ -69,10 +69,16 @@ namespace TerraScale.Dashboard.Features.Databases
             return await DatabaseOutput(await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation, ttlHours));
         }
 
-        [McpServerTool(Name = "fork_database", Title = "Fork database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Fork a database now or at an ISO 8601 point in time, with an optional TTL in hours.")]
-        public async Task<McpDatabase> ForkDatabase(string databaseId, string name, string? organizationId = null, string? projectId = null, string? pointInTime = null, decimal? ttlHours = null)
+        [McpServerTool(Name = "fork_database", Title = "Fork database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Fork a database now into a ready copy, or at an ISO 8601 pointInTime to start a restore and return the running operation at once instead of waiting for the copy; poll get_restore_status for the new database. Optional TTL in hours. A point-in-time fork requires management access and consumes one database slot.")]
+        public async Task<object> ForkDatabase(string databaseId, string name, string? organizationId = null, string? projectId = null, string? pointInTime = null, decimal? ttlHours = null)
         {
-            return await DatabaseOutput(await databases.BranchAsync(Scope(organizationId, projectId), databaseId, name, Cancellation, ttlHours, pointInTime));
+            var context = Scope(organizationId, projectId);
+            if (!string.IsNullOrWhiteSpace(pointInTime))
+            {
+                var started = await recovery.StartForkAsync(context, databaseId, pointInTime, name, DatabaseTtl.Seconds(ttlHours), Cancellation);
+                return new McpRestoreStart(started.OperationId, started.Status, name.Trim());
+            }
+            return await DatabaseOutput(await databases.BranchAsync(context, databaseId, name, Cancellation, ttlHours));
         }
 
         [McpServerTool(Name = "set_database_ttl", Title = "Set database TTL", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Set expiry from now using ttlHours (one minute to 365 days), or clear expiry with clear=true.")]

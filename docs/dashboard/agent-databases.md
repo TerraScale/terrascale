@@ -20,7 +20,11 @@ MCP exposes `create_database(name, ttlHours?)`,
 `set_database_ttl(databaseId, ttlHours)` or
 `set_database_ttl(databaseId, clear: true)`, `run_sql(databaseId, sql)` and
 `delete_database(databaseId, confirmName)`. `pointInTime` is an ISO 8601 timestamp;
-the native form uses UTC. `run_sql` remains read only. Delete requires the exact
+the native form uses UTC. With `pointInTime`, `fork_database` starts a point-in-time
+restore and returns the running operation at once instead of waiting for the copy;
+poll `get_restore_status` for the new database, and the dashboard fork form redirects
+to the backups tab with the operation's progress. Without it, the fork returns the
+ready database. `run_sql` remains read only. Delete requires the exact
 name. `fork_database` replaces `branch_database`; only the new tool is exposed.
 Database MCP results include `expiresAt`, explicitly null for permanent databases.
 

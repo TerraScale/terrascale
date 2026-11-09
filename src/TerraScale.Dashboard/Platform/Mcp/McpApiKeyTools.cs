@@ -142,15 +142,14 @@ namespace TerraScale.Dashboard.Platform.Mcp
             if (tool == "fork_database")
             {
                 var ttl = DatabaseTtl.Seconds(Hours());
+                var forkName = Text("name");
                 var instant = DatabaseTtl.Instant(Text("pointInTime"));
-                TerraBaseManagedDatabase fork;
                 if (instant is { } at)
                 {
-                    var answer = await rpc.User<IBackupsService>(scope.AccessToken, region.Id).WithCancellationToken(ct)
-                        .RestorePointInTimeAsync(scope.ProjectId, databaseId, new(at, Text("name"), null, ttl));
-                    fork = answer.Deserialize(ManagementJson.Default.TerraBaseManagedDatabase) ?? throw new JsonException("Invalid fork response.");
+                    var forkStart = await backups.StartRestorePointInTimeAsync(scope, region, databaseId, at, forkName, ttl, ct);
+                    return Reply(new McpRestoreStart(forkStart.OperationId, forkStart.Status, forkName is { Length: > 0 } ? forkName.Trim() : null), McpAgentJson.Default.McpRestoreStart);
                 }
-                else { fork = await management.BranchAsync(scope.ProjectId, databaseId, Text("name"), ttl); }
+                var fork = await management.BranchAsync(scope.ProjectId, databaseId, forkName, ttl);
                 return Reply(Output(fork), McpAgentJson.Default.McpDatabase);
             }
             if (tool == "set_database_ttl")
