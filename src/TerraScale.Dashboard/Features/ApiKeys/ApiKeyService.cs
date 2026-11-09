@@ -520,25 +520,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var query = string.Join('&', values.Where(value => !string.IsNullOrEmpty(value.Value)).Select(value => System.Net.WebUtility.UrlEncode(value.Key) + "=" + System.Net.WebUtility.UrlEncode(value.Value)));
             return query.Length == 0 ? path : path + "?" + query;
         }
-        public string AccessFor(string kind)
-        {
-            if (Create != kind || DraftScopes.Length == 0 && Error.Length == 0)
-            {
-                return "sql:read";
-            }
-
-            var scopes = DraftScopes.Split([',', ' ', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
-                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-            if (scopes.SequenceEqual(Full.Split(',').Order(StringComparer.Ordinal)))
-            {
-                return Full;
-            }
-
-            var value = string.Join(',', scopes);
-            return value is "sql:read" or "sql:write" or "sql:read,sql:write" or Full ? value : "";
-        }
-        // SQL read/write plus database management for setup and teardown scripts.
-        public const string Full = "sql:read,sql:write,databases:read,databases:write";
         public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
         {
             if (FullAccessScopes.All(key.Scopes.Contains))
