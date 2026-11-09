@@ -20,6 +20,7 @@ public interface IOperationAllowance
     ValueTask<OperationAllowanceCheck> CheckAsync(TenantContext database, MeteredOperation operation, CancellationToken cancellationToken);
 }
 
+// The monthly plan limits of https://terrascale.tech/pricing.json.
 internal sealed class OperationAllowance : IOperationAllowance
 {
     private readonly UsageMeter _meter;

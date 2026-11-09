@@ -7,6 +7,7 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 
+// A project enrolled by its first database create resolves in every region at once (TS-1394).
 public sealed class CrossRegionProjectEnrollmentTests
 {
     private const string Scopes = "databases:read databases:write";

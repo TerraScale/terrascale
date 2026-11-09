@@ -3,6 +3,7 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.Management;
 
+// ts-auth's closure request for one of its projects: docs/terrabase/project-closure.md.
 public sealed record ProjectClosureRequest(int Version, string? ClosureId, string? AuthorityOrganizationId);
 
 public sealed record ProjectClosureStatus(string Status, string ClosureId, int PendingHolders, int EvidenceVersion = 2);

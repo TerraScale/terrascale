@@ -11,6 +11,7 @@ using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
 
+// A delete acknowledged with 204 releases the allowance in every region (GitHub #1098).
 public sealed class CrossRegionDeleteAllowanceTests
 {
     private const string Scopes = "databases:read databases:write";

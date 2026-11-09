@@ -27,6 +27,7 @@ public sealed record UsageWindow(UsageGranularity Granularity, long First, int C
 
     private static readonly DateTimeOffset Latest = new(9999, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
+    // RFC 3339 date-times: a full date and time, optional fraction, and Z or a numeric offset.
     private static readonly string[] Rfc3339 =
     [
         "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", "yyyy-MM-dd'T'HH:mm:sszzz", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz",
