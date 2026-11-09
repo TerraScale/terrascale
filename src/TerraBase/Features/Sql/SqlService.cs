@@ -14,7 +14,6 @@ namespace TerraBase.Features.Sql;
 
 internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
-    [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime,
     IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options, IHomeApply apply,
     WriteRouter router, DatabaseFences fences, RegionalOwners owners) : ISqlService
 {
@@ -23,9 +22,9 @@ internal sealed class SqlService(
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite, apply, fences);
+        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, database, canWrite, apply, fences);
         return replicas.Holds(database)
-            ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, transactionTime, database, canWrite, Local)
+            ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, time, database, canWrite, Local)
             : Local();
     }
 
@@ -182,7 +181,7 @@ internal sealed class SqlService(
 
 
 internal sealed class SqlSession(
-    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time, TimeProvider transactionTime,
+    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     TenantContext database, bool canWrite, IHomeApply apply, DatabaseFences fences)
     : ISqlSession
 {
@@ -456,7 +455,7 @@ internal sealed class SqlSession(
 
         if (_pinned is { } pinned)
         {
-            timeout = Min(timeout, SqlLimits.MaxTransactionTime - transactionTime.GetElapsedTime(pinned.Opened));
+            timeout = Min(timeout, SqlLimits.MaxTransactionTime - time.GetElapsedTime(pinned.Opened));
         }
 
         return timeout > TimeSpan.FromMilliseconds(1) ? timeout : TimeSpan.FromMilliseconds(1);
@@ -692,7 +691,7 @@ internal sealed class SqlSession(
     }
 
     private SqlError LostReason() =>
-        _expiring == _generation || (_pinned is { } pinned && transactionTime.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime) ? Expired : Aborted;
+        _expiring == _generation || (_pinned is { } pinned && time.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime) ? Expired : Aborted;
 
     private async ValueTask<(SqlOutcome Outcome, bool Ended)> RunAsync(
         IStorageTransaction transaction, SqlStatementPlan plan, SqlCommand command, Tally tally, Func<SqlResult, SqlError?>? admit, bool first,
@@ -960,8 +959,8 @@ internal sealed class SqlSession(
         }
 
         var generation = ++_generation;
-        var timer = transactionTime.CreateTimer(_ => _ = ExpireLaterAsync(generation), null, SqlLimits.MaxTransactionTime, Timeout.InfiniteTimeSpan);
-        _pinned = new Pinned(transaction, lease, write, transactionTime.GetTimestamp(), baseline, timer, new Tally(), []);
+        var timer = time.CreateTimer(_ => _ = ExpireLaterAsync(generation), null, SqlLimits.MaxTransactionTime, Timeout.InfiniteTimeSpan);
+        _pinned = new Pinned(transaction, lease, write, time.GetTimestamp(), baseline, timer, new Tally(), []);
         return (_pinned, null);
     }
 
@@ -989,7 +988,7 @@ internal sealed class SqlSession(
 
     private async ValueTask ExpireIfDueAsync()
     {
-        if (_pinned is { } pinned && _lost is null && transactionTime.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime)
+        if (_pinned is { } pinned && _lost is null && time.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime)
         {
             await LoseAsync(Expired).ConfigureAwait(false);
         }

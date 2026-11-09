@@ -195,7 +195,7 @@ public sealed class SqlNativeHardeningTests
         string? target = null;
         await using var db = await StartAsync(services =>
         {
-            services.AddKeyedSingleton<TimeProvider>(SqlLimits.TransactionClock, clock);
+            services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
             {
                 if (step == "writer.commit" && database.DatabaseId == Volatile.Read(ref target) && Interlocked.Exchange(ref armed, 0) == 1)
