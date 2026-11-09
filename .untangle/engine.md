@@ -122,4 +122,33 @@ closed-hierarchy rework here without behavior risk; noted for the future.)
 - F6 namespace fix only; no test logic changes.
 
 ## Work log
-- (in progress)
+- F1 committed: `ReservedRootNames` table + `IsReservedRootName`; both longhand predicates now
+  read from it. Build green, Fast green.
+- F2 committed: `CreateSystemStore`/`CreateTenantStore` factories; second store constructor
+  deleted; intent journal uses the system factory (it now carries `RewriteSteps` it can never
+  record). Build green.
+- F3 committed: removed `AfterGroupCommit`/`AfterTursoCommit` (+ invocations), `_batched`/
+  `BatchedWrites`, store `IdleCount`, pool `IdleCount`/`IdleCountOf`/`MaxIdle`,
+  `BeforeReadinessProbe`/`ReadinessProbeTask`/`InitializationsAwaitingRelease`/`CreationHeld`,
+  the four `TursoChangeTap` hooks (+ guarded invocations), the empty `if (existed) {}`, and the
+  parameterless `QueryCapacityException` constructor. Fast suite 88/88.
+- F4 committed: `ValueSize`/`Value` shared stepping helpers.
+- F5 committed: `SkipPayload` record-skip table; `Cut`/`EndMark` keep only value-consuming arms.
+- F6 committed: Slow revision tests namespace fixed; Slow project builds.
+- Modernization committed: using directives replace inline `System.*`/`global::Turso.*` names
+  in eleven files; `is var` unwound in four places; `DatabaseFences.Set` null-conditional;
+  duplicate `_queryBudget` assignment dropped; `FileSeenWindow` named; `DatabaseTransactions`
+  converted to a C# 14 `extension` block.
+- Comment pass committed: 389 `///` lines removed across 32 files; 69 marker-bearing lines and
+  all `//` constraint comments kept; the trusted-operator threat model kept as a `//` comment
+  on `IStorageEngine`. Fast suite 88/88 after it.
+- Sweep two committed: `TursoStorageEngine.Backup`/`TursoShapeReader` qualified names; dead
+  `DisposeResponseAsync` test helper removed.
+
+## Remaining (not worth the risk; for the coordinator)
+- Fixed-set enums (`SqlFailure`, `ReplicaVerdict`, `FullReason`, `RewriteRefusal`) as closed
+  hierarchies: cross-slice consumers, see above.
+- `RevisionManifest` exposes `List<>`/`HashSet<>` properties: it is an in-place builder that
+  `TursoRevisionLedger` and `RevisionManifestFile.Load` mutate; sealing that behind read-only
+  views would rework the ledger's update flow for no behavioral gain.
+- `DatabaseFences`/`HomeLeaseGate` construct with `TimeProvider.System` (no injected clock).
