@@ -154,7 +154,10 @@ public sealed record HostedPageCopy(
     string ErrorTransientTitle,
     string ErrorTransient,
     string RetryWaitMinutes,
-    string RetryWaitSeconds);
+    string RetryWaitSeconds,
+    string ErrorPasswordLength,
+    string ErrorPasswordCommon,
+    string NoticeCredentialChanged);
 
 public static class HostedCopies
 {
@@ -310,7 +313,10 @@ public static class HostedCopies
         ErrorTransientTitle: "Sign-in is unavailable right now",
         ErrorTransient: "Something went wrong on our side. Nothing was sent yet. Try again in a moment.",
         RetryWaitMinutes: "{minutes} minutes",
-        RetryWaitSeconds: "{seconds} seconds");
+        RetryWaitSeconds: "{seconds} seconds",
+        ErrorPasswordLength: "Choose a password of 15 to 256 characters. A passphrase of a few words works well.",
+        ErrorPasswordCommon: "That password is too common or easy to guess. Choose a longer or less predictable one.",
+        NoticeCredentialChanged: "This credential expired, was already used, or lost a concurrent sign-in or rotation in another region. Sign in again or use the latest credential.");
 
     public static readonly HostedPageCopy Portuguese = new(
         FooterNav: "Rodapé",
@@ -464,7 +470,10 @@ public static class HostedCopies
         ErrorTransientTitle: "O acesso está indisponível no momento",
         ErrorTransient: "Algo deu errado do nosso lado. Nada foi enviado ainda. Tente novamente em instantes.",
         RetryWaitMinutes: "{minutes} minutos",
-        RetryWaitSeconds: "{seconds} segundos");
+        RetryWaitSeconds: "{seconds} segundos",
+        ErrorPasswordLength: "Escolha uma senha de 15 a 256 caracteres. Uma frase de algumas palavras funciona bem.",
+        ErrorPasswordCommon: "Essa senha é comum demais ou fácil de adivinhar. Escolha uma mais longa ou menos previsível.",
+        NoticeCredentialChanged: "Esta credencial expirou, já foi usada ou perdeu um início de sessão ou rotação simultânea em outra região. Entre novamente ou use a credencial mais recente.");
 
     public static HostedPageCopy For(string locale) => locale == AuthEmails.Portuguese ? Portuguese : English;
 }
