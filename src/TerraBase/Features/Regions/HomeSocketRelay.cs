@@ -41,7 +41,11 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             }
         }
 
-        upstream.Options.SetRequestHeader(HomeForwarding.ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
+        if (Listeners.ArrivedOn(context) == TerraBaseListener.Client)
+        {
+            upstream.Options.SetRequestHeader(HomeForwarding.ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
+        }
+
         credential.Sign(upstream.Options);
         try
         {

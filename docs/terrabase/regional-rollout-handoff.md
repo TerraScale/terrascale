@@ -114,3 +114,27 @@ pinned owner's upgrade writes its preparation certificate. A legacy process
 admits without the exclusive lease, so that certificate is not authority to
 reclaim a different node. Complete bootstrap on the same retained owner after
 physical old-process exit; protocol-v2 transfer phases enable automatic recovery.
+
+## Requests that reach the serving peer
+
+The serving peer admits client-listener and management requests but does not run
+them: it sends each one to the region's writer on the writer's internal listener
+with the peer credential, and answers 503 while no writer is known.
+
+- **REST.** A request that arrived on the client listener carries
+  `X-TerraBase-Forwarded-For`, so the writer serves it as a client request: the
+  same token, IP-allowlist, scope and quota checks, once, at the writer. One that
+  arrived on the internal listener keeps its peer identity.
+- **WebSockets** (`sql/ws`, `shape/ws`). An HTTP/1.1 Upgrade on the client
+  listener or an RFC 8441 extended CONNECT on the internal listener cannot be
+  forwarded as a plain request, so the peer relays the whole socket: it opens a
+  WebSocket to the writer over HTTP/2 extended CONNECT with the client's
+  subprotocols and headers (plus `X-TerraBase-Forwarded-For` for a client-listener
+  socket), then accepts the client and pumps frames both ways for the socket's
+  life. The writer runs the session exactly like one that reached it directly,
+  so the 5-second transaction limit and single-writer semantics hold. A writer
+  that cannot be reached answers `421 wrong_region`.
+
+`tests/TerraBase.Slow/Sync/RegionalSocketForwardingTests.cs` runs EF Core
+migrations, an explicit transaction and a 300-row save through the serving peer
+over both listeners.

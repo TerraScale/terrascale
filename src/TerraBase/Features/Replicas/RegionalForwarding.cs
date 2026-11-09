@@ -39,14 +39,18 @@ internal static class RegionalForwarding
                 return;
             }
 
-            var address = owner.InternalListener(options.InternalPort);
-            if (Listeners.ArrivedOn(context) == TerraBaseListener.Client)
+            var writer = new HomeNode(options.Region, owner.InternalListener(options.InternalPort));
+            if (context.WebSockets.IsWebSocketRequest)
             {
-                await HomeForwarding.ForwardAsync(context, new HomeNode(options.Region, address)).ConfigureAwait(false);
+                await services.GetRequiredService<HomeSocketRelay>().RunAsync(context, writer, context.RequestAborted).ConfigureAwait(false);
+            }
+            else if (Listeners.ArrivedOn(context) == TerraBaseListener.Client)
+            {
+                await HomeForwarding.ForwardAsync(context, writer).ConfigureAwait(false);
             }
             else
             {
-                await ingress.ForwardServiceAsync(context, address).ConfigureAwait(false);
+                await ingress.ForwardServiceAsync(context, writer.Address).ConfigureAwait(false);
             }
         });
         return app;

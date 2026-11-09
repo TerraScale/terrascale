@@ -25,6 +25,9 @@ Platform services such as ts-auth reach their databases on the internal listener
 their upgrade is an extended CONNECT (RFC 8441); the socket needs no auth frame and runs with the platform operator's
 access to the project's database, checked again before every frame like any other socket.
 
+Any node of the region accepts the socket on either listener. A node that is not the region's writer relays the whole
+socket to the writer, which runs the session ([regional writer](../regional-rollout-handoff.md#requests-that-reach-the-serving-peer)).
+
 The auth frame holds at most 16 KiB, and nothing else is read before it. A frame-authenticated socket gets the same
 checks as a header: the project token's key admission and revocation watch, IP allowlists, project and database
 restrictions, scopes and the database's placement (a database served elsewhere answers `wrong_region`, 421/08004,

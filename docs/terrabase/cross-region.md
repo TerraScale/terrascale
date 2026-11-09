@@ -57,7 +57,8 @@ mesh.
   over the mesh (RFC 8441 on the internal listener) with the client's subprotocols, headers and address, then accepts the
   client and pumps frames both ways for the socket's whole life. The home serves it exactly as a socket that reached it
   directly — the same token, IP-allowlist and scope checks, once, at the home. When the home cannot be reached the answer
-  is `421 wrong_region` with `X-TerraBase-Database-Home`, like a forwarded request.
+  is `421 wrong_region` with `X-TerraBase-Database-Home`, like a forwarded request. Inside a region, the serving peer
+  relays sockets to the regional writer the same way ([regional writer](regional-rollout-handoff.md#requests-that-reach-the-serving-peer)).
 - **Replica regions.** A Postgres or WebSocket session that reaches a replica region of its database is not relayed: it
   reads from the replica and runs writes and transactions on a session at the home
   ([region replicas](region-replicas.md#writes-and-transactions)).
