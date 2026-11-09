@@ -8,7 +8,6 @@ using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Backup;
 

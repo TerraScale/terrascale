@@ -7,7 +7,6 @@ using TerraBase.Engine;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Sql;
 

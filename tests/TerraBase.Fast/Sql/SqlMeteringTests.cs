@@ -4,7 +4,6 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Sql;

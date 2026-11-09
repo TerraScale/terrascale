@@ -13,7 +13,6 @@ using TerraBase.Features.Replicas;
 using TerraBase.Features.Sql;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Sync;
 

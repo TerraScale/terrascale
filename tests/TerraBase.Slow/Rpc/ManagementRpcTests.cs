@@ -6,7 +6,6 @@ using MagicOnion;
 using MagicOnion.Client;
 using MagicOnion.Serialization.MessagePack;
 using MessagePack;
-using TerraBase.Testing;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Backups;
 using TerraScale.TerraBase.Contracts.Management;

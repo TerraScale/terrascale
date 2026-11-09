@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text.Json;
-using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Sql;

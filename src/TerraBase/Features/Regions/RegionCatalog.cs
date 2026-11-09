@@ -1,4 +1,3 @@
-using System.Net.Http;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
 

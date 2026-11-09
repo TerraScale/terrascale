@@ -17,7 +17,6 @@ using TerraBase.Tenancy;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Sync;
 

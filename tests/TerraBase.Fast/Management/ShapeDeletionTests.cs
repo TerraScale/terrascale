@@ -4,7 +4,6 @@ using Microsoft.Extensions.Hosting;
 using TerraBase.Configuration;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 

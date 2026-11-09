@@ -4,7 +4,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Features.Regions;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 

@@ -4,7 +4,6 @@ using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Sync;
 

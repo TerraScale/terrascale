@@ -5,7 +5,6 @@ using Bogus;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 

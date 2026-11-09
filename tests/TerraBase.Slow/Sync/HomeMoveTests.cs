@@ -8,7 +8,6 @@ using Npgsql;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Slow.Sync;

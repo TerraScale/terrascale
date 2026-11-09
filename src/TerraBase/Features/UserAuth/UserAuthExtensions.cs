@@ -1,7 +1,6 @@
 using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Security.Claims;
-using System.Threading;
 using Microsoft.AspNetCore.Authentication;
 using TerraBase.Configuration;
 using TerraBase.Engine;

@@ -13,7 +13,6 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 using tsauth::TerraScale.Authentication.Configuration;

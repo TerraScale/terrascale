@@ -1,6 +1,5 @@
 using Npgsql;
 using NpgsqlTypes;
-using TerraBase.Testing;
 using static TerraBase.Testing.PostgresSql;
 
 namespace TerraBase.Fast.Postgres;

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
@@ -7,7 +6,6 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
-using TerraBase.Testing;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
 

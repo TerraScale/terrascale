@@ -5,7 +5,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Features.Management;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
 

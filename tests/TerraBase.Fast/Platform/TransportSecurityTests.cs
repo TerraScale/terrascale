@@ -9,7 +9,6 @@ using MagicOnion.Client;
 using MagicOnion.Serialization.MessagePack;
 using Npgsql;
 using TerraBase.Primitives;
-using TerraBase.Testing;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Management;
 

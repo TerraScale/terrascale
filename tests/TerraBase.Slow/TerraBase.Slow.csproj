@@ -19,4 +19,7 @@
          ts-auth's types through the alias. -->
     <Compile Include="../TerraScale.Authentication.TestHarness/FakeGitHubActions.cs" Link="Management/FakeGitHubActions.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <Using Include="TerraBase.Testing" />
+  </ItemGroup>
 </Project>

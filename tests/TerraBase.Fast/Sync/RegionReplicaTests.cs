@@ -9,7 +9,6 @@ using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Sync;
 

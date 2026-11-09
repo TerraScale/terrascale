@@ -3,7 +3,6 @@ using Bogus;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Sync;
 

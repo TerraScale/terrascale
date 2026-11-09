@@ -10,7 +10,6 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Slow.Backup;
 

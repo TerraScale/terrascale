@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
@@ -8,7 +7,6 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Shapes;
 using System.Text.Json;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
 

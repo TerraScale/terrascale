@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,7 +8,6 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
-using TerraBase.Testing;
 using TerraScale.TerraBase.Contracts.Management;
 
 namespace TerraBase.Fast.Sync;

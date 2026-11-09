@@ -3,7 +3,6 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Backup;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
 

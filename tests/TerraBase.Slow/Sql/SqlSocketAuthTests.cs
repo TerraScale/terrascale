@@ -1,7 +1,6 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using Bogus;
-using TerraBase.Testing;
 using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Sql;
