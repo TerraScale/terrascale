@@ -60,7 +60,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          if [ -n "$BASE_SHA" ]; then git fetch --no-tags --depth=1 origin "$BASE_SHA"; fi
           make dashboard-lint
       # The image job wraps these exact bytes without another build.
       - name: Publish the tested application
