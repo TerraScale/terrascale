@@ -6,12 +6,13 @@ namespace TerraBase.Engine;
 
 internal sealed record ReplicaPullResult(bool Changed, bool Pushed, bool Pending);
 
-internal enum ReplicaVerdict
-{
-    Equal,
-    Diverged,
-    Moved,
-}
+internal closed record class ReplicaVerdict;
+
+internal sealed record class Equal : ReplicaVerdict;
+
+internal sealed record class Diverged : ReplicaVerdict;
+
+internal sealed record class Moved : ReplicaVerdict;
 
 internal sealed record ReplicaComparison(ReplicaVerdict Verdict, DatabaseRevision? Revision, string? Where);
 

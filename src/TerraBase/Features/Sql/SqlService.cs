@@ -10,6 +10,8 @@ using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 using TerraBase.Features.Sql.Routing;
 
+using TerraBase.Features.Sql;
+
 namespace TerraBase.Features.Sql;
 
 internal sealed class SqlService(
@@ -413,7 +415,7 @@ internal sealed class SqlSession(
             return plan.Run;
         }
 
-        var found = await run(Internal("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_ts_conflicts'")).ConfigureAwait(false);
+        var found = await run(Internal($"SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '{ConflictTable.Name}'")).ConfigureAwait(false);
         return found.Rows.Count > 0 ? plan.Run : without;
     }
 
@@ -705,7 +707,7 @@ internal sealed class SqlSession(
         }
         catch (SqlStatementException error)
         {
-            return (error.Failure == SqlFailure.Interrupted && RequestExpired ? SqlErrors.Deadline : Map(error), error.TransactionEnded);
+            return (error.Failure is Interrupted && RequestExpired ? SqlErrors.Deadline : Map(error), error.TransactionEnded);
         }
         catch (Exception error) when (Failure(error) is { } failure)
         {
@@ -1073,21 +1075,21 @@ internal sealed class SqlSession(
 
     internal static SqlError Map(SqlStatementException error, bool canWrite) => error.Failure switch
     {
-        SqlFailure.PrimaryKey => new SqlError(SqlErrors.PrimaryKeyViolation, error.Message),
-        SqlFailure.Unique => new SqlError(SqlErrors.UniqueViolation, error.Message),
-        SqlFailure.NotNull => new SqlError(SqlErrors.NotNullViolation, error.Message),
-        SqlFailure.Check => new SqlError(SqlErrors.CheckViolation, error.Message),
-        SqlFailure.ForeignKey => new SqlError(SqlErrors.ForeignKeyViolation, error.Message),
-        SqlFailure.Constraint => new SqlError(SqlErrors.ConstraintViolation, error.Message),
-        SqlFailure.Syntax => new SqlError(SqlErrors.SyntaxError, error.Message),
-        SqlFailure.NoSuchTable => new SqlError(SqlErrors.UndefinedTable, error.Message),
-        SqlFailure.NoSuchColumn => new SqlError(SqlErrors.UndefinedColumn, error.Message),
-        SqlFailure.AlreadyExists => new SqlError(SqlErrors.DuplicateObject, error.Message),
-        SqlFailure.Busy => SqlErrors.Busy(error.Message),
-        SqlFailure.TooBig => SqlErrors.TooBig(error.Message),
-        SqlFailure.Interrupted => SqlErrors.Interrupt,
-        SqlFailure.ReadOnly => canWrite ? new SqlError(SqlErrors.ReadOnlyTransaction, error.Message) : SqlErrors.Auth,
-        _ => SqlErrors.Error(error.Message),
+        PrimaryKey => new SqlError(SqlErrors.PrimaryKeyViolation, error.Message),
+        Unique => new SqlError(SqlErrors.UniqueViolation, error.Message),
+        NotNull => new SqlError(SqlErrors.NotNullViolation, error.Message),
+        Check => new SqlError(SqlErrors.CheckViolation, error.Message),
+        ForeignKeyFailure => new SqlError(SqlErrors.ForeignKeyViolation, error.Message),
+        Constraint => new SqlError(SqlErrors.ConstraintViolation, error.Message),
+        Syntax => new SqlError(SqlErrors.SyntaxError, error.Message),
+        NoSuchTable => new SqlError(SqlErrors.UndefinedTable, error.Message),
+        NoSuchColumn => new SqlError(SqlErrors.UndefinedColumn, error.Message),
+        AlreadyExists => new SqlError(SqlErrors.DuplicateObject, error.Message),
+        Busy => SqlErrors.Busy(error.Message),
+        TooBig => SqlErrors.TooBig(error.Message),
+        Interrupted => SqlErrors.Interrupt,
+        ReadOnly => canWrite ? new SqlError(SqlErrors.ReadOnlyTransaction, error.Message) : SqlErrors.Auth,
+        Error => SqlErrors.Error(error.Message),
     };
 
     private static SqlError? Failure(Exception error) => error switch

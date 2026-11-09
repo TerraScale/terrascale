@@ -4,6 +4,8 @@ using System.Text.RegularExpressions;
 using Turso.Data.Sqlite;
 using TerraBase.Features.Qos;
 
+using TerraBase.Features.Sql;
+
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoStorageTransaction(
@@ -235,14 +237,14 @@ internal sealed partial class TursoStorageTransaction(
             catch (SqliteException error) when (committing && !_committed && TursoSession.Stopped(error))
             {
                 _faulted = true;
-                throw new SqlStatementException(SqlFailure.Interrupted, "the commit was interrupted before it took effect", transactionEnded: true, error);
+                throw new SqlStatementException(new Interrupted(), "the commit was interrupted before it took effect", transactionEnded: true, error);
             }
-            catch (SqliteException error) when (committing && !_committed && error.Message.Contains("constraint failed", StringComparison.OrdinalIgnoreCase))
+            catch (SqliteException error) when (committing && !_committed && SqlErrors.IsConstraintFailure(error.Message))
             {
                 _faulted = true;
-                var foreignKey = error.Message.Contains("FOREIGN KEY", StringComparison.OrdinalIgnoreCase);
+                var foreignKey = SqlErrors.IsForeignKeyFailure(error.Message);
                 throw new SqlStatementException(
-                    foreignKey ? SqlFailure.ForeignKey : SqlFailure.Constraint, foreignKey ? "FOREIGN KEY constraint failed" : "constraint failed", transactionEnded: true, error);
+                    foreignKey ? new ForeignKeyFailure() : new Constraint(), foreignKey ? "FOREIGN KEY constraint failed" : "constraint failed", transactionEnded: true, error);
             }
             catch
             {

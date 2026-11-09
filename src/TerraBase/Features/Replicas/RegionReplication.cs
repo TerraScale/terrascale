@@ -682,33 +682,12 @@ internal sealed partial class RegionReplication(
             {
                 var round = await _verification.ConfigureAwait(false);
                 var now = _owner.Time.GetUtcNow();
-                switch (round.Verdict)
+                await (round.Verdict switch
                 {
-                    case ReplicaVerdict.Equal:
-                        Count("equal");
-                        _cursor = round.Next;
-                        if (round.Next is null)
-                        {
-                            _verifiedAt = now;
-                            _nextVerify = now + VerifyEvery;
-                        }
-                        else
-                        {
-                            _nextVerify = now + RoundGap;
-                            WakeAfter(RoundGap, cancellationToken);
-                        }
-
-                        break;
-                    case ReplicaVerdict.Moved:
-                        Count("skipped");
-                        _nextVerify = now + RetryGap;
-                        break;
-                    default:
-                        Count("diverged");
-                        _owner.Logger.ZLogError($"Replica of database {Database.DatabaseId:@Database} in project {Database.ProjectId:@Project} diverged from its home in region {_home.Region:@Home}: {round.Where:@Where}");
-                        await HealAsync(verifier, now, cancellationToken).ConfigureAwait(false);
-                        break;
-                }
+                    Equal => EqualRoundAsync(round, now, cancellationToken),
+                    Moved => MovedRoundAsync(now),
+                    Diverged => DivergedRoundAsync(verifier, round, now, cancellationToken),
+                });
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
@@ -719,6 +698,35 @@ internal sealed partial class RegionReplication(
             finally
             {
                 _verification = null;
+            }
+
+            async Task EqualRoundAsync(VerificationRound round, DateTimeOffset now, CancellationToken cancellationToken)
+            {
+                Count("equal");
+                _cursor = round.Next;
+                if (round.Next is null)
+                {
+                    _verifiedAt = now;
+                    _nextVerify = now + VerifyEvery;
+                }
+                else
+                {
+                    _nextVerify = now + RoundGap;
+                    WakeAfter(RoundGap, cancellationToken);
+                }
+            }
+
+            async Task MovedRoundAsync(DateTimeOffset now)
+            {
+                Count("skipped");
+                _nextVerify = now + RetryGap;
+            }
+
+            async Task DivergedRoundAsync(ReplicaVerifier verifier, VerificationRound round, DateTimeOffset now, CancellationToken cancellationToken)
+            {
+                Count("diverged");
+                _owner.Logger.ZLogError($"Replica of database {Database.DatabaseId:@Database} in project {Database.ProjectId:@Project} diverged from its home in region {_home.Region:@Home}: {round.Where:@Where}");
+                await HealAsync(verifier, now, cancellationToken).ConfigureAwait(false);
             }
         }
 

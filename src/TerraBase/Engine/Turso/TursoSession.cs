@@ -6,6 +6,8 @@ using System.Data.Common;
 using Turso.Data.Sqlite;
 using Turso.Raw.Public.Handles;
 
+using TerraBase.Features.Sql;
+
 namespace TerraBase.Engine.Turso;
 
 internal sealed class TursoSession(SqliteConnection connection, TimeProvider time) : IDisposable
@@ -84,7 +86,7 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
     public static bool Stopped(SqliteException error) => error.SqliteErrorCode == 9
         || error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
-    public static bool Busy(SqliteException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
+    public static bool Busy(SqliteException error) => SqlErrors.IsLocked(error.Message);
 
     public static byte[] Bytes(SqliteDataReader reader, int ordinal) => reader.GetValue(ordinal) switch
     {

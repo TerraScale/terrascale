@@ -21,6 +21,8 @@ using Turso.Raw.Public.Handles;
 using Turso.Raw.Public.Value;
 using ZLogger;
 
+using TerraBase.Features.Sql;
+
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoReplicas(
@@ -650,7 +652,7 @@ internal sealed partial class TursoReplicas(
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
                 if (Held != revision || Local)
                 {
-                    return new ReplicaComparison(ReplicaVerdict.Moved, Held, null);
+                    return new ReplicaComparison(new Moved(), Held, null);
                 }
 
                 await using var reader = await BeginReadAsync(cancellationToken).ConfigureAwait(false);
@@ -668,11 +670,11 @@ internal sealed partial class TursoReplicas(
 
                     if (local != range)
                     {
-                        return new ReplicaComparison(ReplicaVerdict.Diverged, revision, RangeChecksums.Mismatch(range, local));
+                        return new ReplicaComparison(new Diverged(), revision, RangeChecksums.Mismatch(range, local));
                     }
                 }
 
-                return new ReplicaComparison(ReplicaVerdict.Equal, revision, null);
+                return new ReplicaComparison(new Equal(), revision, null);
             }
             finally
             {
@@ -983,7 +985,7 @@ internal sealed partial class TursoReplicas(
         }
 
         private static readonly TimeSpan LockedWait = TimeSpan.FromSeconds(5);
-        private static bool Locked(TursoException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
+        private static bool Locked(TursoException error) => SqlErrors.IsLocked(error.Message);
 
         private static void Run(TursoDatabaseHandle native, string sql)
         {
@@ -1053,7 +1055,7 @@ internal sealed partial class TursoReplicas(
                 catch (TursoException error)
                 {
                     var (failure, message) = TursoStorageTransaction.Classify(native, error);
-                    _healthy = failure is not SqlFailure.Error;
+                    _healthy = failure is not Error;
                     throw new SqlStatementException(failure, message, transactionEnded: false, error);
                 }
             }
@@ -1084,7 +1086,7 @@ internal sealed partial class TursoReplicas(
                 catch (TursoException error)
                 {
                     var (failure, message) = TursoStorageTransaction.Classify(native, error);
-                    _healthy = failure is not SqlFailure.Error;
+                    _healthy = failure is not Error;
                     throw new SqlStatementException(failure, message, transactionEnded: false, error);
                 }
             }
