@@ -33,6 +33,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal const string LockFileName = ".terrabase.lock";
     private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix, RevisionManifestFile.Suffix, RevisionManifestFile.StagedSuffix];
 
+    private static readonly string[] ReservedRootNames =
+        [LockFileName, .. new[] { SystemName, IntentName }.SelectMany(database => Sidecars.Prepend(string.Empty).Select(suffix => database + FileExtension + suffix))];
+
     private static readonly string[] ScratchDirectories = [".tmp", ".backup", ".import", ".exports"];
     internal DatabaseKeys Encryption { get; }
 
@@ -740,22 +743,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var link = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
-                var reservedRootName = entry.Directory.SequenceEqual(entry.RootDirectory)
-                    && (entry.FileName.SequenceEqual(LockFileName)
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension)
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + "-wal")
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + "-shm")
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + "-journal")
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + DatabaseKeys.Suffix)
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + RevisionManifestFile.Suffix)
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + RevisionManifestFile.StagedSuffix)
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension)
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-wal")
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-shm")
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-journal")
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + DatabaseKeys.Suffix)
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + RevisionManifestFile.Suffix)
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + RevisionManifestFile.StagedSuffix));
+                var reservedRootName = entry.Directory.SequenceEqual(entry.RootDirectory) && IsReservedRootName(ref entry);
                 return reservedRootName
                     ? entry.IsDirectory || link
                     : !entry.IsDirectory || link || CollisionDatabaseIdFromFileName(entry.FileName.ToString()) is not null;
@@ -1184,11 +1172,21 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         return error.GetType() == typeof(IOException) && error.HResult is 11 or unchecked((int)0x80070020) or unchecked((int)0x80070021);
     }
 
+    private static bool IsReservedRootName(ref FileSystemEntry entry)
+    {
+        foreach (var reserved in ReservedRootNames)
+        {
+            if (entry.FileName.SequenceEqual(reserved))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsFlatDatabaseFile(string name) =>
-        !string.Equals(name, SystemName + FileExtension, StringComparison.Ordinal)
-        && !Sidecars.Any(sidecar => string.Equals(name, SystemName + FileExtension + sidecar, StringComparison.Ordinal))
-        && !string.Equals(name, IntentName + FileExtension, StringComparison.Ordinal)
-        && !Sidecars.Any(sidecar => string.Equals(name, IntentName + FileExtension + sidecar, StringComparison.Ordinal))
+        !ReservedRootNames.Contains(name)
         && (name.EndsWith(FileExtension, StringComparison.Ordinal)
             || Sidecars.Any(sidecar => name.EndsWith(FileExtension + sidecar, StringComparison.Ordinal)));
 
