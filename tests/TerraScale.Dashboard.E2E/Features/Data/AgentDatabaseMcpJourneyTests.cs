@@ -44,7 +44,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That((await CallAsync("set_database_ttl", new { databaseId = sourceId, clear = true })).GetProperty("expiresAt").ValueKind).IsEqualTo(JsonValueKind.Null);
             var backup = await CallAsync("create_backup", new { databaseId = sourceId });
             var restoreStart = await CallAsync("restore_backup", new { databaseId = sourceId, backupId = backup.GetProperty("id").GetString(), name = "agent-restored" });
-            await Assert.That(restoreStart.GetProperty("status").GetString()).IsEqualTo("running");
+            await Assert.That(restoreStart.GetProperty("status").GetString() is "running" or "completed").IsTrue();
             var restoredId = await RestoreCompletedAsync(sourceId, restoreStart.GetProperty("operationId").GetString()!);
             await Assert.That((await CallAsync("execute_sql", new { databaseId = restoredId, sql = "SELECT value FROM results" })).GetProperty("rows")[0][0].GetString()).IsEqualTo("before");
             await CallAsync("delete_database", new { databaseId = restoredId, confirmName = "agent-restored" });

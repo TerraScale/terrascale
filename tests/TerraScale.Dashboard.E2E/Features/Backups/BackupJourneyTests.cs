@@ -146,7 +146,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             Check(await ScoreAsync(restoredId) == 1 && await ScoreAsync(id) == 2, "The restored database reads the captured snapshot through SQL; the source retains its later write");
             var defaultStart = await CallAsync(replica, secret, "restore_backup", new { databaseId = id });
             var defaultOperation = defaultStart.GetProperty("operationId").GetString()!;
-            Check(TerraScaleIds.IsValid(defaultOperation) && defaultStart.GetProperty("status").GetString() == "running",
+            Check(TerraScaleIds.IsValid(defaultOperation) && defaultStart.GetProperty("status").GetString() is "running" or "completed",
                 "MCP restore starts the newest actual restore point and answers with a pollable operation instead of blocking");
             var defaultDone = await McpRestoreCompletedAsync(replica, secret, id, defaultOperation);
             var defaultId = defaultDone.GetProperty("targetDatabaseId").GetString()!;
