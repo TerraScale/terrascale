@@ -97,6 +97,31 @@ namespace TerraScale.Dashboard.Features.Backups
             var operation = await SafeAsync(async () => (await (await ClientAsync(context, source, ["databases:read", "databases:write"], ct))
                 .StartRestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, destination)))
                 .Deserialize(BackupBackendJson.Default.ProducerRestoreOperation) ?? throw new JsonException("Invalid restore operation."));
+            return await RecordAsync(context, source, operation, ct);
+        }
+
+        public async Task<BackupRestoreStart> StartForkAsync(AccountContext context, string databaseId, string point, string name, long? ttlSeconds, CancellationToken ct)
+        {
+            var instant = DatabaseTtl.Instant(point) ?? throw new AccountAccessException("Enter an ISO 8601 point in time, such as 2026-11-04T12:00:00Z.", 422);
+            context = await databases.CurrentAsync(context, ct);
+            var source = DatabaseService.Database(context, databaseId);
+            if (source.Status != "ready")
+            {
+                throw new AccountAccessException("Only a ready database can be branched.", 409);
+            }
+
+            DatabaseService.DemandProvision(context.Organization!, context.UserId);
+            DatabaseService.DemandRoom(context.Organization!);
+            name = DatabaseService.ValidName(name);
+            DatabaseService.DemandName(context.Project!, name);
+            var operation = await SafeAsync(async () => (await (await ClientAsync(context, source, ["databases:read", "databases:write"], ct))
+                .StartRestorePointInTimeAsync(context.Project!.Id, source.Name, new(instant, name, null, ttlSeconds)))
+                .Deserialize(BackupBackendJson.Default.ProducerRestoreOperation) ?? throw new JsonException("Invalid restore operation."));
+            return await RecordAsync(context, source, operation, ct);
+        }
+
+        private async Task<BackupRestoreStart> RecordAsync(AccountContext context, DatabaseRecord source, ProducerRestoreOperation operation, CancellationToken ct)
+        {
             if (!TerraScaleIds.IsValid(operation.OperationId) || operation.Status is not ("running" or "completed" or "failed") ||
                 operation.Status != "running" && operation.Database is null)
             {

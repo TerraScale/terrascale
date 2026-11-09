@@ -119,10 +119,9 @@ namespace TerraScale.Dashboard.Common.Databases
             return record;
         }
 
-        public async Task<DatabaseRecord> BranchAsync(AccountContext context, string id, string name, CancellationToken cancellationToken, decimal? ttlHours = null, string? pointInTime = null)
+        public async Task<DatabaseRecord> BranchAsync(AccountContext context, string id, string name, CancellationToken cancellationToken, decimal? ttlHours = null)
         {
             var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
-            var instant = DatabaseTtl.Instant(pointInTime);
             context = await CurrentAsync(context, cancellationToken);
             var source = Database(context, id);
             DemandProvision(context.Organization!, context.UserId);
@@ -137,8 +136,8 @@ namespace TerraScale.Dashboard.Common.Databases
             var scope = Scope(context);
             var home = await HomeAsync(context, source, cancellationToken);
             ManagedDatabase remote;
-            try { remote = await backend.BranchAsync(scope, home, id, name, cancellationToken, ttlSeconds, instant); }
-            catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken" && instant is null)
+            try { remote = await backend.BranchAsync(scope, home, id, name, cancellationToken, ttlSeconds); }
+            catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
             {
                 remote = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name && database.BranchedFrom == source.Id)
                     ?? throw new AccountAccessException("A database with this name already exists.", 409);

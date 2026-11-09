@@ -1,6 +1,5 @@
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.TerraBase.Contracts.Management;
-using TerraScale.TerraBase.Contracts.Backups;
 using TerraScale.TerraBase.Contracts.Regions;
 using System.Net;
 using System.Text.Json;
@@ -83,7 +82,7 @@ namespace TerraScale.Dashboard.Common.Databases
         Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, DatabaseRegion home, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken, long? ttlSeconds = null);
         Task<ManagedDatabase> PlaceAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken);
         Task<ManagedDatabase> MoveHomeAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string homeRegion, CancellationToken cancellationToken);
-        Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null, DateTimeOffset? pointInTime = null);
+        Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null);
         Task<ManagedDatabase> RenameAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
         Task<ManagedDatabase> SetTtlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, long? ttlSeconds, CancellationToken cancellationToken);
         Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
@@ -207,25 +206,10 @@ namespace TerraScale.Dashboard.Common.Databases
             return Map(await RunAsync(() => client.MoveDatabaseHomeAsync(scope.ProjectId, databaseId, new(homeRegion)).ResponseAsync));
         }
 
-        public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null, DateTimeOffset? pointInTime = null)
+        public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
             var source = await NameAsync(scope, home, databaseId, cancellationToken);
             var client = await ClientAsync(scope, home, "databases:write", cancellationToken);
-            if (pointInTime is { } instant)
-            {
-                var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
-                var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, ["databases:read", "databases:write"], cancellationToken);
-                var backups = rpc.User<IBackupsService>(token, home.Id).WithCancellationToken(cancellationToken);
-                var answer = await RunAsync(() => backups.RestorePointInTimeAsync(scope.ProjectId, source, new(instant, name, null, ttlSeconds)).ResponseAsync);
-                var restored = answer.Deserialize(ManagementJson.Default.TerraBaseManagedDatabase) ?? throw new JsonException("Invalid fork response.");
-                var reader = await ClientAsync(scope, home, "databases:read", cancellationToken);
-                var placed = await RunAsync(() => reader.GetDatabaseAsync(scope.ProjectId, name).ResponseAsync);
-                if (placed.Id != restored.Id || placed.CreatedAt != restored.CreatedAt || placed.ExpiresAt != restored.ExpiresAt)
-                {
-                    throw new HttpRequestException("Fork readback could not be confirmed. Check the database list before retrying.");
-                }
-                return Map(placed);
-            }
             return Map(await RunAsync(() => client.BranchAsync(scope.ProjectId, source, name, ttlSeconds).ResponseAsync));
         }
 

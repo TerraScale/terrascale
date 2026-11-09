@@ -1132,7 +1132,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         }
 
         // A branch starts as a copy of its source's tables and rows.
-        public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null, DateTimeOffset? pointInTime = null)
+        public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken, long? ttlSeconds = null)
         {
             var copy = Engine(scope, databaseId).Snapshot();
             var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []) { ExpiresAt = ttlSeconds is { } seconds ? DateTimeOffset.UtcNow.AddSeconds(seconds) : null };
