@@ -38,7 +38,8 @@ internal static class ServingNodeExtensions
 
 internal static class PeerHttp
 {
-    public static HttpClient Create(InternalCredential credential) =>        new(new PeerRequests(credential)
+    public static HttpClient Create(InternalCredential credential) =>
+        new(new PeerRequests(credential)
         {
             InnerHandler = new SocketsHttpHandler
             {

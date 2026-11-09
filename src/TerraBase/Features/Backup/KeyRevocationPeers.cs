@@ -31,7 +31,7 @@ internal sealed class KeyRevocationPeers(TerraBaseOptions options, InternalCrede
         await Parallel.ForEachAsync(nodes.Where(node => node.Name != options.MachineId),
             new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = token }, async (node, cancellationToken) =>
             {
-                var address = new UriBuilder(Uri.UriSchemeHttp, node.Address.ToString(), options.InternalPort).Uri;
+                var address = node.InternalListener(options.InternalPort);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
                     HttpClient = _http,
