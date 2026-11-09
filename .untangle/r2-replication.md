@@ -36,3 +36,29 @@ Self-check greps (rule 5 of the brief): comments gone, `System.*` qualified name
 - Fix 5: `RegionReplicaTests` constructs `TursoReplicas` directly but drives the real home server over HTTP with real storage (encryption-at-rest leak scans, delayed-answer interleaving, checkpoint/reopen) — integration tests of the replica subsystem, kept. `LocalWriteWorld` builds a real second node from real stores to fake partner health — kept. `ClockSafetyTests` drives the real gRPC clock service — already through the public interface. No unit tests deleted.
 - Reviewed and left: `DateTime.UtcNow` for test credential expiry and one `Task.Wait()` rendezvous in `HomeMoveDeleteFenceTests`' paused-checkpoint drill (test-side blocking by design).
 - Checks: `dotnet build src/TerraBase -c Debug` 0 errors/0 warnings; Slow and E2E test builds 0/0; `dotnet format whitespace --verify-no-changes` clean for src, Fast and Slow; `make terrabase-test-fast`: 12.837 s / 30 s, 88 tests, slowest 7.7 s, all passed.
+
+## Round 2 continuation (coordinator review pass)
+
+### Fix 7 — one Backoff sequence for every retry loop
+The doubling expression `TimeSpan.FromTicks(Math.Min(max, current * 2))` was hand-rolled five times: `HomePush.cs` ConsumeAsync/ApplyAsync/RetryAsync, `RegionReplication.cs` Follower.RetryAsync, `HomeMoves.cs` DrainAsync. New `Backoff` struct (`Features/Replicas/Backoff.cs`); all five use `Next()`/`Reset()`. Solve: coordinator target 1 (duplicated backoff logic).
+- `HomePush.cs` ConsumeAsync/ApplyAsync/RetryAsync
+- `RegionReplication.cs:1014` Follower.RetryAsync
+- `HomeMoves.cs:393` DrainAsync
+
+### Fix 8 — one rollout-status reader in RegionalHandoff
+`GET /v1/rollout/status` + `RegionalStatus` decode was copied 5× and the self-region peer lookup 3×. New `StatusAsync`, `AwaitStatusAsync` (both 25 ms settle polls) and `SelfRegionPeerAsync`.
+- `RegionalHandoff.Control.cs` NodeReadyAsync, BeginDrainAsync, ReplacedSourceReadyAsync
+- `RegionalHandoff.cs` DrainCoreAsync activation and observer polls
+
+### Fix 9 — HomePush takes RegionalOwners directly
+`services.GetService<RegionalOwners>()?.Writer ?? true` was a fallback only the Slow test world needed (round 1 kept it); `RegionalOwners` is now a constructor dependency and `LocalWriteWorld` passes an instance. The test world's PeersFile-less options keep `Writer` true, matching the old default. Solve: coordinator target 4 (test-only seam).
+
+### Fix 10 — file splits by change reason (coordinator target 1)
+- `RegionReplication.cs` (1,035) → follower/publish/notice engine + `RegionReplication.Catalog.cs` (peers listing, home catalog reads, record import, missing-replica resolution, teardown).
+- `HomeLeases.cs` (833) → per-database lease lifecycle + `HomeLeases.Node.cs` (node session: RenewAsync, Lapse, TakeNodeAsync, PublishNodeAsync).
+
+### Judged and left
+- State machines as flags (target 1): `RegionalTransfer.Phase` and `ReplicaStates`/`WriteStates` are persisted/wire string value sets (HARD LIMITS: no contract change); `HomePush`'s `_ready`/`_js`/`_nats` are lifecycle availability, not a closed variant set. No change.
+- HomeMoves vs RegionalHandoff (target 2): move flows post `/v1/home-move*` routes with their own timeout helper; handoff posts `/v1/rollout` routes. Different contracts, no shared steps beyond the generic post-JSON shape each class already owns. No copies.
+- `ConsumeAsync`'s 100 ms `RegionWriter` poll (target 3): samples a time-varying property (lease expiry timestamp + KV-observed owner + drain flag); an event cannot express time-based expiry, so polling is the design, not a workaround.
+- Backoff waits against NATS/storage/peers stay (external, bounded).
