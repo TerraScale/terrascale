@@ -10,19 +10,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
             services.AddSingleton<OnboardingService>();
         }
 
-        public static void MapOnboarding(this WebApplication app)
-        {
-            app.MapGet("/register", (HttpContext context) => HttpRedirects.SeeOther("/onboarding" + context.Request.QueryString));
-            app.MapGet("/onboarding", GetAsync);
-            app.MapPost("/onboarding/step", SaveAsync);
-        }
-
-        private static async Task<IResult> GetAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend)
-        {
-            return await RenderAsync(context, sessions, accounts, service, backend);
-        }
-
-        private static async Task<IResult> RenderAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend, IFormCollection? draft = null, string error = "", int status = 200)
+        internal static async Task<IResult> RenderAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend, IFormCollection? draft = null, string error = "", int status = 200)
         {
             var plans = await service.PlansAsync(context.RequestAborted);
             var requested = draft?["plan"].ToString() ?? context.Request.Query["plan"].ToString();
@@ -86,7 +74,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
             return name.Equals(email, StringComparison.OrdinalIgnoreCase) || name.Equals(email.Split('@')[0], StringComparison.OrdinalIgnoreCase) ? "" : name;
         }
 
-        private static async Task<IResult> SaveAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend)
+        internal static async Task<IResult> SaveAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend)
         {
             var form = await FormRequests.ReadAsync(context, context.RequestAborted);
             if (!Csrf.Validate(context, form))

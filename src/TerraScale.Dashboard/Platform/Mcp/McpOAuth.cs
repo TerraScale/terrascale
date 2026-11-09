@@ -30,16 +30,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
         private static readonly string[] CodeChallengeMethods = ["S256"];
         private static readonly string[] TokenEndpointAuthMethods = ["none"];
 
-        public static void MapMcpOAuth(this WebApplication app)
-        {
-            app.MapGet("/.well-known/oauth-protected-resource/{**resource}", ProtectedResource);
-            app.MapGet("/.well-known/oauth-authorization-server", AuthorizationServer);
-            app.MapPost("/oauth/register", RegisterAsync);
-            app.MapGet("/oauth/authorize", AuthorizeAsync);
-            app.MapPost("/oauth/authorize", ConsentAsync);
-            app.MapPost("/oauth/token", TokenAsync);
-        }
-
         // mcp.terrascale.tech serves only MCP; its sign-in and authorization pages live on the dashboard host.
         public static bool IsMcpHost(HttpContext context)
         {
@@ -66,7 +56,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             return Origin(context) + "/.well-known/oauth-protected-resource" + (IsMcpHost(context) ? "" : "/mcp");
         }
 
-        private static IResult ProtectedResource(HttpContext context)
+        internal static IResult ProtectedResource(HttpContext context)
         {
             return Results.Json(new Dictionary<string, object>
             {
@@ -79,7 +69,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             });
         }
 
-        private static IResult AuthorizationServer(HttpContext context)
+        internal static IResult AuthorizationServer(HttpContext context)
         {
             var issuer = Issuer(context);
             return Results.Json(new Dictionary<string, object>
@@ -100,7 +90,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         // Anyone may register: a client is only a name and its redirect URIs, and every authorization
         // still needs the user's consent on the dashboard and a sign-in on ts-auth.
-        private static async Task<IResult> RegisterAsync(HttpContext context, IDashboardState state, TimeProvider time)
+        internal static async Task<IResult> RegisterAsync(HttpContext context, IDashboardState state, TimeProvider time)
         {
             static IResult TooLarge()
             {
@@ -194,7 +184,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }, statusCode: StatusCodes.Status201Created);
         }
 
-        private static async Task<IResult> AuthorizeAsync(HttpContext context, IDashboardState state)
+        internal static async Task<IResult> AuthorizeAsync(HttpContext context, IDashboardState state)
         {
             var request = await ReadRequestAsync(context, state, context.Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString()));
             if (request.Page is not null)
@@ -216,7 +206,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         public const string FormActionKey = "TerraScale.Dashboard/form-action";
 
-        private static async Task<IResult> ConsentAsync(HttpContext context, IDashboardState state)
+        internal static async Task<IResult> ConsentAsync(HttpContext context, IDashboardState state)
         {
             if (!context.Request.HasFormContentType)
             {
@@ -322,7 +312,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             { ["error"] = "access_denied", ["state"] = authorization.State, ["iss"] = authorization.Issuer }.Where(pair => pair.Value is not null)));
         }
 
-        private static async Task<IResult> TokenAsync(HttpContext context, IDashboardState state, AccessTokens tokens, TimeProvider time)
+        internal static async Task<IResult> TokenAsync(HttpContext context, IDashboardState state, AccessTokens tokens, TimeProvider time)
         {
             if (!context.Request.HasFormContentType)
             {

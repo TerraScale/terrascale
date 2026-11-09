@@ -257,6 +257,22 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<StorageDeleteFileEndpoint>(),
                 EndpointRegistration.Create<StorageDownloadEndpoint>(),
                 EndpointRegistration.Create<ReferenceScriptEndpoint>(),
+                EndpointRegistration.Create<LoginEndpoint>(),
+                EndpointRegistration.Create<LoginCallbackEndpoint>(),
+                EndpointRegistration.Create<AuthStepUpCallbackEndpoint>(),
+                EndpointRegistration.Create<OrganizationChooseEndpoint>(),
+                EndpointRegistration.Create<AuthLogoutEndpoint>(),
+                EndpointRegistration.Create<RegisterEndpoint>(),
+                EndpointRegistration.Create<OnboardingPageEndpoint>(),
+                EndpointRegistration.Create<OnboardingStepEndpoint>(),
+                EndpointRegistration.Create<McpProtectedResourceEndpoint>(),
+                EndpointRegistration.Create<McpAuthorizationServerEndpoint>(),
+                EndpointRegistration.Create<McpRegisterEndpoint>(),
+                EndpointRegistration.Create<McpAuthorizeEndpoint>(),
+                EndpointRegistration.Create<McpConsentEndpoint>(),
+                EndpointRegistration.Create<McpTokenEndpoint>(),
+                EndpointRegistration.Create<McpUnsupportedMethodEndpoint>(),
+                EndpointRegistration.Create<McpRootUnsupportedMethodEndpoint>(),
             ]);
             builder.Services.AddTransient<ServerTiming.Handler>();
             builder.Services.AddTransient<RequestIdentity.Handler>();
@@ -430,13 +446,10 @@ namespace TerraScale.Dashboard
             app.Use((context, next) => stateInitializer is null or { Initialized: true } || context.Request.Path.StartsWithSegments("/healthz") ||
                 context.Request.Path.StartsWithSegments("/readyz") || context.Request.Path.StartsWithSegments("/health")
                 ? next(context) : throw new IOException("Dashboard state is initializing."));
-            app.MapAuth();
-            app.MapOnboarding();
             app.MapDatabaseFeatures();
             app.MapSettings();
             app.MapBilling();
             app.MapBillingPlanChanges();
-            app.MapMcpOAuth();
             app.MapDashboardMcp();
             app.MapDevelopmentUpdates();
             app.MapDashboardContracts();
