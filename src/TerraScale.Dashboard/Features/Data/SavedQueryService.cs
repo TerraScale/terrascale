@@ -1,16 +1,14 @@
-using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Data
 {
     public sealed record SavedQuery(string Id, string Name, string Sql, string DatabaseId, DateTimeOffset CreatedAt);
-    public sealed record SavedQueryRecord(string OrganizationId, string ProjectId, IReadOnlyList<SavedQuery> Queries);
 
-    public sealed class SavedQueryService(IDashboardState state, TimeProvider time, AccountService accounts)
+    public sealed class SavedQueryService(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, AccountService accounts)
     {
-        private const string Table = "dashboard_saved_queries";
         public async Task<IReadOnlyList<SavedQuery>> ListAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
@@ -31,14 +29,12 @@ namespace TerraScale.Dashboard.Features.Data
 
         private async Task<IReadOnlyList<SavedQuery>> ReadAsync(AccountContext context, CancellationToken cancellationToken)
         {
-            var row = await state.GetAsync(Table, Key(context), cancellationToken);
-            if (row is null)
-            {
-                return [];
-            }
-
-            var record = Read(context, row);
-            return [.. record.Queries.OrderBy(query => query.Name, StringComparer.Ordinal)];
+            var scope = DatabaseService.Scope(context);
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var rows = await db.SavedQueries.AsNoTracking()
+                .Where(row => row.OrganizationId == scope.OrganizationId && row.ProjectId == scope.ProjectId)
+                .ToListAsync(cancellationToken);
+            return [.. rows.Select(row => new SavedQuery(row.Id, row.Name, row.Sql, row.DatabaseId, new DateTimeOffset(row.CreatedAt))).OrderBy(query => query.Name, StringComparer.Ordinal)];
         }
 
         public async Task<SavedQuery> SaveAsync(AccountContext context, string databaseId, string name, string sql, CancellationToken cancellationToken)
@@ -72,15 +68,27 @@ namespace TerraScale.Dashboard.Features.Data
             }
 
             var query = new SavedQuery(AccountService.NewId(), name, sql, databaseId, time.GetUtcNow());
-            await UpdateAsync(context, queries =>
+            var scope = DatabaseService.Scope(context);
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            db.SavedQueries.Add(new SavedQueryRow
             {
-                if (queries.Any(item => item.DatabaseId == databaseId && string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    throw new AccountAccessException("A saved query with this name already exists. Choose another name or delete the existing query.", 409);
-                }
+                Id = query.Id,
+                OrganizationId = scope.OrganizationId,
+                ProjectId = scope.ProjectId,
+                DatabaseId = databaseId,
+                Name = name,
+                Sql = sql,
+                CreatedAt = query.CreatedAt.UtcDateTime,
+            });
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException error) when (error.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation })
+            {
+                throw new AccountAccessException("A saved query with this name already exists. Choose another name or delete the existing query.", 409);
+            }
 
-                queries.Add(query);
-            }, cancellationToken);
             return query;
         }
 
@@ -97,43 +105,12 @@ namespace TerraScale.Dashboard.Features.Data
                 throw new AccountAccessException("Write access is required.");
             }
 
-            await UpdateAsync(context, queries =>
-            {
-                var query = queries.FirstOrDefault(query => query.Id == id) ?? throw new AccountAccessException("Saved query is unavailable.", 404);
-                queries.Remove(query);
-            }, cancellationToken);
-        }
-
-        private async Task UpdateAsync(AccountContext context, Action<List<SavedQuery>> mutate, CancellationToken cancellationToken)
-        {
-            for (var attempt = 0; attempt < 4; attempt++)
-            {
-                var key = Key(context);
-                var current = await state.GetAsync(Table, key, cancellationToken);
-                var queries = current is null ? [] : Read(context, current).Queries.ToList();
-                mutate(queries);
-                try
-                {
-                    await state.PutAsync(Table, key, JsonSerializer.SerializeToElement(new SavedQueryRecord(context.Organization!.Id, context.Project!.Id, queries)), current is null ? StatePrecondition.Absent : StatePrecondition.Matches(current.Version), cancellationToken);
-                    return;
-                }
-                catch (StateConflictException) when (attempt < 3) { }
-            }
-        }
-        private static SavedQueryRecord Read(AccountContext context, StateRecord row)
-        {
-            var record = AccountService.Read<SavedQueryRecord>(row);
-            if (record.OrganizationId != context.Organization!.Id || record.ProjectId != context.Project!.Id)
-            {
-                throw new AccountAccessException("Saved query scope is invalid.");
-            }
-
-            return record;
-        }
-        private static string Key(AccountContext context)
-        {
             var scope = DatabaseService.Scope(context);
-            return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(scope.OrganizationId + "/" + scope.ProjectId)));
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            if (await db.SavedQueries.Where(row => row.Id == id && row.OrganizationId == scope.OrganizationId && row.ProjectId == scope.ProjectId).ExecuteDeleteAsync(cancellationToken) == 0)
+            {
+                throw new AccountAccessException("Saved query is unavailable.", 404);
+            }
         }
     }
 }

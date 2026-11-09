@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Features.Notifications;
@@ -6,11 +7,11 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
-    public sealed class DeletionRelatedRecords(IDashboardState state)
+    public sealed class DeletionRelatedRecords(IDashboardState state, IDbContextFactory<DashboardDbContext> storage)
     {
         public async Task CleanAccountAsync(string subject, CancellationToken cancellationToken)
         {
-            await Features.Data.SqlWorkspace.EraseAsync(state, new Dictionary<string, string> { ["UserId"] = subject }, cancellationToken);
+            await Features.Data.SqlWorkspace.EraseAsync(storage, row => row.UserId == subject, cancellationToken);
         }
 
         public async Task CleanOrganizationAsync(string organizationId, CancellationToken cancellationToken)
@@ -29,7 +30,6 @@ namespace TerraScale.Dashboard.Features.Profile
             }
             await DropAsync<BillingChangeReceipt>(StripeBilling.ChangesTable, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
             await DropAsync<AllowanceNotificationState>(AllowanceNotifications.Table, organizationId, row => row.OrganizationId == organizationId, cancellationToken);
-            await Features.Data.DatabaseWorkspaceCleanup.EraseMarkersAsync(state, organizationId, null, cancellationToken);
             await CleanNotificationsAsync(organizationId, null, cancellationToken);
         }
 

@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Platform.Persistence;
@@ -17,6 +18,10 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
 
     public DbSet<McpCodeRow> McpCodes => Set<McpCodeRow>();
 
+    public DbSet<SavedQueryRow> SavedQueries => Set<SavedQueryRow>();
+
+    public DbSet<SqlWorkspaceRow> SqlWorkspaces => Set<SqlWorkspaceRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfiguration(new AuthFlowRow.Configuration());
@@ -24,6 +29,8 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
         modelBuilder.ApplyConfiguration(new AccessTokenRow.Configuration());
         modelBuilder.ApplyConfiguration(new McpClientRow.Configuration());
         modelBuilder.ApplyConfiguration(new McpCodeRow.Configuration());
+        modelBuilder.ApplyConfiguration(new SavedQueryRow.Configuration());
+        modelBuilder.ApplyConfiguration(new SqlWorkspaceRow.Configuration());
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
             foreach (var property in entity.GetProperties())

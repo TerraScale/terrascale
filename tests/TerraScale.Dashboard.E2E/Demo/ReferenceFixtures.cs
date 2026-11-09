@@ -24,7 +24,7 @@ namespace TerraScale.Dashboard.E2E
         internal const string SandboxId = "06RCAG0WTSX0132AWJ5NEK4KR8";
         internal const string PrimaryId = "0Z793APJ2ECFW2F7P6J9F2RKVY";
 
-        public static async Task<ReferencePersonas> InitializeAsync(string root, TestState state, TestWorkspace workspace,
+        public static async Task<ReferencePersonas> InitializeAsync(string root, TestState state, Func<Task<DashboardDbContext>> storage, TestWorkspace workspace,
             Action<ReferencePrincipal> registerPrincipal, Action<ManagedDatabase> registerDatabase, Func<DatabaseScope, string, string, Task> runSql)
         {
             using var manifest = await ReadManifestAsync(root);
@@ -98,12 +98,32 @@ namespace TerraScale.Dashboard.E2E
                 ("12K95R3TTQBAV0C4VSQ4H3H1D1", "{\"type\":\"checkout.completed\",\"occurredAt\":\"2026-09-17T14:10:00Z\"}"),
                 ("133XABR9K9YRWKZ26JVK0K7R3R", "{\"type\":\"session.started\",\"occurredAt\":\"2026-09-17T14:12:00Z\"}")
             ]);
-            var saved = new SavedQueryRecord(LabsId, CoreId,
-            [
-                new("39ZEVV1QSZ378459T0K4B2R2WJ", "orders-over-500", "SELECT * FROM orders WHERE total > 500", "", At(2026, 9, 16, 10, 20)),
-                new("01RDCAGXABDJ1KBJ6RGJZM0FE3", "sessions-active-7d", "SELECT id, startedAt FROM sessions WHERE startedAt > now() - 7d", "", At(2026, 9, 14, 16, 44))
-            ]);
-            await state.PutAsync("dashboard_saved_queries", Hash(LabsId + "/" + CoreId), JsonSerializer.SerializeToElement(saved), StatePrecondition.Absent, default);
+            await using (var db = await storage())
+            {
+                db.SavedQueries.AddRange(
+                    new SavedQueryRow
+                    {
+                        Id = "39ZEVV1QSZ378459T0K4B2R2WJ",
+                        OrganizationId = LabsId,
+                        ProjectId = CoreId,
+                        DatabaseId = "",
+                        Name = "orders-over-500",
+                        Sql = "SELECT * FROM orders WHERE total > 500",
+                        CreatedAt = At(2026, 9, 16, 10, 20).UtcDateTime
+                    },
+                    new SavedQueryRow
+                    {
+                        Id = "01RDCAGXABDJ1KBJ6RGJZM0FE3",
+                        OrganizationId = LabsId,
+                        ProjectId = CoreId,
+                        DatabaseId = "",
+                        Name = "sessions-active-7d",
+                        Sql = "SELECT id, startedAt FROM sessions WHERE startedAt > now() - 7d",
+                        CreatedAt = At(2026, 9, 14, 16, 44).UtcDateTime
+                    });
+                await db.SaveChangesAsync();
+            }
+
             return personas;
         }
 
@@ -552,11 +572,6 @@ namespace TerraScale.Dashboard.E2E
                 var values = columns.Select(name => row.RootElement.GetProperty(name) is var value && value.ValueKind == JsonValueKind.Number ? value.GetRawText() : "'" + value.GetString()!.Replace("'", "''", StringComparison.Ordinal) + "'");
                 await runSql(scope, databaseId, "INSERT INTO " + table + " VALUES ('" + id + "', " + string.Join(", ", values) + ")");
             }
-        }
-
-        private static string Hash(string value)
-        {
-            return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
         }
 
         private static DateTimeOffset At(int year, int month, int day, int hour, int minute)

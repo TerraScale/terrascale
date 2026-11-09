@@ -24,6 +24,7 @@ public sealed class TerraBaseStorage : IAsyncDisposable
     private readonly ConcurrentQueue<string> output = new();
     private readonly TerraScaleIdGenerator ids = new();
     private readonly HttpClient peer = new(new PeerCredential(TestIdentity.PeerSecret) { InnerHandler = TerraBaseHttp.CreateHandler() });
+    private readonly HttpClient databases = new(TerraBaseHttp.CreateHandler());
     private Process? process;
 
     public Uri InternalAddress { get; private set; } = null!;
@@ -68,7 +69,7 @@ public sealed class TerraBaseStorage : IAsyncDisposable
         }
     }
 
-    public async Task<string> CreateProjectAsync(CancellationToken cancellationToken)
+    public async Task<(string Project, string Database)> CreateDatabaseAsync(CancellationToken cancellationToken)
     {
         var user = ids.NewId();
         var management = new TerraBaseManagementClient(peer, new TerraBaseManagementClientOptions { BaseAddress = InternalAddress });
@@ -86,22 +87,26 @@ public sealed class TerraBaseStorage : IAsyncDisposable
         response.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         var apiKey = body.RootElement.GetProperty("secret").GetString()!;
-        using var http = new HttpClient(TerraBaseHttp.CreateHandler());
-        await new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { BaseAddress = PublicAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) })
+        await new TerraBaseDatabaseClient(databases, new TerraBaseDatabaseClientOptions { BaseAddress = PublicAddress, AccessTokenProvider = _ => ValueTask.FromResult(apiKey) })
             .Database(project.Id, Database).CreateAsync(cancellationToken);
-        return project.Id;
+        await using (var db = Open(project.Id))
+        {
+            await db.Database.MigrateAsync(cancellationToken);
+        }
+
+        return (project.Id, Database);
     }
 
-    public DashboardDbContext Open(string projectId)
+    public DashboardDbContext Open(string project)
     {
         return new(new DbContextOptionsBuilder<DashboardDbContext>()
-            .UseTerraBase(new TerraBaseSqlClient(peer, new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(projectId, Database)).Options);
+            .UseTerraBase(new TerraBaseSqlClient(peer, new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(project, Database)).Options);
     }
 
-    public void Use(IServiceCollection services, string projectId)
+    public void Use(IServiceCollection services, string project)
     {
         services.Replace(ServiceDescriptor.Singleton(provider => new TerraBaseSqlClient(provider.GetRequiredService<DashboardStorage.Transport>().Client,
-            new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(projectId, Database)));
+            new TerraBaseSqlClientOptions { BaseAddress = InternalAddress }).Database(project, Database)));
     }
 
     public async ValueTask DisposeAsync()
@@ -118,6 +123,7 @@ public sealed class TerraBaseStorage : IAsyncDisposable
         }
 
         peer.Dispose();
+        databases.Dispose();
         Directory.Delete(directory, recursive: true);
     }
 

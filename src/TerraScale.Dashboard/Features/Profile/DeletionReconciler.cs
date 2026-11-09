@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -9,12 +10,12 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     // Local fences guard CAS writers; immutable authorization and enrollment references
     // replay after ACK to repair delayed regional writes.
-    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDashboardState state, DashboardSessions sessions,
+    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDashboardState state, IDbContextFactory<DashboardDbContext> storage, DashboardSessions sessions,
         AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ILogger<DeletionReconciler> logger) : BackgroundService
     {
         private readonly DeletionCleanupJournal journal = new(state);
-        private readonly DeletionProjectRecords projectRecords = new(state);
-        private readonly DeletionRelatedRecords related = new(state);
+        private readonly DeletionProjectRecords projectRecords = new(state, storage);
+        private readonly DeletionRelatedRecords related = new(state, storage);
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -29,8 +30,6 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
-            try { await Features.Data.DatabaseWorkspaceCleanup.ReplayAsync(state, cancellationToken); }
-            catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
             // Replay does not depend on producer availability or delivery of an already ACKed proof.
             try
             {
@@ -94,7 +93,12 @@ namespace TerraScale.Dashboard.Features.Profile
                 case "organization":
                     var ended = await billing.EndSubscriptionAsync(proof.SubjectId, cancellationToken, completedDeletion: true);
                     await billing.EndCustomersForDeletionAsync(proof.SubjectId, entry.CustomerIds, cancellationToken);
-                    await Features.Data.SqlWorkspace.EraseAsync(state, new Dictionary<string, string> { ["OrganizationId"] = proof.SubjectId }, cancellationToken);
+                    await Features.Data.SqlWorkspace.EraseAsync(storage, row => row.OrganizationId == proof.SubjectId, cancellationToken);
+                    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+                    {
+                        await db.SavedQueries.Where(row => row.OrganizationId == proof.SubjectId).ExecuteDeleteAsync(cancellationToken);
+                    }
+
                     var projects = new HashSet<string>(entry.ProjectIds, StringComparer.Ordinal);
                     if (await state.GetAsync(AccountService.OrganizationsTable, proof.SubjectId, cancellationToken) is { } existing && !AccountService.IsDeletionFence(existing))
                     {
@@ -107,7 +111,7 @@ namespace TerraScale.Dashboard.Features.Profile
                         projects.UnionWith(org.Projects.Keys);
                         projects.UnionWith(org.DeletedProjectIds);
                     }
-                    foreach (var table in new[] { "dashboard_saved_queries", "dashboard_alert_rules", "dashboard_log_drains" })
+                    foreach (var table in new[] { "dashboard_alert_rules", "dashboard_log_drains" })
                     {
                         foreach (var row in await state.ListAsync(table, cancellationToken))
                         {

@@ -152,6 +152,131 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Data.SavedQueryRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DatabaseId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("database_id");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name")
+                        .UseCollation("NOCASE");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Sql")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("sql");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "ProjectId", "DatabaseId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("saved_queries", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_saved_queries_id", "length(id) = 26");
+
+                            t.HasCheckConstraint("ck_saved_queries_name", "length(CAST(name AS BLOB)) BETWEEN 1 AND 128");
+
+                            t.HasCheckConstraint("ck_saved_queries_scope", "length(organization_id) = 26 AND length(project_id) = 26 AND length(database_id) IN (0, 26)");
+
+                            t.HasCheckConstraint("ck_saved_queries_sql", "length(sql) > 0");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Features.Data.SqlWorkspaceRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("DatabaseId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("database_id");
+
+                    b.Property<string>("Draft")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("draft");
+
+                    b.Property<string>("History")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("history");
+
+                    b.Property<string>("HistoryEpoch")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("history_epoch");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Receipt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("receipt");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("OrganizationId", "ProjectId", "DatabaseId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("sql_workspaces", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_sql_workspaces_draft", "length(CAST(draft AS BLOB)) <= 16384");
+
+                            t.HasCheckConstraint("ck_sql_workspaces_history", "json_array_length(history) <= 20");
+
+                            t.HasCheckConstraint("ck_sql_workspaces_id", "length(id) = 26");
+
+                            t.HasCheckConstraint("ck_sql_workspaces_scope", "length(organization_id) = 26 AND length(project_id) = 26 AND length(database_id) = 26");
+
+                            t.HasCheckConstraint("ck_sql_workspaces_version", "length(version) = 26");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Platform.Identity.SessionRow", b =>
                 {
                     b.Property<string>("Id")
