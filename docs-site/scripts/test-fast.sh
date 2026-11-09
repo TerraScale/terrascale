@@ -2,7 +2,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 npm ci --no-audit --no-fund
-npm run build
-node --test scripts/*.test.mjs
-
-python3 scripts/check-main.test.py
+node scripts/generate-llms.mjs
+npx vitepress build docs
+node scripts/check-public.mjs &
+check_public=$!
+node scripts/check-links.mjs
+wait "$check_public"
+node scripts/build-worker.mjs
+node --test scripts/*.test.mjs &
+node_tests=$!
+python3 scripts/check-main.test.py &
+py_tests=$!
+wait "$node_tests"
+wait "$py_tests"
