@@ -74,7 +74,22 @@ XML doc comments on every slice type and `//` narration of what the next lines d
 - ZLogger structured interpolation calls kept: repo-wide logging pattern, not a per-slice decision.
 
 ## Work log
-- Baseline: build green at `95412a957`.
+- Baseline: build green at `95412a957`; worktree bootstrap needed a writable NuGet cache (redirected to /tmp) and the pinned Turso native assets (`scripts/vendor/download-turso-native.sh`).
+- Fix 1 committed: one route parser (`b1866824`).
+- Fix 2 committed: `ServingNodeExtensions.InternalListener` extension member (`50fec3f`).
+- Fix 3 committed: `CompareAcrossIncarnations` extension member replaces the two `Compare` copies (`d8f6ebe`).
+- Fix 4 committed: HomeForwarding single-rule cleanup (`f17592d`).
+- Fix 5 committed: HomePush purge subjects + `RegionWriter` property (`4eaa26a`).
+- Fix 6 committed: rollout endpoints share `AnswerAsync` (`69b2b36`).
+- Fix 7 committed: required `RegionalOwners` (`72ed986`); HomePush's optional lookup kept for the Slow test world (noted in the commit).
+- Fix 8 committed: catch-up endpoint takes `RegionReplication` (`234372e`).
+- Fix 9 committed: FQN removal with `using static` for the HomePush class/namespace clash (`6eb7203`).
+- Fix 10 committed: comments pass, −162 lines (`47cd988`).
+- Fix 11 committed: `Task.WhenEach`, ClockGuard age read, HomeLeases `TimeProvider`, `Interlocked.Read` (`f34accc`). `[]` for `IReadOnlyDictionary` fields does not compile (CS9174: not constructible) — reverted those four sites.
+- Fix 12 committed: `ReplicaRoutes.DatabasePath` for five client URL spellings; `StatusAsync` token last (`ae8fed4`).
+- Tests review: all slice suites drive real servers/listeners and assert behavior (ack quorums, failover, monotonic HLC, page sync, anti-entropy, handoff drills); nothing removed. Test comments stay: they carry drill timing windows and incident/Pivot references. `RegionalHandoffTests` call site updated for the `StatusAsync` signature.
+- Checks: `dotnet build src/TerraBase` green (0 warnings) after every commit. `make terrabase-test-fast` first run: 16.3 s / 30 s, 88 tests, all passed except the 10 s single-test gate on one Backup-slice test at 10.008 s (machine load avg 35 from the six parallel workers; later runs tripped the gate on five more other-slice tests). Functional result: all tests pass; see final reply for the last run.
+- Slow test project builds clean.
 
 ## Remaining
-- (filled in as work proceeds)
+- Nothing worth fixing left in the slice within this pass; ideas that need cross-slice agreement are in CROSS-SLICE below.
