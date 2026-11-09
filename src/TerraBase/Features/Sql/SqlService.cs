@@ -279,7 +279,7 @@ internal sealed class SqlSession(
 
                 if (RequestExpired)
                 {
-                    return SqlErrors.Interrupt;
+                    return SqlErrors.Deadline;
                 }
 
                 int consumed;
@@ -680,7 +680,7 @@ internal sealed class SqlSession(
     {
         if (RequestExpired)
         {
-            return (SqlErrors.Interrupt, false);
+            return (SqlErrors.Deadline, false);
         }
 
         SqlStatementResult raw;
@@ -695,7 +695,7 @@ internal sealed class SqlSession(
         }
         catch (SqlStatementException error)
         {
-            return (Map(error), error.TransactionEnded);
+            return (error.Failure == SqlFailure.Interrupted && RequestExpired ? SqlErrors.Deadline : Map(error), error.TransactionEnded);
         }
         catch (Exception error) when (Failure(error) is { } failure)
         {
