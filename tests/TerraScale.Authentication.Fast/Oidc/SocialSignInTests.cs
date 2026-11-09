@@ -1,11 +1,15 @@
 using System.Net;
+using System.Text.Json;
 using Bogus;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -113,14 +117,28 @@ public sealed partial class SocialSignInTests(TerraBaseFixture fixture)
         return (await oidc.CreateProjectAsync(token, organization, this.faker.Commerce.ProductName()), token);
     }
 
+    private static async Task<string> SeededGoogleProjectAsync(OidcHarness oidc, FakeSocialProviders providers)
+    {
+        var services = oidc.Server.App.Services;
+        var store = services.GetRequiredService<AuthStore>();
+        var clock = services.GetRequiredService<TimeProvider>();
+        var options = services.GetRequiredService<AuthOptions>();
+        var project = new ProjectRecord(AuthStore.NewId(), OidcIssuer.InstanceId, AuthStore.NewId(), "Social", AuthStore.NewId(), clock.GetUtcNow());
+        await store.CreateAsync(AuthStore.ProjectTable, OidcIssuer.InstanceId, project.Id,
+            JsonSerializer.SerializeToElement(project, PlatformJson.Default.ProjectRecord), CancellationToken.None);
+        var sealedProvider = SocialProviders.Seal(options, project.Id, SocialProviders.Google, null, "project-client", providers.ClientSecret, null, null, null);
+        _ = await services.GetRequiredService<ProjectAuthSettings>().UpdateAsync(project.Id, current =>
+            current with { Providers = [.. (current.Providers ?? []).Where(other => other.Provider != SocialProviders.Google), sealedProvider] });
+        return project.Id;
+    }
+
     [Test]
     public async Task A_password_user_connects_a_provider_after_reauthentication_and_a_second_account_cannot_take_it()
     {
         var clock = new ManualClock(DateTimeOffset.UtcNow);
         using var providers = new FakeSocialProviders();
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: providers.Route);
-        var (project, token) = await this.ProjectAsync(oidc);
-        await oidc.OkAsync(HttpMethod.Put, $"/v1/{project}/providers/google", token, Configuration("google", providers));
+        var project = await SeededGoogleProjectAsync(oidc, providers);
 
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
         var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
