@@ -5,7 +5,6 @@ using System.Text;
 
 namespace TerraBase.Testing;
 
-/// <summary>Reports bounded runtime samples at integration failures and session end.</summary>
 public static partial class SuiteDiagnostics
 {
     private const int Capacity = 600;
@@ -23,7 +22,6 @@ public static partial class SuiteDiagnostics
     {
         _started = Stopwatch.GetTimestamp();
         _cgroup = CgroupDirectory(out var mountpoint);
-        // Bypass TUnit's captured hook output so green runs expose the startup PID and final comparator rows.
         using (var output = new StreamWriter(Console.OpenStandardOutput()))
         {
             ReportConfiguration(output.WriteLine, mountpoint);
@@ -70,9 +68,6 @@ public static partial class SuiteDiagnostics
             return;
         }
 
-        // Each row holds only the latest completed GC cycle; a gap in gc_index means unobserved GC cycles.
-        // Heap/load values describe that GC cycle, not current live objects; allocation totals are approximate.
-        // Pressure/throttling totals are cumulative microseconds; cgroup counters/bytes are -1 when unavailable.
         write(string.Create(CultureInfo.InvariantCulture,
             $"Suite runtime pid={Environment.ProcessId} cpus={Environment.ProcessorCount} server_gc={GCSettings.IsServerGC}: elapsed_s,cpu_s,gc_pause_s,gen2,threads,queued_work,monitor_contentions,gc_index,gc_gen,gc_promoted_bytes,gc_pause0_ms,gc_pause1_ms,host_cpu_some_us,cgroup_cpu_some_us,cgroup_throttled_us,load1,allocated_bytes,heap_bytes,fragmented_bytes,committed_bytes,memory_load_bytes,memory_load_threshold_bytes,working_set_bytes,cgroup_memory_current_bytes,cgroup_swap_current_bytes,cgroup_memory_low,cgroup_memory_high,cgroup_memory_max,cgroup_memory_oom,cgroup_memory_oom_kill,cgroup_memory_oom_group_kill,host_memory_some_us,host_memory_full_us,cgroup_memory_some_us,cgroup_memory_full_us,cgroup_pgmajfault"));
         foreach (var sample in samples)
@@ -110,7 +105,6 @@ public static partial class SuiteDiagnostics
             settings.Append(CultureInfo.InvariantCulture, $" {key}={value}");
         }
 
-        // AppContext exposes configured PGO only; absence does not establish the effective runtime value.
         var tieredPgo = AppContext.GetData("System.Runtime.TieredPGO") switch
         {
             bool enabled => $"configured:{enabled}",
@@ -170,7 +164,6 @@ public static partial class SuiteDiagnostics
                 Field(memoryEvents, "oom ", ""), Field(memoryEvents, "oom_kill ", ""), Field(memoryEvents, "oom_group_kill ", ""),
                 Field(hostMemoryPressure, "some ", "total="), Field(hostMemoryPressure, "full ", "total="),
                 Field(cgroupMemoryPressure, "some ", "total="), Field(cgroupMemoryPressure, "full ", "total="),
-                // memory.stat can place pgmajfault after 1 KiB; this read stays bounded at 4 KiB.
                 Field(ReadCgroup("memory.stat", 4096), "pgmajfault ", ""));
             if (Samples.Count == Capacity)
             {
@@ -184,19 +177,11 @@ public static partial class SuiteDiagnostics
 
     private static string? ReadCgroup(string name, int limit = 1024) => _cgroup is null ? null : ReadSmall(_cgroup + "/" + name, limit);
 
-    // This process's cgroup v2 directory, or null (fields report -1) when no visible cgroup2 mount contains it. Runs once.
-    // /proc/self/cgroup gives "0::/path" relative to the cgroup namespace root; each cgroup2 line in /proc/self/mountinfo
-    // gives the subtree root it exposes (field 4), relative to the same namespace root, at a mountpoint (field 5). Both
-    // may climb above the namespace root with leading "/.." components. With equal climbs, the most specific mount whose
-    // root is the membership path or a "/"-bounded prefix of it maps the remainder below its mountpoint. A mount whose
-    // root is only further climbs (inherited from outside a cgroup namespace) hides the names between, so its directory
-    // is searched and validated instead.
     private static string? CgroupDirectory(out string? cgroupMountpoint)
     {
         cgroupMountpoint = null;
         var membership = ReadSmall("/proc/self/cgroup", 4096)?.Split('\n').SkipLast(1)
             .FirstOrDefault(entry => entry.StartsWith("0::/", StringComparison.Ordinal))?[3..].TrimEnd('/');
-        // 1 MiB covers hosts with thousands of mounts; past that the cut-off tail is ignored and fields report -1.
         var mountinfo = ReadSmall("/proc/self/mountinfo", 1 << 20);
         if (membership is null || mountinfo is null)
         {
@@ -247,7 +232,6 @@ public static partial class SuiteDiagnostics
         return null;
     }
 
-    // Splits a namespace-relative cgroup path into its leading "/.." count and the remaining "/"-prefixed names.
     private static (int Climb, string Names) SplitClimb(string path)
     {
         var climb = 0;
@@ -260,8 +244,6 @@ public static partial class SuiteDiagnostics
         return (climb, path);
     }
 
-    // The directory depth levels below mountpoint, then names, whose cgroup.procs lists this process. A process belongs
-    // to exactly one cgroup, so at most one candidate matches. Visits at most 4096 directories, else null.
     private static string? FindInherited(string mountpoint, int depth, string names)
     {
         List<string> level = [mountpoint];
@@ -285,7 +267,6 @@ public static partial class SuiteDiagnostics
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
-                    // An unreadable branch is skipped; if it held this process, no candidate matches and fields report -1.
                 }
             }
 
@@ -306,12 +287,10 @@ public static partial class SuiteDiagnostics
         });
     }
 
-    // mountinfo octal-escapes space, tab, newline and backslash; backslash goes last so "\134040" stays a literal "\040".
     private static string Unescape(string field) => field.Replace("\\040", " ", StringComparison.Ordinal)
         .Replace("\\011", "\t", StringComparison.Ordinal).Replace("\\012", "\n", StringComparison.Ordinal)
         .Replace("\\134", "\\", StringComparison.Ordinal);
 
-    // Best effort: reads at most limit bytes (stack buffer for the 1 KiB per-second stats), null when absent or unreadable.
     private static string? ReadSmall(string path, int limit = 1024)
     {
         try
@@ -333,7 +312,6 @@ public static partial class SuiteDiagnostics
         }
     }
 
-    // The first integer after key in the line starting with prefix ("some ... total=N", "throttled_usec N"), or -1.
     private static long Field(string? text, string prefix, string key)
     {
         var line = text?.Split('\n').FirstOrDefault(entry => entry.StartsWith(prefix, StringComparison.Ordinal));

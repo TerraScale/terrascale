@@ -6,7 +6,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Fast.Tenancy;
 
-/// <summary>HTTP writes, restarts and restores preserve encryption of every local database and its WAL.</summary>
 public sealed class DatabaseEncryptionTests
 {
     [Test]
@@ -72,7 +71,6 @@ public sealed class DatabaseEncryptionTests
     private static async Task AssertNoPlaintextAsync(string directory, string marker)
     {
         var expected = Encoding.UTF8.GetBytes(marker);
-        // Logical backup .frames spools can contain plaintext; this proof covers encrypted database pages and wrapped keys.
         var paths = Directory.GetFiles(directory, "*", SearchOption.AllDirectories)
             .Where(path => Path.GetExtension(path) is ".db" or ".key" or ".creating" or ".rebuild"
                 || path.EndsWith("-wal", StringComparison.Ordinal)

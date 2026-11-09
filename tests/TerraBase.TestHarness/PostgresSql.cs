@@ -5,7 +5,6 @@ namespace TerraBase.Testing;
 
 internal static class PostgresSql
 {
-    // Npgsql defaults except TLS: the platform edge terminates it, the listener speaks plaintext.
     internal static NpgsqlDataSource Source(ManagementApi api, string key, string database) => NpgsqlDataSource.Create(
         new NpgsqlConnectionStringBuilder
         {

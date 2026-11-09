@@ -6,14 +6,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace TerraBase.Testing;
 
-/// <summary>
-/// The Cloudflare API behind the shape CDN, routed in place of api.cloudflare.com: purge (ShapeCdnPurge) records every
-/// purged URL, and zone analytics (ShapeCdnAnalytics) answers the configured cache-status groups. Both check the bearer
-/// token and the zone.
-/// </summary>
 public sealed class FakeCloudflare : IDisposable
 {
-    /// <summary>The API token a server configured by <see cref="FakeS3"/> with <c>R2 = true</c> sends.</summary>
     public const string Token = "test-cloudflare-token";
 
     private const string Zone = "4cc466e19478c116fae7dc445a6d0911";
@@ -23,15 +17,12 @@ public sealed class FakeCloudflare : IDisposable
     private readonly ConcurrentQueue<(string Host, string Start, string End)> _windows = new();
     private readonly SemaphoreSlim _queries = new(0);
 
-    /// <summary>Every URL purged so far, in request order.</summary>
     public IReadOnlyCollection<string> Purged => _purged;
 
     public HttpStatusCode VerificationStatus { get; set; } = HttpStatusCode.NotFound;
 
-    /// <summary>The (cache status, count) groups every analytics query answers.</summary>
     public IReadOnlyList<(string CacheStatus, long Count)> Analytics { get; set; } = [];
 
-    /// <summary>Every analytics query's host and half-open window, in request order.</summary>
     public IReadOnlyCollection<(string Host, string Start, string End)> Windows => _windows;
 
     public void Dispose()
@@ -40,14 +31,12 @@ public sealed class FakeCloudflare : IDisposable
         _queries.Dispose();
     }
 
-    /// <summary>Routes the server's Cloudflare API client to this fake.</summary>
     public void Route(IServiceCollection services)
     {
         services.AddHttpClient("cloudflare-api").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
         services.AddHttpClient("shape-cdn-verification").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
     }
 
-    /// <summary>Waits until at least <paramref name="count"/> URLs are purged; the caller's token bounds the wait.</summary>
     public async Task PurgedAsync(int count, CancellationToken cancellationToken)
     {
         while (_purged.Count < count)
@@ -56,7 +45,6 @@ public sealed class FakeCloudflare : IDisposable
         }
     }
 
-    /// <summary>Waits until at least <paramref name="count"/> analytics queries arrived; the caller's token bounds the wait.</summary>
     public async Task QueriedAsync(int count, CancellationToken cancellationToken)
     {
         while (_windows.Count < count)

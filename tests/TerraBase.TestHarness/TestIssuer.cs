@@ -17,12 +17,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
 
-/// <summary>
-/// An in-process stand-in for ts-auth: its OIDC discovery document and JWKS, and access tokens signed with its keys.
-/// Starts with one published ES256 key that signs every token. <see cref="Route"/> serves the JSON metadata through a message
-/// handler that replaces the server's transport (no socket); <see cref="ListenAsync"/> serves them over TLS on a loopback
-/// port to the server's own transport.
-/// </summary>
 public sealed class TestIssuer : IDisposable
 {
     public const string Issuer = "https://auth.test/terrascale";
@@ -30,7 +24,6 @@ public sealed class TestIssuer : IDisposable
     public const string Discovery = Issuer + "/.well-known/openid-configuration";
     public const string Jwks = Issuer + "/.well-known/jwks.json";
 
-    /// <summary>Where <see cref="RedirectJwks"/> sends the JWKS request; it serves the same key set.</summary>
     public const string MovedJwks = Issuer + "/.well-known/moved-jwks.json";
 
     private static readonly JsonWebTokenHandler Tokens = new() { SetDefaultTimesOnTokenCreation = false };
@@ -59,49 +52,36 @@ public sealed class TestIssuer : IDisposable
         Signing = AddKey(SecurityAlgorithms.EcdsaSha256);
     }
 
-    /// <summary>The credentials <see cref="Mint"/> signs with.</summary>
     public SigningCredentials Signing { get; private set; }
 
-    /// <summary>Whether ts-auth answers; while false every fetch fails as a refused connection does.</summary>
     public bool Available
     {
         get => _available;
         set => _available = value;
     }
 
-    /// <summary>Whether requests for the JWKS hang until the caller cancels them.</summary>
     public bool HangJwks { get; set; }
 
-    /// <summary>Completes when a JWKS request starts hanging (<see cref="HangJwks"/>).</summary>
     public Task JwksHanging => _hanging.Task;
 
-    /// <summary>Whether the JWKS answers <c>302</c> to <see cref="MovedJwks"/>, which serves a valid key set.</summary>
     public bool RedirectJwks { get; set; }
 
-    /// <summary>Bytes of filler added to the JWKS response, to make it larger than the server reads.</summary>
     public int JwksPaddingBytes { get; set; }
 
-    /// <summary>The <c>issuer</c> the discovery document names; tests change it to serve mismatched metadata.</summary>
     public string DiscoveryIssuer { get; set; } = Issuer;
 
-    /// <summary>Requests for the discovery document, including those that failed because ts-auth was unavailable.</summary>
     public int DiscoveryFetches => Volatile.Read(ref _discoveryFetches);
 
-    /// <summary>Requests for the JWKS.</summary>
     public int JwksFetches => Volatile.Read(ref _jwksFetches);
 
-    /// <summary>Requests for <see cref="MovedJwks"/>.</summary>
     public int MovedJwksFetches => Volatile.Read(ref _movedJwksFetches);
 
-    /// <summary>Requests for a project's ts-auth authority, including denied requests.</summary>
     public int ProjectFetches => Volatile.Read(ref _projectFetches);
 
-    /// <summary>An explicit response to a project authority request; defaults to admin access to the requested project.</summary>
     public sealed record ProjectAuthority(
         string Id, string OrganizationId, string Role = "admin", HttpStatusCode Status = HttpStatusCode.OK,
         Uri? Redirect = null, bool Available = true);
 
-    /// <summary>Grants only this exact bearer token access to this organization's project; no token is granted by default.</summary>
     public void GrantProject(string token, string organization, string project, ProjectAuthority? authority = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
@@ -113,12 +93,10 @@ public sealed class TestIssuer : IDisposable
         }
     }
 
-    /// <summary>Explicit live subject and organization responses for recovery; no token is granted by default.</summary>
     public sealed record RecoveryAuthority(string Subject, string Organization, string? Role = "owner",
         HttpStatusCode Status = HttpStatusCode.OK, Uri? Redirect = null, bool Available = true, bool Malformed = false,
         Func<Task>? BeforeOrganization = null);
 
-    /// <summary>Grants only this token the supplied live recovery identity and organization response.</summary>
     public void GrantRecovery(string token, RecoveryAuthority authority)
     {
         lock (_gate)
@@ -127,17 +105,14 @@ public sealed class TestIssuer : IDisposable
         }
     }
 
-    /// <summary>Client credentials grants at <c>{Issuer}/oauth/token</c>, granted or not.</summary>
     public int TokenRequests => Volatile.Read(ref _tokenRequests);
 
     public int StatusRequests => Volatile.Read(ref _statusRequests);
 
     public bool StatusAvailable { get; set; } = true;
 
-    /// <summary>Runs before each key status answer: a test advances its clock here to stand in for a slow ts-auth.</summary>
     public Action? BeforeStatus { get; set; }
 
-    /// <summary>False stands in for a ts-auth that predates key status: <c>/api-keys/self</c> answers 404.</summary>
     public bool StatusServed { get; set; } = true;
 
     public static string KeyGeneration(string key) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..16];
@@ -160,7 +135,6 @@ public sealed class TestIssuer : IDisposable
         }
     }
 
-    /// <summary>Revokes a key <see cref="GrantClient"/> granted.</summary>
     public void RevokeClient(string key)
     {
         lock (_gate)
@@ -170,7 +144,6 @@ public sealed class TestIssuer : IDisposable
         }
     }
 
-    /// <summary>Points <paramref name="settings"/> at <see cref="Issuer"/> with <see cref="Audience"/>.</summary>
     public static void Configure(Dictionary<string, string> settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -178,17 +151,11 @@ public sealed class TestIssuer : IDisposable
         settings["auth-audience"] = Audience;
     }
 
-    /// <summary>Routes the server's ts-auth client to this issuer through a handler that replaces its transport.</summary>
     public void Route(IServiceCollection services) =>
         services.AddHttpClient("ts-auth").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
 
-    /// <summary>Serves this issuer over TLS on a loopback port; <see cref="TlsIssuer.Route"/> points the server's own transport at it.</summary>
     public Task<TlsIssuer> ListenAsync() => TlsIssuer.StartAsync(this);
 
-    /// <summary>
-    /// Creates a key for <paramref name="algorithm"/> (ES256, RS256 or HS256), publishes it in the JWKS unless
-    /// <paramref name="publish"/> is false, and returns credentials that sign with it. <see cref="Signing"/> is unchanged.
-    /// </summary>
     public SigningCredentials AddKey(string algorithm, bool publish = true)
     {
         var kid = EntityIds.New().ToString();
@@ -231,7 +198,6 @@ public sealed class TestIssuer : IDisposable
         return new SigningCredentials(key, algorithm);
     }
 
-    /// <summary>Removes <paramref name="credentials"/>' key from the JWKS, as ts-auth does when it retires a key.</summary>
     public void Withdraw(SigningCredentials credentials)
     {
         ArgumentNullException.ThrowIfNull(credentials);
@@ -241,7 +207,6 @@ public sealed class TestIssuer : IDisposable
         }
     }
 
-    /// <summary>Publishes a new ES256 key and signs every later token with it; the old key stays published.</summary>
     public SigningCredentials Rotate() => Signing = AddKey(SecurityAlgorithms.EcdsaSha256);
 
     internal void RegisterProject(string project, string organization)
@@ -252,11 +217,6 @@ public sealed class TestIssuer : IDisposable
         }
     }
 
-    /// <summary>
-    /// An access token for <paramref name="subject"/>: type <c>at+jwt</c>, this issuer, <see cref="Audience"/>, valid
-    /// from a minute ago for five minutes, signed with <see cref="Signing"/>. <paramref name="edit"/> changes it first;
-    /// claims go in <see cref="SecurityTokenDescriptor.Claims"/>.
-    /// </summary>
     public string Mint(string? subject, Action<SecurityTokenDescriptor>? edit = null)
     {
         var now = DateTime.UtcNow;
@@ -289,7 +249,6 @@ public sealed class TestIssuer : IDisposable
         return Tokens.CreateToken(descriptor);
     }
 
-    /// <summary>An unsigned (<c>alg: none</c>) token that is otherwise valid for <paramref name="subject"/>.</summary>
     public static string MintUnsigned(string subject)
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -321,7 +280,6 @@ public sealed class TestIssuer : IDisposable
         }
     }
 
-    // Answers one request for uri, as ts-auth would.
     private async Task<HttpResponseMessage> RespondAsync(Uri uri, string method, string? authorization, string? formProject, CancellationToken cancellationToken)
     {
         if (HangJwks && uri.AbsoluteUri == Jwks)
@@ -510,7 +468,6 @@ public sealed class TestIssuer : IDisposable
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
     }
 
-    // One per handler the client factory builds; the factory disposes handlers, never the issuer.
     private sealed class Handler(TestIssuer issuer) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -527,11 +484,6 @@ public sealed class TestIssuer : IDisposable
         }
     }
 
-    /// <summary>
-    /// A <see cref="TestIssuer"/> served by Kestrel over TLS on a loopback port with a self-signed certificate. Unlike
-    /// <see cref="TestIssuer.Route"/>, it keeps the server's own <c>ts-auth</c> transport and its settings (no redirects,
-    /// the response size limit); only where it connects and which certificate it trusts change.
-    /// </summary>
     public sealed class TlsIssuer : IAsyncDisposable
     {
         private readonly WebApplication _app;
@@ -545,11 +497,9 @@ public sealed class TestIssuer : IDisposable
             _port = port;
         }
 
-        /// <summary>Points the server's ts-auth transport at this listener, trusting only its certificate.</summary>
         public void Route(IServiceCollection services) =>
             services.AddHttpClient("ts-auth").ConfigurePrimaryHttpMessageHandler((handler, _) =>
             {
-                // The production handler, configured, never replaced: a different handler type fails the test here.
                 var sockets = (SocketsHttpHandler)handler;
                 sockets.ConnectCallback = ConnectAsync;
                 sockets.SslOptions.RemoteCertificateValidationCallback = (_, presented, _, _) =>
@@ -622,7 +572,6 @@ public sealed class TestIssuer : IDisposable
             }
         }
 
-        // Every ts-auth host name resolves to this listener.
         private async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
         {
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };

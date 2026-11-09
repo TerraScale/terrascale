@@ -63,14 +63,12 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         [.. S3.Objects.Keys.Where(key => key.StartsWith($"{File}/wal/{generation}/", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).Select(key => BackupLayout.ParseSegment(key)!)];
 
-    /// <summary>Upserts row <paramref name="name"/> of table <paramref name="table"/> (<c>people</c> or <c>load</c>).</summary>
     public async Task PutAsync(string table, string name, string text, CancellationToken cancellationToken)
     {
         using var response = await SqlAsync(Database.Data, $"INSERT INTO {table} (id, text) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET text = excluded.text", [name, text], cancellationToken);
         response.EnsureSuccessStatusCode();
     }
 
-    /// <summary>The text of row <paramref name="name"/> in the database named <paramref name="databaseName"/>, or null.</summary>
     public async Task<string?> ReadAsync(string databaseName, string table, string name, CancellationToken cancellationToken)
     {
         using var response = await SqlAsync((Database with { Name = databaseName }).Data, $"SELECT text FROM {table} WHERE id = ?", [name], cancellationToken);

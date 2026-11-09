@@ -1,12 +1,10 @@
 namespace TerraBase.Testing;
 
-/// <summary>Owns the default server and its temporary data directory until all tests in this assembly finish.</summary>
 public static class SharedServer
 {
     private static readonly CancellationTokenSource Lifetime = new();
     private static readonly Lazy<Task<ManagementApi>> Server = new(StartAsync);
 
-    /// <summary>Starts the assembly-owned server before parallel test requests arrive.</summary>
     public static async Task WarmAsync()
     {
         var api = await Server.Value;
@@ -33,9 +31,7 @@ public static class SharedServer
 
     private static Task<ManagementApi> StartAsync()
     {
-        // The host belongs to the assembly, so its background work must not inherit the first test's context or timeout.
         using var flow = ExecutionContext.SuppressFlow();
-        // A shared host serves the whole suite; use the production CPU-derived worker count.
         return Task.Run(() => ManagementApi.StartAsync(settings => settings.Remove("storage-threads"),
             lifetimeCancellationToken: Lifetime.Token));
     }

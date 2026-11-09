@@ -7,7 +7,6 @@ internal static class StoragePoolHelpers
         var joined = Task.WhenAll(tasks);
         try
         {
-            // Finish tracked work before disposing its clients, sessions and listener.
             await joined;
         }
         catch (OperationCanceledException) when (joined.IsCanceled)

@@ -6,7 +6,6 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.Testing;
 
-/// <summary>Synthetic test-only envelope master, stable across fixture process restarts.</summary>
 internal sealed class TestMasterKey : IMasterKey
 {
     private static readonly MasterKey Master = new(Material());
@@ -19,7 +18,6 @@ internal sealed class TestMasterKey : IMasterKey
     public Task<byte[]> UnwrapAsync(string wrapped, CancellationToken cancellationToken) =>
         Master.UnwrapAsync(wrapped, cancellationToken);
 
-    /// <summary>Seeds a wrapped-only key for a new fixture file, never for an existing database.</summary>
     internal static void Create(string path)
     {
         if (File.Exists(path))
@@ -39,11 +37,9 @@ internal sealed class TestMasterKey : IMasterKey
         }
     }
 
-    /// <summary>Opens an encrypted fixture with its existing wrapped key; missing keys always fail.</summary>
     internal static string ConnectionString(string path, SqliteOpenMode mode = SqliteOpenMode.ReadWrite) =>
         ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = mode, Pooling = false });
 
-    /// <summary>Applies encryption while retaining a fixture's connection options.</summary>
     internal static string ConnectionString(SqliteConnectionStringBuilder builder)
     {
         var record = DatabaseKeys.ReadRecord(builder.DataSource);

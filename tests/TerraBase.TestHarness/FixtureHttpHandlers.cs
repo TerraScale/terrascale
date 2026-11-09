@@ -3,8 +3,6 @@ using Microsoft.Extensions.Http;
 
 namespace TerraBase.Testing;
 
-// Infinite factory lifetimes remove expiry timers that otherwise root a disposed fixture's service provider.
-// This fixture owns the actual pipelines instead: one per immutable named client (currently three).
 internal sealed class FixtureHttpHandlers : IHttpMessageHandlerBuilderFilter, IDisposable
 {
     private readonly Lock _gate = new();
@@ -24,13 +22,11 @@ internal sealed class FixtureHttpHandlers : IHttpMessageHandlerBuilderFilter, ID
                     next(builder);
                     var pipeline = builder.Build();
                     _handlers.Add(pipeline);
-                    // The factory's subsequent Build returns this same, fully configured pipeline.
                     builder.AdditionalHandlers.Clear();
                     builder.PrimaryHandler = pipeline;
                 }
                 catch
                 {
-                    // Failed configuration/build can still create handlers; their fixture must clean them up.
                     var handlers = new HashSet<HttpMessageHandler>(builder.AdditionalHandlers, ReferenceEqualityComparer.Instance)
                     {
                         builder.PrimaryHandler,
