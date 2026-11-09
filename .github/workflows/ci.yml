@@ -196,6 +196,8 @@ jobs:
           python3 scripts/vendor/turso-native-pipeline-test.py
           bash scripts/terrabase/storage-format-check-test.sh
           bash scripts/terrabase/e2e-summary-test.sh
+      - name: all-green-rerun workflow list covers every pull_request workflow
+        run: python3 scripts/ci/check-all-green-rerun.py
       # Reads the labels live: after labelling, re-run checks (docs/terrabase/ci.md, storage train).
       - name: Storage train
         if: github.event_name == 'pull_request'

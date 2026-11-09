@@ -3,7 +3,6 @@ name: all-green
 # and passes only when all of them passed or were skipped, so a PR opened with
 # `gh pr merge --auto --squash` merges itself as soon as everything is green.
 # It only waits (no tests), so it may run longer than the 5-minute test-job budget.
-# After rerunning a failed job, rerun this check too (or push): it fails as soon as any check fails.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]

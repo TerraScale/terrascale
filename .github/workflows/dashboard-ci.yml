@@ -49,6 +49,19 @@ jobs:
         uses: ./.github/actions/turso-native-cache
       - name: Dashboard Fast
         run: make dashboard-test-fast
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
+      - name: Install the web asset build
+        run: npm ci --prefix src/TerraScale.Dashboard/web
+      - name: Dashboard lint
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          make dashboard-lint
       # The image job wraps these exact bytes without another build.
       - name: Publish the tested application
         if: github.event_name != 'pull_request'
