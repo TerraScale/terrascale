@@ -43,8 +43,9 @@ namespace TerraScale.Dashboard.E2E.Features.Data
             await Assert.That((await CallAsync("set_database_ttl", new { databaseId = sourceId, ttlHours = 2 })).GetProperty("expiresAt").GetDateTimeOffset() > source.GetProperty("expiresAt").GetDateTimeOffset()).IsTrue();
             await Assert.That((await CallAsync("set_database_ttl", new { databaseId = sourceId, clear = true })).GetProperty("expiresAt").ValueKind).IsEqualTo(JsonValueKind.Null);
             var backup = await CallAsync("create_backup", new { databaseId = sourceId });
-            var restored = await CallAsync("restore_backup", new { databaseId = sourceId, backupId = backup.GetProperty("id").GetString(), name = "agent-restored" });
-            var restoredId = restored.GetProperty("databaseId").GetString()!;
+            var restoreStart = await CallAsync("restore_backup", new { databaseId = sourceId, backupId = backup.GetProperty("id").GetString(), name = "agent-restored" });
+            await Assert.That(restoreStart.GetProperty("status").GetString() is "running" or "completed").IsTrue();
+            var restoredId = await RestoreCompletedAsync(sourceId, restoreStart.GetProperty("operationId").GetString()!);
             await Assert.That((await CallAsync("execute_sql", new { databaseId = restoredId, sql = "SELECT value FROM results" })).GetProperty("rows")[0][0].GetString()).IsEqualTo("before");
             await CallAsync("delete_database", new { databaseId = restoredId, confirmName = "agent-restored" });
             await CallAsync("delete_database", new { databaseId = sourceId, confirmName = "agent-source" });
@@ -58,6 +59,22 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                     throw new InvalidOperationException(name + ": " + response.GetProperty("content")[0].GetProperty("text").GetString());
                 }
                 return response.GetProperty("structuredContent");
+            }
+
+            async Task<string> RestoreCompletedAsync(string databaseId, string operationId)
+            {
+                for (var attempt = 0; attempt < 120; attempt++)
+                {
+                    var status = await CallAsync("get_restore_status", new { databaseId, operationId });
+                    if (status.GetProperty("status").GetString() != "running")
+                    {
+                        return status.GetProperty("targetDatabaseId").GetString()!;
+                    }
+
+                    await Task.Delay(TimeSpan.FromMilliseconds(250));
+                }
+
+                throw new InvalidOperationException("The MCP restore operation did not finish.");
             }
         }
         [Test]

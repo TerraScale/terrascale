@@ -55,7 +55,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             var secret = await HttpJourney.CreatePatAsync(client, "Backup protocol E2E", native.Password);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             var tools = (await HttpJourney.McpAsync(client, secret, "tools/list", new { })).GetProperty("result").GetProperty("tools");
-            foreach (var name in new[] { "list_backups", "create_backup", "set_backup_policy", "restore_backup" })
+            foreach (var name in new[] { "list_backups", "create_backup", "set_backup_policy", "restore_backup", "get_restore_status" })
             {
                 Check(tools.EnumerateArray().Any(tool => tool.GetProperty("name").GetString() == name), "Actual MCP discovery exposes the source tool: " + name);
             }
@@ -144,10 +144,15 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             }
 
             Check(await ScoreAsync(restoredId) == 1 && await ScoreAsync(id) == 2, "The restored database reads the captured snapshot through SQL; the source retains its later write");
-            var defaultRestore = await CallAsync(replica, secret, "restore_backup", new { databaseId = id });
-            var defaultId = defaultRestore.GetProperty("databaseId").GetString()!;
-            Check(defaultRestore.GetProperty("name").GetString() == "backup-source-restore" && defaultRestore.GetProperty("status").GetString() == "ready" && await ScoreAsync(defaultId) == 2,
-                "MCP selects the newest actual restore point and retains the original {databaseId,name,status} shape");
+            var defaultStart = await CallAsync(replica, secret, "restore_backup", new { databaseId = id });
+            var defaultOperation = defaultStart.GetProperty("operationId").GetString()!;
+            Check(TerraScaleIds.IsValid(defaultOperation) && defaultStart.GetProperty("status").GetString() is "running" or "completed",
+                "MCP restore starts the newest actual restore point and answers with a pollable operation instead of blocking");
+            var defaultDone = await RestoreCompletedAsync(replica, id, defaultOperation);
+            var defaultId = defaultDone.GetProperty("targetDatabaseId").GetString()!;
+            Check(TerraScaleIds.IsValid(defaultId) && defaultDone.GetProperty("targetName").GetString() == "backup-source-restore" &&
+                defaultDone.GetProperty("status").GetString() == "completed" && await ScoreAsync(defaultId) == 2,
+                "MCP restore status reports the completed target database and its captured snapshot");
             var projected = (await CallAsync(replica, secret, "list_databases", new { organizationId = org, projectId = project })).GetProperty("databases");
             Check(projected.GetArrayLength() == 3 && projected.EnumerateArray().Any(database => database.GetProperty("id").GetString() == restoredId), "The other app replica reads committed producer identities without a process-local restore");
             using (var saved = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/policy", new()
