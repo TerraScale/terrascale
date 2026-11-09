@@ -108,6 +108,7 @@ namespace TerraScale.Dashboard
             builder.Services.AddSingleton<IProfileTokens>(services => services.GetRequiredService<AccessTokens>());
             builder.Services.AddDashboardMcp();
             builder.Services.AddDashboardContracts();
+            builder.Services.AddTransient<DevelopmentEventsEndpoint>();
             builder.Services.AddTerraScaleEndpoints(
             [
                 EndpointRegistration.Create<DatabaseTtlEndpoint>(),
@@ -189,9 +190,6 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<CreateSettingsBackupEndpoint>(),
                 EndpointRegistration.Create<StripeWebhookEndpoint>(),
                 EndpointRegistration.Create<AuthStripeWebhookEndpoint>(),
-                .. builder.Environment.IsDevelopment()
-                    ? (EndpointRegistration[])[EndpointRegistration.Create<DevelopmentEventsEndpoint>()]
-                    : [],
                 EndpointRegistration.Create<DatabasesPageEndpoint>(),
                 EndpointRegistration.Create<ListDatabasesApiEndpoint>(),
                 EndpointRegistration.Create<DatabaseOverviewEndpoint>(),
@@ -467,6 +465,10 @@ namespace TerraScale.Dashboard
                 ? next(context) : throw new IOException("Dashboard state is initializing."));
             app.MapDatabaseFeatures();
             app.MapDashboardMcp();
+            if (app.Environment.IsDevelopment())
+            {
+                app.Services.GetRequiredService<DevelopmentEventsEndpoint>().Map(app);
+            }
             app.MapDashboardContracts();
             app.MapTerraScaleEndpoints();
             app.MapFallback(async (HttpContext context, DashboardSessions sessions, AccountService accounts) =>

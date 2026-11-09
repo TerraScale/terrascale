@@ -22,7 +22,7 @@ namespace TerraScale.Dashboard.Features.Billing
             Tags("Billing");
             Summary("Start or resume a bound Stripe checkout");
             Description("Requires the current session, organization-owner permission and a same-origin CSRF form token. An unavailable provider returns 503; return to billing to resume or cancel rather than automatically retrying a mutation.");
-            Accepts<CheckoutRequest>("application/x-www-form-urlencoded");
+            Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(CheckoutRequest), false));
             Metadata(new ProducesResponseTypeMetadata(303, typeof(void)));
             Metadata(new ProducesResponseTypeMetadata(401, typeof(void)));
             Metadata(new ProducesResponseTypeMetadata(403, typeof(void)));
