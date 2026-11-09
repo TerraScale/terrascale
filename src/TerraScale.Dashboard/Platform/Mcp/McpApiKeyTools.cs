@@ -1,8 +1,10 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.WebUtilities;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Data;
@@ -54,10 +56,22 @@ namespace TerraScale.Dashboard.Platform.Mcp
         internal async Task<CallToolResult> InvokeAsync(Credential credential, string tool, IDictionary<string, JsonElement>? arguments, CancellationToken ct)
         {
             string Text(string name, string fallback = "") => arguments?.TryGetValue(name, out var value) == true && value.ValueKind != JsonValueKind.Null ? value.GetString() ?? fallback : fallback;
-            long? Number(string name) => arguments?.TryGetValue(name, out var value) == true && value.ValueKind != JsonValueKind.Null
-                ? value.ValueKind == JsonValueKind.String ? long.Parse(value.GetString()!, System.Globalization.CultureInfo.InvariantCulture) : value.GetInt64() : null;
-            decimal? Hours() => arguments?.TryGetValue("ttlHours", out var value) == true && value.ValueKind != JsonValueKind.Null
-                ? value.ValueKind == JsonValueKind.String ? decimal.Parse(value.GetString()!, System.Globalization.CultureInfo.InvariantCulture) : value.GetDecimal() : null;
+            long? Number(string name)
+            {
+                if (arguments?.TryGetValue(name, out var value) != true || value.ValueKind == JsonValueKind.Null) return null;
+                if (value.ValueKind == JsonValueKind.String)
+                    return long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer)
+                        ? integer : throw new McpProtocolException(name + " must be an integer.", McpErrorCode.InvalidParams);
+                return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var whole) ? whole : throw new McpProtocolException(name + " must be an integer.", McpErrorCode.InvalidParams);
+            }
+            decimal? Hours()
+            {
+                if (arguments?.TryGetValue("ttlHours", out var value) != true || value.ValueKind == JsonValueKind.Null) return null;
+                if (value.ValueKind == JsonValueKind.String)
+                    return decimal.TryParse(value.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var hours)
+                        ? hours : throw new McpProtocolException("ttlHours must be a number.", McpErrorCode.InvalidParams);
+                return value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var ttl) ? ttl : throw new McpProtocolException("ttlHours must be a number.", McpErrorCode.InvalidParams);
+            }
             var scope = credential.Scope;
             if (!Tools.Contains(tool)) throw new AccountAccessException("This tool requires a dashboard sign-in. API keys reach database tools only.");
             if (Text("organizationId", scope.OrganizationId) != scope.OrganizationId || Text("projectId", scope.ProjectId) != scope.ProjectId)
