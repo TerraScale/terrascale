@@ -11,7 +11,7 @@ title: Getting started
 
 Create an account in the [TerraScale dashboard](https://dash.terrascale.tech/register), then create a database and an API key.
 
-Fastest path: install the [CLI](/fr/cli/), run `ts auth login`, then `ts init` — it creates the database, the scoped API key and a ready-to-use `.env` in one command.
+Fastest path: install the [CLI](/fr/cli), run `ts auth login`, then `ts init` — it creates the database, the scoped API key and a ready-to-use `.env` in one command.
 
 ## Create an account, a database and an API key
 
