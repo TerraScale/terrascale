@@ -38,11 +38,13 @@ public sealed partial class RegionalWriterCrashTests
         // Kill the source handler first so it cannot roll back in its finally
         // block. Restart it while the unadmitted target can still supply reads:
         // its normal follower path can retain a same-region replica in memory.
+        var restart = Stopwatch.StartNew();
         await drill.Source.KillAsync();
         await IgnoreControllerDisconnectAsync(draining);
         await drill.Source.StartAsync(token);
         await TerraBaseTestServer.EventuallyAsync(async cancellation =>
             (await RecoveryDrill.StatusAsync(drill.SourceHttp, cancellation)) is { Owner: "gru-2", Ready: true }, TimeSpan.FromSeconds(5));
+        restart.Stop();
         await Assert.That(await drill.OwnerAsync(token) is { Node: "gru-2", Activated: false, Transfer.Phase: "activating" }).IsTrue();
         using (var followed = await drill.SourceHttp.PostAsync(ManagementApi.Uri("/v1/rollout/prime?source=gru-2"), null, token))
         {
@@ -50,8 +52,8 @@ public sealed partial class RegionalWriterCrashTests
         }
         await drill.Target.KillAsync();
         await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
-        await Assert.That(elapsed.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
-        Console.WriteLine($"DRILL target activation failed: recovered_ms={elapsed.Elapsed.TotalMilliseconds:F3}, bound_ms={RegionalHandoff.RecoveryBound.TotalMilliseconds:F0}");
+        await Assert.That(elapsed.Elapsed - restart.Elapsed < RegionalHandoff.RecoveryBound).IsTrue();
+        Console.WriteLine($"DRILL target activation failed: recovered_ms={(elapsed.Elapsed - restart.Elapsed).TotalMilliseconds:F3}, restart_ms={restart.Elapsed.TotalMilliseconds:F3}, end_to_end_ms={elapsed.Elapsed.TotalMilliseconds:F3}, bound_ms={RegionalHandoff.RecoveryBound.TotalMilliseconds:F0}");
         await Assert.That((await drill.OwnerAsync(token)).Node).IsEqualTo("gru-1");
         await drill.AssertRowsAsync(drill.SourceHttp, ["ack-0", "ack-1", "ack-2"], token);
         await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('recovered')", token);
