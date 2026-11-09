@@ -17,9 +17,6 @@ using ZLogger;
 
 namespace TerraBase.Features.Replicas;
 
-// Star topology: every replica pulls from its home, page mode only, never pushing. Pulls run on each home's revision
-// notice, after a NATS reconnect, after a failed pull and on the sweep when no changed revision was applied recently
-// (docs/terrabase/region-replicas.md).
 internal sealed class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
@@ -104,7 +101,6 @@ internal sealed class RegionReplication(
         }
         else if (_peers.Count > 0)
         {
-            // ts-orch does not supply NATS to every cell yet: replicas then follow their homes on the sweep alone.
             logger.ZLogWarning($"TS_NATS_URL or TERRABASE_NATS_TOKEN_FILE is missing; replicas pull every {Sweep.TotalSeconds} s instead of on each revision");
         }
 
@@ -192,7 +188,6 @@ internal sealed class RegionReplication(
             : CatalogAsync(stoppingToken)).ConfigureAwait(false);
     }
 
-    // Home: called on the commit path, so it only marks the database.
     private void OnRevised(TenantContext database)
     {
         _revised[(database.OrganizationId, database.ProjectId!, database.DatabaseId!)] = (database, time.GetUtcNow().ToUnixTimeMilliseconds());
@@ -468,8 +463,6 @@ internal sealed class RegionReplication(
         while (after is not null);
     }
 
-    // Catalog removal must also retire native replicas, which no longer appear in the catalog sweep.
-    // Serialize admission with teardown; stale catalog listings cannot restart a shredded follower.
     internal async Task DeleteShreddedAsync(TenantContext database, CancellationToken cancellationToken)
     {
         var key = Key(database);
@@ -590,7 +583,6 @@ internal sealed class RegionReplication(
 
     private static (string, string, string) Key(TenantContext database) => (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
 
-    // Every database the home places here, or null when the home cannot be read completely.
     private async Task<Dictionary<(string, string, string), ReplicaCatalogEntry>?> ListAsync(ReplicaPeer home, CancellationToken cancellationToken)
     {
         var listed = new Dictionary<(string, string, string), ReplicaCatalogEntry>();
@@ -736,8 +728,6 @@ internal sealed class RegionReplication(
 
         public void SweepIfIdle()
         {
-            // A recent applied revision proves the notice path is alive. Recover lost notices after it goes quiet,
-            // instead of queuing an unnecessary home round trip ahead of the next pushed page answer.
             if (_owner.Time.GetUtcNow().ToUnixTimeMilliseconds() - Volatile.Read(ref _lastChangedAt) >= Sweep.TotalMilliseconds)
             {
                 Signal(0, fromHome: true);
@@ -753,7 +743,6 @@ internal sealed class RegionReplication(
 
             if (committedAt > 0)
             {
-                // The oldest unpulled commit times the lag of the pull that delivers it.
                 _ = Interlocked.CompareExchange(ref _noticed, committedAt, 0);
             }
 
@@ -798,7 +787,6 @@ internal sealed class RegionReplication(
                 }
                 catch (Exception error)
                 {
-                    // A fault completed before shutdown can be waiting for the loop to consume it.
                     _owner.Logger.ZLogInformation($"A replica verification round failed during shutdown: {error.GetType().Name:@Error}");
                 }
             }
@@ -954,7 +942,6 @@ internal sealed class RegionReplication(
             finally
             {
                 _owner._verifying.Release();
-                // Wake the loop to consume the result, without requesting another page pull.
                 _ = _signals.Writer.TryWrite(false);
             }
         }
@@ -1037,7 +1024,6 @@ internal sealed class RegionReplication(
                     if (failures % 20 == 1)
                     {
                         _owner.Logger.ZLogInformation($"A replica {what} failed and is retried: {error.GetType().Name:@Error} ({error.Message:@Detail})");
-                        // A home that stopped answering for this database may have deleted it or moved it out of this region.
                         _ = _owner._catalogWakes.Writer.TryWrite(_home.Region);
                     }
 

@@ -18,9 +18,6 @@ internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosi
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "");
 internal sealed record RegionalDrain(string Target);
 
-// Planned regional ownership transfer: the edge drains first; the old engine is fenced before its final applied
-// positions are sampled; the candidate imports proven replicas; the regional CAS precedes database lease activation.
-// An uncommitted preparation leaves database leases untouched; a quorum rollback resumes the old writer.
 internal sealed partial class RegionalHandoff(
     TerraBaseOptions options, RegionalOwners owners, HomeLeaseGate gate, InternalCredential credential,
     IServiceProvider services, ILogger<RegionalHandoff> logger) : BackgroundService
@@ -109,8 +106,6 @@ internal sealed partial class RegionalHandoff(
                 var entry = await ReadAsync(kv, region, cancellationToken).ConfigureAwait(false);
                 if (entry is null && region == options.Region)
                 {
-                    // Any admitted local node may publish the same deterministic initial
-                    // owner. A follower can start first during the first rolling deployment.
                     var first = new RegionalOwner(region, nodes.Where(node => node.Region == region).MinBy(node => node.Name, StringComparer.Ordinal)!.Name, 1, Version: ProtocolVersion);
                     try
                     {
@@ -118,7 +113,6 @@ internal sealed partial class RegionalHandoff(
                     }
                     catch (NatsKVCreateException)
                     {
-                        // Another session created it; read the winner below.
                     }
 
                     entry = await ReadAsync(kv, region, cancellationToken).ConfigureAwait(false);
@@ -161,8 +155,6 @@ internal sealed partial class RegionalHandoff(
         {
             return true;
         }
-        // A restarted owner must also confirm its database leases. Its node
-        // session changed even when the durable regional epoch did not.
         var source = owner.Previous ?? options.MachineId;
         var leases = services.GetRequiredService<HomeLeases>();
         if (!leases.Ready)
@@ -187,9 +179,6 @@ internal sealed partial class RegionalHandoff(
                 {
                     return false;
                 }
-                // A bounded attempt may expire between database confirmations.
-                // Keep progress for this epoch instead of redoing its first
-                // leases forever when a region has many replicated databases.
                 _activationAfter = database;
             }
             if (page.Next is null)
@@ -211,8 +200,6 @@ internal sealed partial class RegionalHandoff(
         owners.Observe(owner);
         if (owner.Region == options.Region && owner.Node == options.MachineId)
         {
-            // Refresh and recovery also call Observe for an unchanged record.
-            // A previous failed drain must not leave that writer fenced forever.
             owners.Resume();
         }
         if (!changed)
@@ -295,9 +282,6 @@ internal sealed partial class RegionalHandoff(
             return Refuse("preparation catalog missing");
         }
         await RegionalCatalog.ImportAsync(services.GetRequiredService<IStorageEngine>(), request.Catalog, cancellationToken).ConfigureAwait(false);
-        // An aborted preparation can leave the target's old follower suspended.
-        // Reconcile the newly imported catalog before asking it to catch up:
-        // the retry may include databases created after bulk priming as well.
         await services.GetRequiredService<RegionReplication>().SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
 
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
@@ -314,8 +298,6 @@ internal sealed partial class RegionalHandoff(
             {
                 return Refuse("invalid applied-position proof");
             }
-            // Bulk priming happens before the edge barrier. Reuse an already
-            // applied replica; only the final missing suffix needs a fenced pull.
             var held = replicas.HeldRevision(database);
             if (held is not { } current || current.Incarnation != expected.Incarnation
                 || DatabaseRevision.Compare(current, expected) < 0)
@@ -333,7 +315,6 @@ internal sealed partial class RegionalHandoff(
             logger.ZLogInformation($"Regional candidate applied proof: {request.Source:@Source} to {options.MachineId:@Target}, database {position.Database:@Database}, source {position.Revision:@SourceRevision}, target {actual.ToString():@TargetRevision}, epoch {request.Epoch:@Epoch}");
         }
 
-        // Check every position before detaching any replica. A partially prepared retry re-pulls from the still-live source.
         var engine = services.GetRequiredService<IStorageEngine>();
         foreach (var position in request.Positions.Where(position => position.Home == options.Region))
         {
@@ -392,9 +373,6 @@ internal sealed partial class RegionalHandoff(
         {
             return false;
         }
-        // This request read the authoritative owner under the same change gate
-        // as Refresh. Observe it now: the background loop may still cache the
-        // abandoned activation, which otherwise leaves prior copies suspended.
         Observe(owner);
         return true;
     }
@@ -531,8 +509,6 @@ internal sealed partial class RegionalHandoff(
                         }
                         else
                         {
-                            // Freeze this source's applied position while its peer proves the final barrier.
-                            // Resume is registered even when a failed handoff keeps this process serving.
                             await replication.SuspendAsync(database).ConfigureAwait(false);
                             _promoted[database.DatabaseId!] = database;
                             position = replicas.HeldRevision(database);
@@ -576,8 +552,6 @@ internal sealed partial class RegionalHandoff(
                 return true;
             }
 
-            // Native writers and in-flight requests are finished before releasing
-            // exclusive admission. A delayed owner watch cannot admit both nodes.
             await _writerLease!.ReleaseDrainedAsync(cancellationToken).ConfigureAwait(false);
             var next = new RegionalOwner(options.Region, target, owner.Epoch + 1, options.MachineId,
                 Transfer: transfer with { Phase = Activating, Deadline = DateTimeOffset.UtcNow + ActivationBudget }, Version: ProtocolVersion);
@@ -597,8 +571,6 @@ internal sealed partial class RegionalHandoff(
                     await Task.Delay(TimeSpan.FromMilliseconds(25), activation.Token).ConfigureAwait(false);
                 }
             }
-            // Remote forwarding uses the observed regional owner directly, outside this
-            // region's edge. Do not stop its old address while an admitted peer still routes there.
             foreach (var observer in nodes.Where(node => node.Name != options.MachineId))
             {
                 var observedAt = observer.InternalListener(options.InternalPort);

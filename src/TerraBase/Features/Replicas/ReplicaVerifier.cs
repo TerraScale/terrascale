@@ -32,8 +32,6 @@ internal sealed class ReplicaVerifier(IDatabaseReplicas replicas, HttpClient htt
         return new VerificationRound(ReplicaVerdict.Moved, cursor, null);
     }
 
-    // Observe one revision without fetching newer pages. Followers run this beside notice consumption:
-    // a moving home is retried later, rather than making new pushed pages wait for checksum round trips.
     internal async Task<VerificationRound> ObserveAsync(TenantContext database, Uri source, ChecksumCursor? cursor, CancellationToken cancellationToken)
     {
         if (replicas.HeldRevision(database) is not { } held)

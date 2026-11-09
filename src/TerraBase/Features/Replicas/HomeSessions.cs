@@ -24,11 +24,8 @@ internal sealed record HomeSessionResult(IReadOnlyList<SqlColumn> Columns, IRead
 internal sealed record HomeSessionAnswer(
     bool Autocommit, SqlError? Error = null, HomeSessionResult? Result = null, SqlDescription? Description = null, IReadOnlyList<HomeSessionResult>? Batch = null, int Statement = 0);
 
-// Frames are a 4-byte big-endian length, then that many bytes of UTF-8 JSON, reserved against the memory budget
-// before they are read (docs/terrabase/region-replicas.md#writes-and-transactions).
 internal static class HomeSessionFrames
 {
-    // A result holds at most 8 MiB of values (SqlSession.MaxBytes); JSON and base64 at most triple it.
     internal const int MaxBytes = 24 * 1024 * 1024;
 
     public static async ValueTask<T?> ReadAsync<T>(PipeReader input, JsonTypeInfo<T> type, IMemoryBudget memory, TenantContext? tenant, CancellationToken cancellationToken)
@@ -163,7 +160,6 @@ internal sealed class HomeSessions(
     private static HttpClient CreateClient(InternalCredential credential)
     {
         var client = PeerHttp.Create(credential);
-        // A session lives as long as its client's connection; only connecting is bounded.
         client.Timeout = Timeout.InfiniteTimeSpan;
         return client;
     }
@@ -202,8 +198,6 @@ internal sealed class HomeSessions(
 
 internal readonly union HomeSessionOutcome(HomeSqlSession, SqlError);
 
-// Calls are answered in order; a broken stream ends the session, and every later call answers SqlErrors.Unavailable
-// naming the home.
 internal sealed class HomeSqlSession(
     HttpRequestMessage request, HttpResponseMessage response, PipeWriter upstream, PipeReader downstream, CancellationTokenSource stop,
     IMemoryBudget memory, TenantContext database, SqlError unreachable, HomePush.ILocalWrites local) : ISqlSession
@@ -289,7 +283,6 @@ internal sealed class HomeSqlSession(
             return;
         }
 
-        // Ending the request body ends the home's session, which rolls back an open transaction.
         await upstream.CompleteAsync().ConfigureAwait(false);
         await stop.CancelAsync().ConfigureAwait(false);
         await downstream.CompleteAsync().ConfigureAwait(false);
@@ -321,7 +314,6 @@ internal sealed class HomeSqlSession(
             }
             catch (Exception error) when (error is IOException or InvalidDataException or HttpRequestException or OperationCanceledException or ObjectDisposedException)
             {
-                // A call cut off mid-answer leaves the stream unusable: the home rolls its session back when the stream ends.
                 Break();
                 if (error is OperationCanceledException && cancellationToken.IsCancellationRequested)
                 {

@@ -10,7 +10,6 @@ namespace TerraBase.Features.Replicas;
 internal sealed class ReplicaCatalogEndpoint(IReplicaCatalog catalog, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
     private const int PageSize = 100;
-    // Catalog pages read per answer, so a region with few replicated databases among many still answers promptly.
     private const int MaxScannedPages = 16;
 
     public override void Configure()
