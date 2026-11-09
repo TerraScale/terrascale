@@ -807,18 +807,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
 
                     var openingToken = created ? CancellationToken.None : cancellationToken;
-                    openingSystem = new TursoDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
-                        RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
-                    {
-                        HostTime = HostTime,
-
-                        QueryBudget = QueryBudget,
-                        Checkpoint = _checkpoint,
-                        Ledger = Ledger,
-                        WriterHeld = _writerHeld,
-                        Transactions = _transactions,
-                        RewriteSteps = _rewriteSteps,
-                    };
+                    openingSystem = CreateSystemStore(path);
                     await openingSystem.BootstrapAsync(openingToken).ConfigureAwait(false);
 
                     _ = await Io.WithAdmissionAsync(async () =>
@@ -1573,11 +1562,20 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         return initialization;
     }
 
-    private async ValueTask<TursoDatabaseStore> InitializeStoreAsync(
-        (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
-    {
-        var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
-        var store = new TursoDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
+    private TursoDatabaseStore CreateSystemStore(string path) =>
+        new(SystemName, path, Pool, Io, _pragmas, null, Time, RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
+        {
+            HostTime = HostTime,
+            QueryBudget = QueryBudget,
+            Checkpoint = _checkpoint,
+            Ledger = Ledger,
+            WriterHeld = _writerHeld,
+            Transactions = _transactions,
+            RewriteSteps = _rewriteSteps,
+        };
+
+    private TursoDatabaseStore CreateTenantStore((string Organization, string Project, string Database) key, string path) =>
+        new(key.Database, path, Pool, Io, _pragmas, new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database), Time,
             RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
         {
             HostTime = HostTime,
@@ -1592,6 +1590,11 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             Revised = RaiseRevised,
             Leases = Leases,
         };
+
+    private async ValueTask<TursoDatabaseStore> InitializeStoreAsync(
+        (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
+    {
+        var store = CreateTenantStore(key, path);
         var published = false;
         var admitted = false;
         try

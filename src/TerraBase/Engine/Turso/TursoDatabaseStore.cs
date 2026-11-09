@@ -36,9 +36,6 @@ internal sealed partial class TursoDatabaseStore(
         Volatile.Write(ref _retainedCdcRows, (long)command.ExecuteScalar()!);
     }
 
-    internal TursoDatabaseStore(string name, string path, TursoSessionPool pool, TursoIoPool io, string pragmas, DatabaseKeys encryption, TimeProvider? time = null, Action? committed = null)
-        : this(name, path, pool, io, pragmas, null, time, committed, encryption: encryption) { }
-
     private const int SchemaVersion = 1;
 
     internal static readonly byte[] FormatDigest = SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql));

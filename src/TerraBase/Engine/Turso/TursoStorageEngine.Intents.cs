@@ -32,16 +32,7 @@ internal sealed partial class TursoStorageEngine
         var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
         var openingToken = created ? CancellationToken.None : cancellationToken;
         // System semantics suppress recursive intent recording and fail the node closed on native journal damage.
-        var store = new TursoDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
-            RecordCommittedWrite, _logger, _schemaMemory, _storageReads, Encryption)
-        {
-            HostTime = HostTime,
-            QueryBudget = QueryBudget,
-            Checkpoint = _checkpoint,
-            Ledger = Ledger,
-            WriterHeld = _writerHeld,
-            Transactions = _transactions,
-        };
+        var store = CreateSystemStore(path);
         try
         {
             await store.BootstrapAsync(openingToken).ConfigureAwait(false);
