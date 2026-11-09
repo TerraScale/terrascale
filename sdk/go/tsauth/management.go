@@ -307,7 +307,8 @@ func (u *User) RenameOrganization(ctx context.Context, org, name string) (*Organ
 	return call[Organization](ctx, u, http.MethodPatch, orgPath(org), nil, nameBody{name})
 }
 
-// DeleteOrganization deletes an organization without projects; it needs owner.
+// DeleteOrganization deletes an organization without projects; it needs owner
+// and a delete_organization step-up proof via WithStepUpProof.
 func (u *User) DeleteOrganization(ctx context.Context, org string) error {
 	return u.none(ctx, http.MethodDelete, orgPath(org), nil, nil)
 }
@@ -384,7 +385,8 @@ func (u *User) OwnershipTransfer(ctx context.Context, org string) (*OwnershipTra
 }
 
 // StartOwnershipTransfer offers ownership to a member who is not an owner;
-// it needs owner.
+// it needs owner and a start_ownership_transfer step-up proof via
+// WithStepUpProof.
 func (u *User) StartOwnershipTransfer(ctx context.Context, org, user string) (*OwnershipTransfer, error) {
 	return call[OwnershipTransfer](ctx, u, http.MethodPost, orgPath(org, "ownership-transfer"), nil, map[string]string{"user_id": user})
 }

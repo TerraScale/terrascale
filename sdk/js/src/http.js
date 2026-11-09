@@ -20,6 +20,7 @@ import { isValidId } from "./ids.js";
  *   readonly userinfoAccessToken?: string | undefined;
  *   readonly resourceIntrospectionBasic?: string | undefined;
  *   readonly deletionReceipt?: string | undefined;
+ *   readonly stepUpProof?: string | undefined;
  *   readonly signal?: AbortSignal | undefined;
  * }} TsAuthRequest
  */
@@ -90,6 +91,13 @@ export class TsAuthHttp {
                 !/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/u.test(options.deletionReceipt))
               throw new TypeError("Deletion receipts belong only to named account deletion operations.");
             headers.set("X-TerraScale-Deletion-Receipt", options.deletionReceipt);
+          }
+          if (options.stepUpProof !== undefined) {
+            if ((options.routeName !== "tsauth.platform.delete_organization" && options.routeName !== "tsauth.platform.start_ownership_transfer") ||
+                typeof options.stepUpProof !== "string" || options.stepUpProof.length < 1 || options.stepUpProof.length > 8192 ||
+                /[\s\p{Cc}]/u.test(options.stepUpProof))
+              throw new TypeError("Step-up proofs belong only to named proof-required organization operations.");
+            headers.set("X-TerraScale-Step-Up-Proof", options.stepUpProof);
           }
           if (receiptRead && (options.deletionReceipt === undefined || this.#accessToken !== undefined ||
               options.userinfoAccessToken !== undefined || options.resourceIntrospectionBasic !== undefined))
