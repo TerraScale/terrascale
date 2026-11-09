@@ -1,5 +1,6 @@
 //! The v1 HTTPS client: configuration, retry policy and the request loop.
 
+use std::env;
 use std::fmt;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -410,6 +411,20 @@ impl Client {
     /// Starts a [`ClientBuilder`].
     pub fn builder(base_url: impl Into<String>, token: impl Into<String>) -> ClientBuilder {
         ClientBuilder::new(base_url, token)
+    }
+
+    pub fn from_environment() -> Result<Client> {
+        let project = env::var("TERRASCALE_PROJECT_ID")
+            .map_err(|_| Error::InvalidInput("TERRASCALE_PROJECT_ID must be set".into()))?;
+        let api_key = env::var("TERRASCALE_API_KEY")
+            .map_err(|_| Error::InvalidInput("TERRASCALE_API_KEY must be set".into()))?;
+        let mut builder = Client::for_project_api_key(project, api_key);
+        if let Ok(base) = env::var("TERRASCALE_BASE_URL") {
+            if !base.is_empty() {
+                builder = builder.endpoint(base);
+            }
+        }
+        builder.build()
     }
 
     /// A handle by current database name or immutable ULID. Performs no I/O;
