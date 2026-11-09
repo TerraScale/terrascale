@@ -15,7 +15,8 @@ public sealed record ErrorDetail(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Region = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Url = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RequestId = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RequestId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DocsUrl = null);
 public static class BadRequests
 {
     public static WebApplication UseTerraBaseBadRequests(this WebApplication app)
@@ -112,6 +113,6 @@ public static class BadRequests
         context.Response.ContentType = "application/json";
         var requestId = context.TraceIdentifier;
         return JsonSerializer.SerializeAsync(
-            context.Response.Body, new ErrorBody(new ErrorDetail(code, message, op, details, region, machine, url, requestId)), TerraBaseJsonContext.Default.ErrorBody, context.RequestAborted);
+            context.Response.Body, new ErrorBody(new ErrorDetail(code, message, op, details, region, machine, url, requestId, ErrorDocs.Url(code))), TerraBaseJsonContext.Default.ErrorBody, context.RequestAborted);
     }
 }

@@ -25,7 +25,8 @@ internal sealed record SqlErrorDetail(
     string Message,
     int Statement,
     string Sqlstate,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RequestId = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RequestId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DocsUrl = null);
 
 internal static class SqlJson
 {

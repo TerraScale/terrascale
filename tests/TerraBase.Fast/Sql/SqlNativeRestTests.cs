@@ -76,8 +76,10 @@ public sealed class SqlNativeRestTests
         await Assert.That((primaryKeyStatus, primaryKey.GetProperty("code").GetString(), primaryKey.GetProperty("sqlstate").GetString()))
             .IsEqualTo((HttpStatusCode.BadRequest, "primary_key_violation", "23505"));
         await Assert.That(primaryKey.EnumerateObject().Select(property => property.Name).ToArray())
-            .IsEquivalentTo(["code", "message", "statement", "sqlstate", "requestId"]);
+            .IsEquivalentTo(["code", "message", "statement", "sqlstate", "requestId", "docsUrl"]);
         await Assert.That(primaryKey.GetProperty("requestId").GetString()).IsNotNull();
+        await Assert.That(primaryKey.GetProperty("docsUrl").GetString())
+            .IsEqualTo("https://docs.terrascale.tech/guides/errors#primary-key-violation");
         await Assert.That(unique.Code).IsEqualTo("unique_violation");
         await Assert.That(notNull.Code).IsEqualTo("not_null_violation");
         await Assert.That(check.Code).IsEqualTo("check_violation");
