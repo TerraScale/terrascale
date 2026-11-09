@@ -20,7 +20,12 @@ internal sealed record SqlColumnBody(string Name, string? Decltype);
 
 internal sealed record SqlErrorBody(SqlErrorDetail Error);
 
-internal sealed record SqlErrorDetail(string Code, string Message, int Statement, string Sqlstate);
+internal sealed record SqlErrorDetail(
+    string Code,
+    string Message,
+    int Statement,
+    string Sqlstate,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RequestId = null);
 
 internal static class SqlJson
 {

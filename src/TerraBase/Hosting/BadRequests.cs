@@ -14,7 +14,8 @@ public sealed record ErrorDetail(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ValidationDetail>? Details = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Region = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Url = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Url = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RequestId = null);
 public static class BadRequests
 {
     public static WebApplication UseTerraBaseBadRequests(this WebApplication app)
@@ -24,7 +25,10 @@ public static class BadRequests
         {
             var status = context.HttpContext.Response.StatusCode;
             context.HttpContext.Response.Headers.CacheControl = "no-store";
-            return WriteAsync(context.HttpContext, status, CodeFor(status), message: null, op: null);
+            var message = status == StatusCodes.Status404NotFound
+                ? $"no route matches {context.HttpContext.Request.Method} {context.HttpContext.Request.Path}; see the API reference at /scalar/"
+                : null;
+            return WriteAsync(context.HttpContext, status, CodeFor(status), message, op: null);
         });
         app.Use(async (context, next) =>
         {
@@ -106,7 +110,8 @@ public static class BadRequests
         context.Response.StatusCode = status;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.ContentType = "application/json";
+        var requestId = context.TraceIdentifier;
         return JsonSerializer.SerializeAsync(
-            context.Response.Body, new ErrorBody(new ErrorDetail(code, message, op, details, region, machine, url)), TerraBaseJsonContext.Default.ErrorBody, context.RequestAborted);
+            context.Response.Body, new ErrorBody(new ErrorDetail(code, message, op, details, region, machine, url, requestId)), TerraBaseJsonContext.Default.ErrorBody, context.RequestAborted);
     }
 }

@@ -55,7 +55,7 @@ internal static class ApiExamples
             foreach (var media in concrete.Content?.Values.OfType<OpenApiMediaType>() ?? [])
             {
                 media.Example = error
-                    ? new JsonObject { ["error"] = new JsonObject { ["code"] = codes.Split(", ", StringSplitOptions.None)[0], ["message"] = "The request cannot be served." } }
+                    ? new JsonObject { ["error"] = new JsonObject { ["code"] = codes.Split(", ", StringSplitOptions.None)[0], ["message"] = "The request cannot be served.", ["requestId"] = "01ARZ3NDEKTSV4RRFFQ69G5FA7" } }
                     : JsonNode.Parse(Response(id, status));
             }
         }
