@@ -141,13 +141,23 @@ internal static class TerraBaseDbParameters
 
     public static TerraBaseSqlValue ToSqlValue(object? value) => value switch
     {
-        null => TerraBaseSqlValue.Null,
+        null or DBNull => TerraBaseSqlValue.Null,
         bool flag => flag,
-        byte or sbyte or short or ushort or int or uint or long => Convert.ToInt64(value),
-        float or double or decimal => TerraBaseSqlValue.FromDouble(Convert.ToDouble(value)),
+        byte or sbyte or short or ushort or int or uint or long => Convert.ToInt64(value, CultureInfo.InvariantCulture),
+        ulong large => unchecked((long)large),
+        char character => character.ToString(),
+        float single => TerraBaseSqlValue.FromDouble(single),
+        double real => TerraBaseSqlValue.FromDouble(real),
+        decimal exact => exact.ToString("0.0###########################", CultureInfo.InvariantCulture),
         string text => text,
         byte[] blob => TerraBaseSqlValue.FromBytes(blob),
-        DateTime moment => TerraBaseSqlValue.FromString(moment.ToString("O", CultureInfo.InvariantCulture)),
+        DateTime moment => moment.ToString(@"yyyy\-MM\-dd HH\:mm\:ss.FFFFFFF", CultureInfo.InvariantCulture),
+        DateTimeOffset moment => moment.ToString(@"yyyy\-MM\-dd HH\:mm\:ss.FFFFFFFzzz", CultureInfo.InvariantCulture),
+        DateOnly date => date.ToString(@"yyyy\-MM\-dd", CultureInfo.InvariantCulture),
+        TimeOnly time => time.ToString(time.Ticks % TimeSpan.TicksPerSecond == 0 ? @"HH\:mm\:ss" : @"HH\:mm\:ss\.fffffff", CultureInfo.InvariantCulture),
+        TimeSpan span => span.ToString("c", CultureInfo.InvariantCulture),
+        Guid id => id.ToString().ToUpperInvariant(),
+        Enum member => Convert.ToInt64(member, CultureInfo.InvariantCulture),
         TerraBaseSqlValue sql => sql,
         _ => throw new NotSupportedException($"'{value.GetType()}' is not a supported SQL argument type."),
     };

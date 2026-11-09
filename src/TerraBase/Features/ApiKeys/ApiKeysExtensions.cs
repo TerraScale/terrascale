@@ -46,7 +46,7 @@ public static class ApiKeysExtensions
         await using (scope.ConfigureAwait(false))
         {
             var handler = await scope.ServiceProvider.GetRequiredService<IAuthenticationHandlerProvider>()
-                .GetHandlerAsync(context, BearerScheme(context)).ConfigureAwait(false);
+                .GetHandlerAsync(context, context.User.IsOperator() ? UserAuthExtensions.OperatorScheme : BearerScheme(context)).ConfigureAwait(false);
             return handler is null ? AuthenticateResult.NoResult() : await handler.AuthenticateAsync().ConfigureAwait(false);
         }
     }

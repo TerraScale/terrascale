@@ -8,6 +8,7 @@
       "src/TerraScale.Logging/TerraScale.Logging.csproj",
       "tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj",
       "tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj",
+      "benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks/TerraScale.EntityFrameworkCore.Benchmarks.csproj",
       "benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj",
       "benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj"
     ]

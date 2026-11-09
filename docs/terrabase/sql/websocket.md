@@ -20,6 +20,11 @@ The credential is the same bearer API key or project token as `sql/execute`, wit
 | Servers, CLIs, native SDKs | `Authorization: Bearer <key>` on the upgrade request | 401 `invalid_key` or 403 `forbidden_scope` before the upgrade |
 | Browsers (they cannot set WebSocket headers) | Upgrade without `Authorization`, then send `{"id":1,"type":"auth","token":"<key>"}` as the first frame within 5 seconds. The server answers `{"id":1,"type":"result","results":[],"transaction":false}` | an `unauthorized`, `forbidden_scope`, `wrong_region` or `unavailable` error frame, then close 1008. No auth frame within 5 seconds, or any other first frame, also closes with 1008 |
 
+Platform services such as ts-auth reach their databases on the internal listener with the peer credential
+(`X-TerraBase-Peer-Credential`) instead of a bearer key, as on `sql/execute`. That listener speaks only HTTP/2, so
+their upgrade is an extended CONNECT (RFC 8441); the socket needs no auth frame and runs with the platform operator's
+access to the project's database, checked again before every frame like any other socket.
+
 The auth frame holds at most 16 KiB, and nothing else is read before it. A frame-authenticated socket gets the same
 checks as a header: the project token's key admission and revocation watch, IP allowlists, project and database
 restrictions, scopes and the database's placement (a database served elsewhere answers `wrong_region`, 421/08004,

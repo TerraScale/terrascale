@@ -39,29 +39,21 @@ public sealed class TerraBaseDbConnection(TerraBaseSqlDatabase database) : DbCon
     /// <summary>Unsupported: one connection addresses one database.</summary>
     public override void ChangeDatabase(string databaseName) => throw new NotSupportedException("Create another connection for another database.");
 
-    /// <summary>Closes the connection. With an open transaction it throws: the SDK is async-only, so only <see cref="CloseAsync"/> can roll it back.</summary>
+    /// <summary>
+    /// Closes the connection. An open transaction is aborted: its socket closes at once and the server rolls it back.
+    /// Never throws, so a synchronous dispose cannot mask the caller's own exception; <see cref="CloseAsync"/> rolls back
+    /// gracefully.
+    /// </summary>
     public override void Close()
     {
-        if (CurrentTransaction is not null)
-        {
-            throw new NotSupportedException("The TerraScale SDK is async-only; use CloseAsync or DisposeAsync so the open transaction rolls back.");
-        }
-
+        CurrentTransaction?.Abort();
         state = ConnectionState.Closed;
     }
 
-    /// <summary>
-    /// Detaches an open transaction without rolling it back here — the server ends it at its timeout; the session is
-    /// async-only and is not blocked on. Never throws, so a sync dispose cannot mask the caller's own exception.
-    /// </summary>
+    /// <summary>Aborts an open transaction like <see cref="Close"/>.</summary>
     protected override void Dispose(bool disposing)
     {
-        if (CurrentTransaction is { } open)
-        {
-            CurrentTransaction = null;
-            open.Abandon();
-        }
-
+        CurrentTransaction?.Abort();
         base.Dispose(disposing);
     }
 

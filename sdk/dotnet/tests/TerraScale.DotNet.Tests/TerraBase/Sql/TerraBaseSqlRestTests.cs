@@ -154,6 +154,29 @@ public sealed partial class TerraBaseSqlRestTests
     }
 
     [Test]
+    public async Task An_api_key_goes_only_to_the_ts_auth_the_options_name()
+    {
+        var key = "01JA00000000000000000000K9_" + new string('a', 52);
+        var authorities = new List<string>();
+        using var handler = new TerraBaseTestHandler((request, _) =>
+        {
+            lock (authorities) authorities.Add(request.RequestUri!.Authority);
+            return Task.FromResult(request.RequestUri.AbsolutePath == "/terrascale/oauth/token"
+                ? TerraBaseIntegrationFixture.Json("""{"access_token":"local-project-token","token_type":"Bearer","expires_in":900}""")
+                : TerraBaseIntegrationFixture.Json("""{"results":[{"columns":[],"rows":[],"rows_affected":0,"last_insert_rowid":null}]}"""));
+        });
+        using var http = new HttpClient(handler);
+        var terraBase = new Uri("http://127.0.0.1:5001/");
+
+        await Assert.That(() => new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = terraBase, ApiKey = key })).Throws<ArgumentException>();
+        var db = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { BaseAddress = terraBase, ApiKey = key, AuthAddress = new Uri("http://127.0.0.1:5002/") })
+            .Database(TerraBaseIntegrationFixture.ProjectId, "app");
+        await db.ExecuteAsync("SELECT 1");
+
+        await Assert.That(authorities).IsEquivalentTo(["127.0.0.1:5002", "127.0.0.1:5001"]);
+    }
+
+    [Test]
     public async Task A_dashboard_api_key_is_exchanged_once_at_ts_auth_and_the_bearer_is_the_project_token()
     {
         var key = "01JA00000000000000000000K9_" + new string('a', 52);

@@ -36,6 +36,7 @@
     <Project Path="tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj" />
   </Folder>
   <Folder Name="/benchmark/">
+    <Project Path="benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks/TerraScale.EntityFrameworkCore.Benchmarks.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj" />
     <Project Path="benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj" />
   </Folder>

@@ -17,32 +17,24 @@ internal sealed record TerraBaseSqlExecuteResponse(IReadOnlyList<TerraBaseSqlSta
 
 internal sealed record TerraBaseSqlStatementBody(
     IReadOnlyList<TerraBaseSqlColumn> Columns,
-    JsonElement Rows,
+    TerraBaseSqlRows Rows,
     [property: JsonPropertyName("rows_affected")] long RowsAffected,
     [property: JsonPropertyName("last_insert_rowid")] long? LastInsertRowid = null) : IJsonOnDeserialized
 {
     void IJsonOnDeserialized.OnDeserialized()
     {
         TerraBaseJsonContext.RequireNonNullItems(Columns);
-        if (Rows.ValueKind != JsonValueKind.Array
-            || Rows.EnumerateArray().Any(row => row.ValueKind != JsonValueKind.Array || row.GetArrayLength() != Columns.Count || row.EnumerateArray().Any(cell => !IsCell(cell))))
-            throw new JsonException("Each SQL row holds one null, number, string or blob per column.");
+        if (!Rows.Fits(Columns.Count)) throw new JsonException("Each SQL row holds one null, number, string or blob per column.");
     }
-
-    private static bool IsCell(JsonElement cell) => cell.ValueKind switch
-    {
-        JsonValueKind.Null or JsonValueKind.Number or JsonValueKind.String => true,
-        JsonValueKind.Object => cell.EnumerateObject().Count() == 1 && cell.TryGetProperty("base64", out var encoded)
-            && encoded.ValueKind == JsonValueKind.String && encoded.TryGetBytesFromBase64(out _),
-        _ => false,
-    };
 
     public TerraBaseSqlStatementResult ToResult()
     {
         var ordinals = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < Columns.Count; i++) ordinals.TryAdd(Columns[i].Name, i);
         var lookup = ordinals.AsReadOnly();
-        return new(Columns, [.. Rows.EnumerateArray().Select(row => new TerraBaseSqlRecord(Columns, lookup, row))], RowsAffected, LastInsertRowid);
+        var records = new TerraBaseSqlRecord[Rows.Count];
+        for (var i = 0; i < records.Length; i++) records[i] = new TerraBaseSqlRecord(Columns, lookup, Rows.Cells, i * Columns.Count);
+        return new(Columns, records, RowsAffected, LastInsertRowid);
     }
 }
 

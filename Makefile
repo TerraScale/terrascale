@@ -12,7 +12,6 @@ TESTS ?=
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
 TS_DOTNET_DIR ?= sdk/dotnet
-# ts-auth's tests start the TerraBase built from this same commit (ts-dotnet's TerraBaseTestServer runs TERRABASE_BINARY).
 TERRABASE_BINARY ?= $(CURDIR)/src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase
 REDOCLY := npx --yes @redocly/cli@2.57.0
 
@@ -33,6 +32,7 @@ LIBS_TEST_PROJECTS := tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Test
 AUTH_HOST_DLL := src/TerraScale.Authentication/bin/$(CONFIGURATION)/net11.0/ts-auth.dll
 
 BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj \
+	benchmark/dotnet/TerraScale.EntityFrameworkCore.Benchmarks/TerraScale.EntityFrameworkCore.Benchmarks.csproj \
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
 
 .PHONY: restore turso-native build fmt fmt-check lint test-fast test-slow test check docker-test clean \
@@ -247,8 +247,10 @@ status-test-fast:
 .PHONY: sdk-test-fast sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast
 sdk-test-fast: sdk-dotnet-test-fast sdk-js-test-fast sdk-go-test-fast sdk-python-test-fast sdk-rust-test-fast
 
-sdk-dotnet-test-fast:
-	cd sdk/dotnet && bash scripts/test-fast.sh
+sdk-dotnet-test-fast: turso-native
+	dotnet restore src/TerraBase/TerraBase.csproj --locked-mode
+	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
+	cd sdk/dotnet && TERRABASE_BINARY=$(TERRABASE_BINARY) bash scripts/test-fast.sh
 
 sdk-js-test-fast:
 	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- npm ci --no-audit --no-fund

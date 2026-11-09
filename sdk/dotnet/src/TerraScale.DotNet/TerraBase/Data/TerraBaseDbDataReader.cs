@@ -7,12 +7,36 @@ using System.Text.Json;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>A reader over one statement's fully materialized result.</summary>
-public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bool singleRow = false) : DbDataReader
+/// <summary>A reader over fully materialized results: one result set per statement that returns columns.</summary>
+public sealed class TerraBaseDbDataReader : DbDataReader
 {
-    private readonly IReadOnlyList<TerraBaseSqlRecord> rows = singleRow && result.Rows.Count > 0 ? [result.Rows[0]] : result.Rows;
+    private static readonly TerraBaseSqlStatementResult NoResult = new([], [], 0, null);
+    private readonly TerraBaseSqlStatementResult[] sets;
+    private readonly int affected;
+    private readonly bool singleRow;
+    private int set;
+    private TerraBaseSqlStatementResult result;
+    private IReadOnlyList<TerraBaseSqlRecord> rows;
     private int position = -1;
     private bool closed;
+
+    /// <summary>Creates a reader over one statement's result.</summary>
+    public TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bool singleRow = false)
+        : this([result], singleRow)
+    {
+    }
+
+    internal TerraBaseDbDataReader(IReadOnlyList<TerraBaseSqlStatementResult> results, bool singleRow)
+    {
+        ArgumentNullException.ThrowIfNull(results);
+        sets = [.. results.Where(statement => statement.Columns.Count > 0)];
+        long changed = 0;
+        foreach (var statement in results) changed += statement.RowsAffected;
+        affected = (int)changed;
+        this.singleRow = singleRow;
+        result = sets.Length > 0 ? sets[0] : NoResult;
+        rows = Rows(result);
+    }
 
     /// <summary>Always 0: results are one level deep.</summary>
     public override int Depth => 0;
@@ -27,10 +51,10 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
     public override bool IsClosed => closed;
 
     /// <summary>The rows a write changed.</summary>
-    public override int RecordsAffected => (int)result.RowsAffected;
+    public override int RecordsAffected => affected;
 
     /// <summary>The value of a column of the current row.</summary>
-    public override object this[int ordinal] => Box(Row()[ordinal]);
+    public override object this[int ordinal] => Row().Cell(ordinal).Box();
 
     /// <summary>The value of a column of the current row.</summary>
     public override object this[string name] => this[GetOrdinal(name)];
@@ -42,8 +66,24 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
         return ++position < rows.Count;
     }
 
-    /// <summary>Always false: one statement has one result.</summary>
-    public override bool NextResult() => false;
+    /// <summary>Advances to the next statement result with columns.</summary>
+    public override bool NextResult()
+    {
+        ObjectDisposedException.ThrowIf(closed, this);
+        if (set + 1 >= sets.Length)
+        {
+            set = sets.Length;
+            result = NoResult;
+            rows = [];
+            position = -1;
+            return false;
+        }
+
+        result = sets[++set];
+        rows = Rows(result);
+        position = -1;
+        return true;
+    }
 
     /// <summary>A column's name.</summary>
     public override string GetName(int ordinal) => result.Columns[ordinal].Name;
@@ -65,14 +105,14 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
     }
 
     /// <summary>The value of a column of the current row.</summary>
-    public override object GetValue(int ordinal) => Box(Row()[ordinal]);
+    public override object GetValue(int ordinal) => Row().Cell(ordinal).Box();
 
     /// <summary>Copies the current row's values into <paramref name="values"/> and returns the number copied.</summary>
     public override int GetValues(object[] values)
     {
         var row = Row();
         var count = Math.Min(values.Length, result.Columns.Count);
-        for (var i = 0; i < count; i++) values[i] = Box(row[i]);
+        for (var i = 0; i < count; i++) values[i] = row.Cell(i).Box();
         return count;
     }
 
@@ -84,11 +124,12 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
     public override Type GetFieldType(int ordinal)
     {
         var row = position >= 0 && position < rows.Count ? rows[position] : rows.Count > 0 ? rows[0] : null;
-        return row is null ? typeof(object) : row[ordinal].ValueKind switch
+        return row is null ? typeof(object) : row.Cell(ordinal) switch
         {
-            JsonValueKind.Number => row[ordinal].TryGetInt64(out _) ? typeof(long) : typeof(double),
-            JsonValueKind.String => typeof(string),
-            JsonValueKind.Object => typeof(byte[]),
+            { IsInteger: true } => typeof(long),
+            { RealText: not null } => typeof(double),
+            { Text: not null } => typeof(string),
+            { Blob: not null } => typeof(byte[]),
             _ => typeof(object),
         };
     }
@@ -113,6 +154,9 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
     public override DateTime GetDateTime(int ordinal) =>
         DateTime.Parse(Row().GetString(ordinal), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
 
+    internal DateTimeOffset GetDateTimeOffset(int ordinal) =>
+        DateTimeOffset.Parse(Row().GetString(ordinal), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
+
     /// <summary>Copies a blob column into <paramref name="buffer"/> and returns the copied length.</summary>
     public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length)
     {
@@ -127,7 +171,7 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
     public override byte GetByte(int ordinal) => (byte)GetInt64(ordinal);
 
     /// <summary>The column value as a character.</summary>
-    public override char GetChar(int ordinal) => (char)GetInt64(ordinal);
+    public override char GetChar(int ordinal) => Row().Cell(ordinal) is { Text: { } text } ? text[0] : (char)GetInt64(ordinal);
 
     /// <summary>The column value as a 16-bit integer.</summary>
     public override short GetInt16(int ordinal) => (short)GetInt64(ordinal);
@@ -139,11 +183,45 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
     public override float GetFloat(int ordinal) => (float)GetDouble(ordinal);
 
     /// <summary>The column value as a decimal parsed from the exact JSON number text.</summary>
-    public override decimal GetDecimal(int ordinal) =>
-        decimal.Parse(Row()[ordinal].GetRawText(), CultureInfo.InvariantCulture);
+    public override decimal GetDecimal(int ordinal) => Row().Cell(ordinal) switch
+    {
+        { Text: { } text } => decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture),
+        { RealText: { } real } => decimal.Parse(real, NumberStyles.Float, CultureInfo.InvariantCulture),
+        { IsInteger: true } integer => integer.Integer,
+        _ => throw new InvalidOperationException($"Column {ordinal} is not a number."),
+    };
 
     /// <summary>The column value as a GUID parsed from text.</summary>
-    public override Guid GetGuid(int ordinal) => Guid.Parse(GetString(ordinal));
+    public override Guid GetGuid(int ordinal) =>
+        Row().Cell(ordinal) is { Blob: { } blob } ? new Guid(blob) : Guid.Parse(GetString(ordinal));
+
+    /// <summary>The column value as <typeparamref name="T"/>, converted like SQLite's ADO.NET provider.</summary>
+    public override T GetFieldValue<T>(int ordinal)
+    {
+        object value = typeof(T) == typeof(DateTimeOffset) ? GetDateTimeOffset(ordinal)
+            : typeof(T) == typeof(DateTime) ? GetDateTime(ordinal)
+            : typeof(T) == typeof(DateOnly) ? DateOnly.Parse(GetString(ordinal), CultureInfo.InvariantCulture)
+            : typeof(T) == typeof(TimeOnly) ? TimeOnly.Parse(GetString(ordinal), CultureInfo.InvariantCulture)
+            : typeof(T) == typeof(TimeSpan) ? TimeSpan.Parse(GetString(ordinal), CultureInfo.InvariantCulture)
+            : typeof(T) == typeof(Guid) ? GetGuid(ordinal)
+            : typeof(T) == typeof(decimal) ? GetDecimal(ordinal)
+            : typeof(T) == typeof(byte[]) ? Row().GetBytes(ordinal)
+            : typeof(T) == typeof(string) ? GetString(ordinal)
+            : typeof(T) == typeof(bool) ? GetBoolean(ordinal)
+            : typeof(T) == typeof(long) ? GetInt64(ordinal)
+            : typeof(T) == typeof(int) ? GetInt32(ordinal)
+            : typeof(T) == typeof(short) ? GetInt16(ordinal)
+            : typeof(T) == typeof(byte) ? GetByte(ordinal)
+            : typeof(T) == typeof(sbyte) ? (sbyte)GetInt64(ordinal)
+            : typeof(T) == typeof(ushort) ? (ushort)GetInt64(ordinal)
+            : typeof(T) == typeof(uint) ? (uint)GetInt64(ordinal)
+            : typeof(T) == typeof(ulong) ? unchecked((ulong)GetInt64(ordinal))
+            : typeof(T) == typeof(char) ? GetChar(ordinal)
+            : typeof(T) == typeof(double) ? GetDouble(ordinal)
+            : typeof(T) == typeof(float) ? GetFloat(ordinal)
+            : GetValue(ordinal);
+        return (T)value;
+    }
 
     /// <summary>Copies a text column into <paramref name="buffer"/> and returns the copied length.</summary>
     public override long GetChars(int ordinal, long dataOffset, char[]? buffer, int bufferOffset, int length)
@@ -161,16 +239,8 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
     /// <summary>Closes the reader.</summary>
     public override void Close() => closed = true;
 
-    internal static object Box(JsonElement value) => value.ValueKind switch
-    {
-        JsonValueKind.Null => DBNull.Value,
-        JsonValueKind.Number => value.TryGetInt64(out var integer) ? (object)integer : value.GetDouble(),
-        JsonValueKind.String => value.GetString()!,
-        JsonValueKind.True => true,
-        JsonValueKind.False => false,
-        JsonValueKind.Object => value.GetProperty("base64").GetBytesFromBase64(),
-        _ => throw new InvalidOperationException($"A {value.ValueKind} value cannot be boxed."),
-    };
+    private IReadOnlyList<TerraBaseSqlRecord> Rows(TerraBaseSqlStatementResult statement) =>
+        singleRow && statement.Rows.Count > 0 ? [statement.Rows[0]] : statement.Rows;
 
     private TerraBaseSqlRecord Row() =>
         position >= 0 && position < rows.Count ? rows[position] : throw new InvalidOperationException("The reader is before the first row or past the last.");

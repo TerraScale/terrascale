@@ -27,8 +27,19 @@ public sealed class TerraBaseDbCommand : DbCommand
         set => field = value ?? "";
     } = "";
 
-    /// <summary>The command timeout; execution deadlines are enforced by the SDK.</summary>
-    public override int CommandTimeout { get; set; }
+    /// <summary>
+    /// Seconds the command may run before it throws <see cref="TimeoutException"/>; 0, the default, leaves only the SDK's
+    /// 30-second request deadline, which also bounds larger values.
+    /// </summary>
+    public override int CommandTimeout
+    {
+        get;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            field = value;
+        }
+    }
 
     /// <summary>Always <see cref="System.Data.CommandType.Text"/>.</summary>
     public override CommandType CommandType
@@ -72,22 +83,23 @@ public sealed class TerraBaseDbCommand : DbCommand
     protected override DbParameter CreateDbParameter() => new TerraBaseDbParameter();
 
     /// <summary>The number of rows a write changed.</summary>
-    public override async Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken) =>
-        (int)(await SendAsync(cancellationToken).ConfigureAwait(false)).RowsAffected;
+    public override async Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken)
+    {
+        var affected = 0L;
+        foreach (var result in await SendAsync(cancellationToken).ConfigureAwait(false)) affected += result.RowsAffected;
+        return (int)affected;
+    }
 
     /// <summary>The first column of the first row, or null when the result has no rows.</summary>
     public override async Task<object?> ExecuteScalarAsync(CancellationToken cancellationToken)
     {
-        var result = await SendAsync(cancellationToken).ConfigureAwait(false);
-        return result.Rows.Count > 0 ? TerraBaseDbDataReader.Box(result.Rows[0][0]) : null;
+        var results = await SendAsync(cancellationToken).ConfigureAwait(false);
+        return results.FirstOrDefault(result => result.Columns.Count > 0) is { Rows: [var first, ..] } ? first.Cell(0).Box() : null;
     }
 
     /// <summary>A reader over the statement's rows.</summary>
-    protected override async Task<DbDataReader> ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
-    {
-        var result = await SendAsync(cancellationToken).ConfigureAwait(false);
-        return new TerraBaseDbDataReader(result, behavior.HasFlag(CommandBehavior.SingleRow));
-    }
+    protected override async Task<DbDataReader> ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken) =>
+        new TerraBaseDbDataReader(await SendAsync(cancellationToken).ConfigureAwait(false), behavior.HasFlag(CommandBehavior.SingleRow));
 
     /// <summary>The SDK is async-only; use <see cref="ExecuteNonQueryAsync(CancellationToken)"/>.</summary>
     public override int ExecuteNonQuery() => throw NotSync();
@@ -100,12 +112,11 @@ public sealed class TerraBaseDbCommand : DbCommand
 
     private static NotSupportedException NotSync() => new("The TerraScale SDK is async-only; use the async method with a CancellationToken.");
 
-    private async Task<TerraBaseSqlStatementResult> SendAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<TerraBaseSqlStatementResult>> SendAsync(CancellationToken cancellationToken)
     {
         var connection = this.connection ?? throw new InvalidOperationException("The command has no TerraBaseDbConnection.");
         ArgumentException.ThrowIfNullOrWhiteSpace(CommandText, nameof(CommandText));
-        var (args, named) = parameters.ToArguments();
-        var statement = new TerraBaseSqlStatement(CommandText, args, named);
+        var statements = Statements();
         var open = connection.CurrentTransaction;
         var enlisted = DbTransaction as TerraBaseDbTransaction;
         if (open != enlisted)
@@ -115,8 +126,52 @@ public sealed class TerraBaseDbCommand : DbCommand
                 : "The connection has an open transaction; set the command's Transaction property to it.");
         }
 
-        return open is { } transaction
-            ? await transaction.Session.ExecuteAsync(statement, cancellationToken).ConfigureAwait(false)
-            : await connection.SqlDatabase.ExecuteAsync(statement, cancellationToken).ConfigureAwait(false);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (CommandTimeout > 0) deadline.CancelAfter(TimeSpan.FromSeconds(CommandTimeout));
+        try
+        {
+            return open is { } transaction
+                ? await transaction.Session.BatchAsync(statements, deadline.Token).ConfigureAwait(false)
+                : await connection.SqlDatabase.BatchAsync(statements, deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException($"The command did not finish within its CommandTimeout of {CommandTimeout} seconds.", error);
+        }
+    }
+
+    private TerraBaseSqlStatement[] Statements()
+    {
+        var (args, named) = parameters.ToArguments();
+        var script = TerraBaseSqlScript.Split(CommandText);
+        if (script.Count <= 1) return [new TerraBaseSqlStatement(CommandText, args, named)];
+        var statements = new TerraBaseSqlStatement[script.Count];
+        var offset = 0;
+        for (var i = 0; i < script.Count; i++)
+        {
+            var statement = script[i];
+            if (statement.Numbered) throw new NotSupportedException("Numbered ?NNN parameters need a command with one statement; use named parameters.");
+            IReadOnlyList<TerraBaseSqlValue>? slice = null;
+            if (statement.Positional > 0)
+            {
+                if (args is null || offset + statement.Positional > args.Count)
+                    throw new ArgumentException("The command's statements use more positional parameters than it has.", nameof(Parameters));
+                slice = [.. args.Skip(offset).Take(statement.Positional)];
+                offset += statement.Positional;
+            }
+
+            Dictionary<string, TerraBaseSqlValue>? used = null;
+            if (named is not null)
+            {
+                foreach (var name in statement.Named)
+                {
+                    if (named.TryGetValue(name, out var value)) (used ??= new(StringComparer.Ordinal))[name] = value;
+                }
+            }
+
+            statements[i] = new TerraBaseSqlStatement(statement.Sql, slice, used);
+        }
+
+        return statements;
     }
 }

@@ -80,10 +80,24 @@ long balance = await session.TransactionAsync(async (tx, token) =>
 `BeginAsync`, `CommitAsync` and `RollbackAsync` are the explicit form. After a failed statement inside a transaction
 every call throws `transaction_aborted` until rollback; commit then rolls back and throws `transaction_rolled_back`.
 Session errors have a null `StatusCode`. A refused upgrade throws the usual `TerraBaseException` subclass (401, 404,
-421 `TerraBaseWrongRegionException`). The session connects with its own `ClientWebSocket`, not the caller's
-`HttpClient`, and is never resent. When the socket drops, calls in flight fail and the next call reconnects; a
+421 `TerraBaseWrongRegionException`). The upgrade goes through the caller's `HttpClient` and its handlers with
+the same credential as REST (a credential-free client reaches a private listener over HTTP/2 extended CONNECT), and is
+never resent. When the socket drops, calls in flight fail and the next call reconnects; a
 transaction open at the drop rolled back, so every call but `RollbackAsync` throws `transaction_rolled_back` until the
 caller rolls back.
+
+## Entity Framework Core
+
+`TerraScale.EntityFrameworkCore` is the EF Core 10 provider for TerraBase:
+`options.UseTerraBase(database)` with a `TerraBaseSqlDatabase`, or `options.UseTerraBase(connectionString)`.
+`SaveChangesAsync` sends the change set as one atomic `/sql/execute` request, explicit transactions run over the SQL
+WebSocket session, and `MigrateAsync`/`EnsureCreatedAsync` work against TerraBase. Setup, options, transactions,
+migrations and limits: [Entity Framework Core provider](docs/entity-framework-core.md).
+
+The ADO.NET types behind it follow SQLite's ADO.NET conventions: a command may hold several statements, which run as
+one request (or inside the open transaction) and read back as one result set per statement that returns columns;
+`DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`, `Guid` and `decimal` arguments are sent as text and
+`GetFieldValue<T>` reads them back.
 
 ## Databases for agents
 
