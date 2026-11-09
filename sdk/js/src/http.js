@@ -18,6 +18,7 @@ import { isValidId } from "./ids.js";
  *   readonly body?: TBody | undefined;
  *   readonly formBody?: URLSearchParams | string | undefined;
  *   readonly userinfoAccessToken?: string | undefined;
+ *   readonly projectAccessToken?: string | undefined;
  *   readonly resourceIntrospectionBasic?: string | undefined;
  *   readonly deletionReceipt?: string | undefined;
  *   readonly stepUpProof?: string | undefined;
@@ -103,12 +104,17 @@ export class TsAuthHttp {
               options.userinfoAccessToken !== undefined || options.resourceIntrospectionBasic !== undefined))
             throw new TypeError("Account deletion reads require a receipt without bearer credentials.");
           const oidc = options.routeName.startsWith("tsauth.oidc.");
-          const token = oidc
+          const project = options.projectAccessToken !== undefined;
+          if (project && !/^tsauth\.projects\.[a-z0-9_]+$/u.test(options.routeName))
+            throw new TypeError("Project sign-in tokens belong only to named project tenant operations.");
+          const token = oidc || project
             ? undefined
             : await withCancellation(
                 resolveAccessToken(this.#accessToken),
                 signal,
               );
+          if (project)
+            headers.set("authorization", `Bearer ${options.projectAccessToken}`);
           if (token !== undefined && token.length > 0)
             headers.set(
               "authorization",

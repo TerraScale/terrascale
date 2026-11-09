@@ -334,6 +334,11 @@ The optional live catalog check needs `TB_V1_MANAGEMENT_TOKEN` with `databases:r
 in addition to `TB_V1_URL` and `TB_V1_PROJECT`; data-only keys are insufficient.
 Entity pages reject null and primitive records; recovery-code pages contain strings.
 
+`tsAuth.projects` administers one project's hosted sign-in tenant over `/v1/{project}`
+with the caller's TerraScale account sign-in token: `getSettings`, `updateSettings`,
+`listUsers`, `getUser`, `disableUser`, `enableUser`, `deleteUser` and `exportUsers`.
+Provider, session and OAuth-client administration groups are not yet exposed.
+
 Hosted identity and OIDC network methods accept a final `{ signal }` argument;
 list methods keep it in their existing options. Failures retain `kind: "transport"`:
 `request_aborted` identifies caller cancellation, `request_timeout` the SDK deadline,
