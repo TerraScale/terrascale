@@ -361,7 +361,11 @@ import { PrismaClient } from "@prisma/client";
 import { createTerraBaseClient } from "@terrascale/sdk";
 import { PrismaTerraScale } from "@terrascale/sdk/prisma";
 
-const db = createTerraBaseClient({ project: "my-project", token: process.env.TERRABASE_TOKEN, baseUrl: "https://…" }).database("app");
+const db = createTerraBaseClient({
+  baseUrl: "https://api.terrascale.tech",
+  project: process.env.TERRASCALE_PROJECT_ID,
+  token: process.env.TERRASCALE_ACCESS_TOKEN,
+}).database("app");
 const prisma = new PrismaClient({ adapter: new PrismaTerraScale(db) });
 ```
 

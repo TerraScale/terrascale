@@ -11,7 +11,7 @@ title: Practical guides
 
 Use the [quickstart](/ru/getting-started/) to establish one working application connection, then choose the guide for the next operation. For the SQL model, see [SQL](/ru/concepts/sql).
 
-- [SDK reference](/ru/guides/sdks) (being updated for SQL).
+- [SDK reference](/ru/guides/sdks)
 - [Authentication capabilities](/ru/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/ru/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
 - [Connect with psql and Postgres drivers](/ru/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
@@ -22,13 +22,13 @@ Use the [quickstart](/ru/getting-started/) to establish one working application 
 - [Typed SQL with the Rust SDK](/ru/guides/rust-sql): queries, typed `query_as` selects, transactions over the session and batches in Rust.
 - [Errors and safe retries](/ru/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/ru/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
-- [Functions](/ru/guides/functions) (being updated for SQL).
+- [Functions](/ru/guides/functions)
 - [Monitoring](/ru/guides/monitoring): usage counters, request analytics, Prometheus metrics, request logs and the status page.
-- [Backups and restore](/ru/guides/backups-and-restore) (being updated for SQL).
+- [Backups and restore](/ru/guides/backups-and-restore)
 - [Rename a database](/ru/guides/rename-database): change a database's name from the dashboard, API, CLI or SDKs.
 - [File storage](/ru/guides/file-storage): project files in buckets with owner, role and public read and write rules.
 - [Schema migrations](/ru/guides/migrations): versioned SQL table migrations with `ts migrate`.
-- [Branches](/ru/guides/branches) (being updated for SQL).
+- [Branches](/ru/guides/branches)
 - [Multi-region writes and conflicts](/ru/guides/multi-region-writes-and-conflicts): column winners, transaction states and the conflict log.
 - [Dashboard usage](/ru/guides/dashboard): customer account and database workflow.
 - [Connect an AI assistant with MCP](/ru/guides/mcp): sign in or use a personal access token to connect an assistant.
