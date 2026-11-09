@@ -134,7 +134,6 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
         return closed;
     }
 
-
     private static DatabaseKey Key(TenantContext database) => new(database.OrganizationId, database.ProjectId ?? "", database.DatabaseId ?? "");
     private DatabaseEntry Entry(TenantContext database)
     {
@@ -142,7 +141,6 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
         return _databases.TryGetValue(key, out var entry) ? entry : Add(key, database);
     }
 
-    private DatabaseEntry? Find(TenantContext database) => _databases.TryGetValue(Key(database), out var entry) ? entry : null;
     private DatabaseEntry Add(DatabaseKey key, TenantContext database)
     {
         if (!TryTake(ref _databaseCount, MaxDatabases))

@@ -14,6 +14,7 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Platform;
+using TerraBase.Features.Postgres;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Regions;
@@ -21,11 +22,14 @@ using TerraBase.Features.Replicas;
 using TerraBase.Features.Rpc;
 using TerraScale.TerraBase.Rpc;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.Shapes;
 using TerraBase.Features.Sql;
 using TerraBase.Features.Stats;
 using TerraBase.Features.UserAuth;
+using TerraBase.Features.FileStorage;
 using TerraBase.Features.Functions;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraScale.Endpoints;
 if (args is ["--storage-format"])
 {
@@ -98,14 +102,14 @@ builder.Services.AddTerraBaseQos();
 builder.Services.AddTerraBaseEngine(options);
 builder.Services.AddTerraBaseApiKeys();
 builder.Services.AddTerraBaseClientCors();
-TerraBase.Features.FileStorage.FileStorageExtensions.AddTerraBaseFileStorage(builder.Services);
+builder.Services.AddTerraBaseFileStorage();
 builder.Services.AddTerraBaseFunctions();
 builder.Services.AddTerraBaseSql();
 builder.Services.AddTerraBaseUserAuth();
 builder.Services.AddTerraBaseManagement();
 builder.Services.AddTerraBaseRegions();
-builder.Services.AddSingleton<TerraBase.Features.Postgres.PostgresConnectionHandler>();
-builder.Services.AddSingleton<TerraBase.Features.Postgres.PostgresRelay>();
+builder.Services.AddSingleton<PostgresConnectionHandler>();
+builder.Services.AddSingleton<PostgresRelay>();
 builder.Services.AddTerraBaseRegionReplicas();
 builder.Services.AddTerraBaseHomeApply();
 builder.Services.AddTerraBaseLocalAck();
@@ -117,7 +121,7 @@ builder.Services.AddTerraBaseBackup(options);
 builder.Services.AddTerraBaseHealth();
 builder.Services.AddTerraBasePressure();
 builder.Services.AddTerraBaseStats();
-TerraBase.Features.Shapes.ShapesExtensions.AddTerraBaseShapes(builder.Services);
+builder.Services.AddTerraBaseShapes();
 builder.Services.AddTerraBaseCatalog();
 builder.Services.AddTerraBaseRpc();
 
@@ -138,7 +142,7 @@ try
     SqlRequestTiming.UseSqlRequestTiming(app);
     app.UseTerraBaseRestPipeline();
     app.UseTerraBaseForwardedRequests();
-    app.UseTerraScaleRequestIdentity(() => TerraBase.Primitives.EntityIds.New().ToString(),
+    app.UseTerraScaleRequestIdentity(() => EntityIds.New().ToString(),
         app.Services.GetRequiredService<InternalCredential>().CorrelationKey);
     app.UseTerraBasePrivateResponses();
     app.UseTerraBasePressure();
@@ -148,7 +152,7 @@ try
     app.UseRouting();
     app.UseWebSockets();
     app.UseTerraBaseClientCors();
-    TerraBase.Features.Shapes.ShapesExtensions.UseTerraBaseShapeNoStore(app);
+    app.UseTerraBaseShapeNoStore();
     app.UseTerraBaseListeners();
     app.Use((context, next) =>
     {

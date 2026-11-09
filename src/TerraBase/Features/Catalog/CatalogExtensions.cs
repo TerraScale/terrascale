@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Catalog;
@@ -21,8 +22,8 @@ public static class CatalogExtensions
         {
             if (!gate.IsOpen && context.GetEndpoint() is { } endpoint
                 && (endpoint.Metadata.GetMetadata<AnchoredRevocation>() is not null
-                    || endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAuthorizeData>() is not null
-                    && endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAllowAnonymous>() is null))
+                    || endpoint.Metadata.GetMetadata<IAuthorizeData>() is not null
+                    && endpoint.Metadata.GetMetadata<IAllowAnonymous>() is null))
             {
                 context.Response.Headers.CacheControl = "no-store";
                 await BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "catalog_unverified",

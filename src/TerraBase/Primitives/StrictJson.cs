@@ -4,14 +4,11 @@ using System.Text.Json;
 
 namespace TerraBase.Primitives;
 
-/// <summary>A JSON value violates the shared JSON contract.</summary>
 public sealed class JsonValidationException(string message, bool tooLarge = false) : Exception(message)
 {
-    /// <summary>The value exceeds the byte limit.</summary>
     public bool TooLarge { get; } = tooLarge;
 }
 
-/// <summary>One JSON contract for local writes and replication apply, enforced by storage.</summary>
 internal static class StrictJson
 {
     public const int MaxBytes = 1024 * 1024;

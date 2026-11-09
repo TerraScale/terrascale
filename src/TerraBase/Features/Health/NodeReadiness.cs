@@ -1,5 +1,9 @@
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.HomePush;
+using TerraBase.Features.Replicas;
+using HomePushService = TerraBase.Features.HomePush.HomePush;
 
 namespace TerraBase.Features.Health;
 
@@ -10,8 +14,8 @@ public interface INodeReadiness
 
 internal sealed class NodeReadiness(
     IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate,
-    Replicas.RegionalOwners owners, Configuration.TerraBaseOptions options,
-    HomePush.HomePush push, Replicas.HomeLeases leases) : INodeReadiness
+    RegionalOwners owners, TerraBaseOptions options,
+    HomePushService push, HomeLeases leases) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {

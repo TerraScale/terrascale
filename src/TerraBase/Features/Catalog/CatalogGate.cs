@@ -17,23 +17,17 @@ public interface ICatalogGate
     CatalogGateStatus Status { get; }
 }
 
-/// <summary>Why <c>/healthz</c> degrades and <c>/readyz</c> fails while the gate is closed.</summary>
 public enum CatalogGateState
 {
-    /// <summary>The gate has not run a verification yet, or its last run failed without naming the bucket.</summary>
     Unverified = 0,
 
-    /// <summary>The restore anchor was verified and the gate is open.</summary>
     Open = 1,
 
-    /// <summary>The backup bucket that holds the restore anchor does not exist.</summary>
     BucketMissing = 2,
 }
 
-/// <summary>The catalog gate's state for <c>/healthz</c> and <c>/readyz</c>.</summary>
 public sealed record CatalogGateStatus(CatalogGateState State, string? Bucket = null)
 {
-    /// <summary>Whether the gate is open and serving is possible.</summary>
     public bool IsOpen => State == CatalogGateState.Open;
 }
 

@@ -4,12 +4,6 @@ using System.Text;
 
 namespace TerraBase.Primitives;
 
-/// <summary>
-/// An exact decimal, <c>Mantissa × 10^Exponent</c>: the one number rule for client JSON and the arithmetic of
-/// <c>inc</c>, which never rounds.
-/// </summary>
-/// <param name="Mantissa">Digits without trailing zeros.</param>
-/// <param name="Exponent">Power of ten.</param>
 internal readonly record struct ExactNumber(BigInteger Mantissa, int Exponent)
 {
     private const int MaxSignificantDigits = 128;
@@ -18,10 +12,6 @@ internal readonly record struct ExactNumber(BigInteger Mantissa, int Exponent)
     private const int MinMagnitude = -307;
     private const int MaxMagnitude = 307;
 
-    /// <summary>
-    /// Parses JSON number text with at most 128 significant digits (counted before parsing, so the work is bounded)
-    /// and a value that is 0 or between 1e-307 and below 1e308 in magnitude.
-    /// </summary>
     public static bool TryParse(ReadOnlySpan<byte> text, out ExactNumber number)
     {
         number = default;
@@ -74,10 +64,6 @@ internal readonly record struct ExactNumber(BigInteger Mantissa, int Exponent)
         return true;
     }
 
-    /// <summary>Parses JSON number text; see <see cref="TryParse(ReadOnlySpan{byte}, out ExactNumber)"/>.</summary>
-    public static bool TryParse(string text, out ExactNumber number) => TryParse(Encoding.UTF8.GetBytes(text), out number);
-
-    /// <summary>The exact sum; the value limits then decide whether it can be stored.</summary>
     public static ExactNumber Add(ExactNumber a, ExactNumber b)
     {
         if (a.Mantissa.IsZero || b.Mantissa.IsZero)
@@ -90,7 +76,6 @@ internal readonly record struct ExactNumber(BigInteger Mantissa, int Exponent)
         return Normalize((a.Mantissa * BigInteger.Pow(10, a.Exponent - low)) + (b.Mantissa * BigInteger.Pow(10, b.Exponent - low)), low);
     }
 
-    /// <summary>Plain JSON number text: digits and a decimal point, or an exponent for large integers.</summary>
     public override string ToString()
     {
         var digits = BigInteger.Abs(Mantissa).ToString(CultureInfo.InvariantCulture);

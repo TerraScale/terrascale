@@ -5,26 +5,19 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Pressure;
 
-/// <summary>Cached node telemetry and HTTP request accounting.</summary>
 public interface IPressureSignals
 {
-    /// <summary>The most recent immutable sample; fetching never scans or changes its timestamp.</summary>
     PressureBody Snapshot { get; }
 
-    /// <summary>Records a completed request; the organization must come from a validated API key.</summary>
     void Record(TerraBaseListener listener, TimeSpan elapsed, string? organization, PlanTier? plan = null);
 
-    /// <summary>Accounts for a client transport connection opening or closing.</summary>
     void ConnectionOpened();
 
-    /// <summary>Accounts for a client transport connection closing.</summary>
     void ConnectionClosed();
 }
 
-/// <summary>Registers pressure sampling and records requests on their actual listener.</summary>
 public static class PressureExtensions
 {
-    /// <summary>Registers host-scoped counters, metrics and background sampling.</summary>
     public static IServiceCollection AddTerraBasePressure(this IServiceCollection services)
     {
         services.AddSingleton<IPressureSignals, PressureSignals>();
@@ -32,7 +25,6 @@ public static class PressureExtensions
         return services;
     }
 
-    /// <summary>Counts completed requests, including errors, before listener and authorization checks.</summary>
     public static WebApplication UseTerraBasePressure(this WebApplication app)
     {
         var pressure = app.Services.GetRequiredService<IPressureSignals>();

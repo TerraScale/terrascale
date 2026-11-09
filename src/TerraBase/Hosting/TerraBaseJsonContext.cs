@@ -6,6 +6,9 @@ using TerraBase.Features.Clock;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Health;
+using TerraBase.Features.HomeApply;
+using TerraBase.Features.LocalAck;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Logs;
@@ -16,12 +19,15 @@ using TerraBase.Features.Regions;
 using TerraBase.Features.Shapes;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
+using TerraBase.Features.FileStorage;
 using TerraBase.Features.Functions;
 using TerraBase.Tenancy;
+using TerraScale.TerraBase.Contracts.Management;
+using TerraScale.TerraBase.Rpc.Management;
 
 namespace TerraBase.Hosting;
 
-[JsonSerializable(typeof(TerraScale.TerraBase.Contracts.Management.TerraBaseDatabaseRegions))]
+[JsonSerializable(typeof(TerraBaseDatabaseRegions))]
 [JsonSerializable(typeof(DeployFunctionRequest))]
 [JsonSerializable(typeof(FunctionBody))]
 [JsonSerializable(typeof(FunctionBody[]))]
@@ -32,14 +38,14 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ManagedDatabaseBody))]
 [JsonSerializable(typeof(DatabaseBody))]
 [JsonSerializable(typeof(ManagedDatabaseBody[]))]
-[JsonSerializable(typeof(TerraBase.Features.FileStorage.FileBucket))]
-[JsonSerializable(typeof(TerraBase.Features.FileStorage.CreateFileBucketRequest))]
-[JsonSerializable(typeof(TerraBase.Features.FileStorage.FileBucketRulesRequest))]
-[JsonSerializable(typeof(TerraBase.Features.FileStorage.CreateFileUploadRequest))]
-[JsonSerializable(typeof(TerraBase.Features.FileStorage.FileObject))]
-[JsonSerializable(typeof(TerraBase.Features.FileStorage.FileSignedUrl))]
-[JsonSerializable(typeof(TerraBase.Features.FileStorage.FileBucketPage))]
-[JsonSerializable(typeof(TerraBase.Features.FileStorage.FileObjectPage))]
+[JsonSerializable(typeof(FileBucket))]
+[JsonSerializable(typeof(CreateFileBucketRequest))]
+[JsonSerializable(typeof(FileBucketRulesRequest))]
+[JsonSerializable(typeof(CreateFileUploadRequest))]
+[JsonSerializable(typeof(FileObject))]
+[JsonSerializable(typeof(FileSignedUrl))]
+[JsonSerializable(typeof(FileBucketPage))]
+[JsonSerializable(typeof(FileObjectPage))]
 [JsonSerializable(typeof(DatabaseRequestLogs))]
 [JsonSerializable(typeof(RequestLogRecord))]
 [JsonSerializable(typeof(Ulid))]
@@ -57,7 +63,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(BackupSchedule))]
 [JsonSerializable(typeof(RestoreOperationRecord))]
 [JsonSerializable(typeof(RestoreOperation))]
-[JsonSerializable(typeof(TerraBase.Features.FileStorage.FileAccessRules))]
+[JsonSerializable(typeof(FileAccessRules))]
 [JsonSerializable(typeof(CreateApiKeyRequest))]
 [JsonSerializable(typeof(CreatedApiKeyBody))]
 [JsonSerializable(typeof(DatabaseBackup))]
@@ -67,9 +73,9 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(DatabaseTtlRequest))]
 [JsonSerializable(typeof(ForkRequest))]
 [JsonSerializable(typeof(HomeMoveMarker))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.HomePromoteRequest))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.HomeAbortRequest))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.HomePromoteAnswer))]
+[JsonSerializable(typeof(HomePromoteRequest))]
+[JsonSerializable(typeof(HomeAbortRequest))]
+[JsonSerializable(typeof(HomePromoteAnswer))]
 [JsonSerializable(typeof(MoveHomeRequest))]
 [JsonSerializable(typeof(DatabaseUsage))]
 [JsonSerializable(typeof(PlatformDatabaseListBody))]
@@ -85,7 +91,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(DatabasePurgeRecord))]
 [JsonSerializable(typeof(DatabasePurgeReceipt))]
 [JsonSerializable(typeof(ManagedDatabase))]
-[JsonSerializable(typeof(ManagedDatabaseBody))]
 [JsonSerializable(typeof(ManagementPage<DatabaseBackup>))]
 [JsonSerializable(typeof(ManagementPage<ManagedDatabase>))]
 [JsonSerializable(typeof(ManagementPage<ManagedDatabaseBody>))]
@@ -139,32 +144,32 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TsAuthTokenResponse))]
 [JsonSerializable(typeof(TsAuthErrorBody))]
 [JsonSerializable(typeof(TsAuthKeyStatus))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaCatalogPage))]
+[JsonSerializable(typeof(ReplicaCatalogPage))]
 [JsonSerializable(typeof(HomeCountBody))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaCatalogEntry))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaRevisionNotice))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionOpen))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.NodeLease))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalOwner))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalTransfer))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalPrepared))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalWriter))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalPosition))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalPrepare))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalStatus))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalDrain))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.RegionalCatalogSnapshot))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.HomeLease))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.HeldRevisionAnswer))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaHeldNotice))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionCall))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionAnswer))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaChecksumPage))]
-[JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaStatusReport))]
-[JsonSerializable(typeof(TerraBase.Features.HomeApply.RegionTransaction))]
-[JsonSerializable(typeof(TerraBase.Features.HomeApply.HomeApplyResult))]
-[JsonSerializable(typeof(TerraBase.Features.LocalAck.HeldTransaction))]
-[JsonSerializable(typeof(TerraBase.Features.LocalAck.HoldRelease))]
+[JsonSerializable(typeof(ReplicaCatalogEntry))]
+[JsonSerializable(typeof(ReplicaRevisionNotice))]
+[JsonSerializable(typeof(HomeSessionOpen))]
+[JsonSerializable(typeof(NodeLease))]
+[JsonSerializable(typeof(RegionalOwner))]
+[JsonSerializable(typeof(RegionalTransfer))]
+[JsonSerializable(typeof(RegionalPrepared))]
+[JsonSerializable(typeof(RegionalWriter))]
+[JsonSerializable(typeof(RegionalPosition))]
+[JsonSerializable(typeof(RegionalPrepare))]
+[JsonSerializable(typeof(RegionalStatus))]
+[JsonSerializable(typeof(RegionalDrain))]
+[JsonSerializable(typeof(RegionalCatalogSnapshot))]
+[JsonSerializable(typeof(HomeLease))]
+[JsonSerializable(typeof(HeldRevisionAnswer))]
+[JsonSerializable(typeof(ReplicaHeldNotice))]
+[JsonSerializable(typeof(HomeSessionCall))]
+[JsonSerializable(typeof(HomeSessionAnswer))]
+[JsonSerializable(typeof(ReplicaChecksumPage))]
+[JsonSerializable(typeof(ReplicaStatusReport))]
+[JsonSerializable(typeof(RegionTransaction))]
+[JsonSerializable(typeof(HomeApplyResult))]
+[JsonSerializable(typeof(HeldTransaction))]
+[JsonSerializable(typeof(HoldRelease))]
 [JsonSerializable(typeof(HlcState))]
 [JsonSerializable(typeof(ClockReport))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext;

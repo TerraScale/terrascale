@@ -4,16 +4,9 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Health;
 
-/// <summary>
-/// <c>GET /readyz</c>: 200 only while the storage engine is open, the data directory is writable, ts-auth's signing keys
-/// are loaded (when <c>auth-issuer</c> is set), a catalog follower has caught up with its primary once and the server is
-/// not shutting down; 503 otherwise. Unauthenticated on the client listener for load balancers (status only, see
-/// <see cref="StatusBody.For"/>), with build detail on the internal listener.
-/// </summary>
 public sealed class ReadyzEndpoint(
     INodeReadiness readiness, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/readyz");
@@ -27,7 +20,6 @@ public sealed class ReadyzEndpoint(
         Metadata(ListenerMetadata.Probe);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         return await readiness.IsReadyAsync(cancellationToken).ConfigureAwait(false)

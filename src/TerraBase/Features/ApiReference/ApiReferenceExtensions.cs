@@ -9,16 +9,10 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.ApiReference;
 
-/// <summary>
-/// The content of the public OpenAPI document: client-listener operations, their security schemes, authentication
-/// failures and examples. TerraScale.Endpoints maps it and Scalar.
-/// </summary>
 public static class ApiReferenceExtensions
 {
-    /// <summary>Security scheme of public operations: a ts-auth project access token as a bearer token.</summary>
     public const string TsAuthScheme = "TsAuth";
 
-    /// <summary>Shapes the OpenAPI document named <paramref name="name"/>; register it before other operation transformers.</summary>
     public static IServiceCollection AddTerraBaseApiReference(this IServiceCollection services, string name) =>
         services.AddOpenApi(name, options =>
         {
@@ -110,7 +104,6 @@ public static class ApiReferenceExtensions
             });
         });
 
-    /// <summary>Adds examples and error codes after request-body and region metadata have been generated.</summary>
     public static IServiceCollection AddTerraBaseApiExamples(this IServiceCollection services, string name) =>
         services.AddOpenApi(name, options => options.AddOperationTransformer((operation, _, _) =>
         {

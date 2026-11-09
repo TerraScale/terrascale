@@ -2,10 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace TerraBase.Hosting;
 
-/// <summary>Default cache policy for protected tenant responses.</summary>
 internal static class PrivateResponses
 {
-    /// <summary>Register before response writers; endpoint metadata is read when headers are committed.</summary>
     public static WebApplication UseTerraBasePrivateResponses(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
