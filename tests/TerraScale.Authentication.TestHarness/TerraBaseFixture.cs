@@ -60,7 +60,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         var index = (uint)Interlocked.Increment(ref this.nextPool);
         if (index >= (uint)this.pool.Length)
         {
-            var (tenant, database) = await this.CreateDatabaseAsync();
+            var (tenant, database) = await this.CreateDatabaseAsync(provision: false);
             return (tenant, database, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
         }
 
@@ -74,7 +74,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         return Task.Run(async () =>
         {
             await this.InitializeAsync().ConfigureAwait(false);
-            var (tenant, database) = await this.CreateDatabaseAsync().ConfigureAwait(false);
+            var (tenant, database) = await this.CreateDatabaseAsync(provision: false).ConfigureAwait(false);
             return new ProvisionedDatabase(tenant, database, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
         });
     }
