@@ -106,11 +106,42 @@ ObjectStore.Purge.cs:63-64). Fix the typo `before204` → `before 204` in `KeyRe
 ## CROSS-SLICE (for the coordinator, not fixed here)
 - `IManagementService` has 26 members; test seams that decorate it (CopyGate here) suggest a
   dispatch-proxy helper in the shared `TerraBase.TestHarness` would serve several suites
-  (the harness is owned by platform).
+  (the harness is owned by platform) — but CA2012 blocks DispatchProxy for its ValueTask members, so the
+  helper would need either a generator or an approved analyzer exception.
+- 27 of the repo's 60 Slow test files still declare `TerraBase.Fast.*` namespaces (Sync, Shapes, Management,
+  Sql, Revisions, Rpc, Tenancy, Catalog, Clock); 33 use `TerraBase.Slow.*`. One convention should win repo-wide.
 - `EngineManagementService` (management slice) is reached from Backup via
   `Lazy<EngineManagementService>` + `IServiceProvider.GetRequiredService` in `DatabaseBackupPurge`
   and `KeyRevocationLocal` — a service-locator pattern across feature boundaries that the management
   slice may want to make explicit.
 
 ## Progress
-- [x] Decision log written, committed, pushed (this file).
+- [x] F1 dead code removed (HoldsHiddenVersionsAsync + ObjectStore.History.cs, BackupReadObservation plumbing,
+      WaitForShippingAsync, RetentionWaiting, FunctionScheduler tick hook). 338 lines gone.
+- [x] F2 CustomerDeadline helper in S3ObjectStore (one deadline policy).
+- [x] F3 one revoke core in EngineApiKeyStore + BCL Base64Url.
+- [x] F4 TryAnswer dedup in TsAuthKeyAuthority.
+- [x] F5 sweep scope hoist.
+- [x] F6 short names everywhere (PointInTimeRestore, InvokeFunctionEndpoint, ApiKeysExtensions,
+      FunctionScheduler, FileStorageUsage, UserAuthExtensions).
+- [x] F7 comment pass: 572 doc lines removed; kept external-behavior notes; re-added the external-reference
+      comments (TS-633 ×2, docs/terrabase/key-revocation.md, RFC 6750 §3, docs/terrabase/crypto-shredding.md,
+      plus #853 and the docs/backup.md format block restored right after the strip).
+- [x] F8 partial: Slow backup test namespaces fixed (CryptoShreddingTests, SqlTableBackupTests →
+      TerraBase.Slow.Backup; the repo's other 27 Slow files on Fast namespaces are cross-slice, see below);
+      `Description(FunctionRoute.Description + "")` no-ops removed.
+- [x] Modernization: Lock gate for ShippedFile retention, IReadOnly edges (FileSignedUrl.Headers,
+      FunctionLogBody.Lines), first-class span SequenceEqual, DataKeys field naming, Base64Url.
+
+### F8 CopyGate rewrite abandoned (recorded for the coordinator)
+`DispatchProxy` gates `CopyDatabaseAsync` cleanly, but its `Invoke` must return a boxed
+`ValueTask<CopyDatabaseResult>` through an `object?` return, and CA2012 rejects every shape of that hand-off
+(direct return, ternary, object local). The repo forbids suppressions, so the 26-member manual decorator stays;
+commit d83a644b5 records the attempt and revert.
+
+## Remaining
+- `ContinuousBackup.cs` is left dense but cohesive (see deliberate non-fixes); nothing else worth fixing was
+  found in a second pass over the slice.
+- Fast suite: all 88 tests passed (25.7 s suite duration) but `make terrabase-test-fast`'s 30 s wall budget
+  also times `dotnet run` startup, which exceeds 30 s while five sibling workers load this machine (load ~24).
+  Re-run on a quiet machine before merge if CI does not cover it.
