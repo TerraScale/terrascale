@@ -6,7 +6,6 @@ using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.Postgres;
 
-/// <summary>The finite Gregorian subset shared by PostgreSQL and .NET, at microsecond precision.</summary>
 internal static partial class PostgresTemporal
 {
     private static readonly DateTime Epoch = new(2000, 1, 1);

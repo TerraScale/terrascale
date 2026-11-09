@@ -10,10 +10,8 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>An epoch key <c>K_e</c> released for one handle, epoch and database data key.</summary>
 internal sealed record ShapeEpochKey(string Handle, long Epoch, string KeyId, byte[] Key);
 
-/// <summary>A TBS1 object's exact bytes and the epoch and data key that sealed them; disposing releases its memory.</summary>
 internal sealed class ShapeCiphertext(byte[] bytes, string keyId, long epoch, IMemoryReservation reservation) : IDisposable
 {
     public ReadOnlyMemory<byte> Bytes { get; } = bytes;
@@ -25,43 +23,24 @@ internal sealed class ShapeCiphertext(byte[] bytes, string keyId, long epoch, IM
     public void Dispose() => reservation.Dispose();
 }
 
-/// <summary>The project has no data key store on this machine (no backup bucket), so no shape key exists.</summary>
 internal sealed class ShapeKeysUnavailableException() : IOException("unavailable: shape keys need the database data key store");
 
-/// <summary>
-/// Proof that a retained TBS1 object of <c>handle</c> names an <c>(epoch, key_id)</c> pair. Historic keys are released
-/// only with this proof (<c>shape-reads.md</c> section 13); the T1 mirror (FR-22) owns the objects and the answer.
-/// </summary>
 internal interface IShapeKeyRetention
 {
     ValueTask<bool> HasObjectAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken);
 }
 
-/// <summary>Encrypt-then-cache for T1 shape objects (<c>docs/terrabase/shape-reads.md</c> sections 12 and 13).</summary>
 internal interface IShapeCrypto
 {
-    /// <summary>The current epoch, <c>floor(unix_seconds / 600)</c>.</summary>
     long CurrentEpoch { get; }
 
-    /// <summary>
-    /// <c>K_e</c> for a served pair, or <see langword="null"/> (<c>409 must_refetch</c>). Served: the current epoch under
-    /// the database's current data key, and any pair a retained object proves. The caller has already checked that
-    /// <paramref name="handle"/> is current and answered a future epoch with <c>400</c>.
-    /// </summary>
-    /// <exception cref="ShapeKeysUnavailableException">This machine has no data key store.</exception>
     Task<ShapeEpochKey?> GetKeyAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken);
 
-    /// <summary><c>K_e</c> of the current epoch under the database's current data key.</summary>
-    /// <exception cref="ShapeKeysUnavailableException">This machine has no data key store.</exception>
     Task<ShapeEpochKey> CurrentKeyAsync(TenantContext database, string handle, CancellationToken cancellationToken);
 
-    /// <summary>Seals <paramref name="plain"/> as TBS1 under the current epoch and data key, with a fresh random salt.</summary>
-    /// <exception cref="ShapeKeysUnavailableException">This machine has no data key store.</exception>
-    /// <exception cref="QosMemoryException">The ciphertext cannot be reserved.</exception>
     Task<ShapeCiphertext> EncryptAsync(TenantContext database, string handle, string requestOffset, ReadOnlyMemory<byte> plain, CancellationToken cancellationToken);
 }
 
-/// <summary>TBS1 over the per-database data keys backups use; the epoch and object steps are domain-separated from backup keys.</summary>
 internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, IMemoryBudget memory, TimeProvider time) : IShapeCrypto
 {
     internal const int EpochSeconds = 600;
@@ -99,7 +78,7 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
             }
             catch (DatabaseShreddedException)
             {
-                return null; // A deleted database's cached chunks stay sealed: no key exists to release.
+                return null;
             }
 
             if (id == keyId && epoch == CurrentEpoch)
@@ -108,7 +87,6 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
             }
         }
 
-        // Ask for the proof first: an unproven key id never reaches the bucket.
         if (!await retention.HasObjectAsync(database, handle, epoch, keyId, cancellationToken).ConfigureAwait(false))
         {
             return null;
@@ -129,7 +107,6 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
         ValidateHandle(handle);
         var store = keys ?? throw new ShapeKeysUnavailableException();
         var (id, dataKey) = await store.CurrentAsync(Scope(database), cancellationToken).ConfigureAwait(false);
-        // Read the epoch after the key: a slow key read must not seal new data under the epoch it started in.
         var epoch = CurrentEpoch;
         return new(handle, epoch, id, EpochKey(dataKey, handle, epoch));
     }
@@ -165,10 +142,8 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
         }
     }
 
-    /// <summary>The TBS1 size of <paramref name="plainLength"/> bytes: the header and one length word and tag per frame.</summary>
     internal static long SealedLength(int plainLength) => HeaderBytes + (plainLength / FrameBytes + 1) * (4L + TagBytes) + plainLength;
 
-    /// <summary><c>K_e = HKDF(K_d, salt = empty, info = "TBS1 epoch" ‖ 0 ‖ handle ‖ 0 ‖ decimal(E))</c>.</summary>
     internal static byte[] EpochKey(byte[] dataKey, string handle, long epoch)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(epoch);
@@ -176,10 +151,6 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
             Encoding.UTF8.GetBytes("TBS1 epoch\0" + handle + "\0" + epoch.ToString(CultureInfo.InvariantCulture)));
     }
 
-    /// <summary>
-    /// The TBS1 format writer. <see cref="EncryptAsync"/> is the only production caller and passes a fresh CSPRNG salt;
-    /// conformance tests fix it. Every salt yields its own object key, so a (key, nonce) pair never repeats.
-    /// </summary>
     internal static byte[] Seal(ReadOnlySpan<byte> plain, string handle, string requestOffset, long epoch, string keyId, byte[] epochKey, byte[] salt,
         CancellationToken cancellationToken = default)
     {
@@ -197,7 +168,6 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
             throw new ArgumentException("TBS1 takes a 32-byte salt and a 32-byte epoch key");
         }
 
-        // A multiple of 1 MiB, including empty, ends with an empty last frame.
         var frames = plain.Length / FrameBytes + 1;
         var output = new byte[SealedLength(plain.Length)];
         var header = output.AsSpan(0, HeaderBytes);
@@ -237,7 +207,6 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
         return output;
     }
 
-    // K_d is the database's data key; deleting the database destroys it, so cached chunks become unreadable.
     private static string Scope(TenantContext database)
     {
         ArgumentException.ThrowIfNullOrEmpty(database.ProjectId);

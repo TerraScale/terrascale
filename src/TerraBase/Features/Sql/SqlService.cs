@@ -24,7 +24,6 @@ internal sealed class SqlService(
     {
         ArgumentNullException.ThrowIfNull(database);
         ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite, apply, fences);
-        // Only a region holding a replica of the database serves it from one; its home always holds the file.
         return replicas.Holds(database)
             ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, transactionTime, database, canWrite, Local)
             : Local();
@@ -129,7 +128,6 @@ internal sealed class SqlService(
         ArgumentNullException.ThrowIfNull(database);
         if (replicas.Holds(database) && !await UsePrimaryAsync(database, cancellationToken).ConfigureAwait(false))
         {
-            // A replica region lists its replica's tables.
             var reader = await replicas.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
             if (reader is not null)
             {

@@ -10,14 +10,12 @@ using System.Net.WebSockets;
 
 namespace TerraBase.Features.Sql;
 
-/// <summary><c>GET /v1/projects/{project}/databases/{database}/sql/ws</c>: runs SQL over a WebSocket.</summary>
 internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     public const string Protocol = "terrascale.sql.v1";
 
     private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(20);
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(DatabaseRoute.Template + "/sql/ws");
@@ -40,7 +38,6 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
         Metadata(ListenerMetadata.Client, new AuthorizeAttribute(ApiKeyScopes.SqlRead), new Management.DatabaseRegions.ReplicaReads());
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (DatabaseRoute.CheckParameters(HttpContext) is Validation invalid)

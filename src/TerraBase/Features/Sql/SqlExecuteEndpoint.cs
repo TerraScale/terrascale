@@ -18,13 +18,11 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Sql;
 
-/// <summary><c>POST /v1/projects/{project}/databases/{database}/sql/execute</c>: runs relational SQL statements.</summary>
 internal sealed class SqlExecuteEndpoint(
     ISqlService sql, IAuthorizationService authorization, ITenantDirectory tenants, IReplicaCatalog placements, IDatabaseReplicas replicas, IReplicaPeers peers,
     WriteRouter router, ILocalWrites local, ReplicaHolds holds, TerraBaseOptions options, ShapeOverlay overlay) : EndpointWithoutRequest<IResult>
 {
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(DatabaseRoute.Template + "/sql/execute");
@@ -48,7 +46,6 @@ internal sealed class SqlExecuteEndpoint(
         Metadata(ListenerMetadata.Client, new DatabaseRegions.ReplicaReads());
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
         {
@@ -103,8 +100,6 @@ internal sealed class SqlExecuteEndpoint(
     private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
         SqlRequestTiming.Mark(HttpContext, "tenant");
-        // Placement survives a restart before the follower opens its replica. During that interval ReplicaAsync forwards
-        // to the home; opening this node's absent primary file would incorrectly answer 400 sql_error.
         if (await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
         {
             return await ReplicaAsync(database, placement, commands, body, all, cancellationToken);
@@ -136,7 +131,6 @@ internal sealed class SqlExecuteEndpoint(
 
             if (forwarded && outcome is SqlExecuteBody && ShapeOverlay.EncodeCommits(session.Committed) is { } committed)
             {
-                // The replica region shows these rows on its shape tails at once, until its next pull holds them (PIVOT F7).
                 HttpContext.Response.Headers[ShapeOverlay.CommitHeader] = committed;
             }
 
@@ -148,8 +142,6 @@ internal sealed class SqlExecuteEndpoint(
         }
     }
 
-    // A replica region answers reads from its replica (docs/terrabase/region-replicas.md); writes, and reads before the replica's
-    // first pull, belong to the home.
     private async ValueTask<IResult> ReplicaAsync(
         TenantContext database, DatabasePlacement placement, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
@@ -190,7 +182,6 @@ internal sealed class SqlExecuteEndpoint(
         IReplicaReader? reader;
         try
         {
-            // A forced-home write needs no replica snapshot or schema: do not wait behind a local pull to forward it.
             reader = writes && preference == WriteOverride.Home ? null : await replicas.BeginReadAsync(database, cancellationToken);
         }
         catch (Exception error) when (error is not OperationCanceledException)

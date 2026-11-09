@@ -343,9 +343,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            // The catalog record reached this region without the database: a home-only database homed elsewhere is served
-            // by relaying the whole session to its home (docs/terrabase/cross-region.md), never by opening the record here.
-            // Only a session this grant already authorizes relays; a restricted key is denied here, without the hop.
             TenantContext tenant when (restriction is null || restriction == tenant.DatabaseId)
                 && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until),
@@ -379,7 +376,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         return await Tenants.FindDatabaseAsync(key.OrganizationId, project, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            // As above: a record homed elsewhere serves its sessions from its home, when this key reaches it.
             TenantContext tenant when key.Reaches(tenant) && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite)),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
@@ -387,7 +383,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         };
     }
 
-    /// <summary>Whether <paramref name="tenant"/>'s record places its database in another region only, so its session is relayed there.</summary>
     private async ValueTask<HomeNode?> AwayAsync(TenantContext tenant, CancellationToken cancellationToken)
     {
         var region = services.GetRequiredService<TerraBaseOptions>().Region;

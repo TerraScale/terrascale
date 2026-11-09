@@ -8,14 +8,12 @@ using static TerraBase.Features.Shapes.ShapeRoute;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary><c>GET …/tables/{table}/shape/manifest</c>: the mirrored objects of a shape's immutable offsets.</summary>
 internal sealed class GetShapeManifestEndpoint(
     ITenantDirectory tenants, IShapeLineages lineages, IShapeSnapshots snapshots, IShapeChunks chunks, IShapeMirror mirror)
     : EndpointWithoutRequest<IResult>
 {
     private static readonly Validation BadOffset = new("offset must be snap.<S>.<P> or a decimal commit boundary");
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(Shape + "/manifest");
@@ -50,7 +48,6 @@ internal sealed class GetShapeManifestEndpoint(
         Schema = new OpenApiSchema { Type = JsonSchemaType.String },
     };
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var resolved = await ResolveAsync(HttpContext, tenants, lineages, cancellationToken);

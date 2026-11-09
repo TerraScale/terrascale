@@ -137,7 +137,6 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
         }
     }
 
-    /// <summary>Adds <c>"provisional":[…],"local":"…"</c> to an up-to-date body; provisional data is never sealed or mirrored.</summary>
     private static ShapeBody WithProvisional(ShapeBody body, ShapeProvisional provisional)
     {
         using (body.Lease)

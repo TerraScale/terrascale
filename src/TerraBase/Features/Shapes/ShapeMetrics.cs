@@ -5,36 +5,23 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>Bounded, tenant-free telemetry and memory admission shared by shape readers.</summary>
 public interface IShapeMetrics
 {
-    /// <summary>Records one successful 200/304 shape response, including reads served from sealed data.</summary>
     void RecordRead();
 
-    /// <summary>Adds or removes waiting requests; callers balance entry and exit in a finally block.</summary>
     void ChangeWaiting(long delta);
 
-    /// <summary>Adds or removes running flights; callers balance entry and exit in a finally block.</summary>
     void ChangeFlights(long delta);
 
-    /// <summary>Records a successfully published seal's bytes and elapsed time.</summary>
     void RecordSeal(long bytes, TimeSpan elapsed);
 
-    /// <summary>Records the delay between a seal's publication and its mirror's completion.</summary>
     void RecordMirrorLag(TimeSpan lag);
 
-    /// <summary>Records one shape 307 redirect.</summary>
     void RecordRedirect();
 
-    /// <summary>
-    /// Reserves bytes before allocating a seal, page or flight. Null means admission was refused.
-    /// Hold the lease for the entire buffer or flight lifetime and dispose on completion, cancellation and error.
-    /// The explicit tenant charges shared work to its owner; null is reserved for system work.
-    /// </summary>
     IMemoryReservation? TryReserve(long bytes, TenantContext? tenant);
 }
 
-/// <summary>Uses the host-scoped TerraBase meter; no shape or tenant identity enters a metric.</summary>
 internal sealed class ShapeMetrics : IShapeMetrics
 {
     private readonly IMemoryBudget _memory;

@@ -20,7 +20,6 @@ using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>Background transport of published immutable shapes; refusal leaves origin delivery available.</summary>
 internal interface IShapeMirror
 {
     void Warm(TenantContext database, string shapeId, string handle, string offset, string nextOffset);
@@ -40,14 +39,11 @@ internal sealed record ShapeMirrorObject(string Offset, string NextOffset, strin
 [JsonSerializable(typeof(ShapeMirrorManifest))]
 internal sealed partial class ShapeMirrorJsonContext : JsonSerializerContext;
 
-/// <summary>Bounded worker and metadata cache. Tigris remains optional to every individual origin read.</summary>
 internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, IShapeMetrics metrics, IMemoryBudget memory, TimeProvider time,
     Func<IShapeCrypto> crypto, ShapeObjectStore? objects, ILogger<ShapeMirror> logger) : BackgroundService, IShapeMirror, IShapeKeyRetention
 {
     internal const int ManifestObjects = 8;
     private const int QueueItems = 32;
-    // Uploads run concurrently: one shape seals up to a chunk per commit, and a single bucket round trip at a time falls
-    // behind that, refusing (and so never mirroring) the overflow.
     private const int Workers = 4;
     private const int TrimItems = 64;
     private const long TrimBytes = 1024;
@@ -88,8 +84,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
     internal void ChunkSealed(IDatabaseStore store, ShapeSealDefinition shape, ShapeSealedChunk chunk)
     {
-        // shortcut: refused work, and work that failed every attempt, stays origin-only; add bounded backfill when complete
-        // T1 coverage is required.
         if (store.Tenant is { } tenant)
         {
             _ = Queue(tenant, shape.ShapeId, shape.Handle, Number(chunk.Offset), Number(chunk.EndOffset),
@@ -106,7 +100,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         }
     }
 
-    // Runs inside origin maintenance, so it only queues: Tigris I/O belongs to the worker, and a refusal waits for the next trim or hourly sweep.
     internal ValueTask FloorTrimmedAsync(IDatabaseStore store, string handle, long floor, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -188,7 +181,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 return false;
             }
 
-            // The claimed slot keeps duplicates and the byte bound exact while the body is copied outside the lock.
             _pending.Add(key, ShapeObjectStore.Owner(database));
             _queuedBytes += sealedBody.Length;
         }
@@ -221,7 +213,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             return new(handle, entries);
         }
 
-        // The caller already checked publication and lineage; always recheck the persisted retention floor.
         var owner = ShapeObjectStore.Owner(database);
         using var deadline = new CancellationTokenSource(RemoteDeadline, _time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -237,7 +228,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                     _cache.TryGetValue(key, out cached);
                 }
 
-                // Cold metadata is adopted with HEAD after an origin read; plaintext continuation ids stay local.
                 if (cached is null || cached.Head.Owner != owner || !Retained(cached.Head, floor))
                 {
                     break;
@@ -258,7 +248,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         return new(handle, entries);
     }
 
-    // The cursor is persisted by the deletion pass; owner metadata isolates other tenants' immutable objects.
     internal async Task<(string? After, bool Complete)> DeleteDatabaseAsync(TenantContext database, string? after, CancellationToken token)
     {
         if (_objects is null)
@@ -299,13 +288,11 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         }
         lock (_gate)
         {
-            // Only this database's publishers must drain before certifying its cleanup.
             var complete = !_pending.ContainsValue(owner);
             return (complete ? null : after, complete);
         }
     }
 
-    // Shared, durable authority is written before publication, so a different region can erase after a home move.
     internal async Task<bool> DeleteIndexedDatabaseAsync(TenantContext database, CancellationToken token)
     {
         if (_objects is null)
@@ -408,7 +395,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                     previous.Admission.Dispose();
                 }
 
-                // shortcut: continuation waits for another floor notification; refused cursor admission falls back to the hourly expiry sweep.
                 if (more && _trimCursors.Count < CacheItems && _memory.TryReserve(MemoryLane.Bulk, 1024, database) is { } cursorAdmission)
                 {
                     _trimCursors[handle] = new(after!, cursorAdmission);
@@ -466,7 +452,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 }
             }
 
-            // shortcut: cold proofs scan at most 1024 objects; an origin read warms a missed object without rewriting it.
             var scanned = 0;
             await foreach (var stored in _objects.ListAsync(handle, null, linked.Token).ConfigureAwait(false))
             {
@@ -509,7 +494,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                // Every owned worker finishes before queued reservations are released.
             }
 
             finally
@@ -568,7 +552,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     {
         await foreach (var trim in _trims.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
-            // Dequeued first so a floor raised during this pass queues one more pass for the handle.
             Dequeued(trim);
             try
             {
@@ -593,7 +576,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         }
     }
 
-    // Also collects expired objects belonging to handles that are no longer active after a restart or rotation.
     private async Task SweepAsync(CancellationToken cancellationToken)
     {
         if (_objects is null)
@@ -826,7 +808,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         }
         catch (InvalidDataException)
         {
-            // Unproven metadata neither releases keys nor prevents scanning subsequent objects.
             return null;
         }
     }
@@ -951,7 +932,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     private sealed record ScanCursor(string After, IMemoryReservation Admission);
 }
 
-/// <summary>Metadata contains hashes and numeric retention positions, never plaintext row identifiers.</summary>
 internal sealed record ShapeObjectHead(string Owner, string ObjectHash, string Sha256, long Size, long Epoch,
     string KeyId, long SealedAt, long FloorOffset);
 
@@ -1000,7 +980,6 @@ internal sealed class ShapeObjectStore : IDisposable
     public IAsyncEnumerable<StoredObject> ListAsync(string? handle, string? after, CancellationToken cancellationToken) =>
         _objects.ListAsync(handle is null ? "v1/shapes/" : "v1/shapes/" + handle + "/", after, cancellationToken);
 
-    /// <summary>Deletes the object; on an R2 bucket its Cloudflare copies are then purged in the background.</summary>
     public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken, string? owner = null)
     {
         if (_cdn is not null && !await _purge.QueueAsync(_cdn.AbsoluteUri + key, cancellationToken).ConfigureAwait(false))
@@ -1092,10 +1071,8 @@ internal sealed class ShapeObjectStore : IDisposable
         await _objects.PutAsync(InventoryPrefix(owner) + key["v1/shapes/".Length..], inventory, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>The object's URL and when the manifest that names it should be read again: the start of the next epoch.</summary>
     public (string Url, DateTimeOffset ExpiresAt) Link(string key)
     {
-        // Signing and expiry share one whole-second clock snapshot, including at the epoch boundary.
         var now = DateTimeOffset.FromUnixTimeSeconds(_time.GetUtcNow().ToUnixTimeSeconds());
         var expires = DateTimeOffset.FromUnixTimeSeconds((now.ToUnixTimeSeconds() / ShapeCrypto.EpochSeconds + 1) * ShapeCrypto.EpochSeconds);
         if (_cdn is not null)

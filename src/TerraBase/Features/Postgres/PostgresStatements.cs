@@ -9,35 +9,23 @@ using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.Postgres;
 
-/// <summary>A result column: its name and type OID.</summary>
 internal sealed record PgColumn(string Name, int Oid);
 
-/// <summary>One statement's result: <paramref name="Columns"/> null for no rows, <paramref name="Tag"/> null for an empty query.</summary>
 internal sealed record PgResult(PgColumn[]? Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, string? Tag, PgError? Notice = null)
 {
     internal SqlReadCharge? ReadCharge { get; init; }
 }
 
-/// <summary>An ErrorResponse: SQLSTATE and a message that never quotes secrets or paths.</summary>
-/// <summary>An error response; a fatal one also ends the session, as a revoked or expired key does.</summary>
 internal sealed record PgError(string Code, string Message, bool Fatal = false);
 
-/// <summary>A statement's results, or its error.</summary>
 internal readonly union PgOutcome(PgResult[], PgError);
 
-/// <summary>What a statement is, decided from its text.</summary>
 internal enum PgKind { Empty, Sql, Catalog, Set, Show, Discard, Deallocate, Begin, Commit, Rollback, Savepoint }
 
-/// <summary>One statement: its PostgreSQL text, and for <see cref="PgKind.Sql"/> the SQLite text with <c>$n</c> as <c>?n</c>.</summary>
 internal sealed record PgStatement(PgKind Kind, string Text, string Sql, int Parameters);
 
-/// <summary>The statements of a query string, or why it cannot run.</summary>
 internal readonly union PgParse(PgStatement[], PgError);
 
-/// <summary>
-/// Maps PostgreSQL onto <see cref="ISqlSession"/>: session commands drivers send, a token-level PG-to-SQLite dialect
-/// layer, SQLSTATEs, type OIDs and the text and binary value formats.
-/// </summary>
 internal static partial class PostgresStatements
 {
     public const int FirstTableOid = 16384, ProtocolVersion = 196608;
@@ -47,11 +35,9 @@ internal static partial class PostgresStatements
     private static readonly PostgreSqlDialect Dialect = new();
     private static readonly string[] Settable = ["client_encoding", "DateStyle", "TimeZone", "extra_float_digits", "application_name", "search_path", "terrascale.write"];
 
-    /// <summary>The settings ParameterStatus reports at connect.</summary>
     public static readonly string[] Reported =
         ["server_version", "server_encoding", "client_encoding", "DateStyle", "integer_datetimes", "standard_conforming_strings", "TimeZone", "application_name"];
 
-    /// <summary>Session settings at connect.</summary>
     public static Dictionary<string, string> Settings(string applicationName) => new(StringComparer.OrdinalIgnoreCase)
     {
         ["server_version"] = ServerVersion,
@@ -71,7 +57,6 @@ internal static partial class PostgresStatements
 
     public static string Version => $"PostgreSQL {ServerVersion} (TerraBase)";
 
-    /// <summary>Splits a query string at top-level semicolons and translates each statement.</summary>
     public static PgParse Parse(string sql)
     {
         IList<Token> tokens;
@@ -140,7 +125,6 @@ internal static partial class PostgresStatements
         };
     }
 
-    // PG to SQLite on tokens, so string literals, quoted identifiers and comments are never rewritten.
     private static PgOne Translate(string text, List<Token> tokens)
     {
         var output = tokens.Select(token => token.ToString()).ToArray();
@@ -189,7 +173,6 @@ internal static partial class PostgresStatements
 
         return new PgStatement(PgKind.Sql, text, string.Concat(output).Trim(), parameters);
 
-        // `operand::type` becomes CAST(operand AS type), or the bare literal for a text-like cast of a string literal.
         PgError? Cast(ref int s)
         {
             var q = s - 1;
@@ -218,7 +201,6 @@ internal static partial class PostgresStatements
                     return new PgError("42601", "SQL syntax error: unbalanced parentheses");
                 }
 
-                // A function call: its name touches the parenthesis.
                 q -= q > 0 && tokens[at[q - 1]] is Word && at[q - 1] == at[q] - 1 ? 1 : 0;
             }
             else if (tokens[at[q]] is Word or SingleQuotedString or Number or Placeholder)
@@ -300,15 +282,10 @@ internal static partial class PostgresStatements
         }
     }
 
-    /// <summary>
-    /// Fills untyped parameters (OID 0) with the type PostgreSQL would infer from context: the column of an INSERT column
-    /// list, or the column a parameter is compared with or assigned to, in the tables the statement names.
-    /// </summary>
     public static void InferParameters(PgStatement statement, int[] oids, IReadOnlyList<SqlTableInfo> tables)
     {
         var tokens = new Tokenizer().Tokenize(statement.Text, Dialect).Where(token => token is not Whitespace).ToList();
         var named = tables.Where(table => tokens.Any(token => token is Word word && word.Value.Equals(table.Name, StringComparison.OrdinalIgnoreCase))).ToList();
-        // The column's type where its name is unambiguous; numeric binds as float8, dates and times as text.
         int TypeOf(Token? token)
         {
             return token is Word word
@@ -325,7 +302,6 @@ internal static partial class PostgresStatements
             }
         }
 
-        // INSERT INTO t (c1, c2, …) VALUES ($1, $2, …), …: each tuple position takes its column's type.
         var open = tokens.FindIndex(token => token is LeftParen);
         if (tokens is [Word { Keyword: Keyword.INSERT }, ..] && open > 0)
         {
@@ -347,7 +323,6 @@ internal static partial class PostgresStatements
             }
         }
 
-        // column = $n, $n < column, column LIKE $n, SET column = $n.
         for (var i = 0; i < tokens.Count; i++)
         {
             if (tokens[i] is Placeholder)
@@ -365,7 +340,6 @@ internal static partial class PostgresStatements
 
     private static PgError Unsupported(string feature) => new("0A000", $"not supported: {feature}");
 
-    /// <summary>Runs SET or SHOW against the session's settings.</summary>
     public static PgOutcome RunCommand(PgKind kind, string text, Dictionary<string, string> settings)
     {
         if (kind == PgKind.Show)
@@ -398,7 +372,6 @@ internal static partial class PostgresStatements
             return new PgError("22023", "terrascale.write is home, local or auto");
         }
 
-        // Times always render in UTC and dates in ISO; only the values the server supports are accepted.
         var reset = value.Equals("DEFAULT", StringComparison.OrdinalIgnoreCase);
         if (setting == "TimeZone" && !reset && !IsUtcZone(value))
         {
@@ -410,7 +383,6 @@ internal static partial class PostgresStatements
             return new PgError("22023", "DateStyle is ISO, optionally with MDY, DMY or YMD");
         }
 
-        // Session-local echo: the value changes nothing else. TimeZone always echoes UTC; DateStyle echoes its given field order.
         settings[setting] = setting switch
         {
             "TimeZone" => "UTC",
@@ -428,7 +400,6 @@ internal static partial class PostgresStatements
     private static bool IsIsoDateStyle(string value) => value.ToLowerInvariant().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         is ["iso"] or ["iso", "mdy" or "dmy" or "ymd"];
 
-    /// <summary>A statement's result: types from declared types, else from the first non-null value.</summary>
     public static PgResult Result(PgStatement statement, SqlResult result)
     {
         PgColumn[]? columns = result.Columns.Count == 0 ? null : [.. result.Columns.Select((column, i) => new PgColumn(column.Name,
@@ -452,7 +423,6 @@ internal static partial class PostgresStatements
         return new PgResult(columns, result.Rows, tag);
     }
 
-    /// <summary>The OID of a declared type as PostgreSQL names it, 0 when unknown.</summary>
     public static int Oid(string? declared) => (declared?.Split('(')[0].Trim().ToUpperInvariant() ?? "") switch
     {
         "BIGINT" or "INT8" => PgOid.Int8,
@@ -473,10 +443,6 @@ internal static partial class PostgresStatements
         _ => 0,
     };
 
-    /// <summary>
-    /// A column's type before the statement runs: its declared type, else (an expression, which SQLite leaves untyped) the
-    /// type PostgreSQL gives well-known aggregates and casts, else text.
-    /// </summary>
     public static int DescribedOid(SqlColumn column) => Oid(column.DeclType) is > 0 and var declared ? declared
         : ExpressionPattern().Match(column.Name) is { Success: true } match
             ? match.Groups[1].Success ? 20 : match.Groups[2].Success ? 701 : Oid(match.Groups[3].Value) is > 0 and var cast ? cast : PgOid.Text
@@ -489,14 +455,9 @@ internal static partial class PostgresStatements
 
     public static PgError Error(SqlError error) => new(error.Sqlstate, error.Message);
 
-    /// <summary>Whether a column of the type is sent in binary when the client asks; others are always text.</summary>
     public static bool Binary(int oid) => oid is PgOid.Bool or PgOid.Bytea or PgOid.Int8 or PgOid.Int2 or PgOid.Int4 or PgOid.Text or PgOid.Json or PgOid.Float8
         or PgOid.Varchar or PgOid.Date or PgOid.Timestamp or PgOid.Timestamptz or PgOid.Uuid or PgOid.Jsonb or PgOid.Numeric;
 
-    /// <summary>
-    /// A value in the column's format; false when it does not fit the binary type (SQLite keeps 64-bit integers in an int4
-    /// or int2 column).
-    /// </summary>
     public static bool TryEncode(SqlValue value, int oid, bool binary, out byte[]? bytes)
     {
         bytes = null;
@@ -645,7 +606,6 @@ internal static partial class PostgresStatements
         }
     }
 
-    /// <summary>A bound parameter as a SQL value: booleans as 1 or 0. Null when invalid, or binary of an unsupported type.</summary>
     public static SqlValue? Decode(int oid, int format, byte[]? value)
     {
         if (value is null)
@@ -680,7 +640,6 @@ internal static partial class PostgresStatements
                     (PgOid.Bool, var text) => Bool(text) is { } flag ? SqlValue.Of(flag ? 1L : 0L) : null,
                     (PgOid.Int8 or PgOid.Int2 or PgOid.Int4, var text) => long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var integer) ? SqlValue.Of(integer) : null,
                     (PgOid.Float4 or PgOid.Float8, var text) => double.TryParse(text, NumberStyles.Float, Invariant, out var real) ? Real(real) : null,
-                    // Exact numerics stay exact: an integer, a double that round-trips, else the text.
                     (PgOid.Numeric, var text) => PgNumeric.Matches(text) ? Numeric(text)
                         : long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var whole) ? SqlValue.Of(whole)
                         : decimal.TryParse(text, NumberStyles.Float, Invariant, out var exact) && (decimal)(double)exact == exact ? SqlValue.Of((double)exact)
@@ -756,7 +715,6 @@ internal static partial class PostgresStatements
     [GeneratedRegex(@"\ADISCARD\s+ALL\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DiscardPattern();
 
-    /// <summary>The statement <c>DEALLOCATE</c> names, or <see langword="null"/> for <c>ALL</c>.</summary>
     public static string? Deallocated(string text) => DeallocatePattern().Match(text).Groups[1].Value is var name && name.Equals("ALL", StringComparison.OrdinalIgnoreCase)
         ? null
         : name.Trim('"');
@@ -777,8 +735,6 @@ internal static partial class PostgresStatements
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BeginPattern();
 
-    /// <summary>Whether a BEGIN/START TRANSACTION statement opens READ ONLY. Call only on text BeginPattern matched,
-    /// so the statement is those keywords separated by whitespace and commas. The mode is enforced by the SQL session (SQLSTATE 25006).</summary>
     public static bool BeginReadOnly(string text)
     {
         var words = text.Split([',', ' ', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Select(word => word.ToUpperInvariant()).ToList();
@@ -790,7 +746,7 @@ internal static partial class PostgresStatements
                 case "READ" when i + 1 < words.Count && words[i + 1] == "ONLY":
                     return true;
                 case "READ" when i + 1 < words.Count && words[i + 1] is "COMMITTED" or "UNCOMMITTED":
-                    i++; // part of an isolation level, not the access mode
+                    i++;
                     break;
             }
         }

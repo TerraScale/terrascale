@@ -60,11 +60,6 @@ public interface ILocalCommitPath
 {
     bool Ready(TenantContext database);
 
-    /// <summary>
-    /// Whether the discovered regional quorum can acknowledge a local commit: one node when the region has no partner,
-    /// otherwise two healthy nodes, with a connected push stream and an admitted clock. Without it, only
-    /// <c>durability=home</c> writes commit locally; the others go home.
-    /// </summary>
     bool LocalAckAvailable { get; }
 }
 

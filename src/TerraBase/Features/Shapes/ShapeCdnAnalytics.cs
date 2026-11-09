@@ -8,10 +8,6 @@ using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>
-/// Free reads T2 telemetry (docs/terrabase/free-reads-cdn.md): how Cloudflare answered this node's shape CDN host, read
-/// from Cloudflare's zone analytics every few minutes, never counted per request. Nothing runs without an R2 bucket.
-/// </summary>
 internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, string? token, TimeProvider time, IMeterFactory meters,
     ILogger<ShapeCdnAnalytics> logger) : BackgroundService
 {
@@ -22,7 +18,6 @@ internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, s
     // is not lost. Windows are half-open and adjacent, so no request is counted twice.
     internal static readonly TimeSpan Delay = TimeSpan.FromMinutes(10);
 
-    // After a long outage the first window starts at most this far back, inside the dataset's query range.
     private static readonly TimeSpan MaxWindow = TimeSpan.FromHours(6);
 
     private const string Query = """
@@ -38,7 +33,6 @@ internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, s
     private readonly Counter<long> _requests = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.shape.cdn.requests",
         description: "Requests Cloudflare answered on this node's shape CDN host, by cache status (hit, miss, other), from zone analytics about 10 minutes late.");
 
-    // Created with the service, so the first step counts from startup even if ExecuteAsync starts later.
     private readonly PeriodicTimer _timer = new(Step, time);
     private readonly DateTimeOffset _start = Minute(time.GetUtcNow() - Delay);
 
@@ -71,7 +65,6 @@ internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, s
         }
     }
 
-    // True once the window is counted; false leaves it for the next step.
     private async Task<bool> ReadAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken cancellationToken)
     {
         try
@@ -106,7 +99,6 @@ internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, s
         }
     }
 
-    // Bounded labels: served from the cache, read from the bucket, or neither (blocked, errors).
     private static string Status(string? status) => status switch
     {
         "hit" or "stale" or "updating" or "revalidated" => "hit",

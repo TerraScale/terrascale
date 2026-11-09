@@ -13,20 +13,8 @@ using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>One captured row change of a local transaction, in the storage engine capture image format.</summary>
-/// <param name="Type">1 insert, 0 update, -1 delete.</param>
-/// <param name="Table">The table name.</param>
-/// <param name="RowId">The row id in the writer's replica.</param>
-/// <param name="Before">The before record, or null.</param>
-/// <param name="After">The after record, or null.</param>
 internal sealed record ProvisionalRow(int Type, string Table, long RowId, byte[]? Before, byte[]? After);
 
-/// <summary>A transaction that the replica’s home pages do not hold yet.</summary>
-/// <param name="Id">The RegionTransaction id, or a new id for a forwarded write.</param>
-/// <param name="Origin">The machine that committed it, or that received the forwarded answer.</param>
-/// <param name="Rows">Its row changes, in commit order.</param>
-/// <param name="HomeAfter">0 for a local transaction. For a write forwarded to the home, the home's first captured change
-/// id of the commit: the pages hold it once the replica's head is past this id, and its row ids are the home's.</param>
 internal sealed record ProvisionalTransaction(string Id, string Origin, IReadOnlyList<ProvisionalRow> Rows, long HomeAfter = 0)
 {
     [JsonIgnore]
@@ -41,11 +29,6 @@ internal sealed record ProvisionalTransaction(string Id, string Origin, IReadOnl
 [JsonSerializable(typeof(List<ProvisionalTransaction>))]
 internal sealed partial class ShapeOverlayJsonContext : JsonSerializerContext;
 
-/// <summary>
-/// The shape overlay (PIVOT F7/F8): transactions the replica's pages do not hold yet. Commits on this node arrive
-/// through <see cref="ILocalCommitFeed"/>; other nodes and regions send theirs directly over the origin's JetStream
-/// subjects. Live tails show these as <c>provisional</c> until the home's pages confirm or revert them.
-/// </summary>
 internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, ITransactionCrypto crypto, ILogger<ShapeOverlay> logger) : BackgroundService, ILocalCommitFeed
 {
     internal const int MaxPerDatabase = 1024;
@@ -64,13 +47,11 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
 
     internal Task Ready => Task.WhenAll(_subscribed.Task, _streamReady.Task);
 
-    /// <summary>The home's answer to a forwarded write carries its commits' rows here; the region strips it.</summary>
     internal const string CommitHeader = "X-TerraBase-Commit-Rows";
     internal const int MaxHeaderBytes = 48 * 1024;
 
     private const string Subjects = "terrabase.provisional.*.*.*.*";
 
-    /// <summary>The value of <see cref="CommitHeader"/> for a forwarded write's commits, or null when they are too large.</summary>
     internal static string? EncodeCommits(IReadOnlyList<IReadOnlyList<CapturedRowChange>> commits)
     {
         var transactions = new List<ProvisionalTransaction>(commits.Count);
@@ -93,7 +74,6 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
         return encoded.Length <= MaxHeaderBytes ? encoded : null;
     }
 
-    /// <summary>Adds the commits a forwarded write made at the home, from the home's <see cref="CommitHeader"/>.</summary>
     public void Forwarded(TenantContext database, string header)
     {
         ArgumentNullException.ThrowIfNull(database);
@@ -139,14 +119,11 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
         }
     }
 
-    /// <summary>Pending transactions of a database, in arrival order.</summary>
     public IReadOnlyList<ProvisionalTransaction> Snapshot(TenantContext database) =>
         _databases.TryGetValue(Key(database), out var pending) ? pending.Snapshot() : [];
 
-    /// <summary>Completes when a transaction of the database is added.</summary>
     public Task Changed(TenantContext database) => _databases.GetOrAdd(Key(database), _ => new Pending()).Changed;
 
-    /// <summary>Drops transactions the replica's pages hold (confirmed or reverted at the home).</summary>
     public void Held(TenantContext database, IReadOnlyCollection<string> ids)
     {
         if (ids.Count > 0 && _databases.TryGetValue(Key(database), out var pending))
@@ -275,8 +252,6 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
             try
             {
                 payload = await crypto.SealAsync(database, payload, cancellationToken).ConfigureAwait(false);
-                // Live subscribers receive this publish directly, without a pull via the home or a storage-ack round trip.
-                // JetStream retains a bounded copy; R7 remains the durable write path, independently of this publication.
                 var ack = await js.PublishAsync(Subject(database), payload, opts: new NatsJSPubOpts { MsgId = transaction.Id },
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 ack.EnsureSuccess();
