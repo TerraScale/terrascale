@@ -73,13 +73,13 @@ public sealed class ManagementApiTests
         using var intruder = api.As(EntityIds.New().ToString());
         var organization = await api.CreateOrganizationAsync("Acme");
         var project = await api.CreateProjectAsync(organization, "Web");
-        using var created = await api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"), new { name = "main" });
+        using var created = await api.Client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name = "main" });
         var database = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
 
         var statuses = await AllStatusesAsync(intruder, $"/v1/management/organizations/{organization}", project, database);
         await Assert.That(statuses).Count().IsEqualTo(12);
         using var intruderList = JsonDocument.Parse(await intruder.GetStringAsync(Uri("/v1/management/organizations")));
-        using var stillThere = await api.Client.GetAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}/databases/{database}"));
+        using var stillThere = await api.Client.GetAsync(Uri($"/v1/projects/{project}/databases/{database}"));
         var unchanged = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
 
         await Assert.That(statuses.Distinct()).IsEquivalentTo([HttpStatusCode.NotFound]);
@@ -134,7 +134,8 @@ public sealed class ManagementApiTests
     {
         var named = new { name = "valid" };
         var projectPath = $"{organization}/projects/{project}";
-        var databasePath = $"{projectPath}/databases/{database}";
+        var databases = $"/v1/projects/{project}/databases";
+        var databasePath = $"{databases}/{database}";
         (Level Level, Func<Task<HttpResponseMessage>> Send)[] requests =
         [
             (Level.Organization, () => client.GetAsync(Uri(organization))),
@@ -144,8 +145,8 @@ public sealed class ManagementApiTests
             (Level.Organization, () => client.PostAsJsonAsync(Uri($"{organization}/projects"), named)),
             (Level.Project, () => client.GetAsync(Uri(projectPath))),
             (Level.Project, () => client.DeleteAsync(Uri(projectPath))),
-            (Level.Project, () => client.GetAsync(Uri($"{projectPath}/databases"))),
-            (Level.Project, () => client.PostAsJsonAsync(Uri($"{projectPath}/databases"), named)),
+            (Level.Project, () => client.GetAsync(Uri(databases))),
+            (Level.Project, () => client.PostAsJsonAsync(Uri(databases), named)),
             (Level.Database, () => client.GetAsync(Uri(databasePath))),
             (Level.Database, () => client.DeleteAsync(Uri(databasePath))),
             (Level.Database, () => client.PostAsJsonAsync(Uri($"{databasePath}/branches"), named)),

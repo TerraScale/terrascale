@@ -100,6 +100,16 @@ internal sealed class CreateManagedDatabaseEndpoint(
 
         var actor = ManagementRoute.UserId(HttpContext);
         var project = ManagementRoute.Value(HttpContext, "project");
+        if (HttpContext.User.FindFirst("project_id") is null)
+        {
+            return await catalog.ResolveProjectAsync(project, actor, createIn: null, cancellationToken).ConfigureAwait(false) switch
+            {
+                string mapped => await ManagementCreateAsync(mapped, name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false),
+                NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            };
+        }
+
         var owner = HttpContext.User.FindFirst("org_id")?.Value;
         if (owner is null)
         {
@@ -129,6 +139,13 @@ internal sealed class CreateManagedDatabaseEndpoint(
         IResult result = null!;
         await ProjectAccess.RunAsync(grant, async () => result = await CreateAsync(name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
         return result;
+    }
+
+    private async ValueTask<IResult> ManagementCreateAsync(
+        string organization, string name, IReadOnlyList<string> replicas, bool all, long? ttlSeconds, CancellationToken cancellationToken)
+    {
+        HttpContext.Request.RouteValues["organization"] = organization;
+        return await CreateAsync(name, replicas, all, ttlSeconds, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, bool all, long? ttlSeconds, CancellationToken cancellationToken)

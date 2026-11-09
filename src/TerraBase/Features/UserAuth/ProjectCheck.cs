@@ -113,20 +113,22 @@ internal static class ProjectCheck
             var jwt = UserAuthExtensions.Identity(context.User);
             if (jwt is not null)
             {
-                if (jwt.FindFirst("project_id") is null)
+                var managementRoute = context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null;
+                if (jwt.FindFirst("project_id") is null && !managementRoute)
                 {
                     await BadRequests.WriteAsync(context, StatusCodes.Status401Unauthorized, "invalid_key",
                         "this token does not authorize project routes; use an API key or its project token", op: null).ConfigureAwait(false);
                     return;
                 }
 
-                if (jwt.FindFirst("project_id")?.Value != project)
+                if (jwt.FindFirst("project_id")?.Value is string granted && granted != project)
                 {
                     await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
                     return;
                 }
             }
-            else if (context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null)
+            else if (context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
+                && !context.User.IsOperator())
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;

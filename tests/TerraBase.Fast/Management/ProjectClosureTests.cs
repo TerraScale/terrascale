@@ -25,7 +25,7 @@ public sealed class ProjectClosureTests
         using var data = api.DataClient(key.GetProperty("secret").GetString());
         using var before = await ManagementApi.SqlAsync(data, database, "SELECT 1");
         await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var destination = await api.Client.PutAsJsonAsync(ManagementApi.Uri(route + "/backup-destination"), new Dictionary<string, string>
+        using var destination = await api.Client.PutAsJsonAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/backup-destination"), new Dictionary<string, string>
         {
             ["endpoint"] = FakeS3.CustomerEndpoint,
             ["region"] = "test-region-1",

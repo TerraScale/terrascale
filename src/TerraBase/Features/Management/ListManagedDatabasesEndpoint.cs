@@ -41,12 +41,12 @@ internal sealed class ListManagedDatabasesEndpoint(
     private async ValueTask<IResult> ListAsync(PageQuery page, CancellationToken cancellationToken)
     {
         var project = ManagementRoute.Value(HttpContext, "project");
+        var actor = ManagementRoute.UserId(HttpContext);
         if (HttpContext.Request.RouteValues.TryGetValue("organization", out var bound) && bound is string known)
         {
-            return await ListAsync(ManagementRoute.UserId(HttpContext), known, project, null, null, page, cancellationToken).ConfigureAwait(false);
+            return await ListAsync(actor, known, project, null, null, page, cancellationToken).ConfigureAwait(false);
         }
 
-        var actor = ManagementRoute.UserId(HttpContext);
         var resolved = await catalog.ResolveProjectAsync(project, actor, createIn: null, cancellationToken).ConfigureAwait(false);
         if (resolved is not string owner)
         {
@@ -56,6 +56,12 @@ internal sealed class ListManagedDatabasesEndpoint(
                 NotFound => Unknown(),
                 string => throw new UnreachableException(),
             });
+        }
+
+        if (HttpContext.User.FindFirst("project_id") is null)
+        {
+            HttpContext.Request.RouteValues["organization"] = owner;
+            return await ListAsync(actor, owner, project, null, null, page, cancellationToken).ConfigureAwait(false);
         }
 
         var restricted = HttpContext.User.FindFirst("database")?.Value;

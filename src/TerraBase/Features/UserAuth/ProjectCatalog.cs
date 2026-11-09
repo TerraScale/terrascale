@@ -27,6 +27,30 @@ internal static class ProjectCatalog
             return;
         }
 
+        if (jwt.FindFirst("project_id") is null)
+        {
+            if (managementRoute)
+            {
+                var resolved = await context.RequestServices.GetRequiredService<IProjectCatalog>()
+                    .ResolveProjectAsync(project, ManagementRoute.UserId(context), createIn: null, context.RequestAborted).ConfigureAwait(false);
+                if (resolved is not string owner)
+                {
+                    await (resolved switch
+                    {
+                        NotFound => ErrorResponse.From(new NotFound("the database does not exist", "unknown_database")),
+                        Unavailable unavailable => ErrorResponse.From(unavailable),
+                        string => throw new UnreachableException(),
+                    }).ExecuteAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                context.Request.RouteValues["organization"] = owner;
+            }
+
+            await next().ConfigureAwait(false);
+            return;
+        }
+
         var bucketCreation = context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "createFileBucket"
             && !jwt.HasClaim("token_kind", "end_user") && jwt.FindFirst("database") is null;
         var granted = await ProjectGrants.GrantAsync(context, jwt, project, bucketCreation).ConfigureAwait(false);
