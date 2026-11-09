@@ -30,7 +30,6 @@ internal sealed partial class NativeTemporaryStorage(TerraBaseOptions options) :
             }
 
             Directory.CreateDirectory(root);
-            // The engine holds its data lock before calling us; never clean again in this process.
             if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
             {
                 throw new TerraBaseConfigurationException("native temporary storage data-directory must not be a symbolic link");
@@ -47,7 +46,6 @@ internal sealed partial class NativeTemporaryStorage(TerraBaseOptions options) :
             }
 
             Directory.CreateDirectory(path);
-            // Rust's tempfile reads libc getenv; Unix's managed environment dictionary is insufficient.
             if (SetEnvironment("TMPDIR", path, 1) != 0)
             {
                 throw new IOException($"initializing native temporary storage failed (errno {Marshal.GetLastPInvokeError()})");

@@ -495,7 +495,6 @@ internal sealed partial class TursoReplicas(
                 return null;
             }
 
-            // Retain only the bytes accounted for by the kept reservation, not the entire 1 MiB scratch buffer.
             return new Prefetched(to, new PushedAnswer(held, to, buffer.AsSpan(0, length).ToArray(), kept, position));
         }
 
@@ -647,7 +646,6 @@ internal sealed partial class TursoReplicas(
             try
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                // Local writes not yet in the pulled revision make the replica differ from the home on purpose.
                 if (Held != revision || Local)
                 {
                     return new ReplicaComparison(ReplicaVerdict.Moved, Held, null);
@@ -722,8 +720,6 @@ internal sealed partial class TursoReplicas(
                 _pulls.Release();
             }
 
-            // Bound home requests independently of native apply. Writers and pushed answers may proceed while the
-            // home is across the WAN; only a completed page answer needs the native writer/reader gates.
             await _prefetches.WaitAsync(token).ConfigureAwait(false);
             try
             {
@@ -762,8 +758,6 @@ internal sealed partial class TursoReplicas(
                     try
                     {
                         token.ThrowIfCancellationRequested();
-                        // A pushed answer may have overtaken this request. Certify only the revision returned by this
-                        // home request, with its original start position, and never apply older pages over newer ones.
                         if (fetched is not null && Held is { } held && held.Incarnation == fetched.Revision.Incarnation
                             && DatabaseRevision.Compare(held, fetched.Revision) >= 0)
                         {
@@ -829,8 +823,6 @@ internal sealed partial class TursoReplicas(
             {
                 try
                 {
-                    // A checkpoint mutates the same pager as page apply. Drain readers before starting it,
-                    // rather than letting a pooled reader begin against its changing WAL generation.
                     using (await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false))
                     {
                         await sync.CheckpointAsync(cancellationToken).ConfigureAwait(false);
@@ -872,7 +864,6 @@ internal sealed partial class TursoReplicas(
             catch (Exception error)
             {
                 lease.Dispose();
-                // Opening runs only our fixed PRAGMA/BEGIN statements, never caller SQL or bound values.
                 logger.ZLogInformation($"A replica reader could not open: {error.GetType().Name:@Error} ({error.Message:@Detail})");
                 throw;
             }
@@ -898,8 +889,6 @@ internal sealed partial class TursoReplicas(
                 _ = Interlocked.Decrement(ref _idleCount);
             }
 
-            // A reader's BEGIN is refused as locked while the replica's writer commits or checkpoints (a local write, an
-            // overlay re-apply). Like the primary store's sessions, wait it out in 50 ms steps for up to five seconds.
             var started = Stopwatch.GetTimestamp();
             while (true)
             {
@@ -937,8 +926,6 @@ internal sealed partial class TursoReplicas(
                 return;
             }
 
-            // Cancel and drain the independent WAN request before closing its observer, then drain native writers.
-            // A cancelled prefetch never reacquires the native writer, so this lock order cannot trap it at shutdown.
             await _closing.CancelAsync().ConfigureAwait(false);
             await _prefetches.WaitAsync().ConfigureAwait(false);
             await _pulls.WaitAsync().ConfigureAwait(false);
@@ -956,8 +943,6 @@ internal sealed partial class TursoReplicas(
             sync.Dispose();
             observed.Dispose();
             observer.Clear();
-            // Waiters already admitted before _disposed was set must still acquire, check it, and release safely.
-            // These semaphores have no wait handles; let the replica own their managed lifetime.
             _pulls.Release();
             _prefetches.Release();
             _closing.Dispose();

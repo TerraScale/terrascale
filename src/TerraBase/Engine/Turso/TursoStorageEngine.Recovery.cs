@@ -6,7 +6,6 @@ internal sealed partial class TursoStorageEngine : IRecoverySnapshotReader
 {
     public async ValueTask<IRecoverySnapshot> OpenAsync(string file, TenantContext source, CancellationToken cancellationToken)
     {
-        // No Locate, bootstrap, _stores registration, replication callbacks, or tenant file publication.
         var store = new TursoDatabaseStore(source.DatabaseId!, file, Pool, Io, _pragmas, source, Time, committed: null,
             schemaMemory: _schemaMemory, storageReads: _storageReads, encryption: Encryption)
         {

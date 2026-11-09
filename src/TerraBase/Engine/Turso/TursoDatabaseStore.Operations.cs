@@ -6,18 +6,11 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoDatabaseStore
 {
-    // Serialize the durable 0 -> 1 and 1 -> 0 transitions, never native work or writer acquisition.
     private readonly SemaphoreSlim _operations = new(1, 1);
     private int _activeOperations;
 
-    // Completed when the last operation carrying a write intent ends; guarded by _operations.
     private TaskCompletionSource? _operationsEnded;
 
-    /// <summary>
-    /// Starts a storage operation. With <paramref name="intent"/> (anything that can write or sync the file) the first active
-    /// one records the write intent. A read-only transaction (<c>query_only</c>) passes false: it cannot leave unsynced pages
-    /// behind, and damage it detects is marked <c>Faulting</c>, with FULL, before its error reaches the caller (decision 0013d).
-    /// </summary>
     internal async ValueTask<CopyOperation?> BeginOperationAsync(CancellationToken cancellationToken, bool intent = true)
     {
         if (Ledger is not { } ledger || IsSystem)
@@ -88,9 +81,6 @@ internal sealed partial class TursoDatabaseStore
                 }
                 catch (StorageBusyException)
                 {
-                    // The operation finished; only its intent stays, which is conservative: the next operation records it again
-                    // and retires it, a clean stop drops it at the next start, and after an unclean one it faults the copy unless
-                    // the restart proof passes. Failing the node closed instead refused every write until a restart.
                     logger?.ZLogWarning($"Retiring the write intent of database {Tenant!.DatabaseId:@Database} found storage busy; the intent stays until its next operation ends");
                 }
             }
@@ -115,7 +105,6 @@ internal sealed partial class TursoDatabaseStore
         }
     }
 
-    // Shutdown still checkpoints healthy files. Its own operation protects this disk work; idle pool disposal does none.
     internal async Task CheckpointOnCloseAsync()
     {
         if (CurrentWriter() is null || CloseRefusal is not null)

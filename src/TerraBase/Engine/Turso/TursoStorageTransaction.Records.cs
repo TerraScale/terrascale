@@ -7,7 +7,6 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoStorageTransaction
 {
-    // Kinds this write transaction found or created; forgotten when it drops one or rolls back to a savepoint.
     private HashSet<string>? _kinds;
 
     public ValueTask<StoredRecord?> GetAsync(string kind, string id, CancellationToken cancellationToken) =>

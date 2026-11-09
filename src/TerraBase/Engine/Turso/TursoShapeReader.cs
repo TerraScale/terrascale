@@ -517,8 +517,6 @@ internal sealed partial class TursoShapeReader(
                     }
                     else if (values is not null && keyColumns.Count > 0)
                     {
-                        // A receiver may have missed the insert, and the writer's replica rowid can belong to a
-                        // different home row. Local writes have an immutable declared primary key (PushChanges).
                         var find = Command($"SELECT rowid FROM {Quote(shape.Table)} WHERE {string.Join(" AND ", keyColumns.Select(index => Quote(columns[index]) + " IS $k" + index.ToString(CultureInfo.InvariantCulture)))} LIMIT 1;");
                         foreach (var index in keyColumns)
                         {
@@ -540,7 +538,6 @@ internal sealed partial class TursoShapeReader(
                     }
                     else
                     {
-                        // A local transaction without a usable key cannot be mapped safely; use the home path.
                         continue;
                     }
 

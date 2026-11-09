@@ -48,8 +48,6 @@ internal sealed partial class TursoDatabaseStore(
         INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
         """;
 
-    // TerraBase's own records are plain rows: one per kind and id, stamped with the commit offset of the transaction that
-    // wrote it. Only the system database keeps them.
     private const string SystemSchemaSql = OffsetSchemaSql + """
         CREATE TABLE _tb_records (
             kind TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, UNIQUE (kind, id)
@@ -700,8 +698,6 @@ internal sealed partial class TursoDatabaseStore(
             {
                 try
                 {
-                    // A BEGIN cancelled while queued never touched the writer connection. Its cleanup must
-                    // release admission without queueing maintenance behind the call that blocked BEGIN.
                     if (indexRevision)
                     {
                         await IndexRevisionAsync().ConfigureAwait(false);

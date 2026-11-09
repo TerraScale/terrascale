@@ -20,11 +20,9 @@ public readonly partial record struct DatabaseName
 
     public override string ToString() => Value;
 
-    // \z, not $: $ also matches before a trailing newline.
     [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z", RegexOptions.CultureInvariant)]
     private static partial Regex Pattern();
 
-    // Windows device names stay invalid file names even with an extension.
     [GeneratedRegex(@"\A(con|prn|aux|nul|com[0-9]|lpt[0-9])\z", RegexOptions.CultureInvariant)]
     private static partial Regex ReservedDeviceName();
 }

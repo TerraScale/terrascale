@@ -2,8 +2,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
 
-// The data directory and its ancestors must be controlled by trusted operators; filesystem writers must not
-// replace paths while the engine is running. Link validation does not isolate hostile local processes.
 public interface IStorageEngine : IAsyncDisposable
 {
     string Name { get; }

@@ -11,7 +11,6 @@ internal sealed partial class TursoStorageEngine
 
     internal TursoDatabaseStore? IntentStore => Volatile.Read(ref _intents);
 
-    // The caller holds creation and reuses its admission. Journal writes never need the application catalog's writer.
     private async Task OpenIntentStoreLockedAsync(CancellationToken cancellationToken)
     {
         if (_intents is not null)
@@ -30,7 +29,6 @@ internal sealed partial class TursoStorageEngine
         CheckIntentJournal();
         var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
         var openingToken = created ? CancellationToken.None : cancellationToken;
-        // System semantics suppress recursive intent recording and fail the node closed on native journal damage.
         var store = CreateSystemStore(path);
         try
         {
@@ -45,7 +43,6 @@ internal sealed partial class TursoStorageEngine
         Volatile.Write(ref _intents, store);
     }
 
-    // A journal is published before SYSTEM: once SYSTEM exists its absence cannot mean a fresh node.
     private void CheckIntentJournal()
     {
         var path = Path.Combine(_dataDirectory, IntentName + FileExtension);

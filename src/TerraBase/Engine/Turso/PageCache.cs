@@ -2,20 +2,12 @@ using System.Runtime.InteropServices;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// Proves that the kernel caches no page of a file (docs/terrabase/decisions/0013a, section 1.3): the file syncs without
-/// error, its cached pages are dropped, and none is left. After an unclean exit on the same boot, a failed sync can leave
-/// pages cached that never reached the disk, and reading them back would certify them. Once none is cached, every read
-/// comes from the disk, as after a power loss, which every FULL commit survives. Anything unproven (another platform, an
-/// error, a page still cached) is false.
-/// </summary>
 internal static class PageCache
 {
-    private const int DontNeed = 4; // POSIX_FADV_DONTNEED
+    private const int DontNeed = 4;
     private const int ProtRead = 1;
     private const int MapShared = 1;
 
-    // Pages checked per mincore call: the residency vector stays this many bytes.
     private const int Window = 64 * 1024;
 
     internal static bool Evicted(string path)
@@ -28,7 +20,6 @@ internal static class PageCache
         try
         {
             using var file = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
-            // A sync error reported now means pages that may differ from the disk.
             RandomAccess.FlushToDisk(file);
             var fd = (int)file.DangerousGetHandle();
             var length = RandomAccess.GetLength(file);

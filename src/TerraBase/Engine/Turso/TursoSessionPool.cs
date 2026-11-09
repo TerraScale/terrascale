@@ -1,27 +1,11 @@
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// The idle sessions of every database of one engine, bounded per database and in total. When the
-/// total is reached, pooling a session closes the least recently pooled one, whichever database it
-/// belongs to, so databases that are no longer used do not keep connections and file handles open.
-/// </summary>
-/// <remarks>
-/// ponytail: one lock and a linear scan (at most <c>maxIdle</c> entries) per rent, and fixed caps;
-/// index idle sessions by database, or make the caps settings, if profiles show either matters.
-/// </remarks>
 internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int maxWriters)
 {
-    // Guards everything below and TursoDatabaseStore.Closed, so a session is always in exactly one
-    // place: idle here, rented by one transaction, or closed. Sessions are opened and closed outside
-    // it: closing the last connection to a WAL database checkpoints it.
     private readonly Lock _gate = new();
 
-    // Least recently pooled first.
     private readonly LinkedList<(TursoDatabaseStore Store, TursoSession Session)> _idle = new();
 
-    // Every connection outside _idle: held by a transaction, being opened for one, or being closed outside _gate
-    // (evicted, discarded, or idle when its store or the pool closed). After StopAsync, the last of them to go
-    // completes the stop; until then the engine keeps its data directory.
     private readonly HashSet<TursoSession> _rented = [];
     private readonly Dictionary<TursoSession, TursoDatabaseStore> _owners = [];
     private readonly Dictionary<TursoDatabaseStore, int> _openByStore = [];
@@ -31,8 +15,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
     private TaskCompletionSource? _closed;
     private List<Exception>? _stopFailures;
 
-    // A healthy rewrite's stores: they rent, open and pool nothing until resumed, and their drain completes once no native
-    // handle of theirs is left. Failed native closes stay counted per store and refuse every drain.
     private readonly Dictionary<TursoDatabaseStore, TaskCompletionSource> _paused = [];
     private readonly Dictionary<TursoDatabaseStore, TaskCompletionSource> _readersPaused = [];
     private readonly Dictionary<TursoDatabaseStore, TaskCompletionSource> _drains = [];
@@ -153,11 +135,9 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
     {
         if (failure is not null)
         {
-            // Failed native closure remains an outstanding handle until process restart.
             _failedCloses[store] = _failedCloses.GetValueOrDefault(store) + 1;
             if (_drains.Remove(store, out var refused))
             {
-                // Never drains now: wake the waiter to refuse.
                 refused.TrySetResult();
             }
 
@@ -339,11 +319,9 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
             }
             catch (Exception)
             {
-                // Close recorded the failure on the stop task; still attempt every remaining session.
             }
         }
 
-        // Completes an empty stop too. Later returns/openings also record close failures before completing it.
         Update(() => { });
         return closed;
     }
@@ -466,8 +444,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         CloseAll(closing);
     }
 
-    // Closes every session of a batch counted in _closing, even when some fail, so none is left uncounted and
-    // unclosed; the failures are reported once all were attempted.
     private void CloseAll(List<TursoSession> sessions)
     {
         List<Exception>? failures = null;
@@ -479,7 +455,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
             }
             catch (Exception error)
             {
-                // Whatever the failure: the next session must still be closed, or it stays open and counted forever.
                 (failures ??= []).Add(error);
             }
         }
@@ -490,7 +465,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    // Closes a session counted in _closing outside _gate, and stops counting it once it is closed, even if closing failed.
     private void Close(TursoSession session)
     {
         Exception? failure = null;
@@ -515,7 +489,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    // Completes the stop only after the last native handle is closed, including failed provider closes.
     private void Update(Action change, Exception? failure = null)
     {
         TaskCompletionSource? closed = null;

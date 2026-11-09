@@ -12,8 +12,6 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
     internal const string Recorded = "storage.fault.recorded";
     private const long Faulting = 0;
 
-    // This process's intents: a clean stop clears them, so every other non-faulting intent a start finds was left by a
-    // process that exited uncleanly.
     private readonly long _run = Random.Shared.NextInt64(1, long.MaxValue);
     private const int Page = 128;
     private const int MaxReason = 256;

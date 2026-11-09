@@ -36,9 +36,6 @@ internal sealed partial class TursoReplicas
             try
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                // Native BEGIN/capture setup can refuse while a pooled reader begins or ends a transaction.
-                // Use the same reader drain as page apply/checkpoint, and keep it through the short local commit.
-                // A transient native refusal otherwise forwards home and makes the next write pay a WAN catch-up.
                 exclusive = await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false);
                 return await OpenWriterAsync(captured: true, release: true, cancellationToken, exclusive).ConfigureAwait(false);
             }
@@ -46,7 +43,6 @@ internal sealed partial class TursoReplicas
             {
                 exclusive?.Dispose();
                 _pulls.Release();
-                // Only fixed native setup statements ran here; this detail contains no caller SQL or bound values.
                 logger.ZLogInformation($"A local write goes home: replica writer setup failed ({error.GetType().Name:@Error}, {error.Message[..Math.Min(error.Message.Length, 512)]:@Detail})");
                 return null;
             }
@@ -81,8 +77,6 @@ internal sealed partial class TursoReplicas
                 Run(native, CaptureOff);
                 if (captured)
                 {
-                    // No AUTOINCREMENT: the table is emptied by every capture, and a sqlite_sequence row would be a replica-only
-                    // object that replica verification sees as divergence from the home.
                     if (TursoStorageTransaction.Counter(native, $"SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = '{CaptureTable}';") == 0)
                     {
                         Run(native, "CREATE TABLE IF NOT EXISTS turso_cdc_version (table_name TEXT PRIMARY KEY, version TEXT NOT NULL);");

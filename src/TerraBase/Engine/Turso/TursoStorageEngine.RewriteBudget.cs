@@ -4,8 +4,6 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoStorageEngine
 {
-    // The 54 MB concurrent-copy baseline completes in 1.1 s. Leave substantial disk/load margin, but never pin
-    // WAL/CDC, retention and the shape frontier indefinitely (0013f).
     internal const long RewriteBytesPerSecond = 4L * 1024 * 1024;
     internal static readonly TimeSpan RewriteDeadlineFloor = TimeSpan.FromSeconds(15);
     internal static readonly TimeSpan RewriteDeadlineCap = TimeSpan.FromMinutes(2);
@@ -37,7 +35,6 @@ internal sealed partial class TursoStorageEngine
             {
                 _pressure.Cancel();
             }
-            // These protect real WAL/CDC pin time and storage pressure, independently of the query/domain clock.
             _deadline = new CancellationTokenSource(RewriteDeadline(bytes), _engine.Time);
             _linked = CancellationTokenSource.CreateLinkedTokenSource(token, _deadline.Token, _pressure.Token);
             _watch = _engine.Time.CreateTimer(_ => Sample(), null, RewritePressureSample, RewritePressureSample);
@@ -74,7 +71,6 @@ internal sealed partial class TursoStorageEngine
             }
         }
 
-        // Stop watching once the writer is taken: the final hold has its own, shorter deadline.
         internal void StopPressure()
         {
             lock (_gate)

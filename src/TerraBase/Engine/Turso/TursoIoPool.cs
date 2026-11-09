@@ -5,29 +5,8 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Turso;
 
-/// <summary>
-/// Runs Turso calls on dedicated threads. The provider has no true async I/O: its async
-/// methods block the calling thread, so request threads hand the calls to this pool instead.
-/// </summary>
-/// <remarks>
-/// <para>
-/// Admission rule: an admission is held from <see cref="Admit"/> until the resource it protects is fully
-/// released. A transaction holds one until its session is back in the pool or closed; creating or copying
-/// a database holds one through file publication and opening the store; a first open holds one through
-/// the migration. Shutdown (<see cref="DisposeAsync"/>) refuses new admissions and waits for every held one.
-/// </para>
-/// ponytail: <c>storage-threads</c> fixed threads shared by every database and at most
-/// <c>storage-queue</c> admitted transactions, each with at most one queued call, so the queue is
-/// bounded by admission; beyond that callers get <see cref="StorageBusyException"/>. One long call
-/// (<c>VACUUM INTO</c> for a branch, a wait on another process's lock) holds a thread for its whole
-/// duration. Scheduling weights apply to calls, not elapsed time: long calls are not preempted. With at least two
-/// workers, Hobby can occupy at most all but one, and so can bulk work (<see cref="StorageWork.Bulk"/>); one organization can occupy
-/// at most half of them, so a runaway tenant leaves workers to the others; a one-worker pool cannot isolate running calls.
-/// </remarks>
 internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
 {
-    // Lifecycle intent callbacks finish their sequential catalog transactions before returning.
-    // They reuse the maintenance admission, so even storage-queue=1 can record an intent.
     private readonly AsyncLocal<AdmissionScope?> _currentAdmission = new();
 
     internal bool HasAdmission => _currentAdmission.Value is { Active: true };
@@ -79,7 +58,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
     private readonly int _maxHobbyRunning;
     private int _runningHobby;
 
-    // Bulk calls running (StorageWork.Bulk); capped as Hobby's are.
     private int _runningBulk;
 
     private readonly int _maxTenantRunning;
@@ -87,21 +65,16 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
 
     private sealed record WorkItem(string? Organization, long Finish, bool Hobby, bool Bulk, Action Run);
 
-    // ponytail: one short queue lock across storage threads; per-worker queues if contention is measured.
-    // LinkedList lets cancellation unlink a node immediately; BlockingCollection retains cancelled closures.
     private readonly object _queueGate = new();
     private bool _completed;
     private readonly Counter<long> _rejected;
     private readonly Histogram<double> _queueWait;
     private readonly Task[] _threads;
 
-    // Completed once the pool is closed and the last admission is released.
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _admitted;
     private int _running;
 
-    // 1 once shutdown starts. Written with Interlocked.Exchange (a full fence) so the drain and Admit, which
-    // increments before it reads this, cannot both miss each other.
     private int _closed;
     private readonly Lazy<Task> _disposal;
 
@@ -117,13 +90,11 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
             "terrabase.storage.admitted", () => Volatile.Read(ref _admitted), description: "Storage transactions and maintenance calls admitted.");
         meter.CreateObservableGauge(
             "terrabase.storage.running", () => Volatile.Read(ref _running), description: "Turso calls running on the I/O threads.");
-        // A saturated disk shows here first: reads queue for a thread while writers wait on what queued them (batch 8).
         meter.CreateObservableGauge("terrabase.storage.queued", () => Queued, description: "Turso calls waiting for an I/O thread.");
         _rejected = meter.CreateCounter<long>("terrabase.storage.rejected", description: "Storage work rejected as busy (HTTP 503).");
         _queueWait = meter.CreateHistogram<double>("terrabase.storage.queue_wait", "s",
             "Time a Turso call waited for an I/O thread, by lane: hobby, bulk or other (every other plan, system work).",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1] });
-        // Allocate bookkeeping before any launch: even a later allocation failure can join every started worker.
         _threads = new Task[threads];
         var workers = new Thread[threads];
         var started = 0;
@@ -170,8 +141,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
                 Monitor.PulseAll(_queueGate);
             }
 
-            // Construction runs before requests and cannot await disposal of an object that never returned.
-            // Join actual threads, not completion signals: ownership cannot be released before worker exit.
             for (var i = 0; i < started; i++)
             {
                 workers[i].Join();
@@ -190,8 +159,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
             throw new ObjectDisposedException(nameof(TursoIoPool));
         }
 
-        // Reserve a quarter for Starter/Pro/Team/Enterprise/system, and an eighth for Enterprise/system.
-        // With a one-slot pool every plan can still make progress.
         var limit = QosContext.Current?.Plan switch
         {
             PlanTier.Hobby when AdmissionCapacity > 1 => AdmissionCapacity - Math.Max(AdmissionCapacity > 2 ? 2 : 1, AdmissionCapacity / 4),
@@ -243,10 +210,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         using var diagnostic = Diagnostics?.Submit();
-        // Continuations must not run on (and so block) a pool thread.
         var result = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        // Queued (0), started (1) or cancelled (2), decided once: a cancelled call never starts, and a started
-        // one is awaited to the end, because the caller still owns its connection while it runs.
         var state = 0;
         var tenant = QosContext.Current;
         var context = CaptureContext();
@@ -275,7 +239,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
             ObjectDisposedException.ThrowIf(_completed, this);
             if (Volatile.Read(ref state) == 0)
             {
-                // ponytail: bounded queue scans under one lock; use a heap if queue contention is measured.
                 var finish = _virtualTime;
                 foreach (var queued in _work)
                 {
@@ -297,7 +260,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         {
             if (Interlocked.CompareExchange(ref state, 1, 0) != 0)
             {
-                // Cancelled while queued: the caller already moved on.
                 return;
             }
 
@@ -314,7 +276,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
                 }
                 finally
                 {
-                    // Record callback completion before making its asynchronous continuation runnable.
                     diagnostic?.Complete();
                 }
 
@@ -349,7 +310,6 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
 
     private async Task DrainAsync()
     {
-        // No deadline: maintenance can need several Turso calls even after a long VACUUM finishes.
         await DrainAdmissionsAsync().ConfigureAwait(false);
 
         lock (_queueGate)
