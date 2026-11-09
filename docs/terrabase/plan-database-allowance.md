@@ -23,8 +23,8 @@ allowance answers `409` with code `database_limit` and a message naming the plan
 {"error":{"code":"database_limit","message":"the organization's hobby plan allows 1 database; delete a database or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing"}}
 ```
 
-- Covered routes: `POST /v1/projects/{project}/databases` (and its management and organization
-  route aliases), the legacy `PUT /v1/projects/{project}/databases/{database}`, branches
+- Covered routes: `POST /v1/projects/{project}/databases`,
+  `PUT /v1/projects/{project}/databases/{database}`, branches
   (`POST …/databases/{database}/branches`), copies, backup and point-in-time restores, and
   `create_database` in management commits. Nothing is created when it is refused.
 - The check runs in the catalog transaction that registers the database and counts each database

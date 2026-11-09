@@ -25,10 +25,8 @@ without a key. Its body is region codes, `ok`/`degraded` and lag seconds only (a
 - `/readyz` creates and removes an empty file in the data directory, off the request thread and
   outside every engine lock. At most one such probe runs at a time; concurrent callers await
   that same task instead of receiving a stale cached result while it runs. Completed results are
-  cached for one second by default, configurable with `--readiness-cache-seconds` or
-  `TERRABASE_READINESS_CACHE_SECONDS` (positive integer, 1 to 60). Zero is prohibited so sequential
-  anonymous requests cannot multiply disk work. A probe still running after 2 seconds means a
-  stalled volume, and `/readyz` answers 503. Shutdown immediately answers 503 regardless of cached
+  cached for one second, so sequential anonymous requests cannot multiply disk work. A probe still
+  running after 2 seconds means a stalled volume, and `/readyz` answers 503. Shutdown immediately answers 503 regardless of cached
   or in-flight results; engine closure bypasses the filesystem result cache on every request.
 - Any other endpoint on the client listener still requires a scoped API key, or a ts-auth access
   token on the Management API. `/readyz` does not wait for ts-auth's signing keys (decision

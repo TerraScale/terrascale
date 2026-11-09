@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Net;
+using System.Web;
 using System.Xml.Linq;
 
 namespace TerraBase.Testing;
@@ -80,7 +81,7 @@ public sealed partial class FakeS3
 
     private async ValueTask<HttpResponseMessage?> DeletePurgeVersionAsync(HttpRequestMessage request, bool customer, string key, CancellationToken token)
     {
-        var version = System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query)["versionId"];
+        var version = HttpUtility.ParseQueryString(request.RequestUri!.Query)["versionId"];
         if (request.Method != HttpMethod.Delete || version is null or "null")
         {
             return null;

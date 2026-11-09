@@ -6,10 +6,11 @@ using System.Net;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Web;
 using System.Xml.Linq;
 using Amazon.Util;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
 using TerraBase.Features.Backup;
 
@@ -336,17 +337,17 @@ public sealed partial class FakeS3
 
         if (key.Length == 0 && request.Method == HttpMethod.Get && uri.Query.TrimStart('?').Split('&').Any(part => part is "versions" or "versions="))
         {
-            return PurgeVersions(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
+            return PurgeVersions(customer, bucket, HttpUtility.ParseQueryString(uri.Query));
         }
 
         if (key.Length == 0 && request.Method == HttpMethod.Get && uri.Query.TrimStart('?').Split('&').Any(part => part is "uploads" or "uploads="))
         {
-            return PurgeUploads(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
+            return PurgeUploads(customer, bucket, HttpUtility.ParseQueryString(uri.Query));
         }
 
         if (key.Length == 0 && request.Method == HttpMethod.Get)
         {
-            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var query = HttpUtility.ParseQueryString(uri.Query);
             var prefix = query["prefix"] ?? "";
             var startAfter = query["start-after"] ?? "";
             var after = query["continuation-token"] ?? startAfter;
@@ -413,7 +414,7 @@ public sealed partial class FakeS3
             return Xml(HttpStatusCode.OK, result);
         }
 
-        if (System.Web.HttpUtility.ParseQueryString(uri.Query) is var multipart && (multipart["uploadId"] is not null || request.Method == HttpMethod.Post))
+        if (HttpUtility.ParseQueryString(uri.Query) is var multipart && (multipart["uploadId"] is not null || request.Method == HttpMethod.Post))
         {
             return await MultipartResponseAsync(request, customer, bucket, key, multipart, body, cancellationToken);
         }
@@ -676,7 +677,7 @@ public sealed partial class FakeS3
     private bool PresignedSignatureVerifies(HttpRequestMessage request)
     {
         var uri = request.RequestUri!;
-        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var query = HttpUtility.ParseQueryString(uri.Query);
         var credential = query["X-Amz-Credential"]?.Split('/');
         var shape = uri.AbsolutePath.Contains("/v1/shapes/", StringComparison.Ordinal);
         if (query["X-Amz-Algorithm"] != "AWS4-HMAC-SHA256" || credential is not [var accessKey, _, "test-region-1", "s3", "aws4_request"]
@@ -723,8 +724,8 @@ public sealed partial class FakeS3
 
     private static string CanonicalQuery(Uri uri, string? excluded) => string.Join('&', uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
         .Select(part => part.Split('=', 2))
-        .Select(parts => (Key: Uri.EscapeDataString(System.Web.HttpUtility.UrlDecode(parts[0])),
-            Value: Uri.EscapeDataString(System.Web.HttpUtility.UrlDecode(parts.Length == 2 ? parts[1] : ""))))
+        .Select(parts => (Key: Uri.EscapeDataString(HttpUtility.UrlDecode(parts[0])),
+            Value: Uri.EscapeDataString(HttpUtility.UrlDecode(parts.Length == 2 ? parts[1] : ""))))
         .Where(part => part.Key != excluded)
         .OrderBy(part => part.Key, StringComparer.Ordinal).ThenBy(part => part.Value, StringComparer.Ordinal)
         .Select(part => part.Key + "=" + part.Value));

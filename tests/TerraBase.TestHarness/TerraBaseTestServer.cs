@@ -206,7 +206,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             .Select(line =>
             {
                 var start = line.Contains('}', StringComparison.Ordinal) ? line.LastIndexOf('}') + 1 : name.Length;
-                return double.Parse(line[start..].Trim().Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture);
+                return double.Parse(line[start..].Trim().Split(' ')[0], CultureInfo.InvariantCulture);
             }).ToArray();
         return samples.Length == 0
             ? throw new InvalidOperationException(
