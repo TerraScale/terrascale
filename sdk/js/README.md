@@ -336,8 +336,13 @@ Entity pages reject null and primitive records; recovery-code pages contain stri
 
 `tsAuth.projects` administers one project's hosted sign-in tenant over `/v1/{project}`
 with the caller's TerraScale account sign-in token: `getSettings`, `updateSettings`,
-`listUsers`, `getUser`, `disableUser`, `enableUser`, `deleteUser` and `exportUsers`.
-Provider, session and OAuth-client administration groups are not yet exposed.
+`listUsers`, `getUser`, `disableUser`, `enableUser`, `deleteUser`, `exportUsers`,
+`setProvider`, `deleteProvider` (providers are listed in the settings),
+`listSessions`, `revokeSession`, `listClients`, `createClient`, `updateClient`,
+`rotateClientSecret` and `deleteClient`; the client write operations carry a
+step-up proof. Project OAuth clients are distinct from the instance-scoped
+`tsAuth.oauthClients`, which manages the tenant's own `/v1/{slug}/oauth/clients`
+with its management key.
 
 Hosted identity and OIDC network methods accept a final `{ signal }` argument;
 list methods keep it in their existing options. Failures retain `kind: "transport"`:
