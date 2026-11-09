@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
     [ClassDataSource<DashboardE2EFixture>]
     public sealed class BillingPlanMcpJourneyTests(DashboardE2EFixture fixture)
     {
-    private static readonly string[] BillingIntervals = ["month", "year"];
+        private static readonly string[] BillingIntervals = ["month", "year"];
         [Test]
         public async Task NativePatUsesOriginalBillingDtosFreshOwnerScopesAndTheSameCrossReplicaReceipts()
         {

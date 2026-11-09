@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
     [ClassDataSource<DashboardRootFixture>]
     public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
     {
-    private static readonly string[] AttackerRedirectUris = ["http://attacker.example/callback"];
+        private static readonly string[] AttackerRedirectUris = ["http://attacker.example/callback"];
         private const string Callback = "http://127.0.0.1:33418/callback";
 
         [Test]

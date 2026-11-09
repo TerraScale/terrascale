@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard.E2E.Platform
     [Category("Slow")]
     public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
     {
-    private static readonly string[] RegionsGruSjc = ["GRU", "SJC"];
+        private static readonly string[] RegionsGruSjc = ["GRU", "SJC"];
         [Test]
         public async Task DatabaseProfileBillingAndDatastarDesktopAndMobile()
         {

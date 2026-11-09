@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
     [Category("Slow")]
     public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixture)
     {
-    private static readonly string[] OrganizationIdentities = ["Name", "Slug", "OwnerUserId", "Members", "PendingOwnerUserId", "PendingOwnerExpiresAt", "Invitations", "CreatedAt"];
+        private static readonly string[] OrganizationIdentities = ["Name", "Slug", "OwnerUserId", "Members", "PendingOwnerUserId", "PendingOwnerExpiresAt", "Invitations", "CreatedAt"];
         private const string CapAlert = "Internal spending cap reached: estimated bill $124.40, cap $120.00. Report only; services remain active.";
         private const string MissingUsage = "Every project's monthly usage is required to compute the internal bill and evaluate its cap.";
         private const string InvalidAmount = "The internal bill exceeds the supported amount or has invalid reporting rates.";

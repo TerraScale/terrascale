@@ -22,7 +22,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
     // and TerraScale.DotNet 0.0.12's Named, InvitationLookup and AcceptedInvitation DTOs.
     public sealed partial class TsAuthPlatformJourneyTests
     {
-    private static readonly string[] ViewerRoleBody = ["{\"role\":\"viewer\"}"];
+        private static readonly string[] ViewerRoleBody = ["{\"role\":\"viewer\"}"];
         [Test]
         [Arguments("viewer")]
         [Arguments("member")]

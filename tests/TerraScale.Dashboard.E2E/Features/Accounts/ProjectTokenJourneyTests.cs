@@ -208,13 +208,13 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
         // ts-auth's issuer, JWKS and RFC 8693 exchange (terrascale e30ffdc2 PlatformGrants.cs).
         private sealed class Issuer(Func<string, (string UserId, string Email)?> resolve)
         {
-        private static readonly string[] ResponseTypes = ["code"];
-        private static readonly string[] GrantTypes = ["authorization_code", "refresh_token"];
-        private static readonly string[] CodeChallengeMethods = ["S256"];
-        private static readonly string[] SubjectTypes = ["public"];
-        private static readonly string[] IdTokenSigningAlgs = ["ES256"];
-        private static readonly string[] TokenEndpointAuthMethods = ["client_secret_basic"];
-        private static readonly string[] Scopes = ["openid", "email", "profile", "offline_access"];
+            private static readonly string[] ResponseTypes = ["code"];
+            private static readonly string[] GrantTypes = ["authorization_code", "refresh_token"];
+            private static readonly string[] CodeChallengeMethods = ["S256"];
+            private static readonly string[] SubjectTypes = ["public"];
+            private static readonly string[] IdTokenSigningAlgs = ["ES256"];
+            private static readonly string[] TokenEndpointAuthMethods = ["client_secret_basic"];
+            private static readonly string[] Scopes = ["openid", "email", "profile", "offline_access"];
             private const string Origin = "https://auth.terrascale.tech/terrascale";
             private const string ClientId = "01M4EQ2FRJ8S8B29E8TQVWNW4J";
             private readonly ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);

@@ -310,13 +310,13 @@ namespace TerraScale.Dashboard.E2E
 
         private sealed class ScenarioProvider(ScenarioClock clock, TestState state, TestWorkspace workspace, ConcurrentQueue<string> cliRequests) : IDisposable
         {
-        private static readonly string[] ResponseTypes = ["code"];
-        private static readonly string[] GrantTypes = ["authorization_code", "refresh_token"];
-        private static readonly string[] CodeChallengeMethods = ["S256"];
-        private static readonly string[] SubjectTypes = ["public"];
-        private static readonly string[] IdTokenSigningAlgs = ["ES256"];
-        private static readonly string[] TokenEndpointAuthMethods = ["client_secret_post", "client_secret_basic"];
-        private static readonly string[] Scopes = ["openid", "email", "profile", "offline_access"];
+            private static readonly string[] ResponseTypes = ["code"];
+            private static readonly string[] GrantTypes = ["authorization_code", "refresh_token"];
+            private static readonly string[] CodeChallengeMethods = ["S256"];
+            private static readonly string[] SubjectTypes = ["public"];
+            private static readonly string[] IdTokenSigningAlgs = ["ES256"];
+            private static readonly string[] TokenEndpointAuthMethods = ["client_secret_post", "client_secret_basic"];
+            private static readonly string[] Scopes = ["openid", "email", "profile", "offline_access"];
             // ts-auth 6bb896bb: one global issuer, {PublicOrigin}/{tenant}, served from every region.
             private const string Issuer = "https://auth.terrascale.tech/terrascale";
             private const string ClientId = "01M4EQ2FRJ8S8B29E8TQVWNW4J";

@@ -8,13 +8,13 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
     [ClassDataSource<DashboardRootFixture>]
     public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixture)
     {
-    private static readonly string[] CatalogGruSjc = ["gru", "sjc"];
-    private static readonly string[] CatalogGruFraSfo = ["gru", "fra", "sfo"];
-    private static readonly string[] CatalogGruFraSjc = ["gru", "fra", "sjc"];
-    private static readonly string[] RegionsGru = ["GRU"];
-    private static readonly string[] RegionsGruSjc = ["GRU", "SJC"];
-    private static readonly string[] RegionsGruFraSjc = ["GRU", "FRA", "SJC"];
-    private static readonly string[] RegionsSjcFraGru = ["SJC", "FRA", "GRU"];
+        private static readonly string[] CatalogGruSjc = ["gru", "sjc"];
+        private static readonly string[] CatalogGruFraSfo = ["gru", "fra", "sfo"];
+        private static readonly string[] CatalogGruFraSjc = ["gru", "fra", "sjc"];
+        private static readonly string[] RegionsGru = ["GRU"];
+        private static readonly string[] RegionsGruSjc = ["GRU", "SJC"];
+        private static readonly string[] RegionsGruFraSjc = ["GRU", "FRA", "SJC"];
+        private static readonly string[] RegionsSjcFraGru = ["SJC", "FRA", "GRU"];
         // A fresh workspace's empty Databases page carries the create control, and the Overview CTAs open its dialog directly.
         [Test]
         public async Task EmptyDatabasesPageCreatesThroughTheDialogAndTheOverviewLinksOpenIt()

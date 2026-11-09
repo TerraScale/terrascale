@@ -8,8 +8,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases;
 [ClassDataSource<DashboardRootFixture>]
 public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
 {
-private static readonly string[] ConflictColumns = ["id", "kind", "table_name", "row_key", "column_name", "winner_value", "loser_value", "winner_region", "winner_node", "winner_hlc", "winner_transaction_id", "winner_state", "loser_region", "loser_node", "loser_hlc", "loser_transaction_id", "loser_state", "message", "created_at"];
-private static readonly string[] SqlReadScope = ["sql:read"];
+    private static readonly string[] ConflictColumns = ["id", "kind", "table_name", "row_key", "column_name", "winner_value", "loser_value", "winner_region", "winner_node", "winner_hlc", "winner_transaction_id", "winner_state", "loser_region", "loser_node", "loser_hlc", "loser_transaction_id", "loser_state", "message", "created_at"];
+    private static readonly string[] SqlReadScope = ["sql:read"];
     [Test]
     public async Task ConflictsUseReadAuthorityAndKeepFiltersAndTransactionOutcome()
     {

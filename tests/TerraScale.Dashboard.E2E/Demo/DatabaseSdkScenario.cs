@@ -404,11 +404,11 @@ namespace TerraScale.Dashboard.E2E
 
         private sealed class DatabaseProducer
         {
-        private static readonly string[] BackupPolicyFields = ["fullBackupCron", "retentionDays"];
-        private static readonly string[] TtlField = ["ttlSeconds"];
-        private static readonly string[] NameField = ["name"];
-        private static readonly string[] HomeRegionField = ["homeRegion"];
-        private static readonly string[] DestinationFields = ["accessKeyId", "bucket", "endpoint", "mode", "region", "secretKey"];
+            private static readonly string[] BackupPolicyFields = ["fullBackupCron", "retentionDays"];
+            private static readonly string[] TtlField = ["ttlSeconds"];
+            private static readonly string[] NameField = ["name"];
+            private static readonly string[] HomeRegionField = ["homeRegion"];
+            private static readonly string[] DestinationFields = ["accessKeyId", "bucket", "endpoint", "mode", "region", "secretKey"];
             // The current producer creates canonical ULIDs. Keep those actual IDs
             // on both SDK boundaries instead of converting fixture UUIDs.
             private readonly TerraScaleIdGenerator ids = new();
@@ -864,11 +864,20 @@ namespace TerraScale.Dashboard.E2E
                             var stored = policies.GetValueOrDefault(source.Id) ?? new ProducerBackupPolicy("0 2 * * *", 7, null);
                             var scheduleCron = stored.FullBackupCron;
                             return Results.Json(policyHealth == "fail"
-                                ? stored with { LastSucceededAt = DateTimeOffset.UtcNow.AddHours(-26), LastFailedAt = DateTimeOffset.UtcNow.AddMinutes(-30),
+                                ? stored with
+                                {
+                                    LastSucceededAt = DateTimeOffset.UtcNow.AddHours(-26),
+                                    LastFailedAt = DateTimeOffset.UtcNow.AddMinutes(-30),
                                     LastError = new BackupPolicyErrorView("capacity", "Backup storage is temporarily unavailable."),
-                                    NextDueAt = scheduleCron is { Length: > 0 } ? DateTimeOffset.UtcNow.AddHours(10) : null }
-                                : stored with { LastSucceededAt = DateTimeOffset.UtcNow.AddHours(-2), LastFailedAt = null, LastError = null,
-                                    NextDueAt = scheduleCron is { Length: > 0 } ? DateTimeOffset.UtcNow.AddHours(22) : null });
+                                    NextDueAt = scheduleCron is { Length: > 0 } ? DateTimeOffset.UtcNow.AddHours(10) : null
+                                }
+                                : stored with
+                                {
+                                    LastSucceededAt = DateTimeOffset.UtcNow.AddHours(-2),
+                                    LastFailedAt = null,
+                                    LastError = null,
+                                    NextDueAt = scheduleCron is { Length: > 0 } ? DateTimeOffset.UtcNow.AddHours(22) : null
+                                });
                         }
                     }
                     Require(http.Request.Method == "PUT", "Producer full policy uses PUT");
@@ -1153,8 +1162,15 @@ namespace TerraScale.Dashboard.E2E
                     lock (gate)
                     {
                         return restoreOperations.TryGetValue(parts[6], out var operation) && operation.Source == current.Id
-                            ? Results.Json(new { operationId = parts[6], status = heldRestores == 1 ? "running" : "completed", kind = operation.Kind,
-                                database = heldRestores == 1 ? null : operation.Database, errorCode = (string?)null, errorMessage = (string?)null })
+                            ? Results.Json(new
+                            {
+                                operationId = parts[6],
+                                status = heldRestores == 1 ? "running" : "completed",
+                                kind = operation.Kind,
+                                database = heldRestores == 1 ? null : operation.Database,
+                                errorCode = (string?)null,
+                                errorMessage = (string?)null
+                            })
                             : Error(404, "not_found");
                     }
                 }
