@@ -148,7 +148,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             var defaultOperation = defaultStart.GetProperty("operationId").GetString()!;
             Check(TerraScaleIds.IsValid(defaultOperation) && defaultStart.GetProperty("status").GetString() is "running" or "completed",
                 "MCP restore starts the newest actual restore point and answers with a pollable operation instead of blocking");
-            var defaultDone = await McpRestoreCompletedAsync(replica, secret, id, defaultOperation);
+            var defaultDone = await RestoreCompletedAsync(replica, id, defaultOperation);
             var defaultId = defaultDone.GetProperty("targetDatabaseId").GetString()!;
             Check(TerraScaleIds.IsValid(defaultId) && defaultDone.GetProperty("targetName").GetString() == "backup-source-restore" &&
                 defaultDone.GetProperty("status").GetString() == "completed" && await ScoreAsync(defaultId) == 2,
@@ -242,23 +242,6 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             }
 
             throw new InvalidOperationException("The restore operation did not finish: " + status.GetRawText());
-        }
-
-        private static async Task<JsonElement> McpRestoreCompletedAsync(HttpClient client, string secret, string databaseId, string operationId)
-        {
-            JsonElement status = default;
-            for (var attempt = 0; attempt < 120; attempt++)
-            {
-                status = await CallAsync(client, secret, "get_restore_status", new { databaseId, operationId });
-                if (status.GetProperty("status").GetString() != "running")
-                {
-                    return status;
-                }
-
-                await Task.Delay(TimeSpan.FromMilliseconds(250));
-            }
-
-            throw new InvalidOperationException("The MCP restore operation did not finish: " + status.GetRawText());
         }
 
         private static async Task<JsonElement> CallAsync(HttpClient client, string secret, string name, object arguments)

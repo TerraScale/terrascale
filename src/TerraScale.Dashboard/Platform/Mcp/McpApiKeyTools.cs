@@ -23,7 +23,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
         {
             "get_context", "list_databases", "get_database", "create_database", "fork_database", "set_database_ttl", "delete_database",
             "execute_sql", "run_sql", "check_sql", "get_database_schema", "create_scoped_key",
-            "create_backup", "restore_backup"
+            "create_backup", "restore_backup", "get_restore_status"
         };
 
         internal async Task<Credential?> AuthenticateAsync(string key, string? project, CancellationToken ct)
@@ -174,14 +174,27 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 var backup = await backups.CreateAsync(scope, region, databaseId, ct);
                 return Reply(new BackupView(backup.Id, backup.Status, backup.CreatedAt, backup.SizeBytes), McpAgentJson.Default.BackupView);
             }
+            if (tool == "get_restore_status")
+            {
+                var operation = await backups.RestoreOperationAsync(scope, region, databaseId, Text("operationId"), ct);
+                if (operation.Status != "completed")
+                {
+                    return Reply(new McpRestoreStatus(operation.OperationId, operation.Status, null, null,
+                        operation.ErrorCode, operation.Status == "failed" ? BackupBackend.RestoreMessage(operation) : null), McpAgentJson.Default.McpRestoreStatus);
+                }
+
+                var target = await management.GetDatabaseAsync(scope.ProjectId, operation.Database!);
+                return Reply(new McpRestoreStatus(operation.OperationId, operation.Status, target.Id, target.Name, null, null), McpAgentJson.Default.McpRestoreStatus);
+            }
             var backupId = Text("backupId");
             if (backupId.Length == 0)
             {
                 backupId = (await backups.ListAsync(scope, region, databaseId, ct)).OrderByDescending(backup => backup.CreatedAt).FirstOrDefault()?.Id
                     ?? throw new AccountAccessException("That restore point is no longer available.", 404);
             }
-            var restored = await backups.RestoreAsync(scope, region, databaseId, backupId, Text("name") is { Length: > 0 } name ? name : null, ct);
-            return Reply(new BackupRestoreResult(restored.Id, restored.Name, "ready"), McpAgentJson.Default.BackupRestoreResult);
+            var requested = Text("name");
+            var started = await backups.StartRestoreAsync(scope, region, databaseId, backupId, requested is { Length: > 0 } ? requested : null, ct);
+            return Reply(new McpRestoreStart(started.OperationId, started.Status, requested is { Length: > 0 } ? requested.Trim() : null), McpAgentJson.Default.McpRestoreStart);
         }
 
         private static McpDatabase Output(TerraBaseManagedDatabase db) => new(db.Id, db.Name, "ready", db.HomeRegion.Length > 0 ? db.HomeRegion : db.Region,
@@ -199,6 +212,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
     }
 
     internal sealed record McpKeyContext(string OrganizationId, string ProjectId, string? DatabaseId, IReadOnlyList<string> Scopes);
+    internal sealed record McpRestoreStatus(string OperationId, string Status, string? TargetDatabaseId, string? TargetName, string? ErrorCode, string? ErrorMessage);
     [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
     [JsonSerializable(typeof(McpKeyContext))]
     [JsonSerializable(typeof(McpDatabase))]
@@ -210,6 +224,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
     [JsonSerializable(typeof(McpSqlResponse))]
     [JsonSerializable(typeof(TsAuthScopedKey))]
     [JsonSerializable(typeof(BackupRestoreResult))]
+    [JsonSerializable(typeof(McpRestoreStart))]
+    [JsonSerializable(typeof(McpRestoreStatus))]
     [JsonSerializable(typeof(BackupView))]
     [JsonSerializable(typeof(JsonElement))]
     internal sealed partial class McpAgentJson : JsonSerializerContext;
