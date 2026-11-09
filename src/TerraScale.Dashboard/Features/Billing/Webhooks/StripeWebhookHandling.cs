@@ -3,22 +3,13 @@ using Microsoft.AspNetCore.Http.Features;
 
 namespace TerraScale.Dashboard.Features.Billing.Webhooks
 {
-    public static class StripeWebhookEndpoints
+    internal static class StripeWebhookHandling
     {
-        public static IEndpointRouteBuilder MapStripeWebhooks(this IEndpointRouteBuilder endpoints)
-        {
-            endpoints.MapPost("/api/v1/billing/stripe/webhook", HandleStripeWebhookAsync);
-            endpoints.MapPost("/api/auth/stripe/webhook", HandleStripeWebhookAsync);
-            return endpoints;
-        }
-
-        private static async Task<IResult> HandleStripeWebhookAsync(HttpContext http, StripeBilling billing)
+        public static async Task<IResult> HandleAsync(HttpContext http, StripeBilling billing)
         {
             const int bodyLimit = 1 << 20;
             const int rejectionDrainAllowance = 64 * 1024;
             const int lingeringDiscardLimit = 4 << 20;
-            // Raise the limit before any early 413 so Kestrel can drain a slightly
-            // oversized known-length upload instead of resetting the sender mid-write.
             if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
             {
                 limit.MaxRequestBodySize = bodyLimit + rejectionDrainAllowance;
@@ -54,9 +45,6 @@ namespace TerraScale.Dashboard.Features.Billing.Webhooks
                     {
                         return RejectUndrainedBody(http);
                     }
-                    // A bounded drain lets a slightly oversized chunked sender finish
-                    // uploading and observe 413. Rejected bytes are never buffered or
-                    // parsed, and Kestrel still imposes a fixed hard ceiling.
                     if (received > bodyLimit) { oversized = true; continue; }
                     payload.Write(buffer, 0, count);
                 }
@@ -79,9 +67,6 @@ namespace TerraScale.Dashboard.Features.Billing.Webhooks
 
         private static async Task<IResult> RejectAfterLingeringDiscardAsync(HttpContext http, long length)
         {
-            // Closing with unread upload bytes makes TCP reset the sender, which can
-            // then lose the 413 to Broken pipe. Send the 413 first, then discard the
-            // bounded remainder for a short time so the close is graceful.
             if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
             {
                 limit.MaxRequestBodySize = length;
@@ -100,7 +85,6 @@ namespace TerraScale.Dashboard.Features.Billing.Webhooks
 
         private static IResult RejectUndrainedBody(HttpContext http)
         {
-            // Kestrel cannot drain past its hard limit; do not advertise a reusable HTTP/1 connection.
             if (http.Request.Protocol is "HTTP/1.0" or "HTTP/1.1")
             {
                 http.Response.Headers.Connection = "close";

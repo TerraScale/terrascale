@@ -165,7 +165,7 @@ namespace TerraScale.Dashboard.Features.Auth
                         services.GetRequiredService<OrganizationLifecycleService>(), services.GetRequiredService<IWorkspacePlacement>(), "delete"),
                     "start_ownership_transfer" => await OrganizationEndpoints.AccessMutationAsync(http, sessions, accounts,
                         services.GetRequiredService<IOrganizationAccess>(), services.GetRequiredService<IWorkspacePlacement>(), "ownership"),
-                    "change_plan" => await Billing.BillingPlanEndpoints.MutateAsync(http, sessions, accounts,
+                    "change_plan" => await Billing.BillingMutations.MutateAsync(http, sessions, accounts,
                         services.GetRequiredService<Billing.StripeBilling>(),
                         http.Request.Path.Value!.EndsWith("/undo", StringComparison.Ordinal) ? "undo" : "change"),
                     _ => throw Required()

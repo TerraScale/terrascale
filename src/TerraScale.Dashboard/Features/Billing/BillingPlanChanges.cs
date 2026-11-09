@@ -483,7 +483,7 @@ namespace TerraScale.Dashboard.Features.Billing
             // webhooks reconciling the same change; they and the next billing view finish it from Stripe's facts.
             try { await ReconcileChangeAsync(context, receipt); }
             catch (Exception error) when (error is IOException or TerraBaseException or HttpRequestException or StripeException or AccountAccessException or OperationCanceledException)
-            { logger.BillingAppliedInStripeReconciliationDeferred(receipt.Action, receipt.RequestId, error.GetType().Name, BillingPlanEndpoints.Describe(error)); }
+            { logger.BillingAppliedInStripeReconciliationDeferred(receipt.Action, receipt.RequestId, error.GetType().Name, BillingMutations.Describe(error)); }
         }
         private async Task ReconcileChangeAsync(AccountContext context, BillingChangeReceipt receipt)
         {
