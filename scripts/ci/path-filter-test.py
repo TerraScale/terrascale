@@ -252,9 +252,25 @@ cases += [(path, "modified", ci, started) for path, ci, started in [
     (".github/workflows/sdk-fast.yml", set(), sdks),
     (".github/workflows/sdk-go-publish.yml", set(), go),
     (".github/workflows/slow.yml", set(), set())]]
+
+def pull_request_selected(name, path):
+    event = workflows[name].get("pull_request")
+    if event is None or "main" not in event.get("branches", ["main"]):
+        return False
+    return "paths" not in event or selected(event["paths"], path)
+
+def check_pr(case):
+    filename, expected = case
+    started = {name for name in workflows if name != "ci.yml" and pull_request_selected(name, filename)}
+    assert started == expected, f"{filename}: PR starts {sorted(started)}, expected {sorted(expected)}"
+    return f"pull_request {filename} -> {sorted(expected) or 'no workflows'}"
+
+pr_cases = [("scripts/ci/release-only.sh", {"all-green.yml", "dashboard-ci.yml"})]
 errors = []
 with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
-    futures = [pool.submit(check, case) for case in cases] + [pool.submit(live_globs)]
+    futures = ([pool.submit(check, case) for case in cases]
+               + [pool.submit(check_pr, case) for case in pr_cases]
+               + [pool.submit(live_globs)])
     for future in concurrent.futures.as_completed(futures):
         try:
             print(future.result())
