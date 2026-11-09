@@ -12,7 +12,7 @@ using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
 
-namespace TerraBase.Slow.Platform;
+namespace TerraBase.Slow.Sql;
 
 public sealed class WriteRouterTests
 {
