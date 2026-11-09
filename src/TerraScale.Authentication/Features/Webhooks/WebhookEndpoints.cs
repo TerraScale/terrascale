@@ -99,13 +99,16 @@ public sealed class WebhookEndpoints(AuthStore store, AuthOptions options, TimeP
         }
 
         var (counter, counterVersion) = await this.CounterAsync(projectId, cancellationToken).ConfigureAwait(false);
-        List<StoreOperation> operations = [AuthStore.Delete(AuthStore.WebhookEndpointTable, projectId, id, row.Version)];
-        if (counter is { Count: > 0 } && counterVersion is not null)
-        {
-            operations.Add(counter.Count == 1
-                ? AuthStore.Delete(AuthStore.WebhookEndpointCounterTable, projectId, projectId, counterVersion)
-                : AuthStore.Replace(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, counter.Count - 1), counterVersion));
-        }
+        var remaining = counterVersion is null
+            ? (await this.ListAsync(projectId, cancellationToken).ConfigureAwait(false)).Count - 1
+            : counter!.Count - 1;
+        List<StoreOperation> operations =
+        [
+            AuthStore.Delete(AuthStore.WebhookEndpointTable, projectId, id, row.Version),
+            counterVersion is null
+                ? AuthStore.Create(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, remaining))
+                : AuthStore.Replace(AuthStore.WebhookEndpointCounterTable, projectId, projectId, Counter(projectId, remaining), counterVersion),
+        ];
 
         return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null;
     }
