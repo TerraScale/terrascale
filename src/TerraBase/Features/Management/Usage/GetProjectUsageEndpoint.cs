@@ -42,10 +42,10 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
     {
         var organization = ManagementRoute.OrganizationId(HttpContext);
         var nodeOnly = PeerUsage.NodeOnly(HttpContext);
-        var others = nodeOnly ? Task.FromResult<List<ProjectUsage>?>([]) : peers.ProjectAsync(HttpContext, cancellationToken);
+        var others = nodeOnly ? Task.FromResult<IReadOnlyList<ProjectUsage>?>([]) : peers.ProjectAsync(HttpContext, cancellationToken);
         var month = PeerUsage.MonthOf(time.GetUtcNow());
         var units = nodeOnly
-            ? Task.FromResult<Dictionary<string, UsageTotals>?>(new(StringComparer.Ordinal) { [organization] = new UsageTotals(0, 0) })
+            ? Task.FromResult<IReadOnlyDictionary<string, UsageTotals>?>(new Dictionary<string, UsageTotals>(StringComparer.Ordinal) { [organization] = new UsageTotals(0, 0) })
             : peers.MonthsAsync([organization], month, cancellationToken);
         var local = await usage.GetProjectUsageAsync(
             ManagementRoute.UserId(HttpContext), organization, ManagementRoute.Value(HttpContext, "project"), window, cancellationToken);

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 
@@ -47,7 +48,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
     /// Every other region's share of the project usage the client asked for, sent as the same client request so each
     /// region checks the same token. A region that does not hold the project adds nothing; null when one cannot answer.
     /// </summary>
-    public async Task<List<ProjectUsage>?> ProjectAsync(HttpContext context, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ProjectUsage>?> ProjectAsync(HttpContext context, CancellationToken cancellationToken)
     {
         var path = context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent();
         var answers = await AskAsync(peer =>
@@ -60,7 +61,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
     }
 
     /// <summary>Every other region's units of <paramref name="organizations"/> in <paramref name="month"/> (<c>yyyy-MM</c>); null when one cannot answer.</summary>
-    public async Task<Dictionary<string, UsageTotals>?> MonthsAsync(IReadOnlyCollection<string> organizations, string month, CancellationToken cancellationToken)
+    public async Task<IReadOnlyDictionary<string, UsageTotals>?> MonthsAsync(IReadOnlyCollection<string> organizations, string month, CancellationToken cancellationToken)
     {
         var sums = new Dictionary<string, UsageTotals>(StringComparer.Ordinal);
         foreach (var organization in organizations)
@@ -100,7 +101,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
     }
 
     /// <summary>Every other region's own page of allowance usage after <paramref name="after"/>; null when one cannot answer.</summary>
-    public async Task<List<AllowanceUsagePage>?> AllowancesAsync(string? after, string? month, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<AllowanceUsagePage>?> AllowancesAsync(string? after, string? month, CancellationToken cancellationToken)
     {
         var query = new StringBuilder("/v1/usage/allowances?");
         if (after is not null)
@@ -210,7 +211,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
 
     // Asks every other region's node at once. An answer of `status` counts as nothing; any other failure fails the whole.
     private async Task<T?[]?> AskAsync<T>(
-        Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type,
+        Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, JsonTypeInfo<T> type,
         CancellationToken cancellationToken)
         where T : class
     {
@@ -228,7 +229,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
     }
 
     private async Task<(bool Answered, T? Value)> AskOneAsync<T>(
-        RegionPeer peer, Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type,
+        RegionPeer peer, Func<RegionPeer, HttpRequestMessage> build, HttpStatusCode? status, JsonTypeInfo<T> type,
         CancellationToken cancellationToken)
         where T : class
     {

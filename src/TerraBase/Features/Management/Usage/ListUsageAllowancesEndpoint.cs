@@ -47,7 +47,7 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
 
         HttpContext.Response.Headers.CacheControl = "no-store";
         var nodeOnly = PeerUsage.NodeOnly(HttpContext);
-        var others = nodeOnly ? Task.FromResult<List<AllowanceUsagePage>?>([]) : peers.AllowancesAsync(after.Length > 0 ? after : null, previous ? month : null, cancellationToken);
+        var others = nodeOnly ? Task.FromResult<IReadOnlyList<AllowanceUsagePage>?>([]) : peers.AllowancesAsync(after.Length > 0 ? after : null, previous ? month : null, cancellationToken);
         var local = await usage.ListAllowanceUsageAsync(after.Length > 0 ? after : null, previous, cancellationToken);
         if (local is not AllowanceUsagePage page)
         {
