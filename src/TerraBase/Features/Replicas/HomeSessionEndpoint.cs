@@ -12,10 +12,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-/// <summary>
-/// <c>POST /v1/internal/sql/session</c>: one SQL session of a replica region's client, run at this node, the database's home
-/// (docs/terrabase/region-replicas.md#writes-and-transactions). Internal listener only, behind the peer credential.
-/// </summary>
 internal sealed class HomeSessionEndpoint(
     ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local)
     : EndpointWithoutRequest<IResult>

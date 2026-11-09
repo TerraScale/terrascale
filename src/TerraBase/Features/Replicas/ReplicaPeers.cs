@@ -4,22 +4,15 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replicas;
 
-/// <summary>A node of another region, reached on its internal listener.</summary>
-/// <param name="Region">Its region.</param>
-/// <param name="Name">Its node name.</param>
-/// <param name="Internal">Its internal listener, e.g. <c>http://10.0.0.2:8081/</c>.</param>
 internal sealed record ReplicaPeer(string Region, string Name, Uri Internal);
 
-/// <summary>The nodes of the other regions, one per region: a database's home node is its home region's node.</summary>
+// One peer per region: a database's home node is its home region's node.
 internal interface IReplicaPeers
 {
     ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// The ts-orch peers file (<c>TS_PEERS_FILE</c>): every node listens on the same internal port on its private address.
-/// A region of several nodes is reached at its observed CAS-fenced writer; its standby also follows that writer.
-/// </summary>
+// A region of several nodes is reached at its observed CAS-fenced writer; its standby also follows that writer.
 internal sealed class PeersFileReplicaPeers(TerraBaseOptions options, RegionalOwners owners) : IReplicaPeers
 {
     public async ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken)
@@ -43,7 +36,6 @@ internal static class ServingNodeExtensions
     }
 }
 
-/// <summary>Requests to other nodes' internal listeners: HTTP/2 without TLS on the private mesh, with the peer credential.</summary>
 internal static class PeerHttp
 {
     public static HttpClient Create(InternalCredential credential) =>        new(new PeerRequests(credential)

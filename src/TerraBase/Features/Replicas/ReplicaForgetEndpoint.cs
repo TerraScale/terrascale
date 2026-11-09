@@ -5,11 +5,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-/// <summary>
-/// <c>DELETE /v1/sync/organizations/{organization}/projects/{project}/databases/{database}</c>: a database's home
-/// deleted it, so this region forgets its record and stops its replica. Internal listener only, behind the peer
-/// credential. Idempotent: a database this region does not record answers 204 as well.
-/// </summary>
 internal sealed class ReplicaForgetEndpoint(RegionReplication replication, IReplicaCatalog catalog) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

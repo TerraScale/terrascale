@@ -41,11 +41,9 @@ internal interface ILocalTransaction : IAsyncDisposable
 
     ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Publishes the transaction to the durable push stream, holds it on a discovered regional partner and commits it.
-    /// A discovered one-node region acknowledges on that node; a region with a partner requires both copies. With
-    /// <paramref name="homeDurable"/>, or when the required partner did not hold it, it answers after the home applied it.
-    /// </summary>
+    // Publishes the transaction to the durable push stream, holds it on a discovered regional partner and commits it.
+    // A discovered one-node region acknowledges on that node; a region with a partner requires both copies. With
+    // homeDurable, or when the required partner did not hold it, it answers after the home applied it.
     ValueTask<LocalCommit> CommitAsync(bool homeDurable, CancellationToken cancellationToken);
 }
 

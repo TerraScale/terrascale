@@ -52,7 +52,6 @@ internal static class HomeForwarding
         return app;
     }
 
-    /// <summary>Whether <paramref name="name"/> travels with a request sent to a peer.</summary>
     internal static bool IsForwardable(string name) => !Unforwarded.Contains(name) && !name.StartsWith(':');
 
     internal static string Host(string region) => region + ".api.terrascale.tech";
@@ -140,10 +139,6 @@ internal static class HomeForwarding
         return peer is null ? null : new HomeNode(home, peer.Address);
     }
 
-    /// <summary>
-    /// Copies the client request's headers onto <paramref name="request"/> for a peer in <paramref name="region"/> and signs
-    /// it with the peer credential, so the peer serves it as the same client request.
-    /// </summary>
     internal static void Sign(HttpContext context, HttpRequestMessage request, string region)
     {
         foreach (var (name, values) in context.Request.Headers)

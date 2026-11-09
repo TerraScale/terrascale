@@ -6,9 +6,7 @@ namespace TerraBase.Features.Regions;
 
 public sealed record RegionPeer(string Region, Uri Address);
 
-/// <summary>
-/// The observed CAS-fenced writer of every other region. Every regional peer follows applied state and retains R10 holds.
-/// </summary>
+// The observed CAS-fenced writer of every other region. Every regional peer follows applied state and retains R10 holds.
 public interface IRegionPeers
 {
     ValueTask<IReadOnlyList<RegionPeer>> OtherRegionsAsync(CancellationToken cancellationToken);

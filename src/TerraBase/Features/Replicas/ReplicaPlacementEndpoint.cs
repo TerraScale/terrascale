@@ -5,11 +5,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-/// <summary>
-/// <c>GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/placement</c>: the placement of a database
-/// homed on this node, so a replica region tells a database that left its placement from one that was deleted. Internal
-/// listener only, behind the peer credential.
-/// </summary>
 internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()

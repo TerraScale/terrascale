@@ -18,11 +18,9 @@ internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosi
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "");
 internal sealed record RegionalDrain(string Target);
 
-/// <summary>
-/// Planned regional ownership transfer. The edge drains first; the old engine is fenced before its final applied
-/// positions are sampled. The candidate imports proven replicas; the regional CAS precedes database lease activation.
-/// An uncommitted preparation leaves database leases untouched; a quorum rollback resumes the old writer.
-/// </summary>
+// Planned regional ownership transfer: the edge drains first; the old engine is fenced before its final applied
+// positions are sampled; the candidate imports proven replicas; the regional CAS precedes database lease activation.
+// An uncommitted preparation leaves database leases untouched; a quorum rollback resumes the old writer.
 internal sealed partial class RegionalHandoff(
     TerraBaseOptions options, RegionalOwners owners, HomeLeaseGate gate, InternalCredential credential,
     IServiceProvider services, ILogger<RegionalHandoff> logger) : BackgroundService

@@ -12,22 +12,14 @@ using ZLogger;
 
 namespace TerraBase.Features.LocalAck;
 
-/// <summary>The discovered regional quorum for local writes (docs/terrabase/in-region-ack.md).</summary>
 internal interface IInRegionAck
 {
-    /// <summary>Whether this node's in-region partner answered within the last 3 s. A one-node region never has one.</summary>
     bool PartnerHealthy { get; }
 
-    /// <summary>One discovered node needs its own durable push; a region with a partner needs both nodes.</summary>
     bool QuorumHealthy { get; }
 
-    /// <summary>
-    /// Stores the published transaction on the partner and answers true once it is synced there; false when the partner
-    /// did not store it, and the write then waits for the home instead. A discovered one-node region needs no partner copy.
-    /// </summary>
     ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, byte[] payload, CancellationToken cancellationToken);
 
-    /// <summary>Tells the partner that the home holds the database's transactions up to <paramref name="through"/>.</summary>
     void Release(TenantContext database, ulong through);
 }
 
@@ -153,10 +145,6 @@ internal sealed class InRegionAck(
         }
     }
 
-    /// <summary>
-    /// Applies a lost origin's held transactions at their homes, one database at a time in stream order. The home answers a
-    /// transaction it already has from its record, so one the origin's stream also delivers is applied once.
-    /// </summary>
     private async Task FinishAsync(string origin, CancellationToken cancellationToken)
     {
         var stalled = new HashSet<(string, string, string)>();
@@ -241,7 +229,6 @@ internal sealed class InRegionAck(
         }
     }
 
-    // The internal endpoints read a body of known length, so it is sent whole rather than streamed.
     private static ByteArrayContent Json(byte[] json)
     {
         var content = new ByteArrayContent(json);
