@@ -42,7 +42,6 @@ public sealed class RegionReplicaTests
             try
             {
                 await delayed.Captured.Task.WaitAsync(token);
-                // Keep the same overlay contract as production: a pull restores the local commit after page apply.
                 replicas.Overlay = async (_, _, writer, cancellation) =>
                 {
                     _ = await writer.ExecuteAsync(Statement($"INSERT OR REPLACE INTO items(id, tenant, v) VALUES ('local', '{database.DatabaseId}', 'sjc')"), cancellation);
@@ -124,7 +123,6 @@ public sealed class RegionReplicaTests
                 }
             }
 
-            // Cancellation must release the write gate; the next real transaction commits and becomes readable.
             await using (var writer = (await replicas.BeginWriteAsync(database, token))!)
             {
                 _ = await writer.ExecuteAsync(Statement($"INSERT INTO items(id, tenant, v) VALUES ('local', '{database.DatabaseId}', 'committed')"), token);

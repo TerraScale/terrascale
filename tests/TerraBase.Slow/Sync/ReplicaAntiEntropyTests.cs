@@ -38,7 +38,6 @@ public sealed class ReplicaAntiEntropyTests
                 await Assert.That(await verifier.RoundAsync(database, source, null, token)).IsEqualTo(new VerificationRound(ReplicaVerdict.Equal, null, null));
 
                 await server.ExecuteAsync(database, "UPDATE items SET v = 'moved' WHERE id = 'r0300'");
-                // Background verification observes the held revision without fetching newer pages or blocking notices.
                 await Assert.That((await verifier.ObserveAsync(database, source, null, token)).Verdict).IsEqualTo(ReplicaVerdict.Moved);
                 await Assert.That(await verifier.RoundAsync(database, source, null, token)).IsEqualTo(new VerificationRound(ReplicaVerdict.Equal, null, null));
             }

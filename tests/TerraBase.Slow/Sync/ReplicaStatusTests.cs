@@ -46,7 +46,6 @@ public sealed class ReplicaStatusTests
             await Assert.That(initial.Replicas.Single().LastPulledAt).IsNull();
             await Assert.That(initial.Replicas.Single().LastVerified).IsNull();
 
-            // Use the real page client against the authenticated internal listener.
             await using var replica = await api.Server.OpenReplicaAsync(database, directory);
             var caughtUp = (await ReadAsync()).Replicas.Single();
             await Assert.That(caughtUp.LagMs).IsEqualTo(0);

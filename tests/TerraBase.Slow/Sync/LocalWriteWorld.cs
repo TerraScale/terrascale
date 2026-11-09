@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -206,7 +207,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
     public async Task<string?> RegionScalarAsync(string sql, CancellationToken cancellationToken)
     {
         await using var reader = (await Replicas.BeginReadAsync(Database, cancellationToken))!;
-        return Convert.ToString((await reader.ExecuteAsync(ApplySql.Statement(sql), cancellationToken)).Rows.Single()[0], System.Globalization.CultureInfo.InvariantCulture);
+        return Convert.ToString((await reader.ExecuteAsync(ApplySql.Statement(sql), cancellationToken)).Rows.Single()[0], CultureInfo.InvariantCulture);
     }
 
     public async Task<JsonElement> HomeSqlAsync(string sql)

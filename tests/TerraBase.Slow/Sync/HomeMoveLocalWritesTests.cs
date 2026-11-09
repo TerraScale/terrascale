@@ -79,14 +79,11 @@ public sealed class HomeMoveLocalWritesTests
                 expected.Add(row);
             }
 
-            // A remote commit can publish to the old home's subject after its fence. Keep one
-            // transaction open across promotion, independently of catalog refresh timing.
             await using var delayed = await local.BeginAsync(tenant, token) ?? throw new InvalidOperationException("SJC lost its local commit path");
             var lateId = EntityIds.New().ToString();
             _ = await delayed.ExecuteAsync(new SqlStatement($"INSERT INTO acked (id) VALUES ('{lateId}')", [], new Dictionary<string, object?>(), 100, 1 << 20, TimeSpan.FromSeconds(5)), token);
             var writer = Task.Run(async () =>
             {
-                // The open local writer serializes this load until its delayed commit below.
                 for (var write = 0; write < 5; write++)
                 {
                     var row = EntityIds.New().ToString();
@@ -108,8 +105,6 @@ public sealed class HomeMoveLocalWritesTests
             var late = await delayed.CommitAsync(homeDurable: false, token);
             await Assert.That(late.Id).IsNotNull();
             expected.Add(lateId);
-            // A forwarded attempt can already be waiting at the old home's 30-second
-            // ordering barrier when it is fenced. Allow its refusal to finish too.
             await writer.WaitAsync(TimeSpan.FromSeconds(60), token);
             string[] observed = [];
             var readStatus = HttpStatusCode.OK;
