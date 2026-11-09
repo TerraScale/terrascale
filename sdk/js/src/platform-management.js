@@ -16,7 +16,7 @@ import { platformIdentityRoutes } from "./platform-management-routes.js";
  * tenant management keys. The producer checks the live user, session and role.
  * @typedef {{readonly apiBaseUrl: string; readonly signInToken: string | (() => string | Promise<string>); readonly fetch?: import("./config.js").FetchLike}} TerraScaleIdentityManagementClientConfig
  */
-/** @typedef {{readonly signal?: AbortSignal}} IdentityRequestOptions */
+/** @typedef {{readonly signal?: AbortSignal; readonly stepUpProof?: string}} IdentityRequestOptions */
 /** @typedef {{readonly apiBaseUrl: string; readonly fetch?: import("./config.js").FetchLike}} IdentityTransportConfig */
 /** @typedef {IdentityTransportConfig} TerraScaleAccountDeletionClientConfig */
 /** @typedef {IdentityTransportConfig & {readonly project: string; readonly projectApiKey: string | (() => string | Promise<string>)}} TerraScaleProjectIdentityClientConfig */
@@ -153,6 +153,12 @@ function receipt(value) {
     throw new TypeError("receipt must be a canonical 32-byte base64url deletion receipt.");
   return value;
 }
+/** @param {unknown} value @returns {string} */
+function stepUpProof(value) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 8192 || /[\s\p{Cc}]/u.test(value))
+    throw new TypeError("stepUpProof must be 1-8192 characters without whitespace or control characters.");
+  return value;
+}
 /** @param {unknown} value @returns {"github" | "google"} */
 function providerName(value) {
   if (value !== "github" && value !== "google") throw new TypeError("provider must be github or google.");
@@ -192,8 +198,12 @@ function platformCaller(config, provider, credential = signInToken) {
    * @returns {Promise<TerraScaleResult<T>>}
    */
   async function call(operation, selectors, decode, options, body, query, deletionReceipt) {
-    members(options, ["signal"]);
+    members(options, ["signal", "stepUpProof"]);
     const route = platformIdentityRoutes[operation];
+    const stepUp = "stepUp" in route ? route.stepUp : undefined;
+    if (stepUp === undefined && options.stepUpProof !== undefined)
+      throw new TypeError("Step-up proofs belong only to proof-required organization operations.");
+    const proof = stepUp === undefined ? undefined : stepUpProof(options.stepUpProof);
     const path = route.pathTemplate.replace(/\{(organization|project|user|key|invitation|provider)\}/gu,
       (_match, name) => encodeURIComponent(name === "provider" ? providerName(selectors.provider) : requireId(Reflect.get(selectors, name), name)));
     // Resolve once per request, under TsAuthHttp's deadline/cancellation.
@@ -213,6 +223,7 @@ function platformCaller(config, provider, credential = signInToken) {
     const result = await http.request({ method: route.method, path, routeName: `tsauth.platform.${operation}`,
       ...(body === undefined ? {} : { body }), ...(query === undefined ? {} : { query }),
       ...(deletionReceipt === undefined ? {} : { deletionReceipt }),
+      ...(proof === undefined ? {} : { stepUpProof: proof }),
       ...(options.signal === undefined ? {} : { signal: options.signal }) });
     if (!result.ok) {
       // Provider and fetch implementations are caller code. Transport exceptions

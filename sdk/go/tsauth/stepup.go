@@ -7,14 +7,17 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 const StepUpProofHeader = "X-TerraScale-Step-Up-Proof"
 
 type StepUpRequest struct {
-	Purpose   string `json:"purpose"`
-	Audience  string `json:"audience"`
-	ReturnURI string `json:"return_uri"`
+	Purpose        string `json:"purpose"`
+	Audience       string `json:"audience"`
+	ReturnURI      string `json:"return_uri"`
+	OrganizationID string `json:"organization_id,omitempty"`
 }
 
 type StepUpBody struct {
@@ -24,8 +27,10 @@ type StepUpBody struct {
 }
 
 const (
-	StepUpCreateAPIKey = "create_api_key"
-	StepUpRotateAPIKey = "rotate_api_key"
+	StepUpCreateAPIKey           = "create_api_key"
+	StepUpRotateAPIKey           = "rotate_api_key"
+	StepUpDeleteOrganization     = "delete_organization"
+	StepUpStartOwnershipTransfer = "start_ownership_transfer"
 )
 
 const DefaultDashboardOrigin = "https://dash.terrascale.tech"
@@ -34,8 +39,22 @@ func (u *User) RequestStepUp(ctx context.Context, purpose string) (*StepUpBody, 
 	if purpose != StepUpCreateAPIKey && purpose != StepUpRotateAPIKey {
 		return nil, fmt.Errorf("tsauth: unsupported step-up purpose %q", purpose)
 	}
+	return u.requestStepUp(ctx, purpose, "")
+}
+
+func (u *User) RequestOrganizationStepUp(ctx context.Context, purpose, organization string) (*StepUpBody, error) {
+	if purpose != StepUpDeleteOrganization && purpose != StepUpStartOwnershipTransfer {
+		return nil, fmt.Errorf("tsauth: unsupported organization step-up purpose %q", purpose)
+	}
+	if err := entityid.Check(organization); err != nil {
+		return nil, err
+	}
+	return u.requestStepUp(ctx, purpose, organization)
+}
+
+func (u *User) requestStepUp(ctx context.Context, purpose, organization string) (*StepUpBody, error) {
 	var out StepUpBody
-	body := StepUpRequest{Purpose: purpose, Audience: "ts-auth", ReturnURI: DefaultDashboardOrigin + "/auth/step-up/callback"}
+	body := StepUpRequest{Purpose: purpose, Audience: "ts-auth", ReturnURI: DefaultDashboardOrigin + "/auth/step-up/callback", OrganizationID: organization}
 	if _, err := u.doStatus(ctx, http.MethodPost, []string{"step-up"}, nil, body, &out); err != nil {
 		return nil, err
 	}

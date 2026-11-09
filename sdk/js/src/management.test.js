@@ -48,3 +48,22 @@ test("project API key creation sends a stable database ULID and listing preserve
   expect(await client.listProjectApiKeys(config.project, config.project))
     .toMatchObject({ ok: true, value: { items: [{ database }] } });
 });
+
+test("organization deletion and ownership-transfer start send the step-up proof header", async () => {
+  /** @type {string[]} */
+  const proofs = [];
+  const client = createTerraScaleIdentityManagementClient({ ...identityConfig, fetch: async input => {
+    const request = /** @type {Request} */ (input);
+    proofs.push(/** @type {string} */ (request.headers.get("x-terrascale-step-up-proof")));
+    if (request.method === "DELETE") return new Response(null, { status: 204 });
+    expect(new URL(request.url).pathname).toBe(`/v1/terrascale/organizations/${config.project}/ownership-transfer`);
+    expect(await request.json()).toEqual({ user_id: config.project });
+    return Response.json({ from_user_id: config.project, to_user_id: config.project,
+      created_at: "2026-11-08T00:00:00Z", expires_at: "2026-11-09T00:00:00Z" }, { status: 201 });
+  } });
+  expect(await client.deleteOrganization(config.project, { stepUpProof: "fixture-proof" })).toMatchObject({ ok: true });
+  expect(await client.startOwnershipTransfer(config.project, { user_id: config.project }, { stepUpProof: "fixture-proof" }))
+    .toMatchObject({ ok: true, value: { to_user_id: config.project } });
+  expect(proofs).toEqual(["fixture-proof", "fixture-proof"]);
+  await expect(client.deleteOrganization(config.project)).rejects.toThrow(TypeError("stepUpProof must be 1-8192 characters without whitespace or control characters."));
+});

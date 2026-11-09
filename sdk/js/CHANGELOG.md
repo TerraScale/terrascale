@@ -6,6 +6,11 @@
 Drizzle's `sqlite-proxy` driver expects, mapped from a root database handle's
 `execute` and atomic `batch`. The SDK adds no `drizzle-orm` dependency.
 
+`deleteOrganization` and `startOwnershipTransfer` now require
+`options.stepUpProof` and send it as `X-TerraScale-Step-Up-Proof`, matching the
+purpose-bound, organization-bound proofs ts-auth requires since #1341. The proof
+is single-use and these mutations are never retried.
+
 TerraScale is SQL-only. The JSON data API is removed without a replacement shim,
 with its handles, `db.transaction()`, filters and queries, shapes and replicas,
 `db.changes()`, `db.export()`, imports, indexes, inferred and declared schemas,
