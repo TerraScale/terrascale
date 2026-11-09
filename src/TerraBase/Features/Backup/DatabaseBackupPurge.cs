@@ -20,10 +20,8 @@ internal sealed record BackupPurgeProgress(DateTimeOffset RequestedAt, string? D
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 internal sealed partial class BackupPurgeJsonContext : JsonSerializerContext;
 
-/// <summary>Destroys a deleted database's backup data keys now, ahead of its next erasure pass.</summary>
 public interface IBackupKeyShredding
 {
-    /// <summary>Starts shredding <paramref name="database"/>'s keys in the background; the erasure pass retries failures.</summary>
     void Shred(TenantContext database);
 
     Task<bool> DestroyAsync(TenantContext database, CancellationToken cancellationToken);
@@ -177,10 +175,6 @@ internal sealed class DatabaseBackupPurge(
         }
     }
 
-    /// <summary>
-    /// Shreds the database's keys in the shared custody store outside backup destinations.
-    /// </summary>
-    /// <returns>When the keys were destroyed, or <see langword="null"/> while custody still holds one.</returns>
     internal async Task<DateTimeOffset?> ShredAsync(TenantContext database, CancellationToken token)
     {
         var shredded = await ShredScopeAsync(database, token).ConfigureAwait(false);
@@ -426,7 +420,6 @@ internal sealed class DatabaseBackupPurge(
             }
         }
 
-        /// <summary>Whether this cause is new for the erasure's step (its inventory or one destination): worth one log line.</summary>
         public bool Report(string database, string slot, string cause)
         {
             if (_reported.TryGetValue((database, slot), out var last) && last == cause)

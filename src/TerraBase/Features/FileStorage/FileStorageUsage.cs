@@ -5,10 +5,8 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.FileStorage;
 
-/// <summary>Logical file bytes including unexpired upload reservations; replicas add no bytes.</summary>
 public interface IFileStorageUsage
 {
-    /// <summary>Reads bounded logical accounting for an organization or project.</summary>
     ValueTask<long> BytesAsync(string organization, string? project, CancellationToken cancellationToken);
 }
 

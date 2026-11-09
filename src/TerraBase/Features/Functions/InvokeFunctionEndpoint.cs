@@ -9,12 +9,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>Runs a function over HTTPS.</summary>
 internal sealed class InvokeFunctionEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
     private const int MaxBodyBytes = 1024 * 1024;
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(FunctionRoute.Item + "/invoke");
@@ -34,7 +32,6 @@ internal sealed class InvokeFunctionEndpoint(IManagementService management, IFun
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (HttpContext.Request.ContentLength > MaxBodyBytes)

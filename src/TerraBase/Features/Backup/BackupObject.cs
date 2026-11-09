@@ -6,18 +6,13 @@ using NativeCompressions;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>
-/// The stored form of every backup object, format 1 (<c>docs/backup.md</c>): a header, then chunks of at most 1 MiB, each
-/// LZ4-compressed when that is smaller and sealed with AES-256-GCM.
-/// </summary>
-/// <remarks>
-/// Header (62 bytes): magic <c>TBK1</c>, the 26-character id of the database data key, a random 32-byte salt. Each object
-/// gets its own AES key, HKDF-SHA256 of the data key with the salt and, as info, the object's bucket key, so an object
-/// moved to another key does not decrypt. Chunk <c>i</c>: a big-endian word with the plain length (low 30 bits), bit 30
-/// set when LZ4-compressed and bit 31 on the last chunk; a big-endian word with the stored length; the ciphertext and its
-/// 16-byte tag. The nonce is <c>i</c> (8 bytes, big-endian) after four zero bytes; the associated data is the header,
-/// <c>i</c> and both words, so chunks cannot be reordered, dropped or cut off. An empty object is one empty last chunk.
-/// </remarks>
+// The stored form of every backup object, format 1 (docs/backup.md), a persisted contract: header (62 bytes) of magic
+// TBK1, the 26-character data-key id and a random 32-byte salt; then chunks of at most 1 MiB, each LZ4-compressed when
+// smaller and sealed with AES-256-GCM. Each object gets its own AES key, HKDF-SHA256 of the data key with the salt and,
+// as info, the object's bucket key, so an object moved to another key does not decrypt. Chunk i: big-endian words with
+// the plain length (low 30 bits), bit 30 when compressed and bit 31 on the last chunk, and the stored length; then the
+// ciphertext and its 16-byte tag. The nonce is i (8 bytes, big-endian) after four zero bytes; the associated data is
+// the header, i and both words, so chunks cannot be reordered, dropped or cut off. An empty object is one empty last chunk.
 internal static class BackupObject
 {
     private const int KeyIdBytes = 26;
@@ -33,7 +28,6 @@ internal static class BackupObject
 
     private static ReadOnlySpan<byte> Magic => "TBK1"u8;
 
-    /// <summary>Seals <paramref name="plain"/> into <paramref name="output"/> as the object <paramref name="objectKey"/>.</summary>
     public static async Task WriteAsync(Stream plain, Stream output, string objectKey, string keyId, byte[] dataKey, CancellationToken cancellationToken)
     {
         if (keyId.Length != KeyIdBytes || !Ascii.IsValid(keyId))
@@ -79,11 +73,6 @@ internal static class BackupObject
         }
     }
 
-    /// <summary>
-    /// Opens the object <paramref name="objectKey"/> from <paramref name="sealedObject"/> into <paramref name="output"/>;
-    /// <paramref name="dataKey"/> returns the data key with an id.
-    /// </summary>
-    /// <exception cref="InvalidDataException">The object is not format 1, truncated, or fails authentication.</exception>
     public static async Task ReadAsync(
         Stream sealedObject, Stream output, string objectKey, Func<string, Task<byte[]>> dataKey, CancellationToken cancellationToken)
     {

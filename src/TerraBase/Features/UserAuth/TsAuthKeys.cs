@@ -8,28 +8,16 @@ using ZLogger;
 
 namespace TerraBase.Features.UserAuth;
 
-/// <summary>
-/// ts-auth's signing keys, read through OIDC discovery (<c>{auth-issuer}/.well-known/openid-configuration</c>, then its
-/// <c>jwks_uri</c>) and cached in memory. Each fetch has one <see cref="FetchTimeout"/> deadline for both responses and stops
-/// at shutdown. The first fetch starts with the host without delaying it; a background loop then retries every
-/// <see cref="StartupRetry"/> until one succeeds, and refreshes every <see cref="RefreshInterval"/>. A failed fetch keeps the
-/// cached keys. Requests never fetch, except through <see cref="RefreshAsync"/> (an unknown key id); before the first keys
-/// load they join a running fetch (<see cref="JoinAsync"/>).
-/// </summary>
 internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
 {
-    /// <summary>Name of the <see cref="HttpClient"/> that reaches ts-auth.</summary>
     public const string HttpClientName = "ts-auth";
 
-    /// <summary>Largest discovery or JWKS response read; a larger one fails the fetch.</summary>
     public const int MaxResponseBytes = 1024 * 1024;
 
-    /// <summary>Deadline of one fetch, discovery and JWKS together.</summary>
     public static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan StartupRetry = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(10);
 
-    /// <summary>Least time between two refreshes caused by an unknown key id.</summary>
     public static readonly TimeSpan UnknownKeyInterval = TimeSpan.FromSeconds(30);
 
     private readonly IHttpClientFactory _http;
@@ -58,10 +46,8 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
             .CreateCounter<long>("terrabase.auth.key_fetches", "{fetch}", "ts-auth signing key fetches, by outcome (success or failure).");
     }
 
-    /// <inheritdoc />
     public IReadOnlyList<SecurityKey>? Keys => Volatile.Read(ref _keys);
 
-    /// <inheritdoc />
     public async ValueTask<RefreshIssuerKeysResult> RefreshAsync(CancellationToken cancellationToken)
     {
         Task<IReadOnlyList<SecurityKey>?> fetch;
@@ -87,7 +73,6 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         return keys is not null ? keys : new Unavailable("ts-auth signing keys are not loaded");
     }
 
-    /// <inheritdoc />
     public async ValueTask<IReadOnlyList<SecurityKey>?> JoinAsync(CancellationToken cancellationToken)
     {
         Task<IReadOnlyList<SecurityKey>?>? fetch;

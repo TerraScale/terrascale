@@ -160,7 +160,6 @@ internal static class UserAuthExtensions
         return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "auth_unavailable", KeyAuthorityMessages.Unavailable, op: null);
     }
 
-    /// <summary>RFC 6750 §3: every 401 on the public listener carries a Bearer challenge, so clients can tell how to authenticate.</summary>
     public static WebApplication UseTerraBaseBearerChallenge(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);

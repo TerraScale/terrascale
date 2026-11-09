@@ -8,17 +8,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>
-/// Per-database data keys (envelope encryption): generated and wrapped by the master key, stored wrapped in the bucket,
-/// kept in the clear only in memory. A database uses its newest unexpired key; objects name the key that sealed them.
-/// Deleting a database destroys its wrapped keys and leaves a deletion record; its scope then refuses every key.
-/// </summary>
-/// <remarks>
-/// Two members rotating a project's key at once both succeed; each object names its own persisted key. Current keys
-/// refresh at most once a minute and are cached for at most 65536 scopes. Another 65536 unwrapped keys are cached for
-/// restores (at most 4 MiB of key material in both caches), including concurrent downloads using the same key.
-/// Entries expire after a day without access; a cache miss retrieves the retained wrapped key.
-/// </remarks>
 internal sealed class DataKeys : IDisposable
 {
     private readonly IObjectStore _store;
@@ -105,7 +94,6 @@ internal sealed class DataKeys : IDisposable
         }
     }
 
-    /// <summary>The data key new objects of <paramref name="scope"/> are sealed with.</summary>
     public async Task<(string Id, byte[] Key)> CurrentAsync(string scope, CancellationToken cancellationToken)
     {
         if (Current(scope) is { } cached)
@@ -214,8 +202,6 @@ internal sealed class DataKeys : IDisposable
         }
     }
 
-    /// <summary>The data key <paramref name="id"/> of <paramref name="scope"/>.</summary>
-    /// <exception cref="InvalidDataException">The bucket holds no such key.</exception>
     public Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken) =>
         ReadKeyAsync(scope, id, cancellationToken);
 
@@ -319,10 +305,6 @@ internal sealed class DataKeys : IDisposable
         }
     }
 
-    /// <summary>
-    /// Drops this member's cached keys of a shredded <paramref name="scope"/>. Arrays already handed to running operations
-    /// are not zeroed: they may still be sealing, and what they seal is unreadable once the wrapped keys are gone.
-    /// </summary>
     public void Forget(string scope)
     {
         lock (_cacheAdmission)

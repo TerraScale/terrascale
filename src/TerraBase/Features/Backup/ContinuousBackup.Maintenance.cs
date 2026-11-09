@@ -9,29 +9,12 @@ using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>A restore drill: the file rebuilt from the bucket compared with the live file at the same frame position.</summary>
-/// <param name="At">When it ran.</param>
-/// <param name="Passed">Whether the rebuilt file's checksum equals the live file's.</param>
-/// <param name="RestoreSeconds">Seconds the download, roll-forward and integrity check took.</param>
-/// <param name="Error">Why it failed; null when it passed.</param>
 public sealed record BackupDrill(DateTimeOffset At, bool Passed, double RestoreSeconds, string? Error);
 
-/// <summary>A file's backup as stored in TerraBase's own catalog, refreshed hourly and after each drill.</summary>
-/// <param name="File">The file's directory in the bucket.</param>
-/// <param name="Member">The member that ships it.</param>
-/// <param name="Generation">The generation being shipped.</param>
-/// <param name="LastShippedAt">When the newest data in the bucket was read.</param>
-/// <param name="LagSeconds">Seconds the oldest data not yet in the bucket has waited.</param>
-/// <param name="SizeBytes">Bytes the file's backup occupies in the bucket, measured daily.</param>
-/// <param name="SizedAt">When <paramref name="SizeBytes"/> was measured.</param>
-/// <param name="RetentionDays">The retention of the database's plan.</param>
-/// <param name="LastDrill">The last restore drill.</param>
-/// <param name="UpdatedAt">When this record was written.</param>
 public sealed record BackupStatusRecord(
     string File, string Member, string? Generation, DateTimeOffset? LastShippedAt, double LagSeconds, long? SizeBytes, DateTimeOffset? SizedAt,
     int RetentionDays, BackupDrill? LastDrill, DateTimeOffset UpdatedAt);
 
-/// <summary>Retention by plan, daily restore drills and the backup record of each shipped file.</summary>
 internal sealed partial class ContinuousBackup
 {
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
@@ -44,7 +27,6 @@ internal sealed partial class ContinuousBackup
     // Kept past the window, so a restore that picked a snapshot just inside it finishes before retention deletes it.
     private static readonly TimeSpan RetentionGrace = TimeSpan.FromHours(1);
 
-    /// <summary>The kind of a database's backup record in the system catalog, deleted with the database's state.</summary>
     internal static (string Kind, string Id) RecordKey(TenantContext? database) =>
         database is null ? ("backup_status", "_system") : ($"databases/{database.DatabaseId}/backup_status", "current");
 

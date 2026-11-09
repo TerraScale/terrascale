@@ -77,7 +77,6 @@ internal static class CustomerBackupNetwork
     }
 }
 
-/// <summary>Resolves the customer host once for each new connection.</summary>
 internal interface ICustomerBackupDns
 {
     Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken);
@@ -88,7 +87,6 @@ internal sealed class CustomerBackupDns : ICustomerBackupDns
     public Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken) => Dns.GetHostAddressesAsync(host, cancellationToken);
 }
 
-/// <summary>Connects only to the addresses already checked by the customer handler, without resolving again.</summary>
 internal interface ICustomerBackupConnector
 {
     ValueTask<Stream> ConnectAsync(IPAddress[] addresses, int port, CancellationToken cancellationToken);

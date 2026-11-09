@@ -11,20 +11,13 @@ using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.ApiKeys;
 
-/// <summary>
-/// Keeps keys as records in the system database (<see cref="IStorageEngine.OpenSystemDatabaseAsync"/>), keyed by ULID
-/// with a SHA-256 secret lookup. Secrets are 256 random bits, so an unsalted hash is sufficient.
-/// Project-scoped operator keys also have a hash entry in <see cref="ProjectKeys"/> so project closure can revoke them.
-/// </summary>
 internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time) : IApiKeyStore
 {
     private const string Kind = "api_keys";
     private const string Hashes = "api_key_hashes";
 
-    /// <summary>Every API key secret starts with this; other bearer tokens (ts-auth access tokens) are not API keys.</summary>
     internal const string SecretPrefix = "tb_";
 
-    /// <summary>The project-scoped operator keys to revoke during project closure, keyed by key id.</summary>
     public static string ProjectKeys(string projectId) => ProjectState(projectId) + "api_keys";
 
     public async ValueTask<CreateApiKeyResult> CreateAsync(
@@ -138,6 +131,4 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
     private static string Hash(string secret) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
 }
 
-/// <summary>A project-scoped key's closure entry: the secret hash to delete with it.</summary>
-/// <param name="Hash">The SHA-256 of the key's secret.</param>
 internal sealed record ProjectKeyEntry(string Hash);

@@ -4,10 +4,8 @@ using TerraBase.Features.UserAuth;
 
 namespace TerraBase.Features.ApiKeys;
 
-/// <summary>Registers API-key authentication and one authorization policy per scope.</summary>
 public static class ApiKeysExtensions
 {
-    /// <summary>Registers <see cref="IApiKeyStore"/>, the <c>ApiKey</c> scheme and the scope policies.</summary>
     public static IServiceCollection AddTerraBaseApiKeys(this IServiceCollection services)
     {
         services.AddSingleton<IApiKeyStore, EngineApiKeyStore>();

@@ -5,10 +5,6 @@ using Microsoft.Extensions.Options;
 
 namespace TerraBase.Features.ApiKeys;
 
-/// <summary>
-/// Authenticates <c>Authorization: Bearer &lt;api key&gt;</c>, emits one <c>scope</c> claim per granted scope and keeps the
-/// <see cref="ApiKey"/> on the request (<see cref="ApiKey.Of"/>), whose organization is the request's tenant.
-/// </summary>
 internal sealed class ApiKeyAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,
@@ -38,7 +34,6 @@ internal sealed class ApiKeyAuthenticationHandler(
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
-    /// <summary>The API key secret <paramref name="request"/> presents as its bearer token, or null.</summary>
     internal static string? Secret(HttpRequest request)
     {
         // The scheme name is case-insensitive (RFC 9110); the secret is not.

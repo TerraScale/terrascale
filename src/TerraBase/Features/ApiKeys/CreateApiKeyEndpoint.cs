@@ -4,32 +4,12 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.ApiKeys;
 
-/// <summary>A key to issue.</summary>
-/// <param name="Name">Operator-chosen label, 1 to 100 characters.</param>
-/// <param name="Scopes">Scopes to grant; see <see cref="ApiKeyScopes"/>.</param>
-/// <param name="OrganizationId">The organization (tenant) the key acts for.</param>
-/// <param name="ProjectId">Narrows the key to one project of the organization.</param>
-/// <param name="DatabaseId">Narrows the key to one database of <paramref name="ProjectId"/>, which it then requires.</param>
-/// <param name="ExpiresAt">When the key stops authenticating, at most 366 days away; none lasts until revoked.</param>
 public sealed record CreateApiKeyRequest(
     string Name, IReadOnlyList<string> Scopes, string? OrganizationId = null, string? ProjectId = null, string? DatabaseId = null, DateTimeOffset? ExpiresAt = null);
 
-/// <summary>An issued key. <paramref name="Secret"/> is shown only in this response.</summary>
-/// <param name="Id">Public identifier.</param>
-/// <param name="Name">Label.</param>
-/// <param name="Scopes">Granted scopes.</param>
-/// <param name="OrganizationId">The organization the key acts for.</param>
-/// <param name="ProjectId">The only project it reaches, if narrowed.</param>
-/// <param name="DatabaseId">The only database it reaches, if narrowed.</param>
-/// <param name="Secret">The bearer secret for <c>Authorization: Bearer</c>.</param>
-/// <param name="ExpiresAt">When the key stops authenticating, if it expires.</param>
 public sealed record CreatedApiKeyBody(
     string Id, string Name, IReadOnlyList<string> Scopes, string OrganizationId, string? ProjectId, string? DatabaseId, string Secret, DateTimeOffset? ExpiresAt = null);
 
-/// <summary>
-/// <c>POST /admin/api-keys</c>: issues a scoped client API key for one organization. Served only on the internal
-/// administrative listener, so it trusts the local operator.
-/// </summary>
 public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time) : Endpoint<CreateApiKeyRequest, IResult>
 {
     private const int MaxNameLength = 100;
@@ -37,7 +17,6 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time) :
     // A key with an expiry lives at most a year; rotate by issuing a new one and revoking the old one.
     private static readonly TimeSpan MaxLifetime = TimeSpan.FromDays(366);
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/admin/api-keys");
@@ -51,7 +30,6 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time) :
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CreateApiKeyRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);

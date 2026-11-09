@@ -3,7 +3,6 @@ using TerraBase.Engine.Turso;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>The authenticated backup payload carries both the wrapped database key and its encrypted pages.</summary>
 internal static class SnapshotBundle
 {
     private static ReadOnlySpan<byte> Magic => "TERRABASE-SNAPSHOT-1\n"u8;

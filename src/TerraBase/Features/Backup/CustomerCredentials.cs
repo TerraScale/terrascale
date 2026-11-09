@@ -4,15 +4,11 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>A customer bucket's key pair, sealed for the catalog: <see cref="WrappedKey"/> is its data key wrapped by the master key.</summary>
-/// <param name="WrappedKey">The data key, wrapped by the master key.</param>
-/// <param name="Ciphertext">base64(nonce | ciphertext | tag) of the key pair, sealed with the data key.</param>
+// Ciphertext is base64(nonce | ciphertext | tag) of the key pair, sealed with the data key wrapped by WrappedKey.
 public sealed record SealedCredentials(string WrappedKey, string Ciphertext);
 
-/// <summary>The JSON form of a customer key pair, only ever sealed.</summary>
 internal sealed record CustomerKeyPair(string AccessKeyId, string SecretKey);
 
-/// <summary>Seals and opens a customer key pair with AES-256-GCM under a per-record data key (envelope encryption).</summary>
 internal static class CustomerCredentials
 {
     private const int NonceBytes = 12;
