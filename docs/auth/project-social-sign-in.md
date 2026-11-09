@@ -52,10 +52,17 @@ A project's sign-in and sign-up pages show "Continue with …" for each configur
 3. Sign-in matches a previously linked provider identity (provider, issuer, client ID and subject); accounts are never linked by
    verified email. A provider identity that is already linked signs that account in. A new identity whose email is new to the project
    creates an account when the project allows sign-up. A new identity whose email already belongs to an email/password account is
-   refused with 401 and no session. Such a user keeps signing in with email and password; linking a social provider to an
-   existing project account is not available yet.
+   refused with 401 and no session; the page tells the user to sign in with their password, then connect the provider from the
+   security page.
    A user with MFA continues to the hosted second-factor step. A disabled user, an unverified email or any provider failure answers
    401 with no session. Success sets the project's session cookie and continues to `next` like the other hosted methods.
+
+A signed-in user connects a provider on the hosted security page (`/ui/{project}/security`): the connect is a
+same-origin form post from a session opened in the last 10 minutes, the authorization carries a state sealed to that
+account, that session and its authentication state for 10 minutes, and the callback binds the identity to that one
+account — never by email, never to another account, and not when any account in the project already owns the
+identity (the page says the provider account is already connected). Disconnecting a provider on the same page
+releases its identities and revokes every prior session and token.
 
 Both pages share the hosted per-IP budget. The outbound client times out after 10 seconds and connects only to
 public unicast addresses, so a configured OIDC issuer cannot reach loopback, private, link-local or mesh addresses.

@@ -91,7 +91,8 @@ The hosted sign-in and sign-up pages show a **Continue with Google**, **Continue
 An end user signs in only with a provider that confirms a verified email address:
 
 - Sign-in matches a previously linked provider identity (provider, issuer, client ID and subject); accounts are never linked by email.
-- A new identity whose email is new to the project creates an account only if the project allows sign-up. An identity whose email already belongs to an email/password account is refused; that user keeps signing in with email and password, because linking a social provider to an existing project account is not available yet.
+- A new identity whose email is new to the project creates an account only if the project allows sign-up. An identity whose email already belongs to an email/password account is refused; that user signs in with their password once, then connects the provider from the security page.
+- A signed-in user connects a configured provider, or disconnects one, on the account security page. Connecting needs a sign-in from the last 10 minutes, and a provider account already connected to any account in the project is refused.
 - Disabled users cannot sign in this way. Users with MFA continue to the hosted second-factor step.
 
 ### Manage providers through the API

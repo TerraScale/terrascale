@@ -31,7 +31,9 @@ public sealed record SocialIdentity(string Email, string Issuer, string Subject,
 /// <param name="Next">The validated page to resume.</param>
 /// <param name="ExpiresAt">Unix seconds after which the callback is refused.</param>
 /// <param name="ConfigurationHash">The provider configuration and sealed credential generation at start.</param>
-public sealed record SocialState(string Provider, string State, string Nonce, string Verifier, string? Next, long ExpiresAt, string ConfigurationHash);
+public sealed record SocialState(string Provider, string State, string Nonce, string Verifier, string? Next, long ExpiresAt, string ConfigurationHash, SocialLink? Link = null);
+
+public sealed record SocialLink(string UserId, string SessionHash, string? AuthStamp, long AuthEpoch);
 
 /// <summary>
 /// A project's end users sign in with the project's own OAuth client at Google, GitHub, Apple or an OpenID Connect
@@ -61,10 +63,10 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
     public static string Cookie(string tenant) => "tsauth_social_" + tenant;
 
     /// <summary>Starts a sign-in: the provider's authorization URL and the sealed state for the cookie.</summary>
-    public async Task<(Uri Location, string Sealed)> StartAsync(string tenant, SocialProviderRecord provider, string? next, CancellationToken cancellationToken)
+    public async Task<(Uri Location, string Sealed)> StartAsync(string tenant, SocialProviderRecord provider, string? next, CancellationToken cancellationToken, SocialLink? link = null)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        var state = new SocialState(provider.Provider, Tokens.RandomToken(32), Tokens.RandomToken(32), Tokens.RandomToken(43), next, (clock.GetUtcNow() + Lifetime).ToUnixTimeSeconds(), ConfigurationHash(provider));
+        var state = new SocialState(provider.Provider, Tokens.RandomToken(32), Tokens.RandomToken(32), Tokens.RandomToken(43), next, (clock.GetUtcNow() + Lifetime).ToUnixTimeSeconds(), ConfigurationHash(provider), link);
         var query = new Dictionary<string, string>
         {
             ["response_type"] = "code",
@@ -288,6 +290,7 @@ public sealed class SocialSignIn(IHttpClientFactory clients, AuthOptions options
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(SocialState))]
+[JsonSerializable(typeof(SocialLink))]
 [JsonSerializable(typeof(SocialProviderRecord))]
 [JsonSerializable(typeof(SocialIdentity))]
 internal sealed partial class SocialJson : JsonSerializerContext;
