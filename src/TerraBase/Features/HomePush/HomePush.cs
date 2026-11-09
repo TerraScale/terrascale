@@ -540,7 +540,7 @@ internal sealed class HomePush(
     private async Task ConsumeAsync(NatsJSContext js, NatsConnection nats, string origin, CancellationToken cancellationToken)
     {
         var reset = true;
-        var backoff = TimeSpan.FromMilliseconds(200);
+        var backoff = new Backoff(TimeSpan.FromMilliseconds(200), MaxBackoff);
         while (!cancellationToken.IsCancellationRequested)
         {
             if (!RegionWriter)
@@ -566,7 +566,7 @@ internal sealed class HomePush(
                     reset = false;
                 }
 
-                backoff = TimeSpan.FromMilliseconds(200);
+                backoff.Reset();
                 await foreach (var message in consumer.ConsumeAsync<byte[]>(opts: new NatsJSConsumeOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken)
                     .ConfigureAwait(false))
                 {
@@ -582,8 +582,7 @@ internal sealed class HomePush(
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger.ZLogInformation($"The push from {origin} is not consumed yet: {error.GetType().Name:@Error}");
-                await Task.Delay(backoff, time, cancellationToken).ConfigureAwait(false);
-                backoff = TimeSpan.FromTicks(Math.Min(MaxBackoff.Ticks, backoff.Ticks * 2));
+                await Task.Delay(backoff.Next(), time, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -666,7 +665,7 @@ internal sealed class HomePush(
             return;
         }
 
-        var backoff = TimeSpan.FromMilliseconds(100);
+        var backoff = new Backoff(TimeSpan.FromMilliseconds(100), MaxBackoff);
         HomeApplyResult result;
         while (true)
         {
@@ -708,10 +707,10 @@ internal sealed class HomePush(
 
             _applies?.Add(1, new KeyValuePair<string, object?>("state", "unavailable"));
             _applyRetries?.Add(1, new KeyValuePair<string, object?>("reason", reason));
-            logger.ZLogWarning($"A home push apply retries after {backoff.TotalMilliseconds} ms: {reason}");
+            var delay = backoff.Next();
+            logger.ZLogWarning($"A home push apply retries after {delay.TotalMilliseconds} ms: {reason}");
             await message.AckProgressAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-            await Task.Delay(backoff, time, cancellationToken).ConfigureAwait(false);
-            backoff = TimeSpan.FromTicks(Math.Min(MaxBackoff.Ticks, backoff.Ticks * 2));
+            await Task.Delay(delay, time, cancellationToken).ConfigureAwait(false);
         }
 
         await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
@@ -744,7 +743,7 @@ internal sealed class HomePush(
 
     private async Task RetryAsync(Func<CancellationToken, Task> step, string failure, CancellationToken cancellationToken)
     {
-        var backoff = TimeSpan.FromMilliseconds(200);
+        var backoff = new Backoff(TimeSpan.FromMilliseconds(200), MaxBackoff);
         while (true)
         {
             try
@@ -755,8 +754,7 @@ internal sealed class HomePush(
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger.ZLogWarning($"{failure}: {error.GetType().Name:@Error}");
-                await Task.Delay(backoff, time, cancellationToken).ConfigureAwait(false);
-                backoff = TimeSpan.FromTicks(Math.Min(MaxBackoff.Ticks, backoff.Ticks * 2));
+                await Task.Delay(backoff.Next(), time, cancellationToken).ConfigureAwait(false);
             }
         }
     }

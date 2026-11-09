@@ -1011,7 +1011,7 @@ internal sealed class RegionReplication(
 
         private async Task<bool> RetryAsync(Func<Task<bool>> attempt, string what, CancellationToken cancellationToken)
         {
-            var backoff = TimeSpan.FromMilliseconds(50);
+            var backoff = new Backoff(TimeSpan.FromMilliseconds(50), MaxBackoff);
             for (var failures = 1; ; failures++)
             {
                 try
@@ -1027,8 +1027,7 @@ internal sealed class RegionReplication(
                         _ = _owner._catalogWakes.Writer.TryWrite(_home.Region);
                     }
 
-                    await Task.Delay(backoff, _owner.Time, cancellationToken).ConfigureAwait(false);
-                    backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
+                    await Task.Delay(backoff.Next(), _owner.Time, cancellationToken).ConfigureAwait(false);
                 }
             }
         }

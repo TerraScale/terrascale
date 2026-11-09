@@ -390,7 +390,7 @@ internal sealed class HomeMoves(
 
     private async Task DrainAsync(TenantContext database, long fence)
     {
-        var backoff = TimeSpan.FromMilliseconds(200);
+        var backoff = new Backoff(TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(5));
         for (var attempt = 0; attempt < 60; attempt++)
         {
             try
@@ -402,8 +402,7 @@ internal sealed class HomeMoves(
             catch (Exception error) when (error is not OperationCanceledException)
             {
                 logger.ZLogWarning($"Pushes addressed to the former home wait to be applied: {error.GetType().Name:@Error}");
-                await Task.Delay(backoff, time).ConfigureAwait(false);
-                backoff = TimeSpan.FromTicks(Math.Min(TimeSpan.FromSeconds(5).Ticks, backoff.Ticks * 2));
+                await Task.Delay(backoff.Next(), time).ConfigureAwait(false);
             }
         }
 
