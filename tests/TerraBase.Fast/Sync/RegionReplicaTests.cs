@@ -238,7 +238,7 @@ public sealed class RegionReplicaTests
                 await using var reader = (await replicas.BeginReadAsync(database, token))!;
                 var refused = await Assert.That(async () => await reader.ExecuteAsync(Statement("INSERT INTO extra(k, w) VALUES (8, 'eight')"), token))
                     .Throws<SqlStatementException>();
-                await Assert.That(refused!.Failure).IsEqualTo(SqlFailure.ReadOnly);
+                await Assert.That(refused!.Failure).IsEqualTo<SqlFailure>(new ReadOnly());
                 await Assert.That(await LeakingAsync(directory, marker, token)).IsEmpty();
             }
 

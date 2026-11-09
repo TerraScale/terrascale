@@ -9,6 +9,8 @@ using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
 
+using TerraBase.Features.Sql;
+
 namespace TerraBase.Features.HomeApply;
 
 internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHomeWriteLease leases, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger)
@@ -375,13 +377,13 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
 
     private static string? Rejects(SqlStatementException error) => error.Failure switch
     {
-        SqlFailure.Unique => "unique",
-        SqlFailure.PrimaryKey => "primary_key",
-        SqlFailure.NotNull => "not_null",
-        SqlFailure.Check => "check",
-        SqlFailure.ForeignKey => "foreign_key",
-        SqlFailure.Constraint or SqlFailure.Error or SqlFailure.TooBig => "constraint",
-        SqlFailure.NoSuchTable or SqlFailure.NoSuchColumn or SqlFailure.Syntax => "schema",
-        _ => null,
+        Unique => "unique",
+        PrimaryKey => "primary_key",
+        NotNull => "not_null",
+        Check => "check",
+        ForeignKeyFailure => "foreign_key",
+        Constraint or Error or TooBig => "constraint",
+        NoSuchTable or NoSuchColumn or Syntax => "schema",
+        AlreadyExists or Busy or Interrupted or ReadOnly => null,
     };
 }
