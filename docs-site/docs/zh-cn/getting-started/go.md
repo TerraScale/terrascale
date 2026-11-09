@@ -155,5 +155,6 @@ refused: primary_key_violation statement 0 sqlstate "23505"
 - [SDK reference](/zh-cn/guides/sdks) — the five SDKs and their install commands
 - [JavaScript](/zh-cn/getting-started/javascript), [C#](/zh-cn/getting-started/csharp) and [Python](/zh-cn/getting-started/python) quickstarts
 - [SQL over HTTP](/zh-cn/guides/sql-http) for the raw HTTP interface and [concepts](/zh-cn/concepts/sql) for the SQL dialect
+- [Use GORM, sqlc and bun with Go](/zh-cn/guides/orm-go) for ORMs and typed SQL over the SDK's `database/sql` driver
 
 </div>
