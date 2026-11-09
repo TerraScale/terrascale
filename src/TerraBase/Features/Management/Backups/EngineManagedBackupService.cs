@@ -32,12 +32,6 @@ internal sealed partial class EngineManagedBackupService(
     private const string CurrentPolicy = "current";
     private const string LastSchedule = "last";
     private const string BackupSequence = "backup_sequence";
-    private const int MaxDatabaseNameLength = 63;
-    private const int MaxRestoreNameAttempts = 100;
-
-    private static readonly TimeSpan RestoreLeaseExpiry = TimeSpan.FromHours(1);
-
-    private static readonly TimeSpan RestoreLeaseHeartbeat = TimeSpan.FromMinutes(5);
 
     private const int MaxScheduledBackupsPerPass = 16;
 
@@ -51,9 +45,6 @@ internal sealed partial class EngineManagedBackupService(
 
     private string? _sweepCursor;
 
-    private readonly ConcurrentDictionary<string, byte> _runningRestores = new();
-
-    private readonly DateTimeOffset _startedAt = time.GetUtcNow();
 
     public static BackupPolicy DefaultPolicy { get; } = new("0 2 * * *", 7, null);
 
