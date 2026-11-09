@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
@@ -52,43 +54,55 @@ public sealed record TerraBaseSqlStatementResult(IReadOnlyList<TerraBaseSqlColum
 /// </summary>
 public sealed class TerraBaseSqlRecord
 {
-    private readonly JsonElement values;
+    private readonly TerraBaseSqlCell[] cells;
+    private readonly int offset;
     private readonly IReadOnlyDictionary<string, int> ordinals;
 
-    internal TerraBaseSqlRecord(IReadOnlyList<TerraBaseSqlColumn> columns, IReadOnlyDictionary<string, int> ordinals, JsonElement values)
+    internal TerraBaseSqlRecord(IReadOnlyList<TerraBaseSqlColumn> columns, IReadOnlyDictionary<string, int> ordinals, TerraBaseSqlCell[] cells, int offset)
     {
         Columns = columns;
         this.ordinals = ordinals;
-        this.values = values;
+        this.cells = cells;
+        this.offset = offset;
     }
 
     /// <summary>The result's columns.</summary>
     public IReadOnlyList<TerraBaseSqlColumn> Columns { get; }
 
     /// <summary>The raw value at <paramref name="ordinal"/>.</summary>
-    public JsonElement this[int ordinal] => ordinal >= 0 && ordinal < Columns.Count ? values[ordinal] : throw new ArgumentOutOfRangeException(nameof(ordinal));
+    public JsonElement this[int ordinal] => Element(Cell(ordinal));
 
     /// <summary>The raw value of the first column named <paramref name="name"/>.</summary>
-    public JsonElement this[string name] => values[GetOrdinal(name)];
+    public JsonElement this[string name] => this[GetOrdinal(name)];
 
     /// <summary>The ordinal of the first column named <paramref name="name"/> (case-sensitive).</summary>
     public int GetOrdinal(string name) =>
         ordinals.TryGetValue(name, out var ordinal) ? ordinal : throw new ArgumentException($"The result has no column '{name}'.", nameof(name));
 
     /// <summary>Whether the value is SQL NULL.</summary>
-    public bool IsNull(int ordinal) => this[ordinal].ValueKind == JsonValueKind.Null;
+    public bool IsNull(int ordinal) => Cell(ordinal).Kind == JsonValueKind.Null;
 
     /// <inheritdoc cref="IsNull(int)"/>
     public bool IsNull(string name) => IsNull(GetOrdinal(name));
 
     /// <summary>The value as an integer; throws <see cref="InvalidOperationException"/> or <see cref="FormatException"/> for other values.</summary>
-    public long GetInt64(int ordinal) => this[ordinal].GetInt64();
+    public long GetInt64(int ordinal) => Cell(ordinal) switch
+    {
+        { IsInteger: true } cell => cell.Integer,
+        { RealText: not null } => throw new FormatException($"Column {ordinal} is not an integer."),
+        _ => throw new InvalidOperationException($"Column {ordinal} is not a number."),
+    };
 
     /// <inheritdoc cref="GetInt64(int)"/>
     public long GetInt64(string name) => GetInt64(GetOrdinal(name));
 
     /// <summary>The value as a double; throws <see cref="InvalidOperationException"/> for non-numbers.</summary>
-    public double GetDouble(int ordinal) => this[ordinal].GetDouble();
+    public double GetDouble(int ordinal) => Cell(ordinal) switch
+    {
+        { IsInteger: true } cell => cell.Integer,
+        { RealText: { } real } => double.Parse(real, NumberStyles.Float, CultureInfo.InvariantCulture),
+        _ => throw new InvalidOperationException($"Column {ordinal} is not a number."),
+    };
 
     /// <inheritdoc cref="GetDouble(int)"/>
     public double GetDouble(string name) => GetDouble(GetOrdinal(name));
@@ -101,20 +115,20 @@ public sealed class TerraBaseSqlRecord
 
     /// <summary>The value as text; throws <see cref="InvalidOperationException"/> for numbers, blobs and NULL.</summary>
     public string GetString(int ordinal) =>
-        this[ordinal] is { ValueKind: JsonValueKind.String } text ? text.GetString()! : throw new InvalidOperationException($"Column {ordinal} is not text.");
+        Cell(ordinal) is { Text: { } text } ? text : throw new InvalidOperationException($"Column {ordinal} is not text.");
 
     /// <inheritdoc cref="GetString(int)"/>
     public string GetString(string name) => GetString(GetOrdinal(name));
 
     /// <summary>The value as a blob; throws <see cref="InvalidOperationException"/> for other values.</summary>
     public byte[] GetBytes(int ordinal) =>
-        this[ordinal] is { ValueKind: JsonValueKind.Object } blob ? blob.GetProperty("base64").GetBytesFromBase64() : throw new InvalidOperationException($"Column {ordinal} is not a blob.");
+        Cell(ordinal) is { Blob: { } blob } ? [.. blob] : throw new InvalidOperationException($"Column {ordinal} is not a blob.");
 
     /// <inheritdoc cref="GetBytes(int)"/>
     public byte[] GetBytes(string name) => GetBytes(GetOrdinal(name));
 
     /// <summary>The row as a column-name map; a repeated name keeps its first value.</summary>
-    public IReadOnlyDictionary<string, JsonElement> ToDictionary() => ordinals.ToDictionary(pair => pair.Key, pair => values[pair.Value], StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, JsonElement> ToDictionary() => ordinals.ToDictionary(pair => pair.Key, pair => this[pair.Value], StringComparer.Ordinal);
 
     /// <summary>
     /// Maps the row to <typeparamref name="T"/> through source-generated JSON metadata: the row becomes a JSON object
@@ -124,21 +138,34 @@ public sealed class TerraBaseSqlRecord
     public T As<T>(JsonTypeInfo<T> typeInfo)
     {
         ArgumentNullException.ThrowIfNull(typeInfo);
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer))
         {
             writer.WriteStartObject();
             foreach (var (name, ordinal) in ordinals)
             {
                 writer.WritePropertyName(name);
-                var value = values[ordinal];
-                if (value.ValueKind == JsonValueKind.Object) value.GetProperty("base64").WriteTo(writer);
-                else value.WriteTo(writer);
+                Cell(ordinal).WriteTo(writer, blobAsObject: false);
             }
 
             writer.WriteEndObject();
         }
 
         return JsonSerializer.Deserialize(buffer.WrittenSpan, typeInfo) ?? throw new JsonException("A row cannot map to null.");
+    }
+
+    internal TerraBaseSqlCell Cell(int ordinal) =>
+        ordinal >= 0 && ordinal < Columns.Count ? cells[offset + ordinal] : throw new ArgumentOutOfRangeException(nameof(ordinal));
+
+    private static JsonElement Element(TerraBaseSqlCell cell)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            cell.WriteTo(writer, blobAsObject: true);
+        }
+
+        var reader = new Utf8JsonReader(buffer.WrittenSpan);
+        return JsonElement.ParseValue(ref reader);
     }
 }

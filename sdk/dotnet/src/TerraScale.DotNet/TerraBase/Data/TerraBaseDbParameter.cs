@@ -26,13 +26,19 @@ public sealed class TerraBaseDbParameter : DbParameter
     {
         get => dbType ?? Value switch
         {
-            null => DbType.Object,
+            null or DBNull => DbType.Object,
             bool => DbType.Boolean,
-            byte or sbyte or short or ushort or int or uint or long => DbType.Int64,
-            float or double or decimal => DbType.Double,
-            string => DbType.String,
+            byte or sbyte or short or ushort or int or uint or long or ulong or Enum => DbType.Int64,
+            float or double => DbType.Double,
+            decimal => DbType.Decimal,
+            string or char => DbType.String,
             byte[] => DbType.Binary,
             DateTime => DbType.DateTime,
+            DateTimeOffset => DbType.DateTimeOffset,
+            DateOnly => DbType.Date,
+            TimeOnly or TimeSpan => DbType.Time,
+            Guid => DbType.Guid,
+            TerraBaseSqlValue => DbType.Object,
             _ => throw new NotSupportedException($"'{Value.GetType()}' is not a supported SQL argument type."),
         };
         set => dbType = value;

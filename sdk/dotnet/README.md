@@ -85,6 +85,19 @@ Session errors have a null `StatusCode`. A refused upgrade throws the usual `Ter
 transaction open at the drop rolled back, so every call but `RollbackAsync` throws `transaction_rolled_back` until the
 caller rolls back.
 
+## Entity Framework Core
+
+`TerraScale.EntityFrameworkCore` is the EF Core 10 provider for TerraBase:
+`options.UseTerraBase(database)` with a `TerraBaseSqlDatabase`, or `options.UseTerraBase(connectionString)`.
+`SaveChangesAsync` sends the change set as one atomic `/sql/execute` request, explicit transactions run over the SQL
+WebSocket session, and `MigrateAsync`/`EnsureCreatedAsync` work against TerraBase. Setup, options, transactions,
+migrations and limits: [Entity Framework Core provider](docs/entity-framework-core.md).
+
+The ADO.NET types behind it follow SQLite's ADO.NET conventions: a command may hold several statements, which run as
+one request (or inside the open transaction) and read back as one result set per statement that returns columns;
+`DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`, `Guid` and `decimal` arguments are sent as text and
+`GetFieldValue<T>` reads them back.
+
 ## Databases for agents
 
 `TerraBaseSqlClient` creates, forks and deletes databases, sets or clears their TTL, and mints database-scoped

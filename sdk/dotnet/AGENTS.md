@@ -6,6 +6,7 @@
 - Release workflow: `.github/workflows/sdk-dotnet-release.yml` at the repository root. Package identity remains `TerraScale.DotNet`.
 
 - SDK: `src/TerraScale.DotNet`; TUnit tests: `tests/TerraScale.DotNet.Tests`; contract fixtures: `contracts/`.
+- EF Core provider: `src/TerraScale.EntityFrameworkCore` (package `TerraScale.EntityFrameworkCore`); its integration tests `tests/TerraScale.EntityFrameworkCore.Tests` start the TerraBase built from the same commit (`TERRABASE_BINARY`, set by `make sdk-dotnet-test-fast`).
 - Keep related files and services together using feature-sliced design.
 - Use the SDK pinned in `global.json`; nullable types, analyzers and warnings as errors stay enabled.
 - Build: `dotnet build TerraScale.DotNet.slnx --configuration Release`.

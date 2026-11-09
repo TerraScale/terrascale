@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="5.6.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" VersionOverride="5.3.0" PrivateAssets="all" />
+    <ProjectReference Include="$(TsDotnetRoot)/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
+    <Compile Include="$(TsDotnetRoot)/tests/TerraScale.EntityFrameworkCore.Tests/AppDbContext.cs" Link="Model/AppDbContext.cs" />
+    <Compile Include="$(TsDotnetRoot)/tests/TerraScale.EntityFrameworkCore.Tests/TerraBaseServer.cs" Link="Model/TerraBaseServer.cs" />
+  </ItemGroup>
+</Project>
