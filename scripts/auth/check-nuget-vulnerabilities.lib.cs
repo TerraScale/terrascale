@@ -287,6 +287,7 @@ public static class CheckNugetVulnerabilities
         start.ArgumentList.Add("--include-transitive");
         start.ArgumentList.Add("--format");
         start.ArgumentList.Add("json");
+        start.ArgumentList.Add("--no-restore");
         using var process = Process.Start(start)!;
         // Drain both pipes at once: reading them one after the other deadlocks when the
         // child fills the unread pipe's buffer.

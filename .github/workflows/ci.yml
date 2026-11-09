@@ -343,15 +343,16 @@ jobs:
       - *setup-dotnet
       - *turso-native-cache
       - *locked-restore
-      - name: Install Auth browser dependencies
-        working-directory: terrascale
-        run: npx --yes playwright@1.63.0 install --with-deps chromium
       - name: Checked Auth build
         working-directory: terrascale
-        run: bash scripts/ci/auth-build.sh
+        run: |
+          npx --yes playwright@1.63.0 install --with-deps chromium >"$RUNNER_TEMP/playwright.log" 2>&1 &
+          playwright=$!
+          bash scripts/ci/auth-build.sh
+          wait "$playwright" || { cat "$RUNNER_TEMP/playwright.log"; exit 1; }
       - name: Auth Fast
         working-directory: terrascale
-        run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make -o restore auth-test-fast CONFIGURATION=Release
+        run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make -o restore -o auth-fast-build -o turso-native auth-test-fast CONFIGURATION=Release
 
   terrabase:
     needs: changes
@@ -586,6 +587,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     steps:
       - name: Every affected Fast area passed
         env:
@@ -596,12 +598,24 @@ jobs:
           for area in $(jq -r '.[]' <<< "$FAST_AREAS"); do
             [[ $(jq -r --arg area "$area" '.[$area].result' <<< "$RESULTS") == success ]] || exit 1
           done
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: terrascale
+          persist-credentials: false
+          ref: ${{ needs.changes.outputs.sha }}
+      - name: Fast job times
+        if: github.event_name == 'pull_request'
+        working-directory: terrascale
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/run-budget.py "$GITHUB_RUN_ID"
 
   budget:
     name: Fast timing budget
     needs: [changes, libs, auth, terrabase, test, main, main-auth, main-auth-ordered]
     if: >-
-      ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
+      ${{ !cancelled() && github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
       && (needs.changes.result != 'success' || needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
