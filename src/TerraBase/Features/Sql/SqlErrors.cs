@@ -97,6 +97,9 @@ internal static class SqlErrors
 
     public static SqlError Interrupt { get; } = new(QueryCanceled, "query too expensive: it exceeds the work budget");
 
+    public static SqlError Deadline { get; } = new(QueryCanceled,
+        $"the request exceeded its {(int)SqlLimits.MaxRequestTime.TotalSeconds} s time limit; split the batch or narrow the query");
+
     public static SqlError InFailedTransaction { get; } =
         new(TransactionAborted, "current transaction is aborted, commands ignored until end of transaction block");
 }

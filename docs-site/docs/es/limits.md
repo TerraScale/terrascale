@@ -21,7 +21,7 @@ These are the limits a request or a plan can hit. All SQL surfaces (HTTP, WebSoc
 | Rows changed per transaction | 1,024 | `too_large` (413) / 54000 |
 | Database file growth per transaction | 8 MiB | `too_large` (413) / 54000 |
 
-A query that stays inside result limits but scans or works past the plan's scan budget answers `query_canceled` (400) / 57014. Add indexes or a `LIMIT`, or narrow the query.
+A query that stays inside result limits but scans or works past the plan's scan budget answers `query_canceled` (400) / 57014 with `query too expensive: it exceeds the work budget`; add indexes or a `LIMIT`, or narrow the query. A request whose statements together run past the 5 s request time limit answers `query_canceled` (400) / 57014 with `the request exceeded its 5 s time limit; split the batch or narrow the query`.
 
 ## Transactions
 
