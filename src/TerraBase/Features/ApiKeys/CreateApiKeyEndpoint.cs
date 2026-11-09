@@ -14,7 +14,6 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time) :
 {
     private const int MaxNameLength = 100;
 
-    // A key with an expiry lives at most a year; rotate by issuing a new one and revoking the old one.
     private static readonly TimeSpan MaxLifetime = TimeSpan.FromDays(366);
 
     public override void Configure()
@@ -55,7 +54,6 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time) :
             return ErrorResponse.From(new Validation(UnknownScope));
         }
 
-        // The store checks the scope in the issuing write.
         return await keys.CreateAsync(request.Name, [.. request.Scopes.Distinct()], request.OrganizationId, request.ProjectId, request.DatabaseId, cancellationToken, request.ExpiresAt) switch
         {
             IssuedApiKey issued => TypedResults.Created(
