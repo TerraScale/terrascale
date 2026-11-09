@@ -30,17 +30,8 @@ namespace TerraScale.Dashboard.Features.Auth
             services.AddHostedService<DeletionReconciler>();
         }
 
-        public static void MapAuth(this WebApplication app)
-        {
-            app.MapMethods("/login", ["GET", "HEAD"], StartAsync);
-            app.MapGet("/login/callback", CompleteAsync);
-            app.MapGet("/auth/step-up/callback", StepUpFlow.CallbackAsync);
-            app.MapGet("/organizations/choose", OrganizationPicker.PageAsync);
-            app.MapPost("/api/v1/auth/logout", (Delegate)LogoutAsync);
-        }
-
         // A signed-in visitor continues; everyone else goes to ts-auth's hosted sign-in, or with signup=1 its hosted sign-up.
-        private static async Task<IResult> StartAsync(HttpContext context, DashboardSessions sessions)
+        internal static async Task<IResult> StartAsync(HttpContext context, DashboardSessions sessions)
         {
             var returnTo = Csrf.LocalRedirect(context.Request.Query["returnTo"].ToString());
             if (await sessions.ReadAsync(context) is not null)
@@ -78,7 +69,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 : authorize;
         }
 
-        private static async Task<IResult> CompleteAsync(HttpContext context, AuthFlows flows, IAuthOidcGateway auth, DashboardSessions sessions)
+        internal static async Task<IResult> CompleteAsync(HttpContext context, AuthFlows flows, IAuthOidcGateway auth, DashboardSessions sessions)
         {
             var flow = await flows.TakeOidcAsync(context);
             var state = context.Request.Query["state"].ToString();
@@ -136,7 +127,7 @@ namespace TerraScale.Dashboard.Features.Auth
             { return Failure(context, flow.ReturnTo, "Sign-in could not finish right now. Try again in a moment.", 503, error); }
         }
 
-        private static async Task<IResult> LogoutAsync(HttpContext context)
+        internal static async Task<IResult> LogoutAsync(HttpContext context)
         {
             var form = await FormRequests.ReadAsync(context, context.RequestAborted);
             if (!Csrf.Validate(context, form))
