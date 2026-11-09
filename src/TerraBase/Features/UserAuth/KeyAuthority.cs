@@ -232,18 +232,9 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
         ArgumentNullException.ThrowIfNull(key);
         var id = Id(key);
         KeepWarm(id, key);
-        if (_answers.TryGetValue(id, out var known))
+        if (TryAnswer(id, key, fresh: RefreshAfter, refreshAt: AdmissionRefresh, out var known))
         {
-            var age = time.GetUtcNow() - known.AskedAt;
-            if (known.Result.Value is KeyRefused || age < RefreshAfter)
-            {
-                if (known.Result.Value is KeyActive && age >= AdmissionRefresh)
-                {
-                    _ = Ask(id, key);
-                }
-
-                return known.Result;
-            }
+            return known;
         }
 
         // A region's first question about a key can pay a cold connection to ts-auth, or join one sent before this work arrived:
@@ -266,21 +257,33 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
         ArgumentNullException.ThrowIfNull(key);
         var id = Id(key);
         KeepWarm(id, key);
-        if (_answers.TryGetValue(id, out var known))
-        {
-            var age = time.GetUtcNow() - known.AskedAt;
-            if (known.Result.Value is KeyRefused || age < Fresh)
-            {
-                if (known.Result.Value is KeyActive && age >= RefreshAfter)
-                {
-                    _ = Ask(id, key);
-                }
+        return TryAnswer(id, key, fresh: Fresh, refreshAt: RefreshAfter, out var known)
+            ? known
+            : (await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false)).Result;
+    }
 
-                return known.Result;
-            }
+    // An answer still valid for `fresh` (a refusal always holds), refreshed in the background once it ages past `refreshAt`.
+    private bool TryAnswer(string id, KeyToken key, TimeSpan fresh, TimeSpan refreshAt, out KeyAuthorityResult answer)
+    {
+        answer = default;
+        if (!_answers.TryGetValue(id, out var known))
+        {
+            return false;
         }
 
-        return (await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false)).Result;
+        var age = time.GetUtcNow() - known.AskedAt;
+        if (known.Result.Value is not KeyRefused && age >= fresh)
+        {
+            return false;
+        }
+
+        if (known.Result.Value is KeyActive && age >= refreshAt)
+        {
+            _ = Ask(id, key);
+        }
+
+        answer = known.Result;
+        return true;
     }
 
     private static string Id(KeyToken key) => key.KeyId + " " + key.Generation + " " + key.ProjectId;
