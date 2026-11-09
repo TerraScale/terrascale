@@ -19,6 +19,13 @@ __all__ = [
     "ProjectClient",
     "ProjectClientPage",
     "ProjectClientSecret",
+    "ProjectDirectoryUser",
+    "ProjectLinkedProvider",
+    "ProjectSettings",
+    "ProjectSettingsUpdate",
+    "ProjectUser",
+    "ProjectUserExportPage",
+    "ProjectUserPage",
     "Regions",
     "ScopedKey",
 ]
@@ -346,6 +353,287 @@ class ProjectClientPage:
     def from_json(cls, body: dict[str, Any]) -> ProjectClientPage:
         return cls(
             items=[ProjectClient.from_json(c) for c in body.get("items") or []],
+            next_cursor=body.get("next") or None,
+        )
+
+
+def _bool(body: dict[str, Any], key: str, what: str) -> bool:
+    if not isinstance(body.get(key), bool):
+        raise ValueError(f"invalid {what}")
+    return body[key]
+
+
+def _text(body: dict[str, Any], key: str, what: str) -> str | None:
+    value = body.get(key)
+    if value is not None and (not isinstance(value, str) or not value):
+        raise ValueError(f"invalid {what}")
+    return value
+
+
+def _int_or_none(body: dict[str, Any], key: str, what: str) -> int | None:
+    value = body.get(key)
+    if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+        raise ValueError(f"invalid {what}")
+    return value
+
+
+@dataclass(frozen=True)
+class ProjectSettingsMethods:
+    """The project's enabled end-user sign-in methods."""
+
+    passcode: bool
+    password: bool
+    sign_up: bool
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectSettingsMethods:
+        return cls(passcode=_bool(body, "passcode", "project sign-in methods"),
+                   password=_bool(body, "password", "project sign-in methods"),
+                   sign_up=_bool(body, "sign_up", "project sign-in methods"))
+
+
+@dataclass(frozen=True)
+class ProjectSettingsBranding:
+    """Hosted-page branding; every member is optional and stays unchanged when omitted."""
+
+    name: str | None = None
+    logo_url: str | None = None
+    theme_color: str | None = None
+    title_size: int | None = None
+    default_theme: str | None = None
+    footer_links: tuple[tuple[str, str], ...] = ()
+    background_color: str | None = None
+    text_color: str | None = None
+    email_message: str | None = None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectSettingsBranding:
+        links = body.get("footer_links") or []
+        if not isinstance(links, list):
+            raise ValueError("invalid project footer links")
+        parsed = []
+        for link in links:
+            if not isinstance(link, dict) or not isinstance(link.get("label"), str) \
+                    or not isinstance(link.get("url"), str):
+                raise ValueError("invalid project footer links")
+            parsed.append((link["label"], link["url"]))
+        return cls(name=_text(body, "name", "project branding name"),
+                   logo_url=_text(body, "logo_url", "project branding logo"),
+                   theme_color=_text(body, "theme_color", "project branding color"),
+                   title_size=_int_or_none(body, "title_size", "project branding title size"),
+                   default_theme=_text(body, "default_theme", "project branding theme"),
+                   footer_links=tuple(parsed),
+                   background_color=_text(body, "background_color", "project branding background"),
+                   text_color=_text(body, "text_color", "project branding text"),
+                   email_message=_text(body, "email_message", "project branding email message"))
+
+
+@dataclass(frozen=True)
+class ProjectSettingsCounts:
+    """The project's current user and OAuth client counts."""
+
+    users: int
+    clients: int
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectSettingsCounts:
+        return cls(users=_int_or_none(body, "users", "project user count") or 0,
+                   clients=_int_or_none(body, "clients", "project client count") or 0)
+
+
+@dataclass(frozen=True)
+class ProjectSettingsProvider:
+    """One federated sign-in provider's configuration state."""
+
+    provider: str
+    configured: bool
+    client_id: str | None
+    issuer: str | None
+    team_id: str | None
+    key_id: str | None
+    callback_url: str
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectSettingsProvider:
+        for key in ("provider", "callback_url"):
+            if not isinstance(body.get(key), str) or not body[key]:
+                raise ValueError("invalid project provider")
+        return cls(provider=body["provider"], configured=_bool(body, "configured", "project provider state"),
+                   client_id=_text(body, "client_id", "project provider client id"),
+                   issuer=_text(body, "issuer", "project provider issuer"),
+                   team_id=_text(body, "team_id", "project provider team id"),
+                   key_id=_text(body, "key_id", "project provider key id"),
+                   callback_url=body["callback_url"])
+
+
+@dataclass(frozen=True)
+class ProjectSettingsConfiguration:
+    """The project's redirect URLs and session lifetime."""
+
+    redirect_urls: list[str]
+    session_lifetime_seconds: int | None = None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectSettingsConfiguration:
+        return cls(redirect_urls=_strings(body, "redirect_urls", "project redirect urls"),
+                   session_lifetime_seconds=_int_or_none(body, "session_lifetime_seconds",
+                                                          "project session lifetime"))
+
+
+@dataclass(frozen=True)
+class ProjectSettings:
+    """The project's end-user authentication settings, read and updated with the operator's sign-in token."""
+
+    project_id: str
+    issuer: str
+    discovery_url: str
+    sign_in_url: str
+    methods: ProjectSettingsMethods
+    branding: ProjectSettingsBranding
+    counts: ProjectSettingsCounts
+    providers: list[ProjectSettingsProvider]
+    configuration: ProjectSettingsConfiguration | None = None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectSettings:
+        for key in ("project_id", "issuer", "discovery_url", "sign_in_url"):
+            if not isinstance(body.get(key), str) or not body[key]:
+                raise ValueError("invalid project settings")
+        configuration = body.get("configuration")
+        return cls(
+            project_id=validate_id(body["project_id"]),
+            issuer=body["issuer"],
+            discovery_url=body["discovery_url"],
+            sign_in_url=body["sign_in_url"],
+            methods=ProjectSettingsMethods.from_json(body.get("methods") or {}),
+            branding=ProjectSettingsBranding.from_json(body.get("branding") or {}),
+            counts=ProjectSettingsCounts.from_json(body.get("counts") or {}),
+            providers=[ProjectSettingsProvider.from_json(p) for p in body.get("providers") or []],
+            configuration=ProjectSettingsConfiguration.from_json(configuration)
+            if configuration is not None else None,
+        )
+
+
+@dataclass(frozen=True)
+class ProjectSettingsUpdate:
+    """A partial settings update; omitted parts stay unchanged."""
+
+    methods: ProjectSettingsMethods | None = None
+    branding: ProjectSettingsBranding | None = None
+    configuration: ProjectSettingsConfiguration | None = None
+
+    def to_body(self) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if self.methods is not None:
+            body["methods"] = {"passcode": self.methods.passcode, "password": self.methods.password,
+                               "sign_up": self.methods.sign_up}
+        if self.branding is not None:
+            branding: dict[str, Any] = {}
+            for key in ("name", "logo_url", "theme_color", "default_theme", "background_color", "text_color",
+                        "email_message"):
+                value = getattr(self.branding, key)
+                if value is not None:
+                    branding[key] = value
+            if self.branding.title_size is not None:
+                branding["title_size"] = self.branding.title_size
+            if self.branding.footer_links:
+                branding["footer_links"] = [{"label": label, "url": url}
+                                            for label, url in self.branding.footer_links]
+            body["branding"] = branding
+        if self.configuration is not None:
+            configuration: dict[str, Any] = {"redirect_urls": list(self.configuration.redirect_urls)}
+            if self.configuration.session_lifetime_seconds is not None:
+                configuration["session_lifetime_seconds"] = self.configuration.session_lifetime_seconds
+            body["configuration"] = configuration
+        return body
+
+
+@dataclass(frozen=True)
+class ProjectUser:
+    """A project end user; disabling ends every session and stops refresh tokens at once."""
+
+    id: str
+    email: str
+    created_at: str
+    disabled: bool
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectUser:
+        for key in ("id", "email", "created_at"):
+            if not isinstance(body.get(key), str) or not body[key]:
+                raise ValueError("invalid project user")
+        return cls(id=validate_id(body["id"]), email=body["email"], created_at=body["created_at"],
+                   disabled=_bool(body, "disabled", "project user state"))
+
+
+@dataclass(frozen=True)
+class ProjectUserPage:
+    items: list[ProjectUser]
+    next_cursor: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectUserPage:
+        return cls(
+            items=[ProjectUser.from_json(u) for u in body.get("items") or []],
+            next_cursor=body.get("next") or None,
+        )
+
+
+@dataclass(frozen=True)
+class ProjectLinkedProvider:
+    """A federated identity linked to a project end user."""
+
+    provider: str
+    client_id: str
+    subject: str
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectLinkedProvider:
+        for key in ("provider", "client_id", "subject"):
+            if not isinstance(body.get(key), str) or not body[key]:
+                raise ValueError("invalid project linked provider")
+        return cls(provider=body["provider"], client_id=body["client_id"], subject=body["subject"])
+
+
+@dataclass(frozen=True)
+class ProjectDirectoryUser:
+    """One exported directory record: profile fields only, never credentials or sessions."""
+
+    id: str
+    email: str
+    email_verified: bool
+    created_at: str
+    disabled: bool
+    linked_providers: list[ProjectLinkedProvider] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectDirectoryUser:
+        for key in ("id", "email", "created_at"):
+            if not isinstance(body.get(key), str) or not body[key]:
+                raise ValueError("invalid project directory user")
+        return cls(id=validate_id(body["id"]), email=body["email"],
+                   email_verified=_bool(body, "email_verified", "project directory user"),
+                   created_at=body["created_at"],
+                   disabled=_bool(body, "disabled", "project directory user"),
+                   linked_providers=[ProjectLinkedProvider.from_json(p)
+                                     for p in body.get("linked_providers") or []])
+
+
+@dataclass(frozen=True)
+class ProjectUserExportPage:
+    """One bounded page of the audited directory export; a null ``next_cursor`` ends the export."""
+
+    items: list[ProjectDirectoryUser]
+    created_before: str
+    next_cursor: str | None
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> ProjectUserExportPage:
+        if not isinstance(body.get("created_before"), str) or not body["created_before"]:
+            raise ValueError("invalid project export page")
+        return cls(
+            items=[ProjectDirectoryUser.from_json(u) for u in body.get("items") or []],
+            created_before=body["created_before"],
             next_cursor=body.get("next") or None,
         )
 

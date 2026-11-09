@@ -30,6 +30,10 @@ class Fake:
         self.databases: dict[str, dict[str, Any]] = {}
         self.api_keys: dict[str, dict[str, Any]] = {}
         self.clients: dict[str, dict[str, Any]] = {}
+        self.users: dict[str, dict[str, Any]] = {
+            "01J" + "V" * 23: {"id": "01J" + "V" * 23, "email": "ada@example.com",
+                               "created_at": "2026-11-04T00:00:00Z", "disabled": False},
+        }
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -55,6 +59,13 @@ class Fake:
             m = re.fullmatch(r"/v1/([^/]+)/clients(?:/([^/]+))?(/secret/rotate)?", path)
             if m:
                 return self._clients(request, m.group(1), m.group(2), m.group(3) == "/secret/rotate")
+            if path == f"/v1/{PROJECT}/settings":
+                return self._settings(request)
+            if path == f"/v1/{PROJECT}/users/export":
+                return self._users_export(request)
+            m = re.fullmatch(rf"/v1/{PROJECT}/users(?:/([^/]+))?(/disable|/enable)?", path)
+            if m:
+                return self._users(request, m.group(1), m.group(2))
             return self._token(request)
         path = unquote(request.url.raw_path.split(b"?")[0].decode())
         path = unquote(request.url.raw_path.split(b"?")[0].decode())
@@ -216,6 +227,56 @@ class Fake:
             del self.clients[client_id]
             return httpx.Response(204)
         return self._err(404, "unknown_route")
+
+    def _settings(self, request: httpx.Request) -> httpx.Response:
+        if not self._bearer(request):
+            return self._err(401, "invalid_token")
+        if request.method == "PUT":
+            return httpx.Response(200, json={"updated": json.loads(request.content)})
+        return httpx.Response(200, json={
+            "project_id": PROJECT, "issuer": f"https://auth.test/{PROJECT}",
+            "discovery_url": f"https://auth.test/{PROJECT}/.well-known/openid-configuration",
+            "sign_in_url": f"https://auth.test/{PROJECT}/sign-in",
+            "methods": {"passcode": False, "password": True, "sign_up": True},
+            "branding": {"name": "Acme", "logo_url": None, "theme_color": "#0f62fe",
+                         "footer_links": [{"label": "Acme", "url": "https://acme.example"}]},
+            "counts": {"users": len(self.users), "clients": len(self.clients)},
+            "providers": [], "configuration": {"redirect_urls": ["https://app.example/cb"],
+                                               "session_lifetime_seconds": 1209600},
+        })
+
+    def _users(self, request: httpx.Request, user: str | None, action: str | None) -> httpx.Response:
+        if not self._bearer(request):
+            return self._err(401, "invalid_token")
+        if user is None:
+            if request.method != "GET":
+                return self._err(404, "unknown_route")
+            items = list(self.users.values())
+            search = request.url.params.get("q")
+            if search:
+                items = [u for u in items if search in u["email"]]
+            return httpx.Response(200, json={"items": items, "next": None})
+        record = self.users.get(user)
+        if record is None:
+            return self._err(404, "unknown_user")
+        if action in ("/disable", "/enable"):
+            if request.method != "POST":
+                return self._err(404, "unknown_route")
+            record["disabled"] = action == "/disable"
+            return httpx.Response(200, json=record)
+        if request.method == "GET":
+            return httpx.Response(200, json=record)
+        if request.method == "DELETE":
+            del self.users[user]
+            return httpx.Response(204)
+        return self._err(404, "unknown_route")
+
+    def _users_export(self, request: httpx.Request) -> httpx.Response:
+        if not self._bearer(request):
+            return self._err(401, "invalid_token")
+        items = [{**u, "email_verified": True, "linked_providers": []} for u in self.users.values()]
+        return httpx.Response(200, json={"items": items, "next": None,
+                                         "created_before": "2026-11-08T00:00:00Z"})
 
     def _token(self, request: httpx.Request) -> httpx.Response:
         form = dict(x.split("=", 1) for x in request.content.decode().split("&"))
