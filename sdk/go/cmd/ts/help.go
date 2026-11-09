@@ -20,6 +20,7 @@ var commandSyntax = map[string]string{
 	"db branch list":   "db branch list", "db branch delete": "db branch delete <name>",
 	"db branch url": "db branch url <name>",
 	"db branch":     "db branch <source> <new-database>", "db info": "db info <database>",
+	"db import":    "db import <database> <file|-> [-from <n>]",
 	"db placement": "db placement <database> (-replica-regions <a,b> | -all-regions)", "db move-home": "db move-home <database> <region>",
 	"db regions":       "db regions <database>",
 	"db rename":        "db rename <database> <new-name>",

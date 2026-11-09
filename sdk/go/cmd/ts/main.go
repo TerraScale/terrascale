@@ -72,6 +72,8 @@ Options go before or after the command and its operands; -- ends options.
                                           alias: db rename
   db info <db>                            print a database's metadata as JSON
   db export <db> [-o file]               download the database as a SQL dump
+  db import <db> <file|->                load a SQL dump; not atomic: each batch
+                                          commits on its own; resume with -from n
   db placement <db> (-replica-regions <a,b> | -all-regions)
                                           set the database's replica regions
   db move-home <db> <region>              move the home to a replica region
@@ -216,6 +218,7 @@ var commands = map[string][]int{
 	"db branch url":      {1},
 	"db info":            {1},
 	"db export":          {1},
+	"db import":          {2},
 	"db placement":       {1},
 	"db move-home":       {2},
 	"db regions":         {1},
@@ -617,6 +620,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	}
 	if name == "db export" {
 		return dbExport(ctx, s, operands[0], *exportFile, *force, out)
+	}
+	if name == "db import" {
+		start, err := parseImportFrom(*from)
+		if err != nil {
+			return err
+		}
+		return dbImport(ctx, s.tb.Database(s.project, operands[0]), operands[1], start, in, out, prompt)
 	}
 	if name == "db delete" {
 		if err := confirmDelete(operands[0], s.project, *yes, in, prompt, tty); err != nil {

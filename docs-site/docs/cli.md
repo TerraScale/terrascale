@@ -148,7 +148,11 @@ ts db info example
 `db list` lists databases. `db info` prints one database's metadata as JSON,
 including its immutable ULID. `db export <db>` downloads a database as a SQL
 dump to stdout; `-o file` writes it atomically, leaving no file if the export
-is interrupted, and `-force` overwrites an existing file. `db rename <db> <new-name>`
+is interrupted, and `-force` overwrites an existing file. `db import <db>
+<file|->` loads such a dump, or any SQLite-dialect `.sql` file, back into a
+database in batches; `-` reads stdin. The import is not atomic: each batch
+commits on its own; on failure the CLI prints the first failed statement's
+number and `-from <n>` resumes past the first n-1 statements. `db rename <db> <new-name>`
 (the long form is `ts databases rename`) renames a database by name or ULID:
 
 ```sh
