@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Errors;
@@ -37,8 +38,6 @@ internal static class HomeForwarding
             {
                 if (context.WebSockets.IsWebSocketRequest)
                 {
-                    // A WebSocket cannot follow a 421 or a stripped upgrade: the session is relayed to the home
-                    // for its whole life instead of forwarded (docs/terrabase/cross-region.md).
                     await context.RequestServices.GetRequiredService<HomeSocketRelay>().RunAsync(context, home, context.RequestAborted).ConfigureAwait(false);
                     return;
                 }
@@ -67,9 +66,6 @@ internal static class HomeForwarding
             return null;
         }
 
-        // A session WebSocket authenticates either with a header or with a first frame, after the upgrade: the socket
-        // endpoints are anonymous. The home is resolved from the route alone, and the home runs every check — first
-        // frame, token, IP allowlist, scope — itself, once; the relaying region decides nothing.
         var socket = context.GetEndpoint()?.Metadata.GetMetadata<Management.DatabaseRegions.ReplicaReads>() is not null
             && context.WebSockets.IsWebSocketRequest;
         if (!socket
@@ -107,9 +103,6 @@ internal static class HomeForwarding
                 return await HomeAtAsync(peers, shapeHome, context.RequestAborted).ConfigureAwait(false);
             }
 
-            // A session WebSocket whose record is here but places the database elsewhere never reaches the endpoint:
-            // the placement check answers 421 first, and a WebSocket cannot follow that. Relay the whole socket to the
-            // home instead. A replica region keeps serving the socket itself, as every route does.
             if (socket && database is not null
                 && await management.FindDatabaseRecordAsync(found, project, database, context.RequestAborted).ConfigureAwait(false) is ManagedDatabase socketDatabase
                 && socketDatabase.Home(options.Region) is { } socketHome
@@ -211,7 +204,7 @@ internal static class HomeForwarding
 
             var elapsed = TimeProvider.System.GetElapsedTime(started).TotalMilliseconds;
             context.Response.Headers.Append("Server-Timing",
-                string.Create(System.Globalization.CultureInfo.InvariantCulture, $"home;dur={elapsed:0.0};desc=\"{home.Region}\""));
+                string.Create(CultureInfo.InvariantCulture, $"home;dur={elapsed:0.0};desc=\"{home.Region}\""));
 
             await using var answer = await response.Content.ReadAsStreamAsync(context.RequestAborted).ConfigureAwait(false);
             await answer.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
