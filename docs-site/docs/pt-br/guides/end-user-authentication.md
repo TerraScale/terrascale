@@ -27,7 +27,7 @@ Use your project's discovery document for app sign-in. It advertises only `autho
 
 Open **Authentication** for your project.
 
-1. **OAuth applications**: register your application with a name, its type and its redirect URIs, one per line. Use **public** for browser, mobile and desktop apps (no secret) and **confidential** for server-side apps. A confidential application's client secret is shown once, right after you create it; store it in your server's secret store. Register 1–10 absolute redirect URIs using `https`, or `http` on `localhost` and loopback addresses, without fragments or userinfo (an embedded username or password). Registration rejects invalid URIs with `400 invalid_request`; when the project's redirect allowlist is nonempty, each URI must also exactly match an entry there.
+1. **OAuth applications**: register your application with a name, its type and its redirect URIs, one per line. Use **public** for browser, mobile and desktop apps (no secret) and **confidential** for server-side apps. Creating a client through the API (`POST /v1/{project}/clients`) needs the project admin role, your TerraScale sign-in token and a fresh `create_oauth_client` step-up proof, like updating and rotating below (see [sensitive actions](/pt-br/guides/sensitive-actions)). A confidential application's client secret is shown once, right after you create it; store it in your server's secret store. Register 1–10 absolute redirect URIs using `https`, or `http` on `localhost` and loopback addresses, without fragments or userinfo (an embedded username or password). Registration rejects invalid URIs with `400 invalid_request`; when the project's redirect allowlist is nonempty, each URI must also exactly match an entry there.
 2. **Sign-in methods**: choose email codes, passwords, or both, and whether people can create their own accounts. At least one of email codes and passwords stays on. A method you turn off disappears from the hosted pages.
 3. **Branding**: set the name, an `https` logo URL and a `#rrggbb` theme color. They style the hosted pages and the verification, sign-in and password-reset emails; without a name, both show your project's name. Optionally set `email_message` in `branding` through `PUT /v1/{project}/settings`: up to 500 plain-text characters, newlines allowed, added to those emails. A sent `branding` replaces the previous one, so send every branding field each time or omitted fields are cleared. HTML and placeholders such as `{{code}}` appear as literal text.
 4. **Configuration**: `redirect_urls` adds a project allowlist of at most 100 exact absolute URLs, without fragments or userinfo (`https`, or loopback `http`). A nonempty list further restricts each client's registered redirects; an empty list never permits unregistered redirects. `session_lifetime_seconds` is an absolute lifetime from original sign-in: 300–2592000 seconds (5 minutes–30 days), default 1209600 (14 days).
@@ -90,9 +90,9 @@ The hosted sign-in and sign-up pages show a **Continue with Google**, **Continue
 
 An end user signs in only with a provider that confirms a verified email address:
 
-- A user is matched to an existing account by that email, so email codes, passwords and social sign-in reach the same account.
-- A new email creates an account only if the project allows sign-up.
-- Disabled users and users with MFA cannot sign in this way.
+- Sign-in matches a previously linked provider identity (provider, issuer, client ID and subject); accounts are never linked by email.
+- A new identity whose email is new to the project creates an account only if the project allows sign-up. An identity whose email already belongs to an email/password account is refused; connect the provider from the signed-in account instead.
+- Disabled users cannot sign in this way. Users with MFA continue to the hosted second-factor step.
 
 ### Manage providers through the API
 
@@ -117,7 +117,17 @@ The access token is a JWT with your project's issuer as `iss`, your client ID as
 
 Refresh tokens rotate on every use. The initial project refresh token expires at **original sign-in (`auth_time`) + configured project session lifetime** (5 minutes–30 days, default 14 days). Rotation never extends the observed expiry; a policy reduction can shorten it further. Store each successor securely and stop using its predecessor. Keep tokens and client secrets out of URLs, logs and browser persistent storage. On sign-out, clear your app session, use `/oauth/logout` for hosted sign-out and `/oauth/revoke` for token revocation; these are separate from clearing local state.
 
-A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project tokens are for your own application: TerraScale's APIs do not accept them.
+A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project sign-in tokens are for your own application: TerraScale's APIs do not accept them. Your users reach data stored in TerraScale through short-lived scoped tokens your backend mints for them; see [Data access for your users](#data-access-for-your-users).
+
+## Data access for your users
+
+Project sign-in tokens never authorize calls to TerraScale APIs. When a signed-in user needs data held in a TerraScale database, your backend mints a scoped end-user access token and the browser uses only that:
+
+1. Your backend authenticates the user with your own sign-in (or the project sign-in above) and picks their user ID and roles. The asserted `user_id` is a canonical ULID and need not match a ts-auth account: your backend owns the mapping.
+2. Your backend mints the token with `POST /v1/terrascale/projects/{project}/end-user-tokens`, authenticating with a project API key that has both `sql:read` and `sql:write` and no database restriction. The request asserts the user ID, optionally the database and up to 32 table names, and optional roles.
+3. Your backend sends only the returned short-lived JWT (at most 15 minutes) to the browser and keeps the project API key on the server.
+
+TerraBase honors these tokens for shape reads when each table has a read grant. The full mint contract, limits and error behavior are in [scoped end-user access tokens](https://github.com/TerraScale/terrascale/blob/main/docs/auth/scoped-end-user-tokens.md); table grants are described in [shape read grants](https://github.com/TerraScale/terrascale/blob/main/docs/terrabase/shape-read-grants.md).
 
 ### Run the sample app
 

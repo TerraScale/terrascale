@@ -43,7 +43,7 @@ Bucket creation, listing, access-rule changes and deletion require unrestricted 
 
 ## Upload and download in your application
 
-Use the ts-auth end-user access token linked to this project and authorized for TerraBase, with its signed subject and trusted roles. An ID token or a token intended only for your own API does not authorize file access. Your token provider should return a current access token for each request.
+Use the ts-auth end-user access token linked to this project and authorized for TerraBase, with its signed subject and trusted roles. Your backend mints this token for the signed-in user with the end-user token endpoint, as described in [end-user authentication](/es/guides/end-user-authentication#data-access-for-your-users); it is never minted in the browser. An ID token or a token intended only for your own API does not authorize file access. Your token provider should return a current access token for each request.
 
 ```js
 import { createTerraBaseClient } from '@terrascale/sdk'
