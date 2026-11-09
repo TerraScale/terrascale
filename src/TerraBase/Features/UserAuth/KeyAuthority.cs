@@ -9,52 +9,27 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.UserAuth;
 
-/// <summary>An access token ts-auth issued for an API key, as its <c>key_id</c>, <c>key_gen</c> and <c>project_id</c> claims name it.</summary>
-/// <param name="KeyId">The key (the token's <c>sub</c>).</param>
-/// <param name="Generation">Which of the key's strings the token came from.</param>
-/// <param name="ProjectId">The project the token acts in, if any.</param>
-/// <param name="Token">The access token itself: ts-auth's status check takes it as its own credential.</param>
 public sealed record KeyToken(string KeyId, string Generation, string? ProjectId, string Token)
 {
-    /// <summary>The strictly validated token's expiry; background status checks never retain it beyond this time.</summary>
     public DateTimeOffset ValidTo { get; init; }
 
-    /// <summary>Whether <paramref name="value"/> has the shape of a <c>key_gen</c> claim: 16 lowercase hex digits.</summary>
     public static bool IsGeneration(string? value) => value is { Length: 16 } && value.All(char.IsAsciiHexDigitLower);
 }
 
-/// <summary>The key's tokens still act, until <paramref name="Until"/> unless asked again: the question's send time plus the answer's lifetime.</summary>
 public sealed record KeyActive(DateTimeOffset Until);
 
-/// <summary>ts-auth refuses the key's tokens: <c>key_revoked</c>, <c>key_expired</c>, or <c>invalid_token</c> for this token only.</summary>
 public sealed record KeyRefused(string Code);
 
-/// <summary>The key still acts, is refused, or ts-auth is unavailable (refuse too: fail closed).</summary>
 public readonly union KeyAuthorityResult(KeyActive, KeyRefused, Unavailable);
 
-/// <summary>
-/// Whether an API key, and the key string and project a token of it was issued for, still act right now
-/// (docs/terrabase/key-revocation.md). Every transport asks before it serves a key's request or statement.
-/// </summary>
+// Key revocation across transports is specified in docs/terrabase/key-revocation.md.
 public interface IKeyAuthority
 {
-    /// <summary>Whether <paramref name="key"/> still acts; <see cref="Unavailable"/> must be refused as well.</summary>
     ValueTask<KeyAuthorityResult> CheckAsync(KeyToken key, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Whether new work may start on <paramref name="key"/>: as <see cref="CheckAsync"/>, but a yes must leave the work's watch
-    /// time to renew it (<see cref="TsAuthKeyAuthority.Admission"/>). An older yes waits for the question already in flight; a
-    /// ts-auth too slow to leave that much is <see cref="Unavailable"/>, refused before the work starts, never cut off in it.
-    /// </summary>
     ValueTask<KeyAuthorityResult> AdmitAsync(KeyToken key, CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// Keeps asking about a key while something runs on its authority (a request, a Postgres session) and cancels it once
-/// the key is refused or cannot be verified, or once the last yes runs out before a new one arrives: running work never
-/// outlives <see cref="KeyActive.Until"/>, so it is cut off at most <see cref="TsAuthKeyAuthority.Fresh"/> plus one poll
-/// after ts-auth acknowledged a revocation.
-/// </summary>
 public sealed class KeyWatch : IDisposable
 {
     private static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(250);
@@ -70,11 +45,6 @@ public sealed class KeyWatch : IDisposable
         _timer = new PeriodicTimer(Poll, time);
     }
 
-    /// <summary>
-    /// Watches the key <paramref name="current"/> names (it may renew the token; null refuses) until disposed, starting
-    /// from the yes that admitted the work (<paramref name="until"/>, when known). Null (nothing to watch) when
-    /// <paramref name="watched"/> is false.
-    /// </summary>
     public static KeyWatch? Start(
         IKeyAuthority authority, bool watched, DateTimeOffset? until, Func<CancellationToken, ValueTask<KeyToken?>> current, CancellationTokenSource target, TimeProvider time)
     {
@@ -89,10 +59,8 @@ public sealed class KeyWatch : IDisposable
         return watch;
     }
 
-    /// <summary>ts-auth's refusal that ended the watch; null while it runs, or when the key could not be verified in time.</summary>
     public KeyRefused? Refusal { get; private set; }
 
-    /// <summary>Stops watching; the target is left as it is.</summary>
     public void Dispose()
     {
         _disposed = true;
@@ -168,10 +136,8 @@ public sealed class KeyWatch : IDisposable
     }
 }
 
-/// <summary>What every transport says when it refuses a key.</summary>
 public static class KeyAuthorityMessages
 {
-    /// <summary>The refusal ts-auth gave, for clients.</summary>
     public static string Refused(string code) => code switch
     {
         "key_expired" => "the API key has expired",
@@ -179,7 +145,6 @@ public static class KeyAuthorityMessages
         _ => "the access token is not valid",
     };
 
-    /// <summary>ts-auth did not answer: the key is refused until it does.</summary>
     public const string Unavailable = "API key status cannot be verified right now; retry";
 
     public const string KeyAsBearer = "This is an API key; exchange it at the token endpoint and send the short-lived access token instead.";
@@ -189,27 +154,15 @@ internal sealed record TsAuthKeyStatus([property: JsonPropertyName("key_id")] st
 internal sealed record TsAuthErrorDetail(string? Code);
 internal sealed record TsAuthErrorBody(TsAuthErrorDetail? Error);
 
-/// <summary>
-/// Asks ts-auth's <c>GET /v1/{tenant}/api-keys/self</c> with the key's token. An answer that the key acts holds for
-/// <see cref="Fresh"/> from when the question was sent, and is asked again in the background after half of that, so a
-/// busy key does not wait; a refusal holds for good (key ids are ULIDs, never reused; a retired key string or a deleted
-/// project never comes back). One question per key at a time. ts-auth unreachable, slow or failing answers
-/// <see cref="Unavailable"/>, never a stale yes: a key is refused at most <see cref="Fresh"/> after ts-auth acknowledged
-/// its revocation, in every region.
-/// </summary>
 internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IHostApplicationLifetime lifetime)
     : BackgroundService, IKeyAuthority
 {
-    /// <summary>How long ts-auth's yes holds, from when it was asked: the revocation bound.</summary>
     public static readonly TimeSpan Fresh = TimeSpan.FromSeconds(2);
 
     private static readonly TimeSpan RefreshAfter = Fresh / 2;
 
-    /// <summary>
-    /// The least of a yes new work starts on. Its watch asks again once the yes is <see cref="RefreshAfter"/> old and aborts
-    /// the work when no new yes arrives before this one runs out, so a yes with less left could end work it just admitted:
-    /// a request admitted on a 1.8-second answer was reset 200 ms in, its write's outcome unknown to the client (#853).
-    /// </summary>
+    // A request admitted on a 1.8-second answer was reset 200 ms in, its write's outcome unknown to the client (#853):
+    // new work starts only on a yes with at least this much left, and its watch renews it from half that.
     public static readonly TimeSpan Admission = Fresh - RefreshAfter;
 
     // New work asks again from here, before Admission would make it wait: a busy key's requests keep not waiting.
@@ -232,18 +185,9 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
         ArgumentNullException.ThrowIfNull(key);
         var id = Id(key);
         KeepWarm(id, key);
-        if (_answers.TryGetValue(id, out var known))
+        if (TryAnswer(id, key, fresh: RefreshAfter, refreshAt: AdmissionRefresh, out var known))
         {
-            var age = time.GetUtcNow() - known.AskedAt;
-            if (known.Result.Value is KeyRefused || age < RefreshAfter)
-            {
-                if (known.Result.Value is KeyActive && age >= AdmissionRefresh)
-                {
-                    _ = Ask(id, key);
-                }
-
-                return known.Result;
-            }
+            return known;
         }
 
         // A region's first question about a key can pay a cold connection to ts-auth, or join one sent before this work arrived:
@@ -266,21 +210,33 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
         ArgumentNullException.ThrowIfNull(key);
         var id = Id(key);
         KeepWarm(id, key);
-        if (_answers.TryGetValue(id, out var known))
-        {
-            var age = time.GetUtcNow() - known.AskedAt;
-            if (known.Result.Value is KeyRefused || age < Fresh)
-            {
-                if (known.Result.Value is KeyActive && age >= RefreshAfter)
-                {
-                    _ = Ask(id, key);
-                }
+        return TryAnswer(id, key, fresh: Fresh, refreshAt: RefreshAfter, out var known)
+            ? known
+            : (await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false)).Result;
+    }
 
-                return known.Result;
-            }
+    // An answer still valid for `fresh` (a refusal always holds), refreshed in the background once it ages past `refreshAt`.
+    private bool TryAnswer(string id, KeyToken key, TimeSpan fresh, TimeSpan refreshAt, out KeyAuthorityResult answer)
+    {
+        answer = default;
+        if (!_answers.TryGetValue(id, out var known))
+        {
+            return false;
         }
 
-        return (await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false)).Result;
+        var age = time.GetUtcNow() - known.AskedAt;
+        if (known.Result.Value is not KeyRefused && age >= fresh)
+        {
+            return false;
+        }
+
+        if (known.Result.Value is KeyActive && age >= refreshAt)
+        {
+            _ = Ask(id, key);
+        }
+
+        answer = known.Result;
+        return true;
     }
 
     private static string Id(KeyToken key) => key.KeyId + " " + key.Generation + " " + key.ProjectId;

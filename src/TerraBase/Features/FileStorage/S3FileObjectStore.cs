@@ -79,7 +79,8 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
                 CacheControl = "private, no-store",
             },
         };
-        return ValueTask.FromResult(new FileSignedUrl(file.Id, Client.GetPreSignedURL(request), expires, []));
+        return ValueTask.FromResult(new FileSignedUrl(file.Id, Client.GetPreSignedURL(request), expires,
+            new Dictionary<string, string>()));
     }
 
     public async ValueTask<bool> VerifyAsync(string region, string key, FileObject file, CancellationToken cancellationToken)

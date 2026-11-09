@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>Lists a database's functions.</summary>
 internal sealed class ListFunctionsEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(FunctionRoute.List);
@@ -24,7 +22,6 @@ internal sealed class ListFunctionsEndpoint(IManagementService management, IFunc
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         FunctionRoute.RunAsync(HttpContext, management, (tenant, _) => functions.ListAsync(tenant, cancellationToken), cancellationToken);
 }

@@ -5,16 +5,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>
-/// <c>GET /backupz</c>: 200 once backup is configured, has found this node's files, and every file the node ships has
-/// reached the bucket with less than a minute of lag; 503 otherwise. A member that ships no file passes once its files
-/// are found. This backup probe is separate from serving health, so a bucket outage does not change serving health.
-/// </summary>
 public sealed class BackupHealthEndpoint(IContinuousBackup backup, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {
     private const double MaxLagSeconds = 60;
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/backupz");
@@ -28,7 +22,6 @@ public sealed class BackupHealthEndpoint(IContinuousBackup backup, TerraBaseOpti
         Metadata(ListenerMetadata.Probe);
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";

@@ -6,18 +6,13 @@ using NativeCompressions;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>
-/// The stored form of every backup object, format 1 (<c>docs/backup.md</c>): a header, then chunks of at most 1 MiB, each
-/// LZ4-compressed when that is smaller and sealed with AES-256-GCM.
-/// </summary>
-/// <remarks>
-/// Header (62 bytes): magic <c>TBK1</c>, the 26-character id of the database data key, a random 32-byte salt. Each object
-/// gets its own AES key, HKDF-SHA256 of the data key with the salt and, as info, the object's bucket key, so an object
-/// moved to another key does not decrypt. Chunk <c>i</c>: a big-endian word with the plain length (low 30 bits), bit 30
-/// set when LZ4-compressed and bit 31 on the last chunk; a big-endian word with the stored length; the ciphertext and its
-/// 16-byte tag. The nonce is <c>i</c> (8 bytes, big-endian) after four zero bytes; the associated data is the header,
-/// <c>i</c> and both words, so chunks cannot be reordered, dropped or cut off. An empty object is one empty last chunk.
-/// </remarks>
+// The stored form of every backup object, format 1 (docs/backup.md), a persisted contract: header (62 bytes) of magic
+// TBK1, the 26-character data-key id and a random 32-byte salt; then chunks of at most 1 MiB, each LZ4-compressed when
+// smaller and sealed with AES-256-GCM. Each object gets its own AES key, HKDF-SHA256 of the data key with the salt and,
+// as info, the object's bucket key, so an object moved to another key does not decrypt. Chunk i: big-endian words with
+// the plain length (low 30 bits), bit 30 when compressed and bit 31 on the last chunk, and the stored length; then the
+// ciphertext and its 16-byte tag. The nonce is i (8 bytes, big-endian) after four zero bytes; the associated data is
+// the header, i and both words, so chunks cannot be reordered, dropped or cut off. An empty object is one empty last chunk.
 internal static class BackupObject
 {
     private const int KeyIdBytes = 26;
@@ -33,7 +28,6 @@ internal static class BackupObject
 
     private static ReadOnlySpan<byte> Magic => "TBK1"u8;
 
-    /// <summary>Seals <paramref name="plain"/> into <paramref name="output"/> as the object <paramref name="objectKey"/>.</summary>
     public static async Task WriteAsync(Stream plain, Stream output, string objectKey, string keyId, byte[] dataKey, CancellationToken cancellationToken)
     {
         if (keyId.Length != KeyIdBytes || !Ascii.IsValid(keyId))
@@ -79,29 +73,19 @@ internal static class BackupObject
         }
     }
 
-    /// <summary>
-    /// Opens the object <paramref name="objectKey"/> from <paramref name="sealedObject"/> into <paramref name="output"/>;
-    /// <paramref name="dataKey"/> returns the data key with an id.
-    /// </summary>
-    /// <exception cref="InvalidDataException">The object is not format 1, truncated, or fails authentication.</exception>
     public static async Task ReadAsync(
-        Stream sealedObject, Stream output, string objectKey, Func<string, Task<byte[]>> dataKey, CancellationToken cancellationToken,
-        BackupReadObservation? observation = null)
+        Stream sealedObject, Stream output, string objectKey, Func<string, Task<byte[]>> dataKey, CancellationToken cancellationToken)
     {
         var header = new byte[HeaderBytes];
-        if (await ReadAsync(sealedObject, header, HeaderBytes, observation, cancellationToken).ConfigureAwait(false) < HeaderBytes
+        if (await sealedObject.ReadAtLeastAsync(header, HeaderBytes, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false) < HeaderBytes
             || !header.AsSpan(0, 4).SequenceEqual(Magic) || !Ascii.IsValid(header.AsSpan(4, KeyIdBytes)))
         {
             throw new InvalidDataException("not a TerraBase backup object of format 1");
         }
 
-        byte[] key;
-        using (observation?.Enter(BackupReadObservation.Phase.Key))
-        {
-            key = await dataKey(Encoding.ASCII.GetString(header, 4, KeyIdBytes)).ConfigureAwait(false);
-        }
+        var key = await dataKey(Encoding.ASCII.GetString(header, 4, KeyIdBytes)).ConfigureAwait(false);
 
-        using var aes = OpenAes(key, header, objectKey, observation);
+        using var aes = new AesGcm(Derive(key, header, objectKey), TagBytes);
         var chunk = ArrayPool<byte>.Shared.Rent(8 + MaxStored + TagBytes);
         var plain = ArrayPool<byte>.Shared.Rent(MaxStored);
         var unpacked = ArrayPool<byte>.Shared.Rent(ChunkBytes);
@@ -109,7 +93,7 @@ internal static class BackupObject
         {
             for (ulong index = 0; ; index++)
             {
-                if (await ReadAsync(sealedObject, chunk.AsMemory(0, 8), 8, observation, cancellationToken).ConfigureAwait(false) < 8)
+                if (await sealedObject.ReadAtLeastAsync(chunk.AsMemory(0, 8), 8, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false) < 8)
                 {
                     throw new InvalidDataException("backup object is truncated");
                 }
@@ -124,48 +108,44 @@ internal static class BackupObject
                 }
 
                 var stored = (int)storedLength;
-                if (await ReadAsync(sealedObject, chunk.AsMemory(8, stored + TagBytes), stored + TagBytes, observation, cancellationToken)
+                if (await sealedObject.ReadAtLeastAsync(chunk.AsMemory(8, stored + TagBytes), stored + TagBytes, throwOnEndOfStream: false, cancellationToken)
                         .ConfigureAwait(false) < stored + TagBytes)
                 {
                     throw new InvalidDataException("backup object is truncated");
                 }
 
                 Memory<byte> data;
-                using (observation?.Enter(BackupReadObservation.Phase.Decode))
+                try
+                {
+                    aes.Decrypt(Nonce(index), chunk.AsSpan(8, stored), chunk.AsSpan(8 + stored, TagBytes), plain.AsSpan(0, stored), Associated(header, index, chunk));
+                }
+                catch (AuthenticationTagMismatchException)
+                {
+                    throw new InvalidDataException("backup object fails authentication");
+                }
+
+                data = plain.AsMemory(0, stored);
+                if (compressed)
                 {
                     try
                     {
-                        aes.Decrypt(Nonce(index), chunk.AsSpan(8, stored), chunk.AsSpan(8 + stored, TagBytes), plain.AsSpan(0, stored), Associated(header, index, chunk));
+                        if (LZ4.Block.Decompress(plain.AsSpan(0, stored), unpacked.AsSpan(0, length), null) != length)
+                        {
+                            throw new InvalidDataException("backup object chunk does not decompress to its length");
+                        }
                     }
-                    catch (AuthenticationTagMismatchException)
+                    catch (LZ4Exception)
                     {
-                        throw new InvalidDataException("backup object fails authentication");
+                        throw new InvalidDataException("backup object chunk is not LZ4");
                     }
 
-                    data = plain.AsMemory(0, stored);
-                    if (compressed)
-                    {
-                        try
-                        {
-                            if (LZ4.Block.Decompress(plain.AsSpan(0, stored), unpacked.AsSpan(0, length), null) != length)
-                            {
-                                throw new InvalidDataException("backup object chunk does not decompress to its length");
-                            }
-                        }
-                        catch (LZ4Exception)
-                        {
-                            throw new InvalidDataException("backup object chunk is not LZ4");
-                        }
-
-                        data = unpacked.AsMemory(0, length);
-                    }
+                    data = unpacked.AsMemory(0, length);
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
                 // A zero-byte write still allocates a FileStream buffer.
                 if (!data.IsEmpty)
                 {
-                    using var write = observation?.Enter(BackupReadObservation.Phase.Output);
                     await output.WriteAsync(data, cancellationToken).ConfigureAwait(false);
                 }
 
@@ -181,23 +161,6 @@ internal static class BackupObject
             ArrayPool<byte>.Shared.Return(plain);
             ArrayPool<byte>.Shared.Return(unpacked);
         }
-    }
-
-    private static AesGcm OpenAes(byte[] key, byte[] header, string objectKey, BackupReadObservation? observation)
-    {
-        using var decode = observation?.Enter(BackupReadObservation.Phase.Decode);
-        return new AesGcm(Derive(key, header, objectKey), TagBytes);
-    }
-
-    private static ValueTask<int> ReadAsync(Stream source, Memory<byte> buffer, int minimum, BackupReadObservation? observation, CancellationToken cancellationToken) =>
-        observation is null
-            ? source.ReadAtLeastAsync(buffer, minimum, throwOnEndOfStream: false, cancellationToken)
-            : ReadObservedAsync(source, buffer, minimum, observation, cancellationToken);
-
-    private static async ValueTask<int> ReadObservedAsync(Stream source, Memory<byte> buffer, int minimum, BackupReadObservation observation, CancellationToken cancellationToken)
-    {
-        using var read = observation.Enter(BackupReadObservation.Phase.Read);
-        return await source.ReadAtLeastAsync(buffer, minimum, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false);
     }
 
     private static byte[] Derive(byte[] dataKey, byte[] header, string objectKey) =>

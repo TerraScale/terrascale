@@ -4,10 +4,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.FileStorage;
 
-/// <summary>SetFileBucketRules through the authorized project file API.</summary>
 public sealed class SetFileBucketRulesEndpoint(IFileStorage files) : Endpoint<FileBucketRulesRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(FileStorageRoute.Bucket + "/rules");
@@ -27,7 +25,6 @@ public sealed class SetFileBucketRulesEndpoint(IFileStorage files) : Endpoint<Fi
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(FileBucketRulesRequest request, CancellationToken cancellationToken) =>
         FileStorageRoute.RunAsync(HttpContext, () => files.SetRulesAsync(FileStorageRoute.BucketId(HttpContext), request, cancellationToken), 200);
 }

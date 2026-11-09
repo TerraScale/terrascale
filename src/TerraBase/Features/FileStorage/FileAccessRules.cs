@@ -4,13 +4,8 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.FileStorage;
 
-/// <summary>A file bucket's declarative end-user permissions. Missing rules deny access.</summary>
-/// <param name="Owner">JSON Pointer of the immutable owner subject, or null.</param>
-/// <param name="Read">Read grants.</param>
-/// <param name="Write">Write grants.</param>
 public sealed record FileAccessRules(string? Owner, FileAccessPolicy? Read, FileAccessPolicy? Write)
 {
-    /// <summary>Rejects ambiguous or unbounded policies before they are stored.</summary>
     public Validation? Check()
     {
         if (Owner is not null && !IsPointer(Owner))
@@ -40,7 +35,6 @@ public sealed record FileAccessRules(string? Owner, FileAccessPolicy? Read, File
         && policy.Roles.All(role => role is { Length: > 0 and <= 128 } && !role.Any(char.IsControl))
         && policy.Roles.Distinct(StringComparer.Ordinal).Count() == policy.Roles.Count;
 
-    /// <summary>Reads an owner subject without coercing numbers, arrays or missing members.</summary>
     public string? Subject(ReadOnlyMemory<byte> json)
     {
         if (Owner is null || json.IsEmpty)
@@ -63,8 +57,4 @@ public sealed record FileAccessRules(string? Owner, FileAccessPolicy? Read, File
     }
 }
 
-/// <summary>Independent public, role and owner grants for one operation.</summary>
-/// <param name="Owner">Whether the signed subject can access its own files.</param>
-/// <param name="Public">Whether every authenticated end-user can access files.</param>
-/// <param name="Roles">Trusted, case-sensitive roles with bucket-wide access.</param>
 public sealed record FileAccessPolicy(bool Owner, bool Public, IReadOnlyList<string>? Roles);

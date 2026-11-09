@@ -37,10 +37,11 @@ internal sealed class ShreddedDatabaseSweep(KeyCustody custody, KeyRevocationLoc
                 && Ulid.TryParse(organization, out _) && Ulid.TryParse(project, out _) && Ulid.TryParse(database, out _))
             {
                 var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
-                var record = await ShredRecords.ReadAsync(custody.Store, BackupLayout.KeyScope(tenant), token).ConfigureAwait(false);
+                var scope = BackupLayout.KeyScope(tenant);
+                var record = await ShredRecords.ReadAsync(custody.Store, scope, token).ConfigureAwait(false);
                 if (record is not null)
                 {
-                    custody.Revocations.Forget(BackupLayout.KeyScope(tenant));
+                    custody.Revocations.Forget(scope);
                 }
                 if (record is null || !await local.RevokeAsync(tenant, token).ConfigureAwait(false))
                 {

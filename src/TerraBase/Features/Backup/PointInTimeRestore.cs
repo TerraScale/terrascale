@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using Amazon.S3;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -7,63 +9,30 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>The times a database can be restored to.</summary>
-/// <param name="Earliest">Its oldest snapshot, limited by the plan's retention window.</param>
-/// <param name="Latest">
-/// The newest time the backup proves restorable: the second at or before the start of the newest backup read marked in
-/// one of its newest segments, or its newest snapshot's time.
-/// </param>
 public sealed record RestoreWindow(DateTimeOffset Earliest, DateTimeOffset Latest);
 
-/// <summary>Advisory backup metadata, read from object names only; restore also checks contents and every segment's length.</summary>
-/// <param name="Window">The database's retention window and newest backed-up data.</param>
-/// <param name="PointInTime">The requested restore time.</param>
-/// <param name="SnapshotAt">When the selected snapshot was taken.</param>
-/// <param name="LatestSegmentAt">The newest applicable segment time, or null when only the snapshot applies.</param>
-/// <param name="SegmentCount">Segments of the selected snapshot's generation applicable to the requested time.</param>
-/// <param name="HistoryCheck">
-/// How far the history up to the time was checked: always <c>metadata</c>, the first segment's start, the segments' order
-/// and the history's end, from object names. Whether each segment begins where the previous one ends needs their lengths,
-/// which only a restore reads, so a restore can still answer 409 <c>backup_history_incomplete</c>.
-/// </param>
-/// <param name="Generation">The generation of the selected snapshot, whose objects a restore reads.</param>
 public sealed record PointInTimePlan(
     RestoreWindow Window, DateTimeOffset PointInTime, DateTimeOffset SnapshotAt, DateTimeOffset? LatestSegmentAt, int SegmentCount, string HistoryCheck,
     Ulid? Generation = null);
 
-/// <summary>A read-only restore plan, or why its metadata could not be read or shows the history incomplete.</summary>
 public readonly union PointInTimePlanResult(PointInTimePlan, NotFound, Conflict, Validation, Unavailable);
 
-/// <summary>A completed restore, or why its requested time could not be restored.</summary>
 public readonly union PointInTimeRestoreResult(Done, NotFound, Conflict, Validation, Unavailable);
 
-/// <summary>A restore window, no backup, or an unreadable plan.</summary>
 public readonly union RestoreWindowResult(RestoreWindow, NotFound, Unavailable);
 
-/// <summary>Point-in-time restore from continuous backup (TS-633).</summary>
+// Point-in-time restore from continuous backup (TS-633).
 public interface IPointInTimeRestore
 {
-    /// <summary>The restore window, <see cref="NotFound"/> when no backup remains within its plan's retention window, or <see cref="Unavailable"/> when its plan cannot be read.</summary>
     Task<RestoreWindowResult> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
-    /// <summary>Reads bounded backup metadata without downloading, decrypting or importing any backup.</summary>
     Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
-    /// <summary>Reads an isolated, caller-owned historical snapshot without publishing a tenant database.</summary>
     Task<HistoricalSnapshotResult> ReadSnapshotAsync(TenantContext source, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
-    /// <summary>
-    /// Creates <paramref name="target"/>, a new engine database, holding <paramref name="source"/> as of <paramref name="at"/>:
-    /// every transaction committed before then and none recorded as committed at or after it, whole. Validates its restore
-    /// window at entry, before downloading or importing.
-    /// Answers <see cref="Conflict"/> <c>backup_history_incomplete</c> unless the backup proves the history complete up to the time,
-    /// <c>restore_point_unproven</c> when it cannot place the time between two transactions, and <c>backup_unreadable</c> when
-    /// an object it needs fails authentication or the restored file its integrity check.
-    /// </summary>
     Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 }
 
-/// <summary>Restores from the newest snapshot at or before the time, rolled forward through its generation's segments.</summary>
 internal sealed class PointInTimeRestore(
     IWalBackup engine, IRecoverySnapshotReader scratch, BackupTargets targets, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time, TerraBaseOptions options)
     : IPointInTimeRestore
@@ -106,7 +75,7 @@ internal sealed class PointInTimeRestore(
                 return retained switch
                 {
                     Unavailable error => error,
-                    DateTimeOffset => throw new System.Diagnostics.UnreachableException(),
+                    DateTimeOffset => throw new UnreachableException(),
                 };
             }
 
@@ -238,7 +207,7 @@ internal sealed class PointInTimeRestore(
             return retained switch
             {
                 Unavailable error => error,
-                DateTimeOffset => throw new System.Diagnostics.UnreachableException(),
+                DateTimeOffset => throw new UnreachableException(),
             };
         }
 
@@ -257,7 +226,7 @@ internal sealed class PointInTimeRestore(
                 Conflict error => error,
                 Validation error => error,
                 Unavailable error => error,
-                RestoredBackup => throw new System.Diagnostics.UnreachableException(),
+                RestoredBackup => throw new UnreachableException(),
             };
         }
         try
@@ -282,7 +251,7 @@ internal sealed class PointInTimeRestore(
                 Conflict error => error,
                 Validation error => error,
                 Unavailable error => error,
-                RestoredBackup => throw new System.Diagnostics.UnreachableException(),
+                RestoredBackup => throw new UnreachableException(),
             };
         }
         try
@@ -339,7 +308,7 @@ internal sealed class PointInTimeRestore(
             {
                 NotFound => new NotFound("continuous backup holds nothing of this database within its plan's retention window"),
                 Unavailable error => error,
-                RestoreWindow => throw new System.Diagnostics.UnreachableException(),
+                RestoreWindow => throw new UnreachableException(),
             };
         }
 
@@ -417,16 +386,12 @@ internal sealed class PointInTimeRestore(
             DateTimeOffset => OutsideWindow(window),
         };
 
-    private static Validation OutsideWindow(RestoreWindow window) => new(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+    private static Validation OutsideWindow(RestoreWindow window) => new(string.Create(CultureInfo.InvariantCulture,
         $"pointInTime must lie between the restore window's earliest and latest times: {window.Earliest:O} to {window.Latest:O}"));
 
     private static Conflict HistoryIncomplete() =>
         new("continuous backup cannot prove this database's history complete up to pointInTime", "backup_history_incomplete");
 
-    /// <summary>
-    /// Whether an object read at <paramref name="readAt"/> covers <paramref name="at"/>: the same millisecond or earlier,
-    /// the precision of object names.
-    /// </summary>
     internal static bool Covers(DateTimeOffset readAt, DateTimeOffset at) => at.ToUnixTimeMilliseconds() <= readAt.ToUnixTimeMilliseconds();
 
     private readonly union EarliestResult(DateTimeOffset, Unavailable);

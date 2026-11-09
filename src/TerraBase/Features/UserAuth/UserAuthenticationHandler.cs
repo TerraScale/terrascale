@@ -23,7 +23,6 @@ internal sealed class UserAuthenticationHandler(
 {
     public const string SchemeName = UserAuthExtensions.TokenScheme;
 
-    /// <summary>Tolerance for clock differences with ts-auth on <c>nbf</c>; <c>exp</c> is strict.</summary>
     public static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(30);
 
     private static readonly JsonWebTokenHandler Tokens = new();
@@ -235,7 +234,6 @@ internal sealed class UserAuthenticationHandler(
 
     private TokenValidationParameters Parameters(IReadOnlyList<SecurityKey> keys) => Parameters(terraBase, keys, time);
 
-    /// <summary>How every ts-auth access token is validated, here and for <see cref="TsAuthKeyExchange"/>.</summary>
     internal static TokenValidationParameters Parameters(TerraBaseOptions terraBase, IReadOnlyList<SecurityKey> keys, TimeProvider? time) => new()
     {
         ValidIssuer = terraBase.AuthIssuer,

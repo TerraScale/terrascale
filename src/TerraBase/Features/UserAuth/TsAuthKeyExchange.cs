@@ -17,25 +17,10 @@ namespace TerraBase.Features.UserAuth;
 
 internal sealed record TsAuthTokenResponse([property: JsonPropertyName("access_token")] string? AccessToken);
 
-/// <param name="Subject">The key's id (the token's <c>sub</c>).</param>
-/// <param name="ProjectId">The key's project.</param>
-/// <param name="Database">The key's database restriction, when it has one.</param>
-/// <param name="Scopes">Granted scopes.</param>
-/// <param name="ValidTo">When the access token expires.</param>
-/// <param name="Allowlists">The key's and project's IP allowlists (<see cref="IpAllowlists"/>); empty for none.</param>
-/// <param name="Key">The token as <see cref="IKeyAuthority"/> checks it before every statement; null from a ts-auth that
-/// predates key status (no <c>key_id</c>), whose tokens are checked as tokens only, as before.</param>
 internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken? Key);
 
-/// <summary>A key's grant, a refused key, or ts-auth is unavailable.</summary>
 internal readonly union TsAuthKeyResult(TsAuthKeyGrant, NotFound, Unavailable);
 
-/// <summary>
-/// Accepts a dashboard API key (<c>&lt;key id&gt;_&lt;secret&gt;</c>, a ts-auth client credential) where a client can only send
-/// a password, as on the Postgres wire: exchanges it at ts-auth's token endpoint with the client credentials grant and
-/// validates the access token exactly like a bearer token. A grant is reused until shortly before its token expires and
-/// then exchanged again; whether its key still acts is <see cref="IKeyAuthority"/>'s answer, asked before every statement.
-/// </summary>
 internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFactory http, IIssuerKeys issuerKeys, IMemoryBudget budget, TimeProvider time)
 {
     private const int MaxInFlight = 16;
@@ -58,7 +43,6 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
     private readonly ConcurrentDictionary<string, Lazy<Task<TsAuthKeyResult>>> _exchanging = new(StringComparer.Ordinal);
     private int _inFlight;
 
-    /// <summary>Whether <paramref name="secret"/> has the shape of a ts-auth project API key.</summary>
     public static bool IsKey(string secret) =>
         secret.Length is > 27 and <= MaxKeyLength && secret[26] == '_' && EntityIds.IsValid(secret[..26])
         && !secret.AsSpan(27).ContainsAnyExcept(SecretCharacters);

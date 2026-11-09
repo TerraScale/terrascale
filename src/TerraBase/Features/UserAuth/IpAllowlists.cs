@@ -3,18 +3,12 @@ using System.Net.Sockets;
 
 namespace TerraBase.Features.UserAuth;
 
-/// <summary>
-/// The IP allowlists ts-auth puts on an API key's tokens: <c>key_cidrs</c> (the key's own) and <c>project_cidrs</c> (its
-/// project's), each space-separated canonical CIDRs. A client address must fall in every list the token carries.
-/// </summary>
 internal static class IpAllowlists
 {
-    /// <summary>The token claims that carry allowlists.</summary>
     public static readonly string[] Claims = ["key_cidrs", "project_cidrs"];
 
     private const int MaxEntries = 32;
 
-    /// <summary>One claim's networks; null when the claim is not a list of at most 32 CIDRs.</summary>
     public static IPNetwork[]? Parse(string claim)
     {
         var entries = claim.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -35,7 +29,6 @@ internal static class IpAllowlists
         return networks;
     }
 
-    /// <summary>Whether <paramref name="address"/> falls in every one of <paramref name="allowlists"/>.</summary>
     public static bool Admits(IReadOnlyList<IPNetwork[]> allowlists, IPAddress? address)
     {
         if (allowlists.Count == 0)
@@ -66,7 +59,6 @@ internal static class IpAllowlists
         return peer is null ? null : Canonical(peer);
     }
 
-    /// <summary>The 403 detail: the address the request came from, so its owner can add it.</summary>
     public static string Refusal(IPAddress? address) =>
         $"requests from {address?.ToString() ?? "an unknown address"} are not in this API key's or project's IP allowlist";
 

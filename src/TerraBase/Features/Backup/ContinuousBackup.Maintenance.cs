@@ -9,34 +9,14 @@ using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>A restore drill: the file rebuilt from the bucket compared with the live file at the same frame position.</summary>
-/// <param name="At">When it ran.</param>
-/// <param name="Passed">Whether the rebuilt file's checksum equals the live file's.</param>
-/// <param name="RestoreSeconds">Seconds the download, roll-forward and integrity check took.</param>
-/// <param name="Error">Why it failed; null when it passed.</param>
 public sealed record BackupDrill(DateTimeOffset At, bool Passed, double RestoreSeconds, string? Error);
 
-/// <summary>A file's backup as stored in TerraBase's own catalog, refreshed hourly and after each drill.</summary>
-/// <param name="File">The file's directory in the bucket.</param>
-/// <param name="Member">The member that ships it.</param>
-/// <param name="Generation">The generation being shipped.</param>
-/// <param name="LastShippedAt">When the newest data in the bucket was read.</param>
-/// <param name="LagSeconds">Seconds the oldest data not yet in the bucket has waited.</param>
-/// <param name="SizeBytes">Bytes the file's backup occupies in the bucket, measured daily.</param>
-/// <param name="SizedAt">When <paramref name="SizeBytes"/> was measured.</param>
-/// <param name="RetentionDays">The retention of the database's plan.</param>
-/// <param name="LastDrill">The last restore drill.</param>
-/// <param name="UpdatedAt">When this record was written.</param>
 public sealed record BackupStatusRecord(
     string File, string Member, string? Generation, DateTimeOffset? LastShippedAt, double LagSeconds, long? SizeBytes, DateTimeOffset? SizedAt,
     int RetentionDays, BackupDrill? LastDrill, DateTimeOffset UpdatedAt);
 
-/// <summary>Retention by plan, daily restore drills and the backup record of each shipped file.</summary>
 internal sealed partial class ContinuousBackup
 {
-    /// <summary>Observes expiry cancelling this file's active drill before deletion; for integration tests.</summary>
-    internal Action<string>? RetentionWaiting { get; set; }
-
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan DrillInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan SizeInterval = TimeSpan.FromDays(1);
@@ -47,7 +27,6 @@ internal sealed partial class ContinuousBackup
     // Kept past the window, so a restore that picked a snapshot just inside it finishes before retention deletes it.
     private static readonly TimeSpan RetentionGrace = TimeSpan.FromHours(1);
 
-    /// <summary>The kind of a database's backup record in the system catalog, deleted with the database's state.</summary>
     internal static (string Kind, string Id) RecordKey(TenantContext? database) =>
         database is null ? ("backup_status", "_system") : ($"databases/{database.DatabaseId}/backup_status", "current");
 
@@ -55,7 +34,7 @@ internal sealed partial class ContinuousBackup
     private async Task RetainAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var retained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        lock (file)
+        lock (file.RetainGate)
         {
             file.Retaining = retained;
         }
@@ -65,7 +44,7 @@ internal sealed partial class ContinuousBackup
         }
         finally
         {
-            lock (file)
+            lock (file.RetainGate)
             {
                 file.Retaining = null;
             }
@@ -225,7 +204,7 @@ internal sealed partial class ContinuousBackup
     // Inventories and deletions belong to one destination: partial uploads or a failed delete in the other destination
     // must remain discoverable on later passes. Bound deletion candidates, scanning the entire inventory to protect
     // snapshots beyond the batch. Hard-expired objects drain in batches of sixteen in the same pass.
-    private async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, HashSet<Ulid> leased, CancellationToken cancellationToken)
+    private static async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, HashSet<Ulid> leased, CancellationToken cancellationToken)
     {
         var complete = true;
         // Include orphan generations and the newest segment: a failing snapshot must not retain WAL forever.
@@ -321,7 +300,7 @@ internal sealed partial class ContinuousBackup
         return complete && await RetainGenerationProofsAsync(store, file.Prefix, file.Generation, expires, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<bool> DeleteSegmentsAsync(IObjectStore store, ShippedFile file, Ulid generation, long? before, CancellationToken cancellationToken)
+    private static async Task<bool> DeleteSegmentsAsync(IObjectStore store, ShippedFile file, Ulid generation, long? before, CancellationToken cancellationToken)
     {
         var complete = true;
         var batch = new List<string>(16);
@@ -352,7 +331,7 @@ internal sealed partial class ContinuousBackup
 
     // Ordinary shipping never waits for a drill. Only actual expiry ends one: cancel and join before deleting
     // its possible inputs, then let the next snapshot perform the daily check against retained history.
-    private async Task<bool> DeleteRetainedAsync(ShippedFile file, IObjectStore store, List<string> keys, CancellationToken cancellationToken)
+    private static async Task<bool> DeleteRetainedAsync(ShippedFile file, IObjectStore store, List<string> keys, CancellationToken cancellationToken)
     {
         if (keys.Count > 0)
         {
@@ -364,7 +343,6 @@ internal sealed partial class ContinuousBackup
             if (active is not null)
             {
                 file.DrilledAt = DateTimeOffset.MinValue;
-                RetentionWaiting?.Invoke(file.Prefix);
                 active.Cancellation.Cancel();
                 await active.Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
@@ -426,7 +404,7 @@ internal sealed partial class ContinuousBackup
                 else
                 {
                     var rebuilt = await _engine.ChecksumAsync(restored.Path, cancellationToken).ConfigureAwait(false);
-                    if (!live.AsSpan().SequenceEqual(rebuilt))
+                    if (!live.SequenceEqual(rebuilt))
                     {
                         error = "the restored database differs from the live one";
                     }

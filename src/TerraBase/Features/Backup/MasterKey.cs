@@ -2,20 +2,14 @@ using System.Security.Cryptography;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary>The master key that wraps backup data keys (envelope encryption).</summary>
 internal interface IMasterKey
 {
-    /// <summary>A new 256-bit data key, in the clear and wrapped by the master key.</summary>
     Task<(byte[] Key, string Wrapped)> GenerateDataKeyAsync(CancellationToken cancellationToken);
 
-    /// <summary>Unwraps a data key from <see cref="GenerateDataKeyAsync"/>.</summary>
     Task<byte[]> UnwrapAsync(string wrapped, CancellationToken cancellationToken);
 }
 
-/// <summary>
-/// The TerraBase master key (32 bytes base64), delivered from OCI Vault via <c>TERRABASE_MASTER_KEY_FILE</c>.
-/// It wraps each data key with AES-256-GCM as base64(nonce | ciphertext | tag); the key never leaves the process.
-/// </summary>
+// The master key (32 bytes base64) is delivered from OCI Vault via TERRABASE_MASTER_KEY_FILE and never leaves the process.
 internal sealed class MasterKey(byte[] masterKey) : IMasterKey
 {
     private const int KeyBytes = 32;
@@ -30,7 +24,6 @@ internal sealed class MasterKey(byte[] masterKey) : IMasterKey
 
     public Task<byte[]> UnwrapAsync(string wrapped, CancellationToken cancellationToken) => Task.FromResult(Unwrap(wrapped));
 
-    /// <summary>Wraps a 256-bit data key.</summary>
     public string Wrap(ReadOnlySpan<byte> key)
     {
         var wrapped = new byte[NonceBytes + KeyBytes + TagBytes];
@@ -40,8 +33,6 @@ internal sealed class MasterKey(byte[] masterKey) : IMasterKey
         return Convert.ToBase64String(wrapped);
     }
 
-    /// <summary>Unwraps a data key from <see cref="Wrap"/>.</summary>
-    /// <exception cref="InvalidDataException">It is malformed or was not wrapped by this master key.</exception>
     public byte[] Unwrap(string wrapped)
     {
         var bytes = new byte[NonceBytes + KeyBytes + TagBytes];

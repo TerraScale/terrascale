@@ -2,10 +2,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Backup;
 
-/// <summary><c>GET /v1/backup</c> on the internal listener: what this node ships and how far each file is.</summary>
 public sealed class BackupStatusEndpoint(IContinuousBackup backup) : EndpointWithoutRequest<BackupStatus>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/backup");
@@ -16,7 +14,6 @@ public sealed class BackupStatusEndpoint(IContinuousBackup backup) : EndpointWit
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override ValueTask<BackupStatus> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";

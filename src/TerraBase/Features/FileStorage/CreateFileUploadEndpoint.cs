@@ -4,10 +4,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.FileStorage;
 
-/// <summary>CreateFileUpload through the authorized project file API.</summary>
 public sealed class CreateFileUploadEndpoint(IFileStorage files) : Endpoint<CreateFileUploadRequest, IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(FileStorageRoute.Files + "/upload");
@@ -27,7 +25,6 @@ public sealed class CreateFileUploadEndpoint(IFileStorage files) : Endpoint<Crea
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CreateFileUploadRequest request, CancellationToken cancellationToken) =>
         FileStorageRoute.RunAsync(HttpContext, () => files.CreateUploadAsync(FileStorageRoute.BucketId(HttpContext), request, cancellationToken), 201);
 }

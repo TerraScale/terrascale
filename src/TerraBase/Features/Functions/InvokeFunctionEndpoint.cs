@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using System.Text.Json;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -8,12 +9,10 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Functions;
 
-/// <summary>Runs a function over HTTPS.</summary>
 internal sealed class InvokeFunctionEndpoint(IManagementService management, IFunctions functions) : EndpointWithoutRequest<IResult>
 {
     private const int MaxBodyBytes = 1024 * 1024;
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(FunctionRoute.Item + "/invoke");
@@ -33,7 +32,6 @@ internal sealed class InvokeFunctionEndpoint(IManagementService management, IFun
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (HttpContext.Request.ContentLength > MaxBodyBytes)
@@ -80,7 +78,7 @@ internal sealed class InvokeFunctionEndpoint(IManagementService management, IFun
                 }
                 catch (JsonException)
                 {
-                    writer.WriteStringValue(System.Text.Encoding.UTF8.GetString(body.Span));
+                    writer.WriteStringValue(Encoding.UTF8.GetString(body.Span));
                 }
             }
 
@@ -94,6 +92,6 @@ internal sealed class InvokeFunctionEndpoint(IManagementService management, IFun
             writer.WriteEndObject();
         }
 
-        return System.Text.Encoding.UTF8.GetString(output.WrittenSpan);
+        return Encoding.UTF8.GetString(output.WrittenSpan);
     }
 }

@@ -2,7 +2,6 @@ using System.Net.Http.Headers;
 
 namespace TerraBase.Features.UserAuth;
 
-/// <summary>Allows an existing operator to present live ts-auth proof only on the marked recovery route.</summary>
 internal sealed class OperatorAuthorityProof
 {
     internal static string? Read(HttpRequest request) =>

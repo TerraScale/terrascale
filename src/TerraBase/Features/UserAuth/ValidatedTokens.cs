@@ -6,14 +6,8 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace TerraBase.Features.UserAuth;
 
-/// <summary>
-/// Access tokens <see cref="UserAuthenticationHandler"/> already accepted, so a client's every request does not verify
-/// the same signature again: verifying was 12 % of the write path's CPU (benchmark/bench/2026-10-12-write-path-cpu.md).
-/// An entry is what the handler derived from the token alone, keyed by the token's SHA-256 (never the token). It answers
-/// only while the issuer keys it was checked against are still the current list, so a refresh that withdraws a key drops
-/// every entry checked with it, and only strictly before the token's expiration, as validation would.
-/// Configuration (issuer, audiences) is fixed for the process, so the rest of validation cannot change its answer.
-/// </summary>
+// Verifying token signatures was 12 % of the write path's CPU (benchmark/bench/2026-10-12-write-path-cpu.md); entries
+// answer only while the issuer keys they were checked against are the current list, and strictly before expiration.
 internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandler.SchemeName)] TimeProvider? time = null)
 {
     // About 1 KiB per entry: 4 MiB at most, then the whole cache starts over.
@@ -21,7 +15,6 @@ internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandl
 
     private readonly ConcurrentDictionary<string, Accepted> _entries = new(StringComparer.Ordinal);
 
-    /// <summary>What the handler accepted: its claims and project-token fields, the keys it checked, exp, and an API key's id and key_gen.</summary>
     internal sealed record Accepted(
         IReadOnlyList<SecurityKey> Keys, DateTime ValidTo, IReadOnlyList<(string Type, string Value)> Claims,
         string? Project, string? Database, string? Scope, IReadOnlyList<IPNetwork[]> Allowlists, (string Id, string Generation)? Key);
