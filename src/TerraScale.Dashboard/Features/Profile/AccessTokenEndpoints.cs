@@ -5,58 +5,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     public static class AccessTokenEndpoints
     {
-        private const string ReturnTo = "/profile?tab=access-tokens";
-
-        public static IEndpointRouteBuilder MapProfileAccessTokens(this IEndpointRouteBuilder endpoints)
-        {
-            // A token acts as its owner until it expires, so it gets its own grant from a
-            // fresh ts-auth authorization instead of copying the browser session's.
-            endpoints.MapPost("/api/v1/dashboard/profile/access-tokens", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.StatusCode(403);
-                }
-
-                try
-                {
-                    if (!int.TryParse(form["expiresInDays"], out var days))
-                    {
-                        throw new AccountAccessException("Choose a valid token expiration.", 422);
-                    }
-
-                    _ = AccessTokens.Validate(form["name"].ToString(), days);
-                    return await StepUpFlow.StartAsync(http, context, "create_pat", "ts-dashboard");
-                }
-                catch (AccountAccessException error) { return await FailureAsync(http, context, sessions, tokens, error); }
-            });
-            endpoints.MapPost("/api/v1/dashboard/profile/access-tokens/{id}/revoke", async (HttpContext http, string id, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.StatusCode(403);
-                }
-
-                try { await tokens.RevokeAsync(context, id, http.RequestAborted); }
-                catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-                return HttpRedirects.SeeOther(ReturnTo + "&status=token-revoked");
-            });
-            return endpoints;
-        }
+        internal const string ReturnTo = "/profile?tab=access-tokens";
 
         // The ts-auth callback for a token flow: the fresh grant must belong to the signed-in browser's user.
         public static async Task<IResult> IssueAsync(HttpContext http, OidcFlow flow, SessionRecord fresh)
@@ -100,7 +49,7 @@ namespace TerraScale.Dashboard.Features.Profile
             }
         }
 
-        private static async Task<IResult> FailureAsync(HttpContext http, AccountContext context, DashboardSessions sessions, IProfileTokens tokens, AccountAccessException error)
+        internal static async Task<IResult> FailureAsync(HttpContext http, AccountContext context, DashboardSessions sessions, IProfileTokens tokens, AccountAccessException error)
         {
             var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Error: error.Message, Tokens: await tokens.ListAsync(context, http.RequestAborted), Sessions: await sessions.ListAsync(http, context.Session)));
             view.StatusCode = error.StatusCode;

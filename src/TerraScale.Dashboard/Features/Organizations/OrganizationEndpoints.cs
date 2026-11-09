@@ -33,145 +33,6 @@ namespace TerraScale.Dashboard.Features.Organizations
 
         public static IEndpointRouteBuilder MapOrganizations(this IEndpointRouteBuilder endpoints)
         {
-            endpoints.MapGet("/organization", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement,
-                StripeBilling billing, SpendingService spending, TimeProvider time, InternalBillingService internalBilling) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
-
-                if (context.Organization is not null && context.Role.Length == 0)
-                {
-                    return Notice(http, context, "organization", "Organization membership is required. Ask an owner or admin for access.", 403);
-                }
-
-                if (http.Request.Query["tab"] == "billing" && http.Request.Query["payment"] == "success" && context.Role == "owner")
-                {
-                    try
-                    {
-                        await billing.ConfirmAsync(context, http.RequestAborted);
-                        context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
-                    }
-                    catch (AccountAccessException error) { return Notice(http, context, "billing", error.Message + (error.StatusCode == 403 ? " Ask an owner or admin for access." : ""), error.StatusCode); }
-                    catch (Exception error) when (error is IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-                    { return Notice(http, context, "billing", "Billing information could not be loaded. Your organization and projects are still available.", 503); }
-                }
-                else if (http.Request.Query["tab"] == "billing" && context.Organization is not null)
-                {
-                    // A provider failure leaves the stored state; the page still loads and the next reload retries.
-                    try
-                    {
-                        if (await billing.ReconcileCheckoutAsync(context, http.RequestAborted))
-                        {
-                            context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
-                        }
-                    }
-                    catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested) { }
-                }
-                if (http.Request.Query["tab"] == "audit" && !context.CanManage)
-                {
-                    return Notice(http, context, "audit", "Organization management is required to view audit events. Ask an owner or admin for access.", 403);
-                }
-
-                context = await OrganizationWizard.PrepareAsync(http, context, accounts);
-                var page = await PageModelAsync(http, context, placement);
-                if (page.Tab == "billing" && context.Organization is not null)
-                {
-                    try { page = page with { Billing = await BillingEndpoints.LoadAsync(page.Shell, billing, spending, http.Request.Query, time.GetUtcNow(), internalBilling, http.RequestAborted) }; }
-                    catch (AccountAccessException error) { return Notice(http, context, "billing", error.Message + (error.StatusCode == 403 ? " Ask an owner or admin for access." : ""), error.StatusCode); }
-                    catch (Exception error) when (error is IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-                    { return Notice(http, context, "billing", "Billing information could not be loaded. Your organization and projects are still available.", 503); }
-                }
-                if (http.Request.Headers["Datastar-Request"] == "true" && page.Tab is "members" or "invitations")
-                {
-                    await DatastarEvents.PatchElementsAsync(http, OrganizationAccessPage.Create(page));
-                    return Results.Empty;
-                }
-                return OrganizationView.Create(page);
-            });
-            endpoints.MapGet("/api/v1/dashboard/context", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                return Results.Json(AccountContextView.From(context));
-            });
-            foreach (var route in new[] { "rename", "projects", "create" })
-            {
-                var operation = route;
-                endpoints.MapPost("/api/v1/dashboard/organization/" + route,
-                    async (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement) =>
-                        await MutateAsync(http, sessions, accounts, placement, operation));
-            }
-            endpoints.MapPost("/api/v1/dashboard/organization/projects/{projectId}/rename",
-                async (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement, string projectId) =>
-                    await MutateAsync(http, sessions, accounts, placement, "rename-project", projectId));
-            foreach (var action in new[] { "invite", "role", "remove", "ownership", "ownership/confirm", "ownership/cancel" })
-            {
-                var operation = action;
-                endpoints.MapPost("/api/v1/dashboard/organization/members/" + action,
-                    async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement) =>
-                        await AccessMutationAsync(http, sessions, accounts, access, placement, operation));
-            }
-            endpoints.MapPost("/api/v1/dashboard/organization/invitations/{id}/revoke",
-                async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string id) =>
-                    await AccessMutationAsync(http, sessions, accounts, access, placement, "revoke-invitation", id));
-            endpoints.MapPost("/api/v1/access/invitations", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement) =>
-                await AccessMutationAsync(http, sessions, accounts, access, placement, "invite"));
-            foreach (var operation in new[] { "revoke", "resend" })
-            {
-                var action = operation;
-                endpoints.MapPost("/api/v1/access/invitations/{id}/" + action, async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string id) =>
-                    await AccessMutationAsync(http, sessions, accounts, access, placement, action + "-invitation", id));
-            }
-            foreach (var operation in new[] { "role", "remove" })
-            {
-                var action = operation;
-                endpoints.MapPost("/api/v1/dashboard/organization/members/{id}/" + action, async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string id) =>
-                    await AccessMutationAsync(http, sessions, accounts, access, placement, action, id));
-            }
-            endpoints.MapPost("/api/v1/access/members/{id}/role", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string id) =>
-                await AccessMutationAsync(http, sessions, accounts, access, placement, "role", id));
-            endpoints.MapPost("/api/v1/access/members/{id}/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string id) =>
-                await AccessMutationAsync(http, sessions, accounts, access, placement, "remove", id));
-            endpoints.MapPost("/api/v1/dashboard/organization/mfa-policy", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthMfa mfa, IWorkspacePlacement placement) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                if (context.Role != "owner")
-                {
-                    return Results.StatusCode(403);
-                }
-
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.BadRequest("Invalid form token.");
-                }
-
-                try
-                {
-                    var organization = context.Organization ?? throw new AccountAccessException("Select an organization.");
-                    await mfa.SetRequireMfaAsync(context.Session, organization.Id, form["requireMfa"] == "true", http.RequestAborted);
-                    return HttpRedirects.SeeOther("/organization");
-                }
-                catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, "organization"); }
-            });
-            endpoints.MapPost("/api/v1/dashboard/organization/leave", async (HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement) =>
-                await LifecycleAsync(http, sessions, accounts, lifecycle, placement, "leave"));
-            endpoints.MapPost("/api/v1/dashboard/organization/deletion", async (HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement) =>
-                await LifecycleAsync(http, sessions, accounts, lifecycle, placement, "delete"));
-            endpoints.MapPost("/api/v1/dashboard/organization/projects/{id}/delete", async (HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement, string id) =>
-                await LifecycleAsync(http, sessions, accounts, lifecycle, placement, "delete-project", id));
             endpoints.MapOrganizationWizard();
             endpoints.MapInvitations();
             endpoints.MapOrganizationAudit();
@@ -179,13 +40,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             endpoints.MapProjectSettings();
             Projects.ProjectInvitationEndpoints.MapProjectInvitations(endpoints);
             return endpoints;
-        }
-
-        private static RazorSlices.RazorSlice<OrganizationPage> Notice(HttpContext http, AccountContext context, string tab, string message, int status)
-        {
-            var view = OrganizationView.Create(new(ShellModel.For(http, context, "Organization"), tab, [], Notice: message, NoticeStatus: status));
-            view.StatusCode = status;
-            return view;
         }
 
         internal static async Task<RazorSlice> PageAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", int status = 200, string? tab = null)
@@ -196,7 +50,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             return slice;
         }
 
-        private static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null)
+        internal static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null)
         {
             if (context.Organization is not null && context.Role.Length == 0)
             {
@@ -241,7 +95,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 Sso: tab == "sso" && context.CanManage ? await http.RequestServices.GetRequiredService<OrganizationSsoService>().ReadAsync(context, http.RequestAborted) : null);
         }
 
-        private static async Task<IResult> AccessMutationAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string operation, string? id = null)
+        internal static async Task<IResult> AccessMutationAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string operation, string? id = null)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
@@ -290,7 +144,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger" : null); }
         }
 
-        private static async Task<IResult> LifecycleAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement, string operation, string? projectId = null)
+        internal static async Task<IResult> LifecycleAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement, string operation, string? projectId = null)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)

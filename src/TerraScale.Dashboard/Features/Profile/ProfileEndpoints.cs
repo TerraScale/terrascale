@@ -1,7 +1,4 @@
-using System.Globalization;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Features.Billing;
-using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard.Features.Profile
@@ -51,84 +48,9 @@ namespace TerraScale.Dashboard.Features.Profile
 
     public static class ProfileEndpoints
     {
-        public static IEndpointRouteBuilder MapProfile(this IEndpointRouteBuilder endpoints)
-        {
-            endpoints.MapGet("/account-deleted", IResult (HttpContext http) =>
-                AccountDeletedView.Create(new("Account deleted", DocumentModel.NonceFor(http))));
-            endpoints.MapGet("/profile", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, ITsAuthMfa mfa, ITsAuthProviders providers) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-                if (context is null)
-                {
-                    return AccountRequest.LoginRedirect(http);
-                }
-
-                var tab = http.Request.Query["tab"].ToString();
-                if (tab is not ("security" or "sessions" or "access-tokens" or "danger"))
-                {
-                    tab = "profile";
-                }
-
-                var list = tab == "access-tokens" ? await tokens.ListAsync(context, http.RequestAborted) : null;
-                var active = await sessions.ListAsync(http, context.Session);
-                var status = tab == "security" ? await mfa.GetAccountMfaAsync(context.Session, http.RequestAborted) : null;
-                var linked = tab == "profile" ? await providers.ListProvidersAsync(context.Session, http.RequestAborted) : null;
-                var notice = http.Request.Query["status"].ToString() switch
-                {
-                    "profile-saved" => tab == "profile" ? "Profile saved." : "",
-                    "language-saved" => tab == "profile" ? "Language preference saved." : "",
-                    "token-revoked" => tab == "access-tokens" ? "Access token revoked." : "",
-                    "session-revoked" => tab == "sessions" ? "Session revoked." : "",
-                    "code-sent" => tab == "profile" ? $"We emailed a code to {context.Account.Email}. It expires in 30 minutes." : "",
-                    _ => ""
-                };
-                var wait = int.TryParse(http.Request.Query["wait"], NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
-                    ? Math.Clamp(seconds, 1, 3600) : (int?)null;
-                return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Status: notice, Tokens: list, Sessions: active, Mfa: status)
-                {
-                    Providers = linked,
-                    ConfirmProvider = http.Request.Query["unlink"].ToString() is var selected && TsAuthGateway.IsSignInProvider(selected) ? selected : null,
-                    CodeWait = wait
-                });
-            });
-            endpoints.MapPost("/api/v1/dashboard/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
-                await SaveAsync(http, sessions, accounts, false));
-            endpoints.MapPost("/api/v1/dashboard/profile/language", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
-                await SaveAsync(http, sessions, accounts, true));
-            endpoints.MapPost("/api/v1/dashboard/profile/delete", AccountDeletion.DeleteAsync);
-            endpoints.MapGet("/account-deletion", AccountDeletion.ProgressAsync);
-            endpoints.MapPost("/api/v1/dashboard/profile/delete/status", AccountDeletion.StatusAsync);
-            endpoints.MapPost("/api/v1/dashboard/profile/delete/continue", (HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform,
-                IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity) =>
-                AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, billing, identity));
-            endpoints.MapPost("/api/v1/dashboard/profile/providers/{provider}/unlink", SignInMethods.UnlinkAsync);
-            endpoints.MapPost("/api/v1/dashboard/profile/providers/{provider}/code", SignInMethods.SendCodeAsync);
-            endpoints.MapPost("/api/v1/dashboard/profile/email-change", (HttpContext http, DashboardSessions sessions, AccountService accounts, IAuthEmailChangeGateway gateway) => EmailChange.SubmitAsync(http, sessions, accounts, gateway, false));
-            endpoints.MapPost("/api/v1/dashboard/profile/email-change/confirm", (HttpContext http, DashboardSessions sessions, AccountService accounts, IAuthEmailChangeGateway gateway) => EmailChange.SubmitAsync(http, sessions, accounts, gateway, true));
-            endpoints.MapPost("/api/v1/dashboard/profile/sign-out-everywhere", SignOutEverywhereAsync);
-            endpoints.MapPost("/api/v1/dashboard/profile/sessions/{id}/revoke", async (HttpContext http, string id, DashboardSessions sessions, AccountService accounts) =>
-            {
-                var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
-                if (context is null)
-                {
-                    return Results.Unauthorized();
-                }
-
-                var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-                if (!Csrf.Validate(http, form))
-                {
-                    return Results.BadRequest("Invalid form token.");
-                }
-
-                await sessions.RevokeAsync(http, context.Session, id);
-                return HttpRedirects.SeeOther("/profile?tab=sessions&status=session-revoked");
-            });
-            return endpoints;
-        }
-
         // ts-auth ends every sign-in of the account, its hosted cookie included. Remove every local
         // session of the user without trying to revoke the now-invalid bearer again.
-        private static async Task<IResult> SignOutEverywhereAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform)
+        internal static async Task<IResult> SignOutEverywhereAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null)
@@ -148,7 +70,7 @@ namespace TerraScale.Dashboard.Features.Profile
             return HttpRedirects.SeeOther("/login?returnTo=%2Fprofile");
         }
 
-        private static async Task<IResult> SaveAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, bool language)
+        internal static async Task<IResult> SaveAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, bool language)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null)
