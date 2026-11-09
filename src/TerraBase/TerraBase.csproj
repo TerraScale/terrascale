@@ -2,6 +2,7 @@
   <PropertyGroup>
     <RootNamespace>TerraBase</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Features>runtime-async=on</Features>
     <AssemblyName>terrabase</AssemblyName>
     <Version>0.1.0</Version>
     <SourceRevisionId Condition="'$(TERRABASE_REVISION)' != ''">$(TERRABASE_REVISION)</SourceRevisionId>
