@@ -14,17 +14,29 @@ Drizzle ORM ships a `sqlite-proxy` driver that runs every query through two call
 ## Install
 
 ```sh
-npm install @terrascale/sdk drizzle-orm
+npm install drizzle-orm
+```
+
+The `@terrascale/sdk/drizzle` adapter ships in the next SDK release. Until then, install the SDK from the repository: inside a clone's `sdk/js` directory run `npm install && npm pack`, then install the tarball it produces:
+
+```sh
+npm install /path/to/terrascale-sdk-<version>.tgz
 ```
 
 ## Connect
+
+Export `TERRASCALE_PROJECT_ID`, exchange `TERRASCALE_API_KEY` for a short-lived access token as shown in the [JavaScript getting-started guide](/fr/getting-started/javascript), and export it as `TERRASCALE_ACCESS_TOKEN`.
 
 ```js
 import { drizzle } from "drizzle-orm/sqlite-proxy";
 import { createTerraBaseClient } from "@terrascale/sdk";
 import { drizzleProxy } from "@terrascale/sdk/drizzle";
 
-const { query, batch } = drizzleProxy(createTerraBaseClient({ project: "my-project", token: process.env.TERRABASE_TOKEN, baseUrl: "https://…" }).database("app"));
+const { query, batch } = drizzleProxy(createTerraBaseClient({
+  baseUrl: "https://api.terrascale.tech",
+  project: process.env.TERRASCALE_PROJECT_ID,
+  token: process.env.TERRASCALE_ACCESS_TOKEN,
+}).database("app"));
 const orm = drizzle(query, batch);
 ```
 
