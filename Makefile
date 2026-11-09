@@ -252,14 +252,15 @@ sdk-dotnet-test-fast:
 
 sdk-js-test-fast:
 	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- npm ci --no-audit --no-fund
-	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- npm test
+	cd sdk/js && mise exec node@24.21.0 -- npm exec --yes --package=npm@11.18.0 -- python3 ../../scripts/ci/fast-budget.py sdk-js --format vitest -- npm test
 
 sdk-go-test-fast:
-	cd sdk/go && go test -count=1 ./...
+	cd sdk/go && go test -count=1 -run '^$$' ./... >/dev/null
+	cd sdk/go && python3 ../../scripts/ci/fast-budget.py sdk-go --format go -- go test -count=1 ./...
 
 sdk-python-test-fast:
 	cd sdk/python && uv venv --allow-existing --python 3.12 .venv && uv pip sync --python .venv/bin/python --require-hashes --only-binary :all: requirements-ci.txt
-	cd sdk/python && uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e '.[dev]' && .venv/bin/pytest -q
+	cd sdk/python && uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e '.[dev]' && python3 ../../scripts/ci/fast-budget.py sdk-python --format pytest -- .venv/bin/pytest -q
 
 sdk-rust-test-fast:
 	cd sdk/rust && bash scripts/test-fast.sh
