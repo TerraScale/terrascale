@@ -1,7 +1,7 @@
-export { createTerraBaseV1Client as createTerraBaseClient, TerraBaseV1Client as TerraBaseClient } from "./v1/terrabase-v1.js";
+export { createTerraBaseV1Client as createTerraBaseClient, createTerraBaseV1ClientFromEnvironment as createTerraBaseClientFromEnvironment, TerraBaseV1Client as TerraBaseClient } from "./v1/terrabase-v1.js";
 export { terraScaleReleaseBlockers, TerraScaleCapabilityUnavailableError } from "./management-contracts.js";
 // Project-scoped TerraBase API: SQL over REST and WebSocket, SQL table shapes and the database catalog.
-export { createTerraBaseV1Client, TerraBaseV1Client, V1Database } from "./v1/terrabase-v1.js";
+export { createTerraBaseV1Client, createTerraBaseV1ClientFromEnvironment, TerraBaseV1Client, V1Database } from "./v1/terrabase-v1.js";
 export {
   TerraBaseV1Error,
   V1InvalidKeyError,

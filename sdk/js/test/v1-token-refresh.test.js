@@ -43,3 +43,28 @@ test("valid key tokens do not wait for a shared background exchange", async () =
     clock.mockRestore();
   }
 });
+
+test("the environment factory exchanges the env key and reaches the API", async () => {
+  const before = { TERRASCALE_API_KEY: process.env.TERRASCALE_API_KEY, TERRASCALE_PROJECT_ID: process.env.TERRASCALE_PROJECT_ID, TERRASCALE_BASE_URL: process.env.TERRASCALE_BASE_URL };
+  process.env.TERRASCALE_API_KEY = apiKey;
+  process.env.TERRASCALE_PROJECT_ID = project;
+  process.env.TERRASCALE_BASE_URL = "http://127.0.0.1:1";
+  const seen = /** @type {string[]} */ ([]);
+  const fetch = vi.fn(async input => {
+    seen.push(String(input));
+    if (String(input).endsWith("/oauth/token"))
+      return Response.json({ access_token: "env.payload.signature", expires_in: 900, token_type: "Bearer" });
+    return Response.json({ results: [{ columns: [], rows: [], rows_affected: 1, last_insert_rowid: 0 }] });
+  });
+  try {
+    const { createTerraBaseClientFromEnvironment } = await import("../src/index.js");
+    const client = createTerraBaseClientFromEnvironment({ baseUrl: "https://api.terrascale.tech", fetch });
+    await client.database("app").execute("INSERT INTO rows (id) VALUES ('env')");
+    expect(seen[0]).toBe("https://auth.terrascale.tech/terrascale/oauth/token");
+    expect(seen[1]).toContain(`/v1/projects/${project}/databases/app/sql/execute`);
+  } finally {
+    for (const [name, value] of Object.entries(before))
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+  }
+});

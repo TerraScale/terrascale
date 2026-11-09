@@ -323,3 +323,19 @@ export class TerraBaseV1Client {
 export function createTerraBaseV1Client(config) {
   return new TerraBaseV1Client(config);
 }
+
+export function createTerraBaseV1ClientFromEnvironment(/** @type {Partial<TerraBaseV1ClientConfig>} */ overrides = {}) {
+  if (typeof process === "undefined" || process.release?.name !== "node")
+    throw new TypeError("createTerraBaseClientFromEnvironment requires Node; browsers use end-user tokens.");
+  const fromEnv = /** @type {(name: string) => string} */ ((name) => {
+    const value = process.env[name];
+    if (value === undefined || value === "") throw new Error(`${name} is not set.`);
+    return value;
+  });
+  const config = /** @type {TerraBaseV1ClientConfig} */ ({ ...overrides, project: overrides.project ?? fromEnv("TERRASCALE_PROJECT_ID"), apiKey: overrides.apiKey ?? fromEnv("TERRASCALE_API_KEY") });
+  if (config.baseUrl === undefined) {
+    const base = process.env.TERRASCALE_BASE_URL;
+    if (base !== undefined && base !== "") config.baseUrl = base;
+  }
+  return new TerraBaseV1Client(config);
+}
