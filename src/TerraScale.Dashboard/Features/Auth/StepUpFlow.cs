@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Primitives;
+using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Features.AuthenticationManagement;
+using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
 
@@ -8,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     public interface IAuthStepUpGateway
     {
-        Task<StepUpChallenge> BeginAsync(SessionRecord session, string purpose, string audience, string returnUri, CancellationToken cancellationToken);
+        Task<StepUpChallenge> BeginAsync(SessionRecord session, string purpose, string audience, string? organizationId, string returnUri, CancellationToken cancellationToken);
         Task<string?> ConsumeAsync(SessionRecord session, string proof, string purpose, string audience, string? operationReceipt, CancellationToken cancellationToken);
     }
 
@@ -101,7 +103,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 throw Required();
             }
 
-            var challenge = await http.RequestServices.GetRequiredService<IAuthStepUpGateway>().BeginAsync(context.Session, purpose, audience,
+            var challenge = await http.RequestServices.GetRequiredService<IAuthStepUpGateway>().BeginAsync(context.Session, purpose, audience, context.Organization?.Id,
                 $"{http.Request.Scheme}://{http.Request.Host}/auth/step-up/callback", http.RequestAborted);
             if (challenge.Proof.Length is 0 or > 4096 || challenge.ExpiresAt <= http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow() ||
                 !Uri.TryCreate(challenge.StepUpUrl, UriKind.Absolute, out var url) || url.Scheme != "https" || !url.IsDefaultPort ||
@@ -157,6 +159,10 @@ namespace TerraScale.Dashboard.Features.Auth
                     "create_api_key" => await CreateDashboardCredentialEndpoint.CreateAsync(http, "api-key", sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "rotate_api_key" => await RotateDashboardCredentialEndpoint.RotateAsync(http, sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "create_oauth_client" => await AuthenticationConsole.PostAsync(http, "clients", sessions, accounts, services.GetRequiredService<ITsAuthProjects>()),
+                    "delete_organization" => await OrganizationEndpoints.LifecycleAsync(http, sessions, accounts,
+                        services.GetRequiredService<OrganizationLifecycleService>(), services.GetRequiredService<IWorkspacePlacement>(), "delete"),
+                    "start_ownership_transfer" => await OrganizationEndpoints.AccessMutationAsync(http, sessions, accounts,
+                        services.GetRequiredService<IOrganizationAccess>(), services.GetRequiredService<IWorkspacePlacement>(), "ownership"),
                     _ => throw Required()
                 };
             }

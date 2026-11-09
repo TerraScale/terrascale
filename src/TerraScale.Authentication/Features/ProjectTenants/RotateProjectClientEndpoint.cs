@@ -30,7 +30,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             throw Invalid("grace_seconds must be 0 to 86400 seconds.");
         }
 
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "rotate_oauth_client", cancellationToken);
+        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "rotate_oauth_client", null, cancellationToken);
         var previous = this.HttpContext.Items[Tenancy.ItemKey];
         this.HttpContext.Items[Tenancy.ItemKey] = projectId;
         try

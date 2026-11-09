@@ -122,7 +122,7 @@ paths:
       operationId: delete_organization
       tags: [Organizations]
       summary: Delete an organization
-      description: Needs the owner role. 409 not_empty while it has projects. Deletes its members, invitations, transfer, organization API keys and audit events.
+      description: Needs the owner role and a fresh delete_organization/ts-auth X-TerraScale-Step-Up-Proof. 409 not_empty while it has projects. Deletes its members, invitations, transfer, organization API keys and audit events.
       responses:
         '204': { description: 'Deleted.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -641,7 +641,7 @@ paths:
       operationId: start_ownership_transfer
       tags: [Ownership transfer]
       summary: Offer ownership to a member
-      description: Needs owner. The nominee is a member who is not an owner. Replaces a pending transfer; valid 7 days.
+      description: Needs owner and a fresh start_ownership_transfer/ts-auth X-TerraScale-Step-Up-Proof. The nominee is a member who is not an owner. Replaces a pending transfer; valid 7 days.
       requestBody:
         required: true
         content:

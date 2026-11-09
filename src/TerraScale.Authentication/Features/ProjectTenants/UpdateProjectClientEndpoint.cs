@@ -34,7 +34,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             }
         }
 
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "update_oauth_client", cancellationToken);
+        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "update_oauth_client", null, cancellationToken);
         var previous = this.HttpContext.Items[Tenancy.ItemKey];
         this.HttpContext.Items[Tenancy.ItemKey] = projectId;
         try

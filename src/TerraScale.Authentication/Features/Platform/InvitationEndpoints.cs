@@ -251,13 +251,13 @@ public sealed class DeclineInvitationEndpoint(Invitations invitations, PlatformA
 }
 
 /// <summary><c>POST /v1/terrascale/organizations/{organization}/ownership-transfer</c>.</summary>
-public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, PlatformAuthentication authentication, StepUpProofs proofs) : PlatformEndpoint(authentication)
 {
     /// <inheritdoc />
     public override void Configure()
     {
         Post($"{Organization}/ownership-transfer");
-        this.Describe("start_ownership_transfer", "Offer ownership to a member", "Needs owner. The nominee is a member who is not an owner. Replaces a pending transfer; valid 7 days.", "Ownership transfer", typeof(StartTransferRequest), StatusCodes.Status201Created, typeof(OwnershipTransferBody));
+        this.Describe("start_ownership_transfer", "Offer ownership to a member", "Needs owner and a fresh start_ownership_transfer/ts-auth X-TerraScale-Step-Up-Proof. The nominee is a member who is not an owner. Replaces a pending transfer; valid 7 days.", "Ownership transfer", typeof(StartTransferRequest), StatusCodes.Status201Created, typeof(OwnershipTransferBody));
     }
 
     /// <inheritdoc />
@@ -269,6 +269,7 @@ public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, P
             throw Invalid("user_id must be a user id.");
         }
 
+        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "start_ownership_transfer", this.RouteId("organization"), cancellationToken);
         var transfer = await platform.StartTransferAsync(caller.Id, this.RouteId("organization"), nominee!, cancellationToken);
         return Results.Json(Map(transfer), PlatformApiJson.Default.OwnershipTransferBody, statusCode: StatusCodes.Status201Created);
     }

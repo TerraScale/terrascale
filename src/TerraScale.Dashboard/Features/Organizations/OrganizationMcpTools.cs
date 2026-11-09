@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Organizations
@@ -44,12 +45,25 @@ namespace TerraScale.Dashboard.Features.Organizations
         { await operations.UpdateProjectAsync(Scope(organizationId, projectId), name, region, backupRegion, regions, Cancellation); return new OrganizationDone(true); });
         }
 
-        [McpServerTool(Name = "request_organization_deletion", Title = "Request organization deletion", Idempotent = true, Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Request deletion of a business organization. Requires the owner role and confirmName equal to the organization name.")]
+        [McpServerTool(Name = "request_organization_deletion", Title = "Request organization deletion", Idempotent = true, Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Request deletion of a business organization. Requires the owner role and confirmName equal to the organization name. Always returns step_up_required: deletion is confirmed with fresh credentials on the dashboard's danger zone page, never through unattended MCP.")]
         public Task<OrganizationDone> RequestDeletion([Description("The organization's exact name, confirming the deletion request.")] string confirmName,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
         {
-            return Invoke(async () =>
-        { await lifecycle.DeleteAsync(Scope(organizationId, projectId), confirmName, Cancellation); return new OrganizationDone(true); });
+            return Invoke<OrganizationDone>(async () =>
+        {
+            var context = Scope(organizationId, projectId);
+            if (context.Organization is null || context.Organization.Kind == "personal" || context.Role != "owner")
+            {
+                throw new AccountAccessException("Only the owner can delete a business organization.");
+            }
+
+            if (confirmName.Trim() != context.Organization.Name)
+            {
+                throw new AccountAccessException("Type the organization name to confirm deletion.", 422);
+            }
+
+            throw ConfirmedInDashboard(context);
+        });
         }
 
         [McpServerTool(Name = "leave_organization", Title = "Leave organization", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Leave a business organization the caller does not own. The dashboard selection moves to another organization.")]
@@ -83,11 +97,30 @@ namespace TerraScale.Dashboard.Features.Organizations
             return Member("remove", userId, organizationId, projectId);
         }
 
-        [McpServerTool(Name = "request_ownership_transfer", Title = "Request ownership transfer", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Nominate an active member as the next owner. The member must confirm with confirm_ownership_transfer within the provider's transfer expiry. Requires the owner role.")]
+        [McpServerTool(Name = "request_ownership_transfer", Title = "Request ownership transfer", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Nominate an active member as the next owner. The member must confirm with confirm_ownership_transfer within the provider's transfer expiry. Requires the owner role. Always returns step_up_required: the nomination is confirmed with fresh credentials on the dashboard's danger zone page, never through unattended MCP.")]
         public Task<OrganizationDone> RequestOwnershipTransfer([Description("Member user ID from list_members.")] string userId,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
         {
-            return Member("start", userId, organizationId, projectId);
+            return Invoke<OrganizationDone>(async () =>
+        {
+            var context = Scope(organizationId, projectId);
+            if (context.Organization is null || context.Role != "owner")
+            {
+                throw new AccountAccessException("Organization ownership is required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(userId) || userId == context.UserId)
+            {
+                throw new AccountAccessException("Choose another active member as the new owner.", 422);
+            }
+
+            throw ConfirmedInDashboard(context);
+        });
+        }
+
+        private static AccountAccessException ConfirmedInDashboard(AccountContext context)
+        {
+            return new("Confirm this in the dashboard: " + WorkspaceUrl.For(context, "/organization?tab=danger"), 403, "step_up_required");
         }
 
         [McpServerTool(Name = "confirm_ownership_transfer", Title = "Confirm ownership transfer", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Accept a pending ownership transfer nominated to the caller. The previous owner becomes an admin.")]

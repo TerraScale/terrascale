@@ -266,12 +266,12 @@ public sealed partial class TerraScaleAuthClient
     private async Task SendAuthenticatedForStatusCoreAsync<TRequest>(
         HttpMethod method, string route, TRequest? body, JsonTypeInfo<TRequest> requestType,
         AuthenticationHeaderValue authorization, HttpStatusCode expectedStatus,
-        int maxRequestBytes, CancellationToken cancellationToken)
+        int maxRequestBytes, CancellationToken cancellationToken, string? stepUpProof = null)
         where TRequest : class
     {
         using var response = await SendRequestAsync(method, route,
             body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
-            new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
+            new RequestAuthentication(authorization), cancellationToken, stepUpProof: stepUpProof).ConfigureAwait(false);
         await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
     }
 

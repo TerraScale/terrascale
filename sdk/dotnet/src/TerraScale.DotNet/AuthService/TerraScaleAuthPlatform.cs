@@ -59,14 +59,15 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOrganization,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
-    /// <summary>delete_organization: DELETE /v1/terrascale/organizations/{organization}.</summary>
+    /// <summary>delete_organization: DELETE /v1/terrascale/organizations/{organization}. Requires a fresh purpose-bound ts-auth proof.</summary>
     public Task DeleteOrganizationAsync(
         string accessToken,
         string organizationId,
+        string stepUpProof,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, $"/v1/terrascale/organizations/{Id(organizationId)}",
             null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
-            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken, Proof(stepUpProof));
 
     /// <summary>list_members: GET /v1/terrascale/organizations/{organization}/members.</summary>
     public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformMember>> ListMembersAsync(
@@ -465,16 +466,17 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
-    /// <summary>start_ownership_transfer: POST /v1/terrascale/organizations/{organization}/ownership-transfer.</summary>
+    /// <summary>start_ownership_transfer: POST /v1/terrascale/organizations/{organization}/ownership-transfer. Requires a fresh purpose-bound ts-auth proof.</summary>
     public Task<TerraScaleAuthPlatformOwnershipTransfer> StartOwnershipTransferAsync(
         string accessToken,
         string organizationId,
         TerraScaleAuthPlatformStartOwnershipTransfer request,
+        string stepUpProof,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, $"/v1/terrascale/organizations/{Id(organizationId)}/ownership-transfer",
             request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformStartOwnershipTransfer,
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOwnershipTransfer,
-            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken, Proof(stepUpProof));
 
     /// <summary>get_ownership_transfer: GET /v1/terrascale/organizations/{organization}/ownership-transfer.</summary>
     public Task<TerraScaleAuthPlatformOwnershipTransfer> GetOwnershipTransferAsync(

@@ -21,7 +21,7 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var body = await this.BodyAsync(WebAuthnJson.Default.PasskeyVerifyRequest, cancellationToken);
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "add_passkey", cancellationToken);
+        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "add_passkey", null, cancellationToken);
         var raw = Map(body.Response);
         var entry = raw is null ? null
             : await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken).ConfigureAwait(false);

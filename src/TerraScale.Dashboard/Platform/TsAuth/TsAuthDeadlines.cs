@@ -37,9 +37,9 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
         internal Task SendAuthenticatedForStatusAsync<TRequest>(HttpMethod method, string route, TRequest? body,
             JsonTypeInfo<TRequest> requestType, AuthenticationHeaderValue authorization, HttpStatusCode expectedStatus,
-            int maxRequestBytes, CancellationToken caller) where TRequest : class
+            int maxRequestBytes, CancellationToken caller, string? stepUpProof = null) where TRequest : class
         {
-            return WithDeadlineAsync(token => SendAuthenticatedForStatusCoreAsync(method, route, body, requestType, authorization, expectedStatus, maxRequestBytes, token), caller);
+            return WithDeadlineAsync(token => SendAuthenticatedForStatusCoreAsync(method, route, body, requestType, authorization, expectedStatus, maxRequestBytes, token, stepUpProof), caller);
         }
 
         internal Task<bool> SendAuthenticatedForDeletionAsync(string route, AuthenticationHeaderValue authorization, CancellationToken caller)

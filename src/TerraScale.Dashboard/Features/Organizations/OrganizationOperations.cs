@@ -132,7 +132,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         }
 
         public async Task MutateMemberAsync(AccountContext context, string operation, string userId, string role,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, string? stepUpProof = null)
         {
             context = operation is "confirm" or "cancel"
                 ? await AccountScope.RefreshAsync(accounts, context, cancellationToken)
@@ -158,7 +158,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
             else
             {
-                await access.TransferAsync(context, operation, userId, cancellationToken);
+                await access.TransferAsync(context, operation, userId, stepUpProof, cancellationToken);
             }
             // Ownership confirmation changes the caller's role. Resolve it again
             // before recording the change; the write refreshes members from ts-auth.
