@@ -1,0 +1,4 @@
+[
+  {"path": "^scripts/legacy-scan/", "repo": "terrascale", "reason": "Scanner policy and process fixtures necessarily name forbidden terms."},
+  {"path": "^scripts/terrabase/fast\\-build\\.slnf$", "repo": "terrascale", "terms": ["engine-brand"], "match": "\\bTurso\\.Data\\.Sqlite\\.Tests\\b", "reason": "Fast solution filter names the internal vendored driver test project path; CI build wiring, not product branding."}
+]

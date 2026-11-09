@@ -1,0 +1,5 @@
+[
+  {"path": "^src/TerraScale\\.Authentication\\.Store/AuthStorageTelemetry\\.cs$", "repo": "terrascale", "terms": ["collections"], "match": "\\bdb\\.collection\\.name\\b", "reason": "Standard OpenTelemetry database semantic attribute for the SQL table name."},
+  {"repo": "terrascale", "path": "^src/TerraScale\\.Authentication\\.Store/AuthStore\\.cs$", "terms": ["webhooks"], "match": "\\bWebhookEndpoint(?:Counter)?Table\\b|\\\"webhook_endpoints\\\"|\\\"webhook_endpoint_counters\\\"", "reason": "Storage table constants of the end-user lifecycle webhook endpoints and their per-project counters (T221)."},
+  {"repo": "terrascale", "path": "^src/TerraScale\\.Authentication\\.Store/AuthStore\\.cs$", "terms": ["webhooks"], "match": "\\bWebhookOutboxTable\\b|\\\"webhook_outbox\\\"", "reason": "Storage table constant of the end-user lifecycle webhook outbox (T228)."}
+]

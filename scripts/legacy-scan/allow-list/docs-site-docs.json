@@ -1,0 +1,3 @@
+[
+  {"path": "^docs-site/docs/public/_redirects$", "repo": "terrascale", "terms": ["libsql"], "match": "^(?:/[a-z-]+)?/guides/libsql-clients\\b", "reason": "Retired URLs redirect to the SQL page so old links still resolve."}
+]

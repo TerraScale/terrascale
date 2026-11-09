@@ -1,0 +1,3 @@
+[
+  {"path": "^sdk/rust/Cargo\\.lock$", "repo": "terrascale", "terms": ["collections"], "match": "\\bicu_collections\\b", "reason": "Third-party ICU crate name."}
+]
