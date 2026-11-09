@@ -58,8 +58,10 @@ export const errorCodes = () => {
   const ctorRe = new RegExp(`new (?:${failures.join('|')})\\(`, 'g');
   const bareRe = /\bnew\(/g;
   const writeRe = /WriteAsync\([^;]*?"([a-z_]+)"/g;
+  const detailRe = /new (?:ErrorDetail|[A-Za-z]*ErrorDetail)\(\s*"([a-z_]+)"/g;
   for (const path of csFiles) {
     const text = readFileSync(path, 'utf8');
+    for (const m of text.matchAll(detailRe)) codes.add(m[1]);
     for (const m of text.matchAll(ctorRe)) {
       const call = callText(text, m.index + m[0].length - 1);
       if (!call) continue;

@@ -15,7 +15,7 @@ import (
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	project := os.Getenv("TERRASCALE_PROJECT")
+	project := os.Getenv("TERRASCALE_PROJECT_ID")
 	tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: os.Getenv("TERRASCALE_API_KEY"), Project: project})
 	if err != nil {
 		log.Fatal(err)
@@ -24,7 +24,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := run(ctx, c.Database(project, os.Getenv("TERRASCALE_DATABASE"))); err != nil {
+	if err := run(ctx, c.Database(project, os.Getenv("TERRASCALE_DATABASE_NAME"))); err != nil {
 		log.Fatal(err)
 	}
 }

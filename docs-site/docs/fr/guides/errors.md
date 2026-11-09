@@ -138,6 +138,10 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 400, SQLSTATE 23503 — a statement broke a foreign key constraint. Insert the parent row or fix the reference. Retry: no.
 
+### `function_error`
+
+500 — the invoked function's JavaScript handler threw, exceeded its runtime limits or a SQL call it made failed. The message carries the handler's error and the run, with its logged lines, is kept in the function's logs; SQL the handler committed outside a transaction stays committed. Fix the function source and invoke again. Retry: no.
+
 ### `function_limit`
 
 409 — the plan's function count limit is reached. Delete a function or upgrade the plan. Retry: no.

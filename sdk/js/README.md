@@ -74,10 +74,10 @@ on each request; the raw key goes only to `https://auth.terrascale.tech`. Keep k
 ```js
 const client = createTerraBaseClient({
   baseUrl: "https://api.terrascale.tech",
-  project: process.env.TERRASCALE_PROJECT,
+  project: process.env.TERRASCALE_PROJECT_ID,
   apiKey: process.env.TERRASCALE_API_KEY,
 });
-const project = process.env.TERRASCALE_PROJECT;
+const project = process.env.TERRASCALE_PROJECT_ID;
 const run = await client.createDatabase(project, "agent_run", { ttlSeconds: 3600 });
 const fork = await client.forkDatabase(project, run.id, "agent_fork", { ttlSeconds: 600 });
 const key = await client.createScopedKey({ project, database: fork.id, access: "read_write", ttlSeconds: 600 });

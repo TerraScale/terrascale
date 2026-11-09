@@ -115,7 +115,8 @@ ts init example    # reuse or create a named database
 Pass `-lang <js|go|python|dotnet|rust>` to pick the snippet yourself, and
 `-yes` to create the database and key without the one confirmation. The key's
 secret is printed once and written to `.env` as `TERRASCALE_API_KEY`, next to
-`TERRASCALE_PROJECT_ID` and `TERRASCALE_DATABASE_NAME`.
+`TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_NAME` and `TERRASCALE_REGION`,
+the database's home region; only the .NET snippet reads the region.
 
 ## Sign in
 
