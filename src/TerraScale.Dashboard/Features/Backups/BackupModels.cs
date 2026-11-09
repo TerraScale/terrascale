@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.Backups
     // The project's own bucket at TerraBase (credentials are write-only there) and a database's scheduled NDJSON export into it.
     public sealed record BackupDestinationView(string Endpoint, string Region, string Bucket, string Mode, DateTimeOffset? UpdatedAt);
     public sealed record BackupBucketView(BackupDestinationView? Destination);
-    public sealed record BackupPage(ShellModel Shell, DatabaseRecord Database, BackupListing? Listing, string Unavailable = "",
+    public sealed record BackupPage(ShellModel Shell, DatabaseRecord Database, BackupListing? Listing,
         string Error = "", string RestoreId = "", string Name = "", string? FullBackupCron = null, string? RetentionDays = null)
     {
         public BackupBucketView? Bucket { get; init; }

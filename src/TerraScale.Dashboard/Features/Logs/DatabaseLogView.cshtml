@@ -14,9 +14,8 @@
                     @foreach (var status in new[] { "2xx", "3xx", "4xx", "5xx" }) { <option value="@status" selected="@(Model.Status == status)">@status</option> }
                 </select>
                 <button class="ts-btn ts-btn-secondary" type="submit">Filter</button>
-                <a class="ts-btn ts-btn-ghost" href="@(DatabaseService.Path(Model.Database.Id, "logs") + (Model.Status.Length == 0 ? "" : "?status=" + Uri.EscapeDataString(Model.Status)))">Retry</a>
             </form>
-            @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
+            @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><a class="ts-link" href="@(DatabaseService.Path(Model.Database.Id, "logs") + (Model.Status.Length == 0 ? "" : "?status=" + Uri.EscapeDataString(Model.Status)))">Retry</a></div> }
             else
             {
                 @if (Model.Logs!.RecordingLimited) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Recording reached capacity on this server. Some requests may be missing.</p></div> }

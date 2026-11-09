@@ -89,7 +89,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             {
                 code = error is AccountAccessException { StatusCode: 400 } ? 400 : 503;
-                message = code == 400 ? "Choose a valid status filter." : "Request logs are unavailable. Retry to load this database’s recorded requests.";
+                message = code == 400 ? "Choose a valid status filter." : "Request logs for " + database.Name + " are unavailable.";
             }
             var page = DatabaseLogView.Create(new(ShellModel.For(http, context, database.Name + " · Logs"), database, status, logs, message, drain, drainError));
             page.StatusCode = drainStatus != 200 ? drainStatus : code;

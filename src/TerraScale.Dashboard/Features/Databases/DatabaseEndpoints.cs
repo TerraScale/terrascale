@@ -265,7 +265,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 catch (Exception failure) when (failure is HttpRequestException or IOException or System.Text.Json.JsonException or InvalidOperationException
                     || KnownFailure(failure) || failure is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
                 {
-                    return new(null, table, since, until, before, failure is AccountAccessException { StatusCode: 422 } ? failure.Message : "Conflicts are unavailable. Try again.");
+                    return new(null, table, since, until, before, failure is AccountAccessException { StatusCode: 422 } ? failure.Message : "Conflicts for " + database.Name + " are unavailable.");
                 }
             }
             var conflictsRead = tab == "conflicts" ? ConflictsAsync() : null;

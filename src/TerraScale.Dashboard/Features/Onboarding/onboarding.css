@@ -234,6 +234,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+.ts-onboarding-plans:has(#interval-annual:checked) .ts-price-monthly {
+  display: none;
+}
+
+.ts-onboarding-plans:has(#interval-monthly:checked) .ts-price-annual {
+  display: none;
+}
+
 /* One primary action: it follows the selected card without a script. */
 .ts-onboarding-submit[data-plan=paid] {
   display: none;
