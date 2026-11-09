@@ -12,6 +12,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
+// A replica region client session run at the home (docs/terrabase/region-replicas.md#writes-and-transactions).
 internal sealed class HomeSessionEndpoint(
     ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local)
     : EndpointWithoutRequest<IResult>

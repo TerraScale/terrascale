@@ -30,6 +30,7 @@ internal interface IShapeKeyRetention
     ValueTask<bool> HasObjectAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken);
 }
 
+// Encrypt-then-cache for T1 shape objects (docs/terrabase/shape-reads.md sections 12 and 13).
 internal interface IShapeCrypto
 {
     long CurrentEpoch { get; }

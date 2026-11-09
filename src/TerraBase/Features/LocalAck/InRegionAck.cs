@@ -12,6 +12,7 @@ using ZLogger;
 
 namespace TerraBase.Features.LocalAck;
 
+// The discovered regional quorum for local writes (docs/terrabase/in-region-ack.md).
 internal interface IInRegionAck
 {
     bool PartnerHealthy { get; }

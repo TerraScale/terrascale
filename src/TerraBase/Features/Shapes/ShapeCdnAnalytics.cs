@@ -8,6 +8,7 @@ using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
+// Free reads T2 telemetry (docs/terrabase/free-reads-cdn.md), read from Cloudflare zone analytics.
 internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, string? token, TimeProvider time, IMeterFactory meters,
     ILogger<ShapeCdnAnalytics> logger) : BackgroundService
 {

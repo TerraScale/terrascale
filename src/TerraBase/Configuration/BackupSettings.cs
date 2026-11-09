@@ -31,6 +31,7 @@ public sealed class BackupSettings
 
     public required string SecretKey { get; init; }
 
+    // Purges shape CDN copies on terrascale.tech once the mirror deletes their objects (docs/terrabase/free-reads-cdn.md).
     public string? CloudflareApiToken { get; init; }
 
     public required byte[] MasterKey { get; init; }
