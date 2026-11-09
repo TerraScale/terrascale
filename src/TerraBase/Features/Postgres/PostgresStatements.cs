@@ -33,27 +33,39 @@ internal static partial class PostgresStatements
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly PostgreSqlDialect Dialect = new();
-    private static readonly string[] Settable = ["client_encoding", "DateStyle", "TimeZone", "extra_float_digits", "application_name", "search_path", "terrascale.write"];
+    private static readonly (string Name, string Value, bool Settable, bool Reported)[] Gucs =
+    [
+        ("server_version", ServerVersion, false, true),
+        ("server_encoding", "UTF8", false, true),
+        ("client_encoding", "UTF8", true, true),
+        ("DateStyle", "ISO, MDY", true, true),
+        ("integer_datetimes", "on", false, true),
+        ("standard_conforming_strings", "on", false, true),
+        ("TimeZone", "UTC", true, true),
+        ("extra_float_digits", "1", true, false),
+        ("application_name", "", true, true),
+        ("search_path", "public", true, false),
+        ("terrascale.write", "auto", true, false),
+    ];
 
-    public static readonly string[] Reported =
-        ["server_version", "server_encoding", "client_encoding", "DateStyle", "integer_datetimes", "standard_conforming_strings", "TimeZone", "application_name"];
+    private static readonly string[] Settable = [.. Gucs.Where(guc => guc.Settable).Select(guc => guc.Name)];
 
-    public static Dictionary<string, string> Settings(string applicationName) => new(StringComparer.OrdinalIgnoreCase)
+    public static readonly string[] Reported = [.. Gucs.Where(guc => guc.Reported).Select(guc => guc.Name)];
+
+    public static Dictionary<string, string> Settings(string applicationName)
     {
-        ["server_version"] = ServerVersion,
-        ["server_encoding"] = "UTF8",
-        ["client_encoding"] = "UTF8",
-        ["DateStyle"] = "ISO, MDY",
-        ["integer_datetimes"] = "on",
-        ["standard_conforming_strings"] = "on",
-        ["TimeZone"] = "UTC",
-        ["application_name"] = applicationName,
-        ["extra_float_digits"] = "1",
-        ["search_path"] = "public",
-        ["terrascale.write"] = "auto",
-        ["transaction_isolation"] = "serializable",
-        ["default_transaction_isolation"] = "serializable",
-    };
+        var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["transaction_isolation"] = "serializable",
+            ["default_transaction_isolation"] = "serializable",
+        };
+        foreach (var (name, value, _, _) in Gucs)
+        {
+            settings[name] = name == "application_name" ? applicationName : value;
+        }
+
+        return settings;
+    }
 
     public static string Version => $"PostgreSQL {ServerVersion} (TerraBase)";
 
