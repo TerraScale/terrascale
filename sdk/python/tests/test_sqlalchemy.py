@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from typing import Any
 
 import httpx
@@ -173,3 +174,61 @@ def test_sqlalchemy_transactions_and_savepoints_over_the_session(serve_sql: Any)
     assert frames[7]["statements"][0]["sql"].upper().startswith("ROLLBACK TO")
     assert frames[8]["statements"][0]["sql"].upper().startswith("SELECT")
     assert inserted == [[1, "outer"]]
+
+
+def test_alembic_batch_migration_adds_column_and_alters_nullability(serve_sql: Any) -> None:
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    db = sqlite3.connect(":memory:", isolation_level=None, check_same_thread=False)
+    in_txn = False
+
+    def answer(ws: ServerConnection, server: Server) -> None:
+        nonlocal in_txn
+        while True:
+            try:
+                frame_id = server.recv(ws)
+            except Exception:
+                return
+            frame = server.frames[-1]
+            if frame["type"] == "begin":
+                in_txn = True
+                results = []
+            elif frame["type"] in ("commit", "rollback"):
+                in_txn = False
+                results = []
+            else:
+                results = [run(stmt) for stmt in frame.get("statements", [])]
+            ws.send(json.dumps({"id": frame_id, "type": "result", "results": results, "transaction": in_txn}))
+
+    def run(stmt: dict[str, Any]) -> dict[str, Any]:
+        cursor = db.execute(stmt["sql"], stmt.get("args") or [])
+        return {
+            "columns": [{"name": d[0], "decltype": None} for d in cursor.description] if cursor.description else [],
+            "rows": [list(row) for row in cursor.fetchall()],
+            "rows_affected": max(cursor.rowcount, 0),
+            "last_insert_rowid": cursor.lastrowid,
+        }
+
+    server, base = serve_sql(answer)
+    engine = sa.create_engine(
+        f"terrascale://{PROJECT}/app",
+        connect_args={"token": "fixture-token", "region": "gru", "base_url": base},
+    )
+    with engine.begin() as conn:
+        conn.execute(sa.text("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)"))
+        conn.execute(sa.text("INSERT INTO notes (id, body) VALUES (1, 'a'), (2, 'b')"))
+    with engine.connect() as conn:
+        operations = Operations(MigrationContext.configure(conn, opts={"render_as_batch": True}))
+        with operations.batch_alter_table("notes") as batch:
+            batch.add_column(sa.Column("title", sa.Text))
+            batch.alter_column("body", existing_type=sa.Text, nullable=False)
+    with engine.connect() as conn:
+        columns = list(conn.execute(sa.text("PRAGMA table_info(notes)")))
+        rows = list(conn.execute(sa.text("SELECT id, body, title FROM notes ORDER BY id")))
+    engine.dispose()
+    db.close()
+    assert [(c[1], c[2], c[3]) for c in columns] == [("id", "INTEGER", 0), ("body", "TEXT", 1), ("title", "TEXT", 0)]
+    assert rows == [(1, "a", None), (2, "b", None)]
+    assert any("sqlite_master" in s["sql"] for f in server.frames for s in f.get("statements", []))
+    assert any(s["sql"].startswith("PRAGMA table_info") for f in server.frames for s in f.get("statements", []))
