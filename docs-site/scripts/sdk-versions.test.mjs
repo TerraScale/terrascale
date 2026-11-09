@@ -40,3 +40,34 @@ test('active SDK installation pins match the dashboard manifest', () => {
     }
   }
 });
+
+test('dashboard constants, Go README and getting-started pins match the dashboard manifest', () => {
+  const versions = JSON.parse(readFileSync(new URL('../src/TerraScale.Dashboard/sdk-versions.json', root), 'utf8'));
+  const constants = Object.fromEntries(
+    [...read('../src/TerraScale.Dashboard/Features/Home/SdkVersions.cs')
+      .matchAll(/public const string (\w+) = "([^"]+)";/g)]
+      .map(([, name, value]) => [name, value]),
+  );
+  assert.deepEqual(Object.keys(constants).sort(), ['Go', 'JavaScript', 'PythonRef']);
+  assert.equal(constants.JavaScript, versions.javascript);
+  assert.equal(constants.Go, versions.go);
+  assert.equal(constants.PythonRef, versions.pythonRef);
+
+  const goReadme = read('../sdk/go/README.md');
+  for (const match of goReadme.matchAll(/go get terrascale\.tech\/sdk@(v[\d.]+)/g)) {
+    assert.equal(match[1], versions.go, 'sdk/go/README.md');
+  }
+
+  const paths = ['docs/getting-started/go.md', 'docs/guides/sdks.md'];
+  for (const { code } of LOCALES) {
+    if (code === 'en') continue;
+    paths.push(`docs/${code}/getting-started/go.md`, `docs/${code}/guides/sdks.md`);
+  }
+  for (const path of paths) {
+    const pins = [...read(path).matchAll(/go get terrascale\.tech\/sdk@(v[\d.]+)/g)];
+    assert.ok(pins.length > 0, path);
+    for (const match of pins) {
+      assert.equal(match[1], versions.go, path);
+    }
+  }
+});
