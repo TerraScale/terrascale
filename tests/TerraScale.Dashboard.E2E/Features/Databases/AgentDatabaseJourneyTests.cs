@@ -37,19 +37,9 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var historical = await CallAsync(replica, secret, "fork_database", new { databaseId = id, name = "agent-history", pointInTime = backup.GetProperty("createdAt").GetString(), ttlHours = 3m });
             await Assert.That(historical.GetProperty("operationId").ValueKind).IsEqualTo(JsonValueKind.String);
             await Assert.That(historical.GetProperty("name").GetString()).IsEqualTo("agent-history");
-            var historicalId = "";
-            for (var attempt = 0; attempt < 120 && historicalId.Length == 0; attempt++)
-            {
-                var status = await CallAsync(replica, secret, "get_restore_status", new { databaseId = id, operationId = historical.GetProperty("operationId").GetString()! });
-                if (status.GetProperty("status").GetString() != "running")
-                {
-                    historicalId = status.GetProperty("targetDatabaseId").GetString()!;
-                }
-                else
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(250));
-                }
-            }
+            var settled = await CallAsync(replica, secret, "get_restore_status", new { databaseId = id, operationId = historical.GetProperty("operationId").GetString()! });
+            await Assert.That(settled.GetProperty("status").GetString()).IsEqualTo("completed");
+            var historicalId = settled.GetProperty("targetDatabaseId").GetString()!;
             var restored = await CallAsync(replica, secret, "get_database", new { databaseId = historicalId });
             await Assert.That(restored.GetProperty("name").GetString()).IsEqualTo("agent-history");
             await Assert.That(restored.GetProperty("expiresAt").ValueKind).IsEqualTo(JsonValueKind.String);
