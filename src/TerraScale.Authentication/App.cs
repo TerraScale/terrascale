@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Http;
@@ -112,6 +113,8 @@ public static class App
         }).Database(StorageProject, StorageDatabase));
         builder.Services.AddPooledDbContextFactory<AuthDbContext>((services, database) => database
             .UseTerraBase(services.GetRequiredService<TerraBaseSqlDatabase>())
+            .UseLoggerFactory(new ConflictLogging(services.GetRequiredService<ILoggerFactory>()))
+            .ConfigureWarnings(warnings => warnings.Log((RelationalEventId.CommandError, LogLevel.Debug)))
             .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
         builder.Services.AddSingleton<AuthData>();
         builder.Services.AddSingleton<AuthSchema>();
