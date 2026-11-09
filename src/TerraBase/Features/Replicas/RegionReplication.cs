@@ -43,7 +43,7 @@ internal sealed class RegionReplication(
 
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), Follower> _followers = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (TenantContext Database, long At)> _revised = new();
-    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), string> _published = new();
+    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (string Revision, TenantContext Database)> _published = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), bool> _suspended = new();
     private readonly Channel<bool> _publish = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Channel<string> _catalogWakes = Channel.CreateBounded<string>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.DropWrite });
@@ -104,6 +104,7 @@ internal sealed class RegionReplication(
                 ReconnectWaitMin = TimeSpan.FromMilliseconds(100),
                 ReconnectWaitMax = TimeSpan.FromSeconds(2),
             });
+            _nats.ConnectionOpened += (_, _) => Reconnected();
             revisions.Revised += OnRevised;
         }
         else if (_peers.Count > 0)
@@ -206,6 +207,25 @@ internal sealed class RegionReplication(
         _ = _publish.Writer.TryWrite(true);
     }
 
+    private ValueTask Reconnected()
+    {
+        foreach (var key in _published.Keys)
+        {
+            if (_published.TryRemove(key, out var published))
+            {
+                _revised[key] = (published.Database, time.GetUtcNow().ToUnixTimeMilliseconds());
+            }
+        }
+
+        _ = _publish.Writer.TryWrite(true);
+        foreach (var follower in _followers.Values)
+        {
+            follower.Signal(0, fromHome: true);
+        }
+
+        return default;
+    }
+
     private async Task PublishAsync(NatsConnection nats, CancellationToken cancellationToken)
     {
         await foreach (var wake in _publish.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
@@ -226,19 +246,19 @@ internal sealed class RegionReplication(
                         continue;
                     }
 
-                    using var push = await RevisionPush.BuildAsync(revisions, memory, revised.Database, _published.GetValueOrDefault(key), revised.At, cancellationToken)
+                    using var push = await RevisionPush.BuildAsync(revisions, memory, revised.Database, _published.GetValueOrDefault(key).Revision, revised.At, cancellationToken)
                         .ConfigureAwait(false);
                     if (push is not { Notice.Revision: { } revision })
                     {
                         continue;
                     }
 
-                    if (_published.TryGetValue(key, out var last) && last == revision)
+                    if (_published.TryGetValue(key, out var last) && last.Revision == revision)
                     {
                         continue;
                     }
 
-                    _published[key] = revision;
+                    _published[key] = (revision, revised.Database);
                     foreach (var region in (placement.AllRegions ? _peers.Select(peer => peer.Region) : placement.Replicas).Append(options.Region).Distinct(StringComparer.Ordinal))
                     {
                         await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database), push.Payload, cancellationToken: cancellationToken)
@@ -252,6 +272,7 @@ internal sealed class RegionReplication(
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
                     _ = _published.TryRemove(key, out _);
+                    _revised[key] = revised;
                     logger.ZLogInformation($"A revision notice was not published: {error.GetType().Name:@Error}");
                 }
             }
@@ -357,7 +378,6 @@ internal sealed class RegionReplication(
         }
     }
 
-    // After a reconnect every replica pulls: notices sent while disconnected are lost.
     private async Task WatchConnectionAsync(NatsConnection nats, CancellationToken cancellationToken)
     {
         var connected = false;
@@ -379,16 +399,7 @@ internal sealed class RegionReplication(
                 }
             }
 
-            var open = nats.ConnectionState == NatsConnectionState.Open;
-            if (open && !connected)
-            {
-                foreach (var follower in _followers.Values)
-                {
-                    follower.Signal(0, fromHome: true);
-                }
-            }
-
-            connected = open;
+            connected = nats.ConnectionState == NatsConnectionState.Open;
         }
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false));
     }
