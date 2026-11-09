@@ -28,7 +28,15 @@ func (c *dbConn) CheckNamedValue(nv *driver.NamedValue) error {
 		float32, float64:
 		return nil
 	}
-	return driver.ErrSkip
+	v, err := driver.DefaultParameterConverter.ConvertValue(nv.Value)
+	if err != nil {
+		return err
+	}
+	if t, ok := v.(time.Time); ok {
+		v = t.UTC().Format(dbTimeLayout)
+	}
+	nv.Value = v
+	return nil
 }
 
 func normalizeRowValue(v any, declType string) any {
