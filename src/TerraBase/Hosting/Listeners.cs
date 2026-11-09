@@ -309,6 +309,13 @@ public static class Listeners
             }
 
             var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listeners ?? ListenerMetadata.Internal.Listeners;
+            if (arrivedOn == TerraBaseListener.Internal
+                && context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
+                && context.GetEndpoint()?.Metadata.GetMetadata<ManagementUserRoute>() is null)
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
 
             if (arrivedOn is not { } listener || !servedBy.Contains(listener))
             {

@@ -23,7 +23,7 @@ internal sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>

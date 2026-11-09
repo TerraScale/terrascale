@@ -26,7 +26,7 @@ internal sealed class RestorePointInTimeEndpoint(IManagementService management, 
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
     public override async ValueTask<IResult> HandleAsync(PointInTimeRestoreRequest request, CancellationToken cancellationToken)

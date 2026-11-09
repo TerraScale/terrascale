@@ -31,7 +31,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
     }
 
     public override async ValueTask<IResult> HandleAsync(DatabaseRegionsRequest request, CancellationToken cancellationToken)
@@ -102,12 +102,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
         var project = HttpContext.RouteValue("project");
         if (HttpContext.User.FindFirst("project_id") is null)
         {
-            return await catalog.ResolveProjectAsync(project, actor, createIn: null, cancellationToken).ConfigureAwait(false) switch
-            {
-                string mapped => await ManagementCreateAsync(mapped, name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false),
-                NotFound error => ErrorResponse.From(error),
-                Unavailable error => ErrorResponse.From(error),
-            };
+            return await CreateAsync(name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false);
         }
 
         var owner = HttpContext.User.FindFirst("org_id")?.Value;
@@ -141,12 +136,6 @@ internal sealed class CreateManagedDatabaseEndpoint(
         return result;
     }
 
-    private async ValueTask<IResult> ManagementCreateAsync(
-        string organization, string name, IReadOnlyList<string> replicas, bool all, long? ttlSeconds, CancellationToken cancellationToken)
-    {
-        HttpContext.Request.RouteValues["organization"] = organization;
-        return await CreateAsync(name, replicas, all, ttlSeconds, cancellationToken).ConfigureAwait(false);
-    }
 
     private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, bool all, long? ttlSeconds, CancellationToken cancellationToken)
     {

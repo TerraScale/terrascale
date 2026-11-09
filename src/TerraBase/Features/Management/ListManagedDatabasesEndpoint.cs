@@ -28,7 +28,7 @@ internal sealed class ListManagedDatabasesEndpoint(
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
@@ -56,12 +56,6 @@ internal sealed class ListManagedDatabasesEndpoint(
                 NotFound => Unknown(),
                 string => throw new UnreachableException(),
             });
-        }
-
-        if (HttpContext.User.FindFirst("project_id") is null)
-        {
-            HttpContext.Request.RouteValues["organization"] = owner;
-            return await ListAsync(actor, owner, project, null, null, page, cancellationToken).ConfigureAwait(false);
         }
 
         var restricted = HttpContext.User.FindFirst("database")?.Value;

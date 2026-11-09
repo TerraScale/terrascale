@@ -149,7 +149,7 @@ internal sealed class UserAuthenticationHandler(
 
         if (jwt.TryGetPayloadValue<string>("database", out var database))
         {
-            if (!EntityIds.IsValid(database))
+            if (project is null || !EntityIds.IsValid(database))
             {
                 return AuthenticateResult.Fail("invalid database claim");
             }

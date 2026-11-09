@@ -26,7 +26,7 @@ internal sealed class BranchManagedDatabaseEndpoint(IManagementService managemen
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
     public override ValueTask<IResult> HandleAsync(ForkRequest request, CancellationToken cancellationToken) =>

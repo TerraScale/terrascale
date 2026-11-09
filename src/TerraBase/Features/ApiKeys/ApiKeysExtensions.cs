@@ -20,7 +20,7 @@ public static class ApiKeysExtensions
                 .AddAuthenticationSchemes("TerraBaseBearer", UserAuthExtensions.OperatorScheme)
                 .RequireAuthenticatedUser()
                 .RequireAssertion(context => context.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, scope)
-                    || context.Resource is HttpContext http && http.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
+                    || context.Resource is HttpContext http && http.GetEndpoint()?.Metadata.GetMetadata<ManagementUserRoute>() is not null
                         && context.User.Identities.Any(identity => identity.IsAuthenticated
                             && identity.AuthenticationType is UserAuthExtensions.TokenScheme or UserAuthExtensions.OperatorScheme
                             && identity.FindFirst("project_id") is null)));

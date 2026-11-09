@@ -136,27 +136,27 @@ public sealed class ManagementApiTests
         var projectPath = $"{organization}/projects/{project}";
         var databases = $"/v1/projects/{project}/databases";
         var databasePath = $"{databases}/{database}";
-        (Level Level, Func<Task<HttpResponseMessage>> Send)[] requests =
+        (Level Level, string Code, string Message, Func<Task<HttpResponseMessage>> Send)[] requests =
         [
-            (Level.Organization, () => client.GetAsync(Uri(organization))),
-            (Level.Organization, () => client.PutAsJsonAsync(Uri($"{organization}/plan"), new { plan = "pro" })),
-            (Level.Organization, () => client.DeleteAsync(Uri(organization))),
-            (Level.Organization, () => client.GetAsync(Uri($"{organization}/projects"))),
-            (Level.Organization, () => client.PostAsJsonAsync(Uri($"{organization}/projects"), named)),
-            (Level.Project, () => client.GetAsync(Uri(projectPath))),
-            (Level.Project, () => client.DeleteAsync(Uri(projectPath))),
-            (Level.Project, () => client.GetAsync(Uri(databases))),
-            (Level.Project, () => client.PostAsJsonAsync(Uri(databases), named)),
-            (Level.Database, () => client.GetAsync(Uri(databasePath))),
-            (Level.Database, () => client.DeleteAsync(Uri(databasePath))),
-            (Level.Database, () => client.PostAsJsonAsync(Uri($"{databasePath}/branches"), named)),
+            (Level.Organization, "not_found", "the resource does not exist", () => client.GetAsync(Uri(organization))),
+            (Level.Organization, "not_found", "the resource does not exist", () => client.PutAsJsonAsync(Uri($"{organization}/plan"), new { plan = "pro" })),
+            (Level.Organization, "not_found", "the resource does not exist", () => client.DeleteAsync(Uri(organization))),
+            (Level.Organization, "not_found", "the resource does not exist", () => client.GetAsync(Uri($"{organization}/projects"))),
+            (Level.Organization, "not_found", "the resource does not exist", () => client.PostAsJsonAsync(Uri($"{organization}/projects"), named)),
+            (Level.Project, "not_found", "the resource does not exist", () => client.GetAsync(Uri(projectPath))),
+            (Level.Project, "not_found", "the resource does not exist", () => client.DeleteAsync(Uri(projectPath))),
+            (Level.Project, "unknown_database", "the database does not exist", () => client.GetAsync(Uri(databases))),
+            (Level.Project, "unknown_database", "the database does not exist", () => client.PostAsJsonAsync(Uri(databases), named)),
+            (Level.Database, "unknown_database", "the database does not exist", () => client.GetAsync(Uri(databasePath))),
+            (Level.Database, "unknown_database", "the database does not exist", () => client.DeleteAsync(Uri(databasePath))),
+            (Level.Database, "unknown_database", "the database does not exist", () => client.PostAsJsonAsync(Uri($"{databasePath}/branches"), named)),
         ];
         var statuses = new List<HttpStatusCode>();
-        foreach (var (level, send) in requests.Where(request => request.Level >= from))
+        foreach (var (level, code, message, send) in requests.Where(request => request.Level >= from))
         {
             using var response = await send();
             statuses.Add(response.StatusCode);
-            await ErrorAssert.ErrorAsync(response, HttpStatusCode.NotFound, "not_found", "the resource does not exist");
+            await ErrorAssert.ErrorAsync(response, HttpStatusCode.NotFound, code, message);
         }
 
         return statuses;

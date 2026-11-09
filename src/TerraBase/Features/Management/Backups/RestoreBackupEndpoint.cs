@@ -24,7 +24,7 @@ internal sealed class RestoreBackupEndpoint(IManagementService management, IMana
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
     public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken)

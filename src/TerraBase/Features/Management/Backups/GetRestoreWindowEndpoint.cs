@@ -36,7 +36,7 @@ internal sealed class GetRestoreWindowEndpoint(IManagementService management, IP
             },
         });
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)

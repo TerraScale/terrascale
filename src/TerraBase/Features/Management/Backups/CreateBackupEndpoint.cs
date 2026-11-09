@@ -20,7 +20,7 @@ internal sealed class CreateBackupEndpoint(IManagementService management, IManag
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>

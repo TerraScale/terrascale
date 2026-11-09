@@ -2,6 +2,8 @@ namespace TerraBase.Features.Management;
 
 public sealed class ProjectManagementRoute;
 
+public sealed class ManagementUserRoute;
+
 internal static class ProjectApiRoute
 {
     public const string Project = "/v1/projects/{project}";

@@ -161,6 +161,19 @@ internal static class QosExtensions
                 Unavailable error => error,
             };
         }
+        if (context.GetEndpoint()?.Metadata.GetMetadata<ManagementUserRoute>() is not null
+            && UserAuthExtensions.Identity(context.User)?.FindFirst("project_id") is null
+            && context.User.Identity?.IsAuthenticated == true
+            && context.Request.RouteValues["project"] as string is string projectId)
+        {
+            return await context.RequestServices.GetRequiredService<IProjectCatalog>()
+                .ResolveProjectAsync(projectId, context.User.UserId(), createIn: null, context.RequestAborted).ConfigureAwait(false) switch
+            {
+                string organization => await ResolvePlanAsync(context, organization).ConfigureAwait(false),
+                NotFound => new Done(),
+                Unavailable error => error,
+            };
+        }
         if (context.Features.Get<ProjectToken>()?.ProjectId is { } project
             && context.Request.RouteValues["project"] as string == project)
         {
