@@ -25,12 +25,12 @@ namespace TerraScale.Dashboard.E2E.Demo
 {
     public sealed class DemoEnvironment : IDisposable
     {
-    public void Dispose()
-    {
-        stripe.Dispose();
-        billingPlans.Dispose();
-        reporting.Dispose();
-    }
+        public void Dispose()
+        {
+            stripe.Dispose();
+            billingPlans.Dispose();
+            reporting.Dispose();
+        }
         private readonly TestState state = new();
         private readonly TestAuth auth;
         private readonly TestIdentity identity = new();

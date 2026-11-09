@@ -12,9 +12,9 @@ namespace TerraScale.Dashboard.E2E.Features.Data
     [ClassDataSource<DashboardRootFixture>]
     public sealed class ProjectApiKeyContractTests(DashboardRootFixture fixture)
     {
-    private static readonly string[] SqlScopes = ["sql:read", "sql:write"];
-    private static readonly string[] SetCidrs = ["203.0.113.0/24", "198.51.100.7", "2001:db8::/48"];
-    private static readonly string[] NormalizedCidrs = ["203.0.113.0/24", "198.51.100.7/32", "2001:db8::/48"];
+        private static readonly string[] SqlScopes = ["sql:read", "sql:write"];
+        private static readonly string[] SetCidrs = ["203.0.113.0/24", "198.51.100.7", "2001:db8::/48"];
+        private static readonly string[] NormalizedCidrs = ["203.0.113.0/24", "198.51.100.7/32", "2001:db8::/48"];
         private const string OrganizationId = "01JA0000000000000000000002";
         private const string ProjectId = "01JA0000000000000000000001";
         private const string KeyId = "01JA0000000000000000000003";

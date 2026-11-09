@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
     [ClassDataSource<DashboardRootFixture>]
     public sealed class OnboardingMcpJourneyTests(DashboardRootFixture fixture)
     {
-    private static readonly string[] BillingIntervals = ["month", "year"];
+        private static readonly string[] BillingIntervals = ["month", "year"];
         [Test]
         public async Task NativePatCompletesFreeOnboardingAcrossRunningReplicas()
         {

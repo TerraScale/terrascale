@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
     [ClassDataSource<DashboardRootFixture>]
     public sealed class SqlCatalogJourneyTests(DashboardRootFixture fixture)
     {
-    private static readonly string[] SqlReadScope = ["sql:read"];
+        private static readonly string[] SqlReadScope = ["sql:read"];
         [Test]
         [Arguments("ok")]
         [Arguments("denied")]

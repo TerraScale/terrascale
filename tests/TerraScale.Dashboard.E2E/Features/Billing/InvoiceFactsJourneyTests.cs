@@ -11,8 +11,8 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
 {
     public sealed class InvoiceFactsJourneyTests
     {
-    private static readonly string[] TwoDashHosts = ["dash.terrascale.tech", "dash.terrascale.tech"];
-    private static readonly string[] ThreeDashHosts = ["dash.terrascale.tech", "dash.terrascale.tech", "dash.terrascale.tech"];
+        private static readonly string[] TwoDashHosts = ["dash.terrascale.tech", "dash.terrascale.tech"];
+        private static readonly string[] ThreeDashHosts = ["dash.terrascale.tech", "dash.terrascale.tech", "dash.terrascale.tech"];
         [Test]
         [Arguments("usd", 1234L, 234L, "$12.34", "$2.34")]
         [Arguments("jpy", 1500L, 500L, "JPY 1500", "JPY 500")]

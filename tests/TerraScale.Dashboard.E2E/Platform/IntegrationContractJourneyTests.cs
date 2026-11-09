@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.E2E.Platform
     [ClassDataSource<DashboardE2EFixture>]
     public sealed class IntegrationContractJourneyTests(DashboardE2EFixture fixture)
     {
-    private static readonly string[] CredentialParameters = ["limit", "after"];
+        private static readonly string[] CredentialParameters = ["limit", "after"];
         [Test]
         public async Task ServedOpenApiMatchesCommittedContractAndAuthenticatedResponses()
         {
