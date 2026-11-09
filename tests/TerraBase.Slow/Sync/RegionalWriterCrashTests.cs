@@ -63,7 +63,7 @@ public sealed partial class RegionalWriterCrashTests
             management.DefaultRequestHeaders.Add("X-TerraBase-User-Id", EntityIds.New().ToString());
             var organization = await CreateAsync("/v1/management/organizations", new { name = "Crash drill" });
             var project = await CreateAsync($"/v1/management/organizations/{organization}/projects", new { name = "Project" });
-            var database = await CreateAsync($"/v1/management/organizations/{organization}/projects/{project}/databases", new { name = "acked", replicaRegions = ReplicaRegions });
+            var database = await CreateAsync($"/v1/projects/{project}/databases", new { name = "acked", replicaRegions = ReplicaRegions });
             var sql = $"/v1/projects/{project}/databases/{database}/sql/execute";
             using var data = PeerTls.CreateClient(writer.Address);
             await ExecuteAsync(data, "CREATE TABLE acked(id TEXT PRIMARY KEY)");

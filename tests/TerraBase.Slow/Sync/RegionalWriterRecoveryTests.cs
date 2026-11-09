@@ -341,7 +341,7 @@ public sealed partial class RegionalWriterCrashTests
         {
             using var management = PeerTls.CreateClient(source.Address);
             management.DefaultRequestHeaders.Add("X-TerraBase-User-Id", User);
-            using var response = await management.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{Organization}/projects/{Project}/databases"), new { name, replicaRegions = ReplicaRegions }, token);
+            using var response = await management.PostAsJsonAsync(ManagementApi.Uri($"/v1/projects/{Project}/databases"), new { name, replicaRegions = ReplicaRegions }, token);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync(token));
             return (await response.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
         }
@@ -379,7 +379,7 @@ public sealed partial class RegionalWriterCrashTests
                 management.DefaultRequestHeaders.Add("X-TerraBase-User-Id", drill.User);
                 var organization = await CreateAsync("/v1/management/organizations", new { name = "Recovery drill" });
                 var project = await CreateAsync($"/v1/management/organizations/{organization}/projects", new { name = "Project" });
-                var database = await CreateAsync($"/v1/management/organizations/{organization}/projects/{project}/databases", new { name = "acked", replicaRegions = ReplicaRegions });
+                var database = await CreateAsync($"/v1/projects/{project}/databases", new { name = "acked", replicaRegions = ReplicaRegions });
                 drill.Organization = organization;
                 drill.Project = project;
                 drill.Database = database;

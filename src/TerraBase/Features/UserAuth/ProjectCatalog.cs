@@ -13,13 +13,6 @@ internal static class ProjectCatalog
     internal static async Task InvokeAsync(HttpContext context, Func<Task> next)
     {
         var managementRoute = context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null;
-        if (context.Features.Get<LegacyManagementRoute>() is { } legacy)
-        {
-            context.Request.RouteValues["organization"] = legacy.OrganizationId;
-            await next().ConfigureAwait(false);
-            return;
-        }
-
         if (context.Request.RouteValues["project"] is not string project || context.Request.RouteValues.ContainsKey("organization")
             || UserAuthExtensions.Identity(context.User) is not { } jwt)
         {
@@ -30,6 +23,30 @@ internal static class ProjectCatalog
         if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName
                 is CreateManagedDatabaseEndpoint.OperationName or ListManagedDatabasesEndpoint.ListOperationName)
         {
+            await next().ConfigureAwait(false);
+            return;
+        }
+
+        if (jwt.FindFirst("project_id") is null)
+        {
+            if (managementRoute)
+            {
+                var resolved = await context.RequestServices.GetRequiredService<IProjectCatalog>()
+                    .ResolveProjectAsync(project, ManagementRoute.UserId(context), createIn: null, context.RequestAborted).ConfigureAwait(false);
+                if (resolved is not string owner)
+                {
+                    await (resolved switch
+                    {
+                        NotFound => ErrorResponse.From(new NotFound("the database does not exist", "unknown_database")),
+                        Unavailable unavailable => ErrorResponse.From(unavailable),
+                        string => throw new UnreachableException(),
+                    }).ExecuteAsync(context).ConfigureAwait(false);
+                    return;
+                }
+
+                context.Request.RouteValues["organization"] = owner;
+            }
+
             await next().ConfigureAwait(false);
             return;
         }

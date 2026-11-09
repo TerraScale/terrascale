@@ -57,7 +57,7 @@ read -r status body <<< "$(call gru PUT "/v1/management/organizations/$organizat
 read -r status body <<< "$(call gru POST "/v1/management/organizations/$organization/projects" '{"name":"proof"}')"
 [[ $status == 201 ]] || { echo "create project: $status $body" >&2; exit 1; }
 project=$(field "$body" '["id"]')
-databases="/v1/management/organizations/$organization/projects/$project/databases"
+databases="/v1/projects/$project/databases"
 echo "user $user organization $organization project $project"
 
 # Every region sees the Starter organization and its project before the race.
