@@ -9,7 +9,6 @@ internal interface IMasterKey
     Task<byte[]> UnwrapAsync(string wrapped, CancellationToken cancellationToken);
 }
 
-// The master key (32 bytes base64) is delivered from OCI Vault via TERRABASE_MASTER_KEY_FILE and never leaves the process.
 internal sealed class MasterKey(byte[] masterKey) : IMasterKey
 {
     private const int KeyBytes = 32;

@@ -7,9 +7,7 @@ namespace TerraBase.Features.Backup;
 
 internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKeys keys, TerraBaseOptions options, IDiskBudget disk)
 {
-    // Segments downloading at once.
     private const int Prefetch = 8;
-    // More than a day's one-second segments, with a separate bound on retained object-name memory.
     private const int MaxSizingSegments = 131_072;
     private const long MaxSizingKeyBytes = 32L << 20;
     private readonly string _scratch = ContinuousBackup.Scratch(options);
@@ -34,13 +32,9 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     {
         if (until is null && file.StartsWith(BackupLayout.FileRoot(null) + "/", StringComparison.Ordinal) && !PointInTimeRestore.Covers(snapshot.At, at))
         {
-            // A catalog follower applies the leader's writes to its system database without capture, so neither its log
-            // nor a later snapshot at the same position shows what was written after a snapshot: only snapshot times hold.
             throw new BackupHistoryIncompleteException("the system database's backup proves only its snapshot times");
         }
 
-        // Decode before creating scratch: stored LZ4 sizes do not bound decoded bytes. Freeze the inventory so
-        // later segments cannot allocate outside this claim, including candidates used only to prove the restore time.
         var snapshotBytes = await DecodedBytesAsync(snapshot.Key, scope, cancellationToken).ConfigureAwait(false);
         var bytes = snapshotBytes;
         List<SegmentKey> inventory = [];
@@ -85,7 +79,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
 
                 if (!proving && segment.At > at)
                 {
-                    // Finish the ordinary replay range before deciding whether it already proves this time.
                     while (pending.Count > 0)
                     {
                         _ = await AcceptAsync().ConfigureAwait(false);
@@ -134,9 +127,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
             }
         }
 
-        // Every Create may add an index over four fields, each as large as the data. Charge that full-data estimate
-        // per Create, including creates later dropped; WorkspaceBytes also allows DB/WAL/native sorting and import.
-        // This is conservative admission, not a filesystem quota against concurrent growth or native amplification.
         var claim = disk.Reserve(DiskBudget.WorkspaceBytes(checked(bytes * (1 + 4 * creates))));
         var restored = Path.Combine(_scratch, EntityIds.New().ToString() + ".db");
         try
@@ -183,13 +173,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         }
     }
 
-    // The segments of the snapshot's generation from its position, up to the time (and before until), in order, each as a
-    // scratch file the caller disposes. Up to Prefetch download at once; contiguity is checked in order as they are handed
-    // out, and reached ends at the log position the last one handed out ends at. Without until (a restore), the history
-    // must then be proven complete up to the time: the snapshot was taken in the time's millisecond (with every writer
-    // held), or the segments read after the time are handed out one by one, cut to the transactions that ran before it,
-    // up to a transaction committed at or after it, a read mark at or after it, or exactly where the generation's next
-    // snapshot is. A segment's own time is when its read finished, so it proves nothing about commits during the read.
     private async IAsyncEnumerable<Stream> SegmentsAsync(
         string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, StrongBox<long> reached, IReadOnlyList<SegmentKey> inventory,
         Dictionary<string, Task<BackupLogSummary>> sizes,
@@ -227,7 +210,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
                 expected = reached.Value = after;
                 if (until is null && inFlight.Count == 0 && PointInTimeRestore.Covers(last.At, at))
                 {
-                    // Read in the time's millisecond: a read mark at its end at or after the time ends the history.
                     try
                     {
                         marked = engine.ReadMark(frames) is { } mark && PointInTimeRestore.Covers(mark, at);
@@ -243,7 +225,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
                 yield return frames;
             }
 
-            // A drill checks its end itself.
             if (until is not null || marked || PointInTimeRestore.Covers(snapshot.At, at))
             {
                 yield break;
@@ -289,7 +270,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         }
         finally
         {
-            // Stopped early (a failure or a hole): close what is still downloading.
             await stop.CancelAsync().ConfigureAwait(false);
             foreach (var (_, download) in inFlight)
             {
@@ -312,8 +292,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     {
         if (inFlight.Peek().Segment.Start != expected)
         {
-            // A gap or an overlap, whatever it holds (a copy under another key does not even authenticate); its download
-            // stays queued for the caller to cancel.
             throw new BackupHistoryIncompleteException("the backup of this database is missing a log segment");
         }
 
@@ -331,7 +309,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         try
         {
             frames = new BackupScratchStream(Path.Combine(_scratch, EntityIds.New().ToString() + ".frames"), claim, bytes);
-            // A record cut short fails the replay; the sealed object's last-chunk flag already catches a truncated download.
             await DownloadAsync(key, scope, frames, cancellationToken).ConfigureAwait(false);
             frames.Position = 0;
             return frames;
@@ -359,7 +336,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         }
         catch (Exception error) when (error is not (OperationCanceledException or DiskCapacityException or OverflowException))
         {
-            // A later proof candidate may be unnecessary. Its original task surfaces failure only if replay reaches it.
             return default;
         }
     }
@@ -378,7 +354,6 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         return count.Length;
     }
 
-    // A stream the store drops mid-object is read again from the start, up to three attempts.
     private async Task DownloadAsync(string key, string scope, Stream output, CancellationToken cancellationToken)
     {
         for (var attempt = 1; ; attempt++)

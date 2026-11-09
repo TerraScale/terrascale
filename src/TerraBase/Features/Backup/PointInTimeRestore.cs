@@ -21,7 +21,6 @@ public readonly union PointInTimeRestoreResult(Done, NotFound, Conflict, Validat
 
 public readonly union RestoreWindowResult(RestoreWindow, NotFound, Unavailable);
 
-// Point-in-time restore from continuous backup (TS-633).
 public interface IPointInTimeRestore
 {
     Task<RestoreWindowResult> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
@@ -37,10 +36,8 @@ internal sealed class PointInTimeRestore(
     IWalBackup engine, IRecoverySnapshotReader scratch, BackupTargets targets, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time, TerraBaseOptions options)
     : IPointInTimeRestore
 {
-    // Bounds one metadata listing; restore and the window scan with it too, so a long history cannot scan unbounded.
     private const int MaxPlanItems = 10_000;
 
-    // Segments, newest first, whose ends a window reads for a read mark.
     private const int MarkReads = 3;
     private static readonly TimeSpan PlanTimeout = TimeSpan.FromSeconds(10);
 
@@ -85,7 +82,6 @@ internal sealed class PointInTimeRestore(
             SegmentScan? newest = null;
             if (latest is null)
             {
-                // Its verdict counts only when the chosen snapshot is the last one, which has no next snapshot.
                 newest = await ScanSegmentsAsync(backup.Store, file, last, snapshots.Next, at, remaining, stopAfterTarget: false, deadline.Token).ConfigureAwait(false);
                 if (newest is null)
                 {
@@ -127,7 +123,6 @@ internal sealed class PointInTimeRestore(
                 return segments is null ? PlanLimit() : HistoryIncomplete();
             }
 
-            // Read from the bucket, the window ends at the newest time a read mark proves; the shipper's own progress stands.
             var proven = newest is null ? storedLatest
                 : await ProvenLatestAsync(backup, BackupLayout.KeyScope(database), last, newest.NewestKeys, deadline.Token).ConfigureAwait(false);
             return new PointInTimePlan(new(earliest, proven), at, chosen.At, segments.Latest, segments.Count, "metadata", chosen.Generation);
@@ -164,7 +159,6 @@ internal sealed class PointInTimeRestore(
         return await WindowAsync(database, file, snapshots, now, backup, destination, proven: true, cancellationToken).ConfigureAwait(false);
     }
 
-    // Latest is the newest data, or with proven, the newest time a read mark proves when it comes from the bucket.
     private async Task<RestoreWindowResult> WindowAsync(
         TenantContext database, string file, SnapshotScan? snapshots, DateTimeOffset now, BackupTarget backup, string destination, bool proven, CancellationToken cancellationToken)
     {
@@ -173,7 +167,6 @@ internal sealed class PointInTimeRestore(
             return new NotFound();
         }
 
-        // The shipper knows its own progress; otherwise the newest segment after the newest snapshot tells.
         var shipped = destination == BackupDestinationNames.Platform ? shipper.LastShipped(database, last.Generation) : null;
         var latest = shipped ?? last.At;
         if (shipped is null)
@@ -269,13 +262,11 @@ internal sealed class PointInTimeRestore(
 
     private async Task<SnapshotFileResult> BuildSnapshotAsync(TenantContext source, DateTimeOffset at, string destination, CancellationToken cancellationToken)
     {
-        // Every caller must preserve the canonical erasure boundary, even before any receipt exists.
         if (PlatformDatabases.IsPlatform(source.OrganizationId))
         {
             return new Conflict("platform database historical recovery is fenced by erasure requirements", "recovery_erasure_fenced");
         }
 
-        // Pin retention before metadata awaits; the same scan discovers the window and selects the snapshot.
         var now = time.GetUtcNow();
         using var backup = await targets.RestoreAsync(source, destination, cancellationToken).ConfigureAwait(false);
         if (backup is null)
@@ -283,7 +274,6 @@ internal sealed class PointInTimeRestore(
             return new NotFound("continuous backup holds nothing of this database");
         }
 
-        // Checked before anything else: a deleted database's objects may still be listed, but nothing can decrypt them.
         if (await backup.Keys.ShreddedAsync(BackupLayout.KeyScope(source), cancellationToken).ConfigureAwait(false) is { } shredded)
         {
             return Shredded(shredded.ShreddedAt);
@@ -327,7 +317,6 @@ internal sealed class PointInTimeRestore(
             return new NotFound("continuous backup holds nothing of this database");
         }
 
-        // Object names alone refuse most incomplete histories before anything downloads; the replay checks the rest.
         var segments = await ScanSegmentsAsync(backup.Store, file, chosen, snapshots.Next, at, MaxPlanItems, stopAfterTarget: true, cancellationToken)
             .ConfigureAwait(false);
         if (segments is not { Proven: true })
@@ -375,9 +364,6 @@ internal sealed class PointInTimeRestore(
 
     private readonly union OutsideResult(Validation, Conflict, Unavailable);
 
-    // A time outside the window, for restore and plan alike: invalid only when no backup can ever hold it (after now, or
-    // before the plan's retention window); otherwise the backup does not hold it yet or any more (an unshipped or lost
-    // final segment, a lost snapshot), a retryable 409.
     private async Task<OutsideResult> OutsideAsync(TenantContext database, DateTimeOffset at, DateTimeOffset now, RestoreWindow window, CancellationToken cancellationToken) =>
         at > now ? OutsideWindow(window) : await EarliestAsync(database, DateTimeOffset.MinValue, now, cancellationToken).ConfigureAwait(false) switch
         {
@@ -398,7 +384,6 @@ internal sealed class PointInTimeRestore(
 
     private async Task<EarliestResult> EarliestAsync(TenantContext database, DateTimeOffset snapshotAt, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        // The plan's window, not the bucket's: retention keeps a predecessor snapshot, and object lock may keep more.
         return await tenants.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false) switch
         {
             PlanTier tier => snapshotAt > now - TimeSpan.FromDays(settings.RetentionDays[tier])
@@ -407,7 +392,6 @@ internal sealed class PointInTimeRestore(
         };
     }
 
-    // Scan raw objects so malformed metadata also consumes the preview budget. Both restore and preview select here.
     private static async Task<SnapshotScan?> ScanSnapshotsAsync(IObjectStore store, string file, DateTimeOffset at, int limit, CancellationToken cancellationToken)
     {
         SnapshotKey? first = null;
@@ -443,13 +427,6 @@ internal sealed class PointInTimeRestore(
         return new(first, last, chosen, next, scanned);
     }
 
-    // The selection restore makes, from object names: segments up to the time, stopping at the first later one even when
-    // subsequent wall-clock timestamps regress. Proven unless the names already show the history incomplete up to the time:
-    // the first segment must start at the snapshot's position and each later one at or after the previous (one holding no
-    // log ends where it starts; the replay checks lengths); then either the first later segment follows them (the replay
-    // places the time in it), the snapshot was taken at the time, the last one was read at the time (only a read mark at
-    // its end can then prove it, which the replay checks), or the generation's next snapshot is not before them.
-    // A segment's own time is when its read finished, not a point every earlier commit had reached, so it proves nothing.
     private static async Task<SegmentScan?> ScanSegmentsAsync(
         IObjectStore store, string file, SnapshotKey snapshot, SnapshotKey? next, DateTimeOffset at, int limit, bool stopAfterTarget, CancellationToken cancellationToken)
     {
@@ -510,9 +487,6 @@ internal sealed class PointInTimeRestore(
         return new(latest, newest, count, scanned, proven, [.. newestKeys]);
     }
 
-    // The newest time the backup proves restorable from last, the newest snapshot, and newest, its generation's newest
-    // segment keys (oldest first): the second at or before the start of the newest read marked at the end of a readable
-    // one of them, where every transaction is placed either side of a whole second, or last's own time.
     private static async Task<DateTimeOffset> ProvenLatestAsync(
         BackupTarget backup, string scope, SnapshotKey last, IReadOnlyList<string> newest, CancellationToken cancellationToken)
     {
@@ -525,7 +499,6 @@ internal sealed class PointInTimeRestore(
             }
             catch (Exception error) when (error is BackupHistoryIncompleteException or InvalidDataException)
             {
-                // Gone since the listing (retention), or unreadable (corrupted, cut short): it proves nothing, as if missing.
                 continue;
             }
 
@@ -539,9 +512,7 @@ internal sealed class PointInTimeRestore(
         return last.At;
     }
 
-    // Next: the first snapshot after Chosen of the same generation.
     private sealed record SnapshotScan(SnapshotKey? First, SnapshotKey? Last, SnapshotKey? Chosen, SnapshotKey? Next, int Scanned);
 
-    // NewestKeys: the generation's last MarkReads segment keys scanned, oldest first.
     private sealed record SegmentScan(DateTimeOffset? Latest, DateTimeOffset? Newest, int Count, int Scanned, bool Proven, IReadOnlyList<string> NewestKeys);
 }

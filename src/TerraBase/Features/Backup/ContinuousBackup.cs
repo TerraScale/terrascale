@@ -179,8 +179,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             _pass.Release();
         }
 
-        // A failed upload cannot retain a native reader after deletion. The engine's
-        // erasure check, after disposal, remains the authority for acknowledging it.
         await Task.WhenAll(file.Retiring!, job?.Completion ?? Task.CompletedTask, job?.Cancelling ?? Task.CompletedTask)
             .WaitAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         cancellationToken.ThrowIfCancellationRequested();
@@ -196,7 +194,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     completed.Cancellation.Dispose();
                     file.Job = null;
                 }
-                // Keep the entry until disposal finishes so another revoker also waits.
                 await file.DisposeAsync().ConfigureAwait(false);
                 _files.TryRemove(prefix, out _);
             }
@@ -765,8 +762,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
         catch (ObjectDisposedException) when (file.Tap.Ended)
         {
-            // The primary may be replaced after the Ended check above. Retire
-            // only that ended tap; discovery opens the new physical copy.
             file.Removed = true;
             await file.Tap.DisposeAsync().ConfigureAwait(false);
         }
@@ -881,7 +876,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
     }
 
-    // A pass appends at most a quarter of the workspace allowance; the buffer and its sealed copy are what stays on disk.
     internal static long SealedPendingBytes(long growth) => checked(2 * growth + (1L << 20));
     private async Task StartGenerationAsync(ShippedFile file, CancellationToken cancellationToken)
     {

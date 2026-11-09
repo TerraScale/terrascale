@@ -4,7 +4,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-// A native replica has its own node-wrapped page key. Envelope eviction alone cannot destroy it.
 internal sealed class KeyRevocationLocal(KeyCustody custody, Lazy<EngineManagementService> management, RegionReplication replicas,
     ContinuousBackup backup, Shapes.ShapeMirror shapes)
 {
@@ -21,8 +20,6 @@ internal sealed class KeyRevocationLocal(KeyCustody custody, Lazy<EngineManageme
             return false;
         }
         await replicas.DeleteShreddedAsync(database, token).ConfigureAwait(false);
-        // Fence and unlink the engine copy before releasing the tap: snapshot ownership
-        // can still be catalogued, so discovery must not be able to reopen its file.
         _ = await management.Value.EraseShreddedAsync(database, token).ConfigureAwait(false);
         await backup.RetireDeletedAsync(database, token).ConfigureAwait(false);
         await shapes.RetireDeletedAsync(database, token).ConfigureAwait(false);

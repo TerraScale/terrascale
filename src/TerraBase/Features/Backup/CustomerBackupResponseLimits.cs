@@ -1,7 +1,5 @@
 namespace TerraBase.Features.Backup;
 
-// AWS materializes S3 listing, multipart (POST) and error XML before returning to the object-store adapter. Bound those
-// bodies before the SDK parses them, including responses without Content-Length. Backup objects themselves remain streamed.
 internal sealed class CustomerBackupResponseLimits : DelegatingHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

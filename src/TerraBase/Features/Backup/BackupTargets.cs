@@ -93,7 +93,6 @@ internal sealed class BackupTargets(
         return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options, disk), [new ProjectStore(platform, scope), scopedCustomer], mirror, customer);
     }
 
-    // Enforce the project boundary on every operation, including keys fabricated by an untrusted S3 listing.
     private sealed class ProjectStore(IObjectStore inner, string scope) : IObjectStore
     {
         private void Check(string key)
@@ -130,9 +129,6 @@ internal sealed class BackupTargets(
         }
     }
 
-    // Acknowledgements cover both destinations. After a partial upload the shipper starts a fresh generation, so
-    // retrying never leaves overlapping segments in either bucket. A failed mirror delays this project's shipping;
-    // each destination remains independently restorable from the objects it accepted.
     private sealed class MirroredStore(IObjectStore platform, IObjectStore customer) : IObjectStore
     {
         public async Task PutAsync(string key, Stream content, CancellationToken cancellationToken)

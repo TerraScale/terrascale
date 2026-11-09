@@ -13,13 +13,10 @@ internal sealed record PrefixPurgeResult(PrefixPurgeProgress Progress, bool Abse
 
 internal sealed partial class S3ObjectStore
 {
-    // Tigris answers 408 under load (gru, 2026-10-27): each purge request retries transient statuses, jittered and bounded.
     private const int PurgeAttempts = 4;
     private static readonly TimeSpan PurgeBackoff = TimeSpan.FromMilliseconds(250);
     private const int PurgeRequestsInFlight = 8;
 
-    // Called only after durable deletion authority has stopped every writer to this database prefix.
-    // A fresh empty versions AND uploads inventory is the proof; DELETE acknowledgements alone are insufficient.
     public async Task<PrefixPurgeResult> PurgePrefixAsync(string prefix, PrefixPurgeProgress progress, CancellationToken cancellationToken)
     {
         var parts = prefix.Split('/');
@@ -60,8 +57,6 @@ internal sealed partial class S3ObjectStore
             throw new InvalidDataException("backup multipart inventory is invalid");
         }
 
-        // An unversioned Tigris bucket truncates with only NextKeyMarker (its versions are all "null") and rejects
-        // version-id-marker=null: the next page then resumes after that key. 31 erasures failed here for two days (2026-10-28).
         var versionMarker = string.IsNullOrEmpty(versions.NextVersionIdMarker) ? null : versions.NextVersionIdMarker;
         if (versions.IsTruncated == true && (!ValidKey(versions.NextKeyMarker, prefix) || versionMarker?.Length > 1024
             || (versions.NextKeyMarker == progress.VersionKey && versionMarker == progress.VersionId))
@@ -96,16 +91,13 @@ internal sealed partial class S3ObjectStore
             uploads.IsTruncated == true && uploadsDirty);
         if (refused || versionsDirty || uploadsDirty || versions.IsTruncated == true || uploads.IsTruncated == true)
         {
-            return new(next, false); // Finish this sweep before revisiting retained entries from its beginning.
+            return new(next, false);
         }
 
-        // Detect incompatible version-list implementations that omit current objects instead of certifying absence.
         await using var listed = ListAsync(prefix, null, cancellationToken).GetAsyncEnumerator(cancellationToken);
         return new(next, !await listed.MoveNextAsync().ConfigureAwait(false));
     }
 
-    // Whether any listed entry was refused or left untried. One request at a time, a remote bucket's round trips held each
-    // erasure to about one page every few minutes (gru, sjc and fra, 2026-10-28); a few in flight keep the page in its budget.
     private static async Task<bool> MutateAsync<T>(IReadOnlyList<T> items, Func<T, CancellationToken, Task> mutate, CancellationToken cancellationToken)
     {
         var refused = 0;
@@ -126,7 +118,7 @@ internal sealed partial class S3ObjectStore
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return true; // Persist the listed page's continuation even when its mutation budget expires.
+            return true;
         }
 
         return Volatile.Read(ref refused) == 1;
@@ -143,13 +135,11 @@ internal sealed partial class S3ObjectStore
             catch (Exception error) when (attempt < PurgeAttempts && !cancellationToken.IsCancellationRequested && Transient(error))
             {
                 var backoff = PurgeBackoff * (1 << (attempt - 1)) * (RandomNumberGenerator.GetInt32(500, 1001) / 1000.0);
-                // Wall time, like the SDK's own retry backoff: the bucket recovers in real time whatever the injected clock says.
                 await Task.Delay(backoff, TimeProvider.System, cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
-    // Customer errors arrive sanitized as HttpRequestException with only the status (SafeAsync).
     private static bool Transient(Exception error) => (error switch
     {
         AmazonServiceException service => (int?)service.StatusCode,
