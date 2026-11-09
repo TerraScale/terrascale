@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // OpenDB returns a *sql.DB backed by db, for use with database/sql and libraries built on it.
@@ -103,10 +104,14 @@ func (c *dbConn) QueryContext(ctx context.Context, query string, args []driver.N
 		return nil, err
 	}
 	names := make([]string, len(res.Columns))
+	declTypes := make([]string, len(res.Columns))
 	for i, col := range res.Columns {
 		names[i] = col.Name
+		if col.DeclType != nil {
+			declTypes[i] = *col.DeclType
+		}
 	}
-	return &execRows{columns: names, rows: res.Rows}, nil
+	return &execRows{columns: names, declTypes: declTypes, rows: res.Rows}, nil
 }
 
 func (c *dbConn) execute(ctx context.Context, query string, args []driver.NamedValue) (*Result, error) {
@@ -173,13 +178,21 @@ func (r execResult) RowsAffected() (int64, error) {
 }
 
 type execRows struct {
-	columns []string
-	rows    []Row
-	next    int
+	columns   []string
+	declTypes []string
+	rows      []Row
+	next      int
 }
 
 func (r *execRows) Columns() []string {
 	return r.columns
+}
+
+func (r *execRows) ColumnTypeDatabaseTypeName(index int) string {
+	if index < 0 || index >= len(r.declTypes) {
+		return ""
+	}
+	return strings.ToUpper(r.declTypes[index])
 }
 
 func (r *execRows) Close() error {
@@ -197,7 +210,7 @@ func (r *execRows) Next(dest []driver.Value) error {
 		return errors.New("terrabase: column count mismatch")
 	}
 	for i, v := range values {
-		dest[i] = v
+		dest[i] = normalizeRowValue(v, r.declTypes[i])
 	}
 	r.next++
 	return nil
