@@ -59,7 +59,9 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     public async Task Ui_locales_overrides_accept_language_for_the_hosted_page()
     {
         await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
-        using var request = new HttpRequestMessage(HttpMethod.Get, SignIn + "?ui_locales=pt-BR");
+        using var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(OidcHarness.Pkce().Challenge, extra: "&ui_locales=pt-BR"), session: null);
+        await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        using var request = new HttpRequestMessage(HttpMethod.Get, authorize.Headers.Location);
         request.Headers.AcceptLanguage.ParseAdd("en");
         using var response = await oidc.Client.SendAsync(request);
         var page = await response.Content.ReadAsStringAsync();
