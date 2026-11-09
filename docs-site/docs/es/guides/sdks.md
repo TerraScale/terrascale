@@ -29,7 +29,7 @@ Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `
 ## Which entry do I call?
 
 - **SQL** goes through the SDK's database handle against `https://api.terrascale.tech`, with a project access token.
-- **Key exchange** happens against `https://auth.terrascale.tech/terrascale/oauth/token` with the client credentials grant. Go, Python and Rust SDKs do it for you; the JavaScript and .NET SDKs expose the token call and a token-provider hook (each quickstart shows the exact code). See [authentication](/es/guides/authentication).
+- **Key exchange** happens against `https://auth.terrascale.tech/terrascale/oauth/token` with the client credentials grant. Go, Python, Rust and .NET do the exchange when you pass the dashboard API key; the published JavaScript SDK (0.0.17) exposes the token call and a token-provider hook (its quickstart shows the code). See [authentication](/es/guides/authentication).
 - **SQL over plain HTTP** (any HTTP client) is documented in [SQL over HTTP](/es/guides/sql-http); PostgreSQL-compatible clients work too ([PostgreSQL clients](/es/guides/postgres-clients)).
 
 ## Versioning
