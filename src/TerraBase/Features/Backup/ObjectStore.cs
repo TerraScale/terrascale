@@ -2,7 +2,9 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Net;
+using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Security.Authentication;
 using System.Text;
 using Amazon.Runtime;
 using Amazon.S3;
@@ -565,7 +567,7 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         }
 
         private static bool IsBodyTransportFailure(Exception error) => error is IOException or HttpRequestException or AmazonClientException
-            or System.Net.Sockets.SocketException or System.Security.Authentication.AuthenticationException;
+            or SocketException or AuthenticationException;
     }
 
     private sealed class FilePart(SafeFileHandle file, long start, long length) : Stream
