@@ -45,21 +45,20 @@ func dbImport(ctx context.Context, db *v1.Database, path string, from int, input
 		}
 	}
 	done := from - 1
-	sent, err := runImportBatches(ctx, db, statements[from-1:], func(n int) {
+	sent, err := runImportBatches(ctx, db, statements[from-1:], from, func(n int) {
 		fmt.Fprintf(errOut, "imported %d/%d statements\n", done+n, total)
 	})
-	var sqlErr *v1.SQLError
-	if errors.As(err, &sqlErr) {
-		return fmt.Errorf("%w\nresume with: ts db import %s %s -from %d", err, db.Name(), path, from+sent)
-	}
 	if err != nil {
+		if sent > 0 {
+			return fmt.Errorf("%w\nresume with: ts db import %s %s -from %d", err, db.Name(), path, from+sent)
+		}
 		return err
 	}
 	fmt.Fprintf(out, "imported %d/%d statements into %s\n", total, total, db.Name())
 	return nil
 }
 
-func runImportBatches(ctx context.Context, db *v1.Database, statements []string, progress func(int)) (int, error) {
+func runImportBatches(ctx context.Context, db *v1.Database, statements []string, from int, progress func(int)) (int, error) {
 	sent := 0
 	for len(statements) > 0 {
 		count := min(len(statements), maxImportStatementsPerBatch)
@@ -75,7 +74,7 @@ func runImportBatches(ctx context.Context, db *v1.Database, statements []string,
 			sent += n
 			progress(sent)
 		}
-		if _, err := sendImportBatch(ctx, db, statements[:count], sent+1, done); err != nil {
+		if _, err := sendImportBatch(ctx, db, statements[:count], from+sent, done); err != nil {
 			return sent, err
 		}
 		statements = statements[count:]

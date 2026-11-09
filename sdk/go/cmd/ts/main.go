@@ -66,11 +66,14 @@ Options go before or after the command and its operands; -- ends options.
   db branch create <name> --from <db> [--ttl 7d]
   db branch list                         list database branches
   db branch delete <name>                 delete a branch (--yes for automation)
-  db branch url <name>                    issue a scoped Postgres connection URL
+  db branch url <name>                    issue a connection URL for the Postgres
+                                          wire endpoint (SQLite SQL dialect)
   db branch <source> <db>                 copy a database into a new one
   databases rename <database> <new-name>  rename by name or immutable ULID
                                           alias: db rename
   db info <db>                            print a database's metadata as JSON
+  db url <db>                             issue a connection URL for the Postgres
+                                          wire endpoint (SQLite SQL dialect)
   db export <db> [-o file]               download the database as a SQL dump
   db import <db> <file|->                load a SQL dump; not atomic: each batch
                                           commits on its own; resume with -from n
@@ -218,6 +221,7 @@ var commands = map[string][]int{
 	"db branch url":      {1},
 	"db info":            {1},
 	"db export":          {1},
+	"db url":             {1},
 	"db import":          {2},
 	"db placement":       {1},
 	"db move-home":       {2},
@@ -323,7 +327,11 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	}
 	if !slices.Contains(commands[name], len(operands)) {
 		if name == "" {
-			return fmt.Errorf("unknown command; run ts help: %w", errUsage)
+			input := strings.Join(args, " ")
+			if suggestion := closestCommand(input); suggestion != "" {
+				return fmt.Errorf("unknown command %q, did you mean %q?: %w", input, suggestion, errUsage)
+			}
+			return fmt.Errorf("unknown command %q: %w", input, errUsage)
 		}
 		return fmt.Errorf("expected %s: %w", helpSyntax(name), errUsage)
 	}
@@ -454,7 +462,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return newMigration(operands[0], out)
 	}
 	dispatch := func(s *session) error {
-		if strings.HasPrefix(name, "db branch ") {
+		if strings.HasPrefix(name, "db branch ") || name == "db url" {
 			if name == "db branch delete" {
 				if err := confirmDelete(operands[0], s.project, *yes, in, prompt, tty); err != nil {
 					return err
