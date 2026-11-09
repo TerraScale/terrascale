@@ -42,11 +42,12 @@
                 <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="payment-method" /><input type="hidden" name="return" value="/onboarding" />
                 <div class="ts-row-between ts-onboarding-payment-head">
                     <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="payment-method-title">Choose your plan</h2></div>
+                    <fieldset class="ts-segmented"><legend class="ts-sr-only">Billing interval</legend><label><input type="radio" name="interval" id="interval-monthly" value="monthly" checked /> Monthly</label><label><input type="radio" name="interval" id="interval-annual" value="annual" /> Yearly</label></fieldset>
                 </div>
                 <fieldset class="ts-onboarding-plans"><legend class="ts-sr-only">Select a plan</legend>
                     @foreach (var plan in Model.Plans ?? [])
                     {
-                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" id="plan-@plan.Key" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">@plan.Price<span class="ts-meta"> @plan.PriceUnit</span></span><span class="ts-meta">@plan.CheckoutDescription</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
+                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" id="plan-@plan.Key" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">@if (plan.PriceCents == 0 || plan.CheckoutIntervals.Contains("monthly")) { <span class="ts-price-monthly">@plan.MonthlyPrice<span class="ts-meta"> / month</span></span> } @if (plan.CheckoutIntervals.Contains("annual")) { <span class="ts-price-annual">@plan.AnnualPrice<span class="ts-meta"> / year</span></span> }</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
                     }
                 </fieldset>
                 <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling</p>

@@ -5,8 +5,7 @@
     <div class="ts-card-body ts-stack-sm">
         @if (Model.Providers is null)
         {
-            <p class="ts-meta" role="status">Sign-in methods are unavailable right now.</p>
-            <a class="ts-btn ts-btn-secondary" href="/profile#profile-sign-in-methods">Refresh sign-in methods</a>
+            <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Sign-in methods are unavailable.</p><a class="ts-link" href="/profile#profile-sign-in-methods">Retry</a></div>
         }
         else if (Model.Providers.Count == 0)
         {

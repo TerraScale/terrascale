@@ -71,11 +71,10 @@ namespace TerraScale.Dashboard.Features.Backups
         internal static async Task<BackupPage> PageAsync(HttpContext http, AccountContext context, DatabaseRecord database, string error, bool export = false)
         {
             BackupListing? listing = null;
-            var unavailable = "";
             try { listing = await http.RequestServices.GetRequiredService<BackupService>().ListAsync(context, database.Id, http.RequestAborted); }
             catch (Exception failure) when (KnownFailure(failure) &&
                 (failure is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
-            { unavailable = Message(failure); }
+            { }
             BackupBucketView? bucket = null;
             if (export)
             {
@@ -96,7 +95,7 @@ namespace TerraScale.Dashboard.Features.Backups
                 { restore = new(restoreOperation, "failed", ErrorMessage: Message(failure)); }
             }
 
-            return new(ShellModel.For(http, context, database.Name + " · backups"), database, listing, unavailable, error,
+            return new(ShellModel.For(http, context, database.Name + " · backups"), database, listing, error,
                 form?["backupId"].ToString() ?? "", form?["name"].ToString() ?? http.Request.Query["name"].ToString(),
                 form is not null && form.ContainsKey("fullBackupCron") ? form["fullBackupCron"].ToString() : null,
                 form is not null && form.ContainsKey("retentionDays") ? form["retentionDays"].ToString() : null)
