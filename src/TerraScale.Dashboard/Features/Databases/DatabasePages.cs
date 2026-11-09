@@ -10,6 +10,7 @@ namespace TerraScale.Dashboard.Features.Databases
         string Search = "", string Error = "", bool OpenCreate = false, string Name = "", string RegionsError = "")
     {
         public string TtlHours { get; init; } = "";
+        public string Notice { get; init; } = "";
         public AccountContext Context => Shell.Context;
         public IReadOnlyList<DatabaseRecord> All => Context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
         public int Ready => All.Count(database => database.Status == "ready");
@@ -127,7 +128,12 @@ namespace TerraScale.Dashboard.Features.Databases
             }
             catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
                 error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-            { return new(new Dictionary<string, DatabaseListMetric>(), "Could not load database metrics. Reload the page to retry."); }
+            { return Failed(); }
+        }
+
+        public static DatabaseListMetrics Failed()
+        {
+            return new(new Dictionary<string, DatabaseListMetric>(), "Could not load database metrics. Reload the page to retry.");
         }
     }
 
@@ -187,6 +193,7 @@ namespace TerraScale.Dashboard.Features.Databases
         public static readonly (string Key, string Title)[] Kinds = [("reads", "Reads"), ("writes", "Writes (put, patch, delete)"), ("storage", "Storage (bytes)"), ("latency", "p95 latency (ms)")];
         // Analytics reports writes as put, patch and delete operations.
         private static readonly string[] WriteOperations = ["put", "patch", "delete"];
+        private const string FailedMessage = "Could not load activity measurements. Reload the page to retry.";
 
         // rangeFor returns an already normalized range for each card key.
         public static async Task<DatabaseActivity> LoadAsync(IAnalyticsBackend backend, AccountContext context, string databaseId, Func<string, string> rangeFor, CancellationToken cancellationToken)
@@ -231,9 +238,14 @@ namespace TerraScale.Dashboard.Features.Databases
                 }
                 catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
                     error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-                { Set(card => card with { Plot = null, Message = "Could not load activity measurements. Reload the page to retry.", Failed = true }); }
+                { Set(card => card with { Plot = null, Message = FailedMessage, Failed = true }); }
             }));
             return new(cards, latencyRegions);
+        }
+
+        public static DatabaseActivity Failed(Func<string, string> rangeFor)
+        {
+            return new([.. Kinds.Select(kind => new DatabaseActivityCard(kind.Key, kind.Title, rangeFor(kind.Key), null, FailedMessage, true))], []);
         }
 
         private static AnalyticsLinePlot Plot(DatabaseActivityCard card, IReadOnlyList<DateTimeOffset> starts, IReadOnlyList<AnalyticsSeries> series)

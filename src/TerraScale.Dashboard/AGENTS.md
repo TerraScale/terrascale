@@ -15,6 +15,8 @@
 
 - The existing official Stripe.net dependency may transitively bring Newtonsoft.Json; direct Newtonsoft package references and API usage remain banned.
 
+- Treat TerraBase, ts-auth and stored data as untrusted input: never `ToDictionary`/`Add` keys or pass values to `ArgumentException`-throwing BCL calls without checking first (`TryAdd`, `TryParse`, range tests), and reject a bad response as the area's `JsonException` or validation failure. See `docs/dashboard/analytics.md#platform-data-and-optional-panels`.
+- Optional page parts (sync, metrics, analytics) load through `OptionalPanel`, which renders the page with the part's notice and logs EventId 44 with code frames. Required reads never go through it; add no other broad `catch (Exception)`.
 - Synthetic provider and subprocess fixtures live only in `tests/TerraScale.Dashboard.E2E/Demo/`; the production executable always builds the real application.
 - Each area's Fast suite must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug. Keep default parallelism.
 - Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. New features add at most one happy-path and one critical-failure test.

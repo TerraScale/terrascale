@@ -15,6 +15,10 @@ An unexpected request failure (HTTP 500) is logged once as `Dashboard request fa
 <route template>: <type> at <frames>`, with up to 12 frames as `Type.Method:line` for the
 exception and up to two inner exceptions. Frames name code, never values, so a failure is
 traceable from its request ID without logging the exception message.
+An optional page part that fails unexpectedly (`OptionalPanel`, see
+[analytics](../analytics.md#platform-data-and-optional-panels)) does not fail the request; it is
+logged at Error as EventId 44, `Dashboard panel <panel> failed on <route template>; the page
+rendered without it: <type> at <frames>`, with the same frames and no message.
 New logging calls must follow the same rule: never log arbitrary exception objects,
 messages, request values or user input. Route templates must remain static metadata.
 

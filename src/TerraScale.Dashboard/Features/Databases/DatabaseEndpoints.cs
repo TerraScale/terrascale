@@ -190,10 +190,10 @@ namespace TerraScale.Dashboard.Features.Databases
         internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
             string error = "", bool openCreate = false, string name = "", int status = 200, string? homeRegion = null, string ttlHours = "")
         {
-            await databases.SyncAsync(context, http.RequestAborted);
-            // Regions and the project metrics are independent reads; they run together.
+            var synced = await OptionalPanel.RunAsync(http, "database-sync", () => databases.SyncAsync(context, http.RequestAborted));
             var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
-            var metricsRead = DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, range, http.RequestAborted);
+            var metricsRead = OptionalPanel.LoadAsync(http, "database-metrics",
+                () => DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, range, http.RequestAborted), DatabaseListMetrics.Failed);
             var regionsRead = backend.RegionsAsync(http.RequestAborted);
             IReadOnlyList<DatabaseRegion> choices = [];
             var regionsError = "";
@@ -203,7 +203,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
             var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
             var metrics = await metricsRead;
-            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, HomeSelection = homeRegion, TtlHours = ttlHours });
+            var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, HomeSelection = homeRegion, TtlHours = ttlHours, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." });
             result.StatusCode = status;
             return result;
         }
@@ -234,11 +234,17 @@ namespace TerraScale.Dashboard.Features.Databases
             var range = HomePage.NormalizeRange(http.Request.Query["range"]);
             var selectedTable = tab == "tables" ? http.Request.Query["table"].ToString() : "";
             // Each tab's reads are independent of one another, so they all start before any is awaited.
+            string CardRange(string key)
+            {
+                return http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range;
+            }
+
             var activityRead = tab == "overview"
-                ? DatabaseActivity.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, database.Id,
-                    key => http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range, http.RequestAborted) : null;
-            // Storage is the metered SQL storage gauge from the latest analytics bucket.
-            var storageRead = tab == "overview" ? DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, "24h", http.RequestAborted) : null;
+                ? OptionalPanel.LoadAsync(http, "database-activity",
+                    () => DatabaseActivity.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, database.Id, CardRange, http.RequestAborted),
+                    () => DatabaseActivity.Failed(CardRange)) : null;
+            var storageRead = tab == "overview" ? OptionalPanel.LoadAsync(http, "database-storage",
+                () => DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, "24h", http.RequestAborted), DatabaseListMetrics.Failed) : null;
             var backupsRead = tab is "backups" or "overview" ? BackupEndpoints.PageAsync(http, context, database, error, tab == "backups") : null;
             async Task<(DatabaseTables Tables, string Table, DatabaseSqlResult? Preview)> TablesAsync()
             {
