@@ -89,3 +89,11 @@ Call `SqlScript.Classify` / `Plan` one time per decision and pattern-match the u
 
 ## Work log
 - Baseline build: 0 warnings / 0 errors. Baseline `make terrabase-test-fast`: passed, 88 tests, 12.078 s.
+
+### Work log (final)
+- Fixes landed (one commit each): using directives for qualified names; classify-once + one result mapper + generated PgNumeric regex; PgOid constants + shared ProtocolVersion + CleartextPassword; exhaustive kind switches + one request clock + one quote helper (plus MaxNamed-derived texts, SET prose derived from Settable, Format() reuse, Access switch, merged extended arms, Exchange/Prepared/Portal as positional records); comments pass; Shapes pass (sweeper's dead pass signal removed, shared StorageBusy translation, named unreachable cases).
+- Comments: 288 restating lines removed; kept the external-behavior lines (RFC 8441, Cloudflare analytics lag, bucket failure modes/#838, SQLite LIKE, PostgreSQL transaction/query semantics, psql/Npgsql catalog notes).
+- Tests reviewed: all 25 test files in the slice drive the real app over HTTP/WebSocket/Postgres wire with meaningful assertions; none can't-fail, none tied to internals; nothing removed. `tests/TerraBase.Slow/Platform/WriteRouterTests.cs` tests this slice's router but lives in Platform's folder (cross-slice note).
+- Reverted during work (wrong calls): removing ZLogger's `$` handler string; removing the 3-arg SerializeToStreamAsync override (still abstract on net11); naming Bootstrap arms where the compiler proves them unreachable; subagent claims that ShapeCrypto's second epoch check is dead (it is a time-rollover guard) and that GraphQlUri is unused (used at ShapeCdnAnalytics.cs:72).
+- ShapeCdnPurge's legacy outbox-row read left in place: persisted-format compatibility; removing it changes behavior for existing rows (hard limit).
+- Final checks: rebase onto origin/terrabase-modernize, build 0 warnings/0 errors, Fast 88 green, Slow builds.
