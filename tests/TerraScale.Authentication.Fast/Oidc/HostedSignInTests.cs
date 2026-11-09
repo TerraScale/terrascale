@@ -55,6 +55,19 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     }
 
 
+    [Test]
+    public async Task Ui_locales_overrides_accept_language_for_the_hosted_page()
+    {
+        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
+        using var request = new HttpRequestMessage(HttpMethod.Get, SignIn + "?ui_locales=pt-BR");
+        request.Headers.AcceptLanguage.ParseAdd("en");
+        using var response = await oidc.Client.SendAsync(request);
+        var page = await response.Content.ReadAsStringAsync();
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(page).Contains("lang=\"pt-BR\"");
+        await Assert.That(page).Contains("Entrar · TerraScale");
+    }
+
     // Starts a hosted sign-up and returns the pending token its verify page carries.
 
     // Every hosted email-code start shares the same mail cooldown.

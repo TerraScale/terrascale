@@ -101,7 +101,7 @@ public sealed class CancelEmailChangeEndpoint(EmailChanges changes, AuthOptions 
 
         var form = this.HttpContext.Request.Form;
         await changes.CancelAsync(form["user"].ToString(), form["token"].ToString(), cancellationToken);
-        var copy = HostedCopies.For(AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
+        var copy = HostedCopies.For(AuthEmails.Locale(this.HttpContext.Request));
         return EmailChangeCancelHosted.Render(this.HttpContext, string.Empty, string.Empty, copy.DoneCancelEmailChange);
     }
 }
@@ -117,6 +117,6 @@ internal static class EmailChangeCancelHosted
 
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        return EmailChangeCancelPage.Create(new EmailChangeCancelPageModel(user, token, done, nonce, AuthEmails.Locale(context.Request.Headers.AcceptLanguage)));
+        return EmailChangeCancelPage.Create(new EmailChangeCancelPageModel(user, token, done, nonce, AuthEmails.Locale(context.Request)));
     }
 }

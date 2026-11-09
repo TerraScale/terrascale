@@ -30,7 +30,7 @@ internal static class StepUpHosted
 
         var record = current.Record;
         var user = live.User;
-        var locale = AuthEmails.Locale(context.Request.Headers.AcceptLanguage);
+        var locale = AuthEmails.Locale(context.Request);
         var copy = HostedCopies.For(locale);
         string? notice = null;
         if (post && !record.Approved)
@@ -52,7 +52,7 @@ internal static class StepUpHosted
 
                 using (var reservation = services.GetRequiredService<SignInMail>().Reserve())
                 {
-                    await reservation.EnqueueStepUpAsync(user, id, AuthEmails.Locale(context.Request.Headers.AcceptLanguage));
+                    await reservation.EnqueueStepUpAsync(user, id, AuthEmails.Locale(context.Request));
                 }
 
                 notice = copy.NoticeCodeRequested;

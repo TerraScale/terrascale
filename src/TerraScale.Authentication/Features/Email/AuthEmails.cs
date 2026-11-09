@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.RegularExpressions;
 using System.Text.Unicode;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 using TerraScale.Authentication.Configuration;
@@ -329,6 +330,34 @@ public sealed partial class AuthEmails(AuthOptions options)
 
     /// <summary>The default copy of <paramref name="kind"/> in <paramref name="locale"/>.</summary>
     public static EmailTemplateFields Defaults(AuthEmailKind kind, string locale) => Copies[(kind, locale)];
+
+    public static string Locale(HttpRequest request)
+    {
+        foreach (var requested in request.Query["ui_locales"])
+        {
+            if (requested is null)
+            {
+                continue;
+            }
+
+            foreach (var candidate in requested.Split(' '))
+            {
+                var trimmed = candidate.Trim();
+                if (trimmed.Length == 0)
+                {
+                    continue;
+                }
+
+                var supported = Locales.FirstOrDefault(locale => locale.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
+                if (supported is not null)
+                {
+                    return supported;
+                }
+            }
+        }
+
+        return Locale(request.Headers.AcceptLanguage);
+    }
 
     /// <summary>
     /// The locale for a request's <c>Accept-Language</c>: <see cref="Portuguese"/> when Portuguese is preferred over
