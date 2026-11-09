@@ -96,8 +96,8 @@ func detectInitLanguages(dir string) []string {
 	return found
 }
 
-func initEnvLines(project, database, key string) string {
-	return fmt.Sprintf("TERRASCALE_PROJECT_ID=%s\nTERRASCALE_DATABASE_NAME=%s\nTERRASCALE_API_KEY=%s\n", project, database, key)
+func initEnvLines(project, database, region, key string) string {
+	return fmt.Sprintf("TERRASCALE_PROJECT_ID=%s\nTERRASCALE_DATABASE_NAME=%s\nTERRASCALE_REGION=%s\nTERRASCALE_API_KEY=%s\n", project, database, region, key)
 }
 
 func writeInitEnv(dir, lines string, out io.Writer) error {
@@ -127,12 +127,18 @@ func runInit(ctx context.Context, s *session, database, lang string, input comma
 	}
 	var existing []string
 	ids := map[string]string{}
+	homes := map[string]string{}
 	for db, err := range projectDatabases(ctx, s.tb, s.project, 100) {
 		if err != nil {
 			return err
 		}
 		existing = append(existing, db.Name)
 		ids[db.Name] = db.ID
+		home := db.Region
+		if db.HomeRegion != nil {
+			home = *db.HomeRegion
+		}
+		homes[db.Name] = home
 	}
 	if database == "" {
 		switch len(existing) {
@@ -157,6 +163,7 @@ func runInit(ctx context.Context, s *session, database, lang string, input comma
 			return err
 		}
 		id = created.ID
+		homes[database] = created.Region
 		if _, err := fmt.Fprintf(out, "Created database %s (%s)\n", database, id); err != nil {
 			return err
 		}
@@ -173,7 +180,7 @@ func runInit(ctx context.Context, s *session, database, lang string, input comma
 	if k == nil || k.APIKey.ProjectID != s.project || k.APIKey.Database != id || k.Key == "" {
 		return errors.New("API key response did not match the request; inspect key state before retrying")
 	}
-	lines := initEnvLines(s.project, database, k.Key)
+	lines := initEnvLines(s.project, database, homes[database], k.Key)
 	if err := writeInitEnv(dir, lines, out); err != nil {
 		return keyOutputError(err)
 	}

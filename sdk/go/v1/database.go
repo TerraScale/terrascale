@@ -42,6 +42,7 @@ type DatabaseInfo struct {
 	ID        string `json:"id" ulid:"required"`
 	ProjectID string `json:"projectId" ulid:"required"`
 	Name      string `json:"name"`
+	Region    string `json:"region"`
 	// Created is true when the call created the database (201).
 	Created bool `json:"-"`
 }

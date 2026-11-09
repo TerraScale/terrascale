@@ -40,7 +40,7 @@ func initSession(t *testing.T) *session {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/databases"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "next": ""})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/databases"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": jsonAuthID, "projectId": jsonAuthID, "name": "main"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": jsonAuthID, "projectId": jsonAuthID, "name": "main", "region": "gru"})
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -77,6 +77,7 @@ func TestInitCreatesDatabaseKeyAndEnv(t *testing.T) {
 	env := string(data)
 	if !strings.Contains(env, "TERRASCALE_PROJECT_ID="+jsonAuthID+"\n") ||
 		!strings.Contains(env, "TERRASCALE_DATABASE_NAME=main\n") ||
+		!strings.Contains(env, "TERRASCALE_REGION=gru\n") ||
 		!strings.Contains(env, "TERRASCALE_API_KEY="+initKeyID+"_fixture-secret") {
 		t.Fatalf(".env = %q", env)
 	}
