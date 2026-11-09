@@ -1,12 +1,14 @@
 using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Security.Claims;
+using System.Threading;
 using Microsoft.AspNetCore.Authentication;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.UserAuth;
@@ -35,7 +37,7 @@ internal static class UserAuthExtensions
                 sockets.PooledConnectionIdleTimeout = TimeSpan.FromMinutes(10);
                 sockets.PooledConnectionLifetime = TimeSpan.FromMinutes(10);
             })
-            .SetHandlerLifetime(System.Threading.Timeout.InfiniteTimeSpan)
+            .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
             .AddHttpMessageHandler(provider => RequestIdentity.CreatePropagationHandler(
                 provider.GetRequiredService<InternalCredential>().CorrelationKey,
                 new Uri(provider.GetRequiredService<TerraBaseOptions>().AuthIssuer ?? "about:blank")))
@@ -385,7 +387,7 @@ internal static class UserAuthExtensions
             {
                 if (context.Request.RouteValues["database"] is string name)
                 {
-                    if (!Primitives.EntityIds.IsValid(name) && !DatabaseName.TryParse(name, out _))
+                    if (!EntityIds.IsValid(name) && !DatabaseName.TryParse(name, out _))
                     {
                         await BadRequests.WriteAsync(context, 404, "unknown_database", "the database does not exist", op: null).ConfigureAwait(false);
                         return;

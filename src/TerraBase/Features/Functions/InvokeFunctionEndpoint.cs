@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using System.Text.Json;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -80,7 +81,7 @@ internal sealed class InvokeFunctionEndpoint(IManagementService management, IFun
                 }
                 catch (JsonException)
                 {
-                    writer.WriteStringValue(System.Text.Encoding.UTF8.GetString(body.Span));
+                    writer.WriteStringValue(Encoding.UTF8.GetString(body.Span));
                 }
             }
 
@@ -94,6 +95,6 @@ internal sealed class InvokeFunctionEndpoint(IManagementService management, IFun
             writer.WriteEndObject();
         }
 
-        return System.Text.Encoding.UTF8.GetString(output.WrittenSpan);
+        return Encoding.UTF8.GetString(output.WrittenSpan);
     }
 }

@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Authentication;
+using TerraBase.Features.Management;
+using TerraBase.Features.UserAuth;
 
 namespace TerraBase.Features.ApiKeys;
 
@@ -11,7 +13,7 @@ public static class ApiKeysExtensions
         services.AddSingleton<IApiKeyStore, EngineApiKeyStore>();
         services.AddAuthentication("TerraBaseBearer")
             .AddPolicyScheme("TerraBaseBearer", "TerraBase bearer token", options => options.ForwardDefaultSelector = BearerScheme)
-            .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
                 ApiKeyAuthenticationHandler.SchemeName, configureOptions: null);
         var authorization = services.AddAuthorizationBuilder();
         foreach (var scope in ApiKeyScopes.All.Concat(ApiKeyScopes.ProjectTokenScopes))
@@ -19,12 +21,12 @@ public static class ApiKeysExtensions
             // Hidden legacy aliases accept sign-in/service identities without project scopes. Every alias target
             // must independently check the caller's real organization membership and role in its management service.
             authorization.AddPolicy(scope, policy => policy
-                .AddAuthenticationSchemes("TerraBaseBearer", UserAuth.UserAuthExtensions.OperatorScheme)
+                .AddAuthenticationSchemes("TerraBaseBearer", UserAuthExtensions.OperatorScheme)
                 .RequireAuthenticatedUser()
                 .RequireAssertion(context => context.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, scope)
-                    || context.Resource is HttpContext http && http.Features.Get<Management.LegacyManagementRoute>() is not null
+                    || context.Resource is HttpContext http && http.Features.Get<LegacyManagementRoute>() is not null
                         && context.User.Identities.Any(identity => identity.IsAuthenticated
-                            && identity.AuthenticationType is UserAuth.UserAuthExtensions.TokenScheme or UserAuth.UserAuthExtensions.OperatorScheme)));
+                            && identity.AuthenticationType is UserAuthExtensions.TokenScheme or UserAuthExtensions.OperatorScheme)));
         }
 
         return services;
@@ -36,7 +38,7 @@ public static class ApiKeysExtensions
         return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             && header.AsSpan("Bearer ".Length).Trim().StartsWith("tb_", StringComparison.Ordinal)
                 ? ApiKeyAuthenticationHandler.SchemeName
-                : UserAuth.UserAuthExtensions.TokenScheme;
+                : UserAuthExtensions.TokenScheme;
     }
 
     internal static async Task<AuthenticateResult> AuthenticateAgainAsync(HttpContext context)

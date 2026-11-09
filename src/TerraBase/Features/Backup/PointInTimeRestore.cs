@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using Amazon.S3;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -106,7 +108,7 @@ internal sealed class PointInTimeRestore(
                 return retained switch
                 {
                     Unavailable error => error,
-                    DateTimeOffset => throw new System.Diagnostics.UnreachableException(),
+                    DateTimeOffset => throw new UnreachableException(),
                 };
             }
 
@@ -238,7 +240,7 @@ internal sealed class PointInTimeRestore(
             return retained switch
             {
                 Unavailable error => error,
-                DateTimeOffset => throw new System.Diagnostics.UnreachableException(),
+                DateTimeOffset => throw new UnreachableException(),
             };
         }
 
@@ -257,7 +259,7 @@ internal sealed class PointInTimeRestore(
                 Conflict error => error,
                 Validation error => error,
                 Unavailable error => error,
-                RestoredBackup => throw new System.Diagnostics.UnreachableException(),
+                RestoredBackup => throw new UnreachableException(),
             };
         }
         try
@@ -282,7 +284,7 @@ internal sealed class PointInTimeRestore(
                 Conflict error => error,
                 Validation error => error,
                 Unavailable error => error,
-                RestoredBackup => throw new System.Diagnostics.UnreachableException(),
+                RestoredBackup => throw new UnreachableException(),
             };
         }
         try
@@ -339,7 +341,7 @@ internal sealed class PointInTimeRestore(
             {
                 NotFound => new NotFound("continuous backup holds nothing of this database within its plan's retention window"),
                 Unavailable error => error,
-                RestoreWindow => throw new System.Diagnostics.UnreachableException(),
+                RestoreWindow => throw new UnreachableException(),
             };
         }
 
@@ -417,7 +419,7 @@ internal sealed class PointInTimeRestore(
             DateTimeOffset => OutsideWindow(window),
         };
 
-    private static Validation OutsideWindow(RestoreWindow window) => new(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+    private static Validation OutsideWindow(RestoreWindow window) => new(string.Create(CultureInfo.InvariantCulture,
         $"pointInTime must lie between the restore window's earliest and latest times: {window.Earliest:O} to {window.Latest:O}"));
 
     private static Conflict HistoryIncomplete() =>
