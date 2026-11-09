@@ -111,7 +111,9 @@ Databases carry `homeRegion`, `replicaRegions` and `allRegions`. `setDatabasePla
 `503 move_unresolved` (at most 5 times, after `Retry-After` or 1 s). Encoding and decoding are covered by the
 [recorded placement fixtures](../dotnet/contracts/terrabase/placement/); live producer qualification has not run.
 
-Automatic all-regions placement and moving the home region are coming on the server.
+All-regions placement (`allRegions`) keeps a replica in every serving region, including regions added later;
+`moveDatabaseHome` moves the home to a replica region, and `db.regions` reads the home region and home-observed
+replica pull progress. These ship from the next published release; the current npm release predates them.
 
 ## Atlas and endpoint selection
 
@@ -187,8 +189,9 @@ scope, checked per statement. Keep service credentials private and out of logs a
 A database has one home region for writes and can have encrypted read replicas in other serving regions.
 REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
-preserve read-your-writes; use the home for REST reads that must see a previous write. Automatic all-regions
-placement is coming; use an explicit replica-region list today.
+preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
+placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
+serving region; otherwise set an explicit replica-region list.
 
 The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
 storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data

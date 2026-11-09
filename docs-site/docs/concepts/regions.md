@@ -27,8 +27,9 @@ Without `homeRegion`, the called region becomes the home. Without `replicaRegion
 read replicas. The home and every replica must be serving regions; a replica must differ from the home.
 
 Change the replicas with `PATCH /v1/projects/{project}/databases/{database}` and
-`{"replicaRegions":["sjc"]}`. An empty list removes the replicas. Automatic placement in all current and future
-regions (`allRegions`) is coming; name each replica region today.
+`{"replicaRegions":["sjc"]}`. An empty list removes the replicas. All-regions placement (`allRegions`, `-all-regions` on
+`ts db create` and `ts db placement`) holds a replica in every serving region, including
+regions added later; otherwise name each replica region.
 
 ## Connect from any region
 

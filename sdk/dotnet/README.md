@@ -118,7 +118,10 @@ await client.MoveDatabaseHomeAsync(project, db.Id, "sjc");
 `TerraBaseManagedDatabase` carries `HomeRegion`, `ReplicaRegions` and `AllRegions`. `SetDatabasePlacementAsync` takes
 exactly one of `replicaRegions` or `allRegions`. `MoveDatabaseHomeAsync` waits up to 10 minutes (set the caller's
 `HttpClient.Timeout` to at least that) and resends only on `503 move_unresolved`, at most 5 times after `Retry-After` or
-1 s. Tests replay `contracts/terrabase/placement/`; live producer qualification has not run.
+1 s. `Database(projectId, name).GetRegionsAsync` reads the home region and home-observed replica pull progress.
+Tests replay `contracts/terrabase/placement/`; live producer qualification has not run. All-regions placement
+(`AllRegions`) keeps a replica in every serving region, including regions added later; `MoveDatabaseHomeAsync` moves
+the home to a replica region (`ts db move-home`, `ts db placement ... -all-regions`).
 
 ## Database request observations
 
@@ -206,8 +209,9 @@ TerraBaseManagedDatabase copy = await client.Database(projectId, "app").BranchAs
 A database has one home region for writes and can have encrypted read replicas in other serving regions.
 REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
-preserve read-your-writes; use the home for REST reads that must see a previous write. Automatic all-regions
-placement is coming; use an explicit replica-region list today.
+preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
+placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
+serving region; otherwise set an explicit replica-region list.
 
 The [published pricing catalog](https://terrascale.tech/pricing.json) counts one home region per database. Writes and
 storage are metered at home; replica storage is not billed separately. Deleting a database destroys its backup data
