@@ -133,7 +133,7 @@ db.batch(vec![
 
 ## ORMs
 
-sqlx, SeaORM and Diesel are **not supported** against TerraScale today. sqlx has no third-party backend extension point for an HTTP/WebSocket database driver; SeaORM is built on sqlx and inherits that limit; Diesel is synchronous and bound to libsqlite3-sys connection traits that TerraScale's client cannot implement. Use the SDK's typed `query_as` queries, parameters, transactions and batches instead — for anything schema-shaped, plain `CREATE TABLE` and `ALTER TABLE` statements over `execute` cover it.
+sqlx, SeaORM and Diesel are **not supported** against TerraScale today. sqlx has no third-party backend extension point for an HTTP/WebSocket database driver; SeaORM is built on sqlx and inherits that limit; Diesel's SQLite backend links the SQLite C library directly and is synchronous, with connection traits TerraScale's HTTP/WebSocket client cannot implement. Use the SDK's typed `query_as` queries, parameters, transactions and batches instead — for anything schema-shaped, plain `CREATE TABLE` and `ALTER TABLE` statements over `execute` cover it.
 
 For errors, typed failures and safe retries, see [Errors and safe retries](/hi/guides/errors).
 
