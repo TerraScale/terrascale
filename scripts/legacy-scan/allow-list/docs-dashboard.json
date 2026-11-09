@@ -1,4 +1,5 @@
 [
   {"repo": "terrascale", "path": "^docs/dashboard/(?:stripe|stripe-live-cutover|stripe-sandbox-dsh207|development|identity-descriptor|oci-deployment)\\.md$", "terms": ["webhooks"], "match": "(?i:\\bwebhooks?\\b)|\\bSTRIPE_WEBHOOK_SECRET\\b|\\bBillingWebhookJourneyTests\\b", "reason": "Stripe payment event signatures, credentials and delivery tests are retained billing safeguards, not the retired database event API."},
-  {"repo": "terrascale", "path": "^docs/dashboard/DESIGN_SYSTEM\\.md$", "terms": ["documents"], "match": "\\bShellDocument\\b|\\bCommon/UI/Slices/Document\\.cshtml\\b", "reason": "Existing Razor HTML shell type and source filename, unrelated to the retired data API."}
+  {"repo": "terrascale", "path": "^docs/dashboard/DESIGN_SYSTEM\\.md$", "terms": ["documents"], "match": "\\bShellDocument\\b|\\bCommon/UI/Slices/Document\\.cshtml\\b", "reason": "Existing Razor HTML shell type and source filename, unrelated to the retired data API."},
+  {"repo": "terrascale", "path": "^docs/dashboard/state-storage\\.md$", "terms": ["webhooks"], "match": "\\bwebhook\\b", "reason": "Storage of the signed alert delivery channel, unrelated to retired database webhooks."}
 ]
