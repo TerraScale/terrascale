@@ -52,7 +52,7 @@ A refused statement rolls back the whole request and answers an `error` object:
 
 ## Transactions
 
-One request is one transaction. `BEGIN`, `COMMIT` and `ROLLBACK` are refused; `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` are accepted within the request. For interactive transactions use the WebSocket session (`…/sql/ws`, subprotocol `terrascale.sql.v1`) or the Postgres wire, both limited to 5 s of statement execution per transaction. See [SQL](/ar/concepts/sql#transactions).
+One request is one transaction. `BEGIN`, `COMMIT` and `ROLLBACK` are refused; `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` are accepted within the request. For interactive transactions use the WebSocket session (`…/sql/ws`, subprotocol `terrascale.sql.v1`) or the Postgres wire, both limited to 5 seconds per transaction. See [SQL](/ar/concepts/sql#transactions).
 
 ## Read and write routing
 

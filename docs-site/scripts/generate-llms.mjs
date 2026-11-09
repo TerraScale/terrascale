@@ -14,7 +14,7 @@ const text = `# TerraScale documentation
 >   with {"statements":[{"sql","args","named"}]}. One request is one
 >   transaction of 1 to 256 statements, all or nothing.
 > - WebSocket: GET .../databases/{database}/sql/ws, subprotocol
->   terrascale.sql.v1, for interactive transactions of at most 5 seconds of statement execution.
+>   terrascale.sql.v1, for interactive transactions of at most 5 seconds.
 > - Postgres wire: postgresql://{database}@pg.terrascale.tech:5432/{database}
 >   with the API key as the password. Statements stay in the SQLite dialect.
 
