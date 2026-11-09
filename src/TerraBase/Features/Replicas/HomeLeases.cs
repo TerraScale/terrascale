@@ -738,7 +738,7 @@ internal sealed class HomeLeases(
         foreach (var answer in await Task.WhenAll(asks).ConfigureAwait(false))
         {
             if (answer is { Revision: { } text } && DatabaseRevision.TryParse(text, out var theirs)
-                && (Compare(theirs, mine) > 0 || Compare(theirs, mine) == 0 && string.CompareOrdinal(answer.Region, options.Region) < 0))
+                && theirs.CompareAcrossIncarnations(mine) is var order && (order > 0 || order == 0 && string.CompareOrdinal(answer.Region, options.Region) < 0))
             {
                 return true;
             }
@@ -763,12 +763,6 @@ internal sealed class HomeLeases(
         {
             return null;
         }
-    }
-
-    internal static int Compare(DatabaseRevision left, DatabaseRevision right)
-    {
-        var incarnation = left.Incarnation.CompareTo(right.Incarnation);
-        return incarnation != 0 ? incarnation : left.Generation != right.Generation ? left.Generation.CompareTo(right.Generation) : left.Frame.CompareTo(right.Frame);
     }
 
     private async Task DemoteAsync(TenantContext database, HomeLease home, CancellationToken cancellationToken)
