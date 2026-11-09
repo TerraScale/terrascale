@@ -30,11 +30,9 @@ public sealed record TerraBaseOptions
 
     private const int MaxQueryBudgetSeconds = 600;
 
-
     public const string DefaultDataDirectory = "data";
 
     private const string EnvironmentPrefix = "TERRABASE_";
-
 
     private const int DefaultStorageQueue = 1024;
     internal const long MinMemoryBudget = 1024 * 1024;
@@ -92,7 +90,6 @@ public sealed record TerraBaseOptions
             : throw new TerraBaseConfigurationException($"query-budget-seconds must be between 1 and {MaxQueryBudgetSeconds} seconds");
     } = TimeSpan.FromSeconds(DefaultQueryBudgetSeconds);
 
-
     public required long MemoryBudget
     {
         get;
@@ -118,10 +115,8 @@ public sealed record TerraBaseOptions
     internal ShapeStorageSettings? ShapeStorage { get; init; }
     public byte[]? DatabaseMasterKey { get; init; }
 
-    /// <summary>The NATS server that carries revision notifications between regions, from <c>TS_NATS_URL</c>.</summary>
     public Uri? NatsUrl { get; init; }
 
-    /// <summary>Its client token, from <c>TERRABASE_NATS_TOKEN_FILE</c>.</summary>
     public string? NatsToken { get; init; }
 
     public static string EnvironmentName(IReadOnlyList<string> args)

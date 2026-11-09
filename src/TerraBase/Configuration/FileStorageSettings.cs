@@ -1,20 +1,15 @@
 namespace TerraBase.Configuration;
 
-/// <summary>Customer-file S3 identity, delivered separately from Tigris backup secrets.</summary>
 public sealed class FileStorageSettings
 {
     internal static string[] Keys => ["files-s3-endpoint", "files-s3-access-key-id", "files-s3-secret-access-key"];
 
-    /// <summary>R2 account endpoint in production.</summary>
     public required Uri Endpoint { get; init; }
 
-    /// <summary>Access key for the three regional file buckets only.</summary>
     public required string AccessKeyId { get; init; }
 
-    /// <summary>S3 secret delivered through its own OCI Vault file reference.</summary>
     public required string SecretKey { get; init; }
 
-    /// <summary>Never includes credentials in diagnostics.</summary>
     public override string ToString() => "customer file storage";
 
     internal static FileStorageSettings? Parse(IReadOnlyDictionary<string, string> values)
