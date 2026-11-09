@@ -577,7 +577,9 @@ project means an organization key), the organization's OIDC SSO connection
 A signed-in user also manages a project's hosted sign-in tenant through
 `{origin}/v1/{project}` (viewer reads, admin changes): the end-user directory
 (`ProjectUsers`, `ProjectUser`, `DisableProjectUser`, `EnableProjectUser`,
-`DeleteProjectUser`), live end-user sessions (`ProjectSessions` with the
+`DeleteProjectUser`; `ExportProjectUsers` reads the audited admin directory
+export page by page with the producer's cursor), live end-user sessions
+(`ProjectSessions` with the
 producer's pagination and optional `User` filter, `RevokeProjectSession`),
 OAuth clients (`ListProjectOAuthClients`, `CreateProjectOAuthClient`,
 `DeleteProjectOAuthClient`) and the tenant's hosted-auth settings and social
