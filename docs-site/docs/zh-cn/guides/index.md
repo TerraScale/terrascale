@@ -18,8 +18,7 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Use Drizzle ORM](/zh-cn/guides/orm-drizzle), [Use Prisma ORM](/zh-cn/guides/orm-prisma) and [Use SQLAlchemy](/zh-cn/guides/orm-sqlalchemy) (being updated for SQL).
 - [SQL over HTTP](/zh-cn/guides/sql-http): run SQL statements with any HTTP client.
 - [Errors and safe retries](/zh-cn/guides/errors): typed failures and uncertain write outcomes.
-- [Indexes](/zh-cn/guides/indexes) (being updated for SQL).
-- [Full-text search](/zh-cn/guides/full-text-search) and [Vector similarity search](/zh-cn/guides/vector-search) (being updated for SQL).
+- [Indexes](/zh-cn/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
 - [Functions](/zh-cn/guides/functions) (being updated for SQL).
 - [Metrics, log drains and alerts](/zh-cn/guides/monitoring) (being updated for SQL).
 - [Backups and restore](/zh-cn/guides/backups-and-restore) (being updated for SQL).
