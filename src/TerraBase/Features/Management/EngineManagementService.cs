@@ -442,7 +442,7 @@ internal sealed partial class EngineManagementService(
         {
             var pushes = (await regionPeers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false))
                 .Where(peer => record.AllRegions || record.Replicas.Contains(peer.Region, StringComparer.Ordinal))
-                .Select(peer => remote.ForgetAsync(peer.Region, peer.Address, storage.OrganizationId, storage.ProjectId!, storage.DatabaseId!, cancellationToken))
+                .Select(peer => remote.ForgetAsync(peer.Region, peer.Address, storage, cancellationToken))
                 .ToArray();
             if (pushes.Length > 0)
             {

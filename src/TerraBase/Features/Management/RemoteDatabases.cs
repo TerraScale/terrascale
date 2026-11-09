@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Management;
@@ -74,12 +76,11 @@ internal sealed class RemoteDatabases(IHttpClientFactory http, InternalCredentia
         }
     }
 
-    public Task ForgetAsync(string region, Uri peer, string organization, string project, string database, CancellationToken cancellationToken)
+    public Task ForgetAsync(string region, Uri peer, TenantContext database, CancellationToken cancellationToken)
     {
         var secret = credential.CorrelationKey
             ?? throw new InvalidOperationException("the cluster peer credential is required to reach peer regions");
-        var address = new Uri(peer, $"v1/sync/organizations/{Uri.EscapeDataString(organization)}/projects/{Uri.EscapeDataString(project)}/databases/{Uri.EscapeDataString(database)}");
-        return SendForgetAsync(region, address, secret, cancellationToken);
+        return SendForgetAsync(region, new Uri(peer, ReplicaRoutes.DatabasePath(database)), secret, cancellationToken);
     }
 
     private async Task SendForgetAsync(string region, Uri address, string secret, CancellationToken cancellationToken)
