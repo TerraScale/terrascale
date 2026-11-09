@@ -30,6 +30,9 @@ public enum AuthEmailKind
     /// <summary>A one-time code for the second sign-in factor.</summary>
     MfaCode,
 
+    /// <summary>A one-time code that confirms the signed-in user's identity for a sensitive change.</summary>
+    StepUpCode,
+
     /// <summary>An alert about a sign-in from a device not seen before.</summary>
     NewDevice,
 
@@ -277,6 +280,7 @@ public sealed partial class AuthEmails(AuthOptions options)
         ["password_reset"] = AuthEmailKind.PasswordReset,
         ["invitation"] = AuthEmailKind.Invitation,
         ["mfa_code"] = AuthEmailKind.MfaCode,
+        ["step_up_code"] = AuthEmailKind.StepUpCode,
         ["new_device"] = AuthEmailKind.NewDevice,
         ["lockout"] = AuthEmailKind.Lockout,
         ["email_change_code"] = AuthEmailKind.EmailChangeCode,
@@ -435,7 +439,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             FromName = brand.SenderName,
             ReplyTo = brand.ReplyTo,
             Tenant = values.Tenant,
-            Purpose = kind is AuthEmailKind.SignInCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.MfaCode
+            Purpose = kind is AuthEmailKind.SignInCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.MfaCode or AuthEmailKind.StepUpCode
                 ? EmailPurpose.Authentication : kind == AuthEmailKind.Invitation ? EmailPurpose.Invitation : EmailPurpose.Notification
         };
     }
@@ -605,6 +609,20 @@ public sealed partial class AuthEmails(AuthOptions options)
             "Digite este código para terminar de entrar em {{ app_name }} como {{ user.email }}.",
             null,
             "Não tentou entrar? Alguém pode saber sua senha: troque-a agora. Nunca compartilhe este código."),
+        [(AuthEmailKind.StepUpCode, English)] = new(
+            "{{ code }} is your {{ app_name }} verification code",
+            "Use it to confirm it's you. It expires in {{ expires_in }}.",
+            "Confirm it's you",
+            "Enter this code to confirm it's you in {{ app_name }} as {{ user.email }}.",
+            null,
+            "Didn't ask for this? Ignore this email. Never share this code."),
+        [(AuthEmailKind.StepUpCode, Portuguese)] = new(
+            "{{ code }} é o seu código de verificação para {{ app_name }}",
+            "Use-o para confirmar que é você. Ele expira em {{ expires_in }}.",
+            "Confirme que é você",
+            "Digite este código para confirmar que é você em {{ app_name }} como {{ user.email }}.",
+            null,
+            "Não pediu isso? Ignore este e-mail. Nunca compartilhe este código."),
         [(AuthEmailKind.NewDevice, English)] = new(
             "New sign-in to {{ app_name }}",
             "Your account was used on a new device.",
@@ -653,7 +671,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             "Your sign-in email is changing",
             "Someone who just verified your credentials asked to change the sign-in email of {{ user.email }} on {{ app_name }} to {{ new_email }}. It changes once that address confirms its code.",
             "This wasn't me",
-            "If this wasn't you, use the button to cancel the change and sign out everywhere, then reset your password."),
+            "If this wasn't you, use the button to cancel the change and sign out of every session, then reset your password."),
         [(AuthEmailKind.EmailChangeNotice, Portuguese)] = new(
             "Seu e-mail de acesso a {{ app_name }} vai mudar",
             "Foi pedida a troca do seu e-mail de acesso para {{ new_email }}.",

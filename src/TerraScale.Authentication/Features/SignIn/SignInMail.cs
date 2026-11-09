@@ -284,6 +284,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 {
                     PasscodePurpose.PasswordReset => AuthEmailKind.PasswordReset,
                     PasscodePurpose.SignUp => AuthEmailKind.VerifyEmail,
+                    PasscodePurpose.StepUp => AuthEmailKind.StepUpCode,
                     _ => AuthEmailKind.SignInCode,
                 },
                 Values = new AuthEmailValues(issued.Email) { Code = issued.Code, ExpiresIn = Passcodes.Lifetime, Tenant = issued.Tenant },
@@ -556,10 +557,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, Resend = true }, locale, null);
 
         /// <summary>Queues the step-up code of hosted request <paramref name="requestId"/>.</summary>
-        public Task EnqueueStepUpAsync(UserRecord user, string requestId)
+        public Task EnqueueStepUpAsync(UserRecord user, string requestId, string locale = AuthEmails.English)
         {
             ArgumentNullException.ThrowIfNull(user);
-            return this.Consume().WriteAsync("queued", new MailWork(user.InstanceId, user.Email) { Purpose = PasscodePurpose.StepUp, UserId = user.Id, RequestId = requestId }, AuthEmails.English, null);
+            return this.Consume().WriteAsync("queued", new MailWork(user.InstanceId, user.Email) { Purpose = PasscodePurpose.StepUp, UserId = user.Id, RequestId = requestId }, locale, null);
         }
 
         /// <summary>Queues a committed <paramref name="kind"/> email using the slot reserved before its transaction.</summary>

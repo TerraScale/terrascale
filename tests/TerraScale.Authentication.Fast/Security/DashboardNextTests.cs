@@ -33,7 +33,7 @@ public sealed partial class DashboardNextTests(TerraBaseFixture fixture)
         await Assert.That(done.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(finished).Contains("<h1>Password updated</h1>");
         await Assert.That(finished).Contains($">Back to account</a>").And.Contains($"href=\"{SecurityTab}\"");
-        await Assert.That(finished).Contains("You were signed out everywhere.");
+        await Assert.That(finished).Contains("You were signed out of every session.");
     }
 
     [Test]

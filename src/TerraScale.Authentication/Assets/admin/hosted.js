@@ -126,7 +126,7 @@ function passkeyDecode(text) {
     button.classList.remove('is-loading');
     button.removeAttribute('aria-busy');
   }
-  function fail() {
+  function fail(message, body) {
     reset();
     var alert = document.getElementById('sign-in-error');
     if (!alert) {
@@ -138,7 +138,7 @@ function passkeyDecode(text) {
       var head = document.querySelector('.head');
       (head || document.body).after(alert);
     }
-    alert.innerHTML = '<strong>Passkey sign-in failed</strong><p>The passkey sign-in failed; start again.</p>';
+    alert.innerHTML = '<strong>' + message + '</strong><p>' + body + '</p>';
   }
   function json(response) {
     return response.json().then(function (body) {
@@ -157,7 +157,11 @@ function passkeyDecode(text) {
   }
   button.addEventListener('click', function () {
     var address = email ? email.value.trim() : '';
-    if (!address) { if (email) email.focus(); return; }
+    if (!address) {
+      if (email) email.focus();
+      fail('Enter your email address', 'Enter your email address to sign in with a passkey.');
+      return;
+    }
     button.disabled = true;
     button.classList.add('is-loading');
     button.setAttribute('aria-busy', 'true');
@@ -208,7 +212,7 @@ function passkeyDecode(text) {
       .then(follow)
       .catch(function (error) {
         if (error && error.name === 'NotAllowedError') { reset(); return; }
-        fail();
+        fail('Passkey sign-in failed', 'The passkey sign-in failed; start again.');
       });
   });
 })();
