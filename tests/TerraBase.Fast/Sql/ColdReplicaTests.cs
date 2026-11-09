@@ -27,8 +27,6 @@ public sealed class ColdReplicaTests
         var peers = new HomePeer(homeRegion);
         await using var away = await ManagementApi.StartAsync(settings => settings["region"] = "sjc", services =>
             services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(peers)), sharedIssuer: home.Issuer);
-        // Let the initial empty catalog sweep finish before exposing the home to request forwarding.
-        // The follower has not opened yet; the durable catalog can already route requests.
         await peers.InitialSweep.Task.WaitAsync(token);
         peers.Address = home.Server.BaseAddress;
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);

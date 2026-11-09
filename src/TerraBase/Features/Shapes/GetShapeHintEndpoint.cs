@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
@@ -21,8 +23,6 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
     public override void Configure()
     {
         Get(ShapeRoute.Shape + "/ws");
-        // CONNECT is the extended CONNECT of a WebSocket relayed from another region (RFC 8441): the same upgrade,
-        // served the same way.
         Verbs(HttpMethods.Get, "CONNECT");
         Name("connectShapeHints");
         Summary("Waits for shape changes over a WebSocket");
@@ -58,7 +58,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                     Validation error => ErrorResponse.From(error),
                     NotFound error => ErrorResponse.From(error),
                     Unavailable error => ErrorResponse.From(error),
-                    TenantContext => throw new System.Diagnostics.UnreachableException(),
+                    TenantContext => throw new UnreachableException(),
                 };
             }
         }
@@ -185,7 +185,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                             break;
                         }
 
-                        var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        var at = offset.ToString(CultureInfo.InvariantCulture);
                         if (body.Local is { } local && local != announced && body.NextOffset == at)
                         {
                             await SendAsync(socket, new ShapeHintFrame("provisional", shape.Lineage.Handle, at, at, Local: local), disconnected.Token).ConfigureAwait(false);

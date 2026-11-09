@@ -74,7 +74,6 @@ public sealed class ShapeKeyShreddingTests
             : null;
     }
 
-    /// <summary>The client side of TBS1 (<see cref="ShapeCrypto.Seal"/>): authenticate every frame and return the plaintext.</summary>
     private static byte[] Open(byte[] sealedBytes, string handle, string offset, byte[] epochKey)
     {
         const int header = ShapeCrypto.HeaderBytes;

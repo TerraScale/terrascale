@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text;
 
 namespace TerraBase.Testing;
 
@@ -29,7 +31,7 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
         var bootstrap = await GetAvailableAsync(new Uri($"{Path}?offset=-1{filter}", UriKind.Relative));
         if (bootstrap.Status != HttpStatusCode.TemporaryRedirect)
         {
-            throw new InvalidOperationException($"bootstrap answered {bootstrap.Status}: {System.Text.Encoding.UTF8.GetString(bootstrap.Body)}");
+            throw new InvalidOperationException($"bootstrap answered {bootstrap.Status}: {Encoding.UTF8.GetString(bootstrap.Body)}");
         }
 
         State.Clear();
@@ -46,7 +48,7 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
             var reply = await ReadAsync(offset);
             if (reply.Status != HttpStatusCode.OK)
             {
-                throw new InvalidOperationException($"offset {offset} answered {reply.Status}: {System.Text.Encoding.UTF8.GetString(reply.Body)}");
+                throw new InvalidOperationException($"offset {offset} answered {reply.Status}: {Encoding.UTF8.GetString(reply.Body)}");
             }
 
             if (reply.UpToDate == "true")
@@ -80,8 +82,6 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
     public Uri Uri(string offset, bool live, string? cursor = null, string? handle = null) =>
         new($"{Path}?handle={handle ?? Handle}&offset={offset}" + (live ? "&live=true" : "") + (cursor is null ? "" : "&cursor=" + cursor) + filter, UriKind.Relative);
 
-    // The shape contract permits 429 while another database seals its snapshot. Keep the same
-    // request and state, then retry with bounded backoff; raw GetAsync still exposes every refusal.
     private async Task<ShapeReply> GetAvailableAsync(Uri target)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -159,7 +159,7 @@ internal sealed class TableShapeClient(HttpClient http, string database, string 
                 item[columns[index]] = JsonNode.Parse(values[index].GetRawText());
             }
 
-            rows[values[0].GetInt64().ToString(System.Globalization.CultureInfo.InvariantCulture)] = item;
+            rows[values[0].GetInt64().ToString(CultureInfo.InvariantCulture)] = item;
         }
 
         return rows;

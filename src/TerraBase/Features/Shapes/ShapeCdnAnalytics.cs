@@ -8,15 +8,12 @@ using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
-// Free reads T2 telemetry (docs/terrabase/free-reads-cdn.md), read from Cloudflare zone analytics.
 internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, string? token, TimeProvider time, IMeterFactory meters,
     ILogger<ShapeCdnAnalytics> logger) : BackgroundService
 {
     internal static readonly Uri GraphQlUri = new("https://api.cloudflare.com/client/v4/graphql");
     internal static readonly TimeSpan Step = TimeSpan.FromMinutes(5);
 
-    // Cloudflare ingests request analytics within minutes; a window is read only once it is this old, so a late row
-    // is not lost. Windows are half-open and adjacent, so no request is counted twice.
     internal static readonly TimeSpan Delay = TimeSpan.FromMinutes(10);
 
     private static readonly TimeSpan MaxWindow = TimeSpan.FromHours(6);

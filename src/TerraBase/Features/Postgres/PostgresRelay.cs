@@ -112,20 +112,9 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
 
     private static async Task RefuseAsync(PipeWriter output, HomeNode home, CancellationToken cancellationToken)
     {
-        var fields = new ArrayBufferWriter<byte>();
-        foreach (var (type, value) in new[] { ('S', "FATAL"), ('V', "FATAL"), ('C', "08001"),
-            ('M', $"the database is served in region {home.Region}, which this region cannot reach now; retry") })
-        {
-            fields.Write([(byte)type]);
-            CString(fields, value);
-        }
-
-        fields.Write([(byte)0]);
-        var message = new byte[5 + fields.WrittenCount];
-        message[0] = (byte)'E';
-        BinaryPrimitives.WriteInt32BigEndian(message.AsSpan(1), 4 + fields.WrittenCount);
-        fields.WrittenSpan.CopyTo(message.AsSpan(5));
-        await output.WriteAsync(message, cancellationToken).ConfigureAwait(false);
+        var writer = new PgWriter(output);
+        writer.Error("08001", $"the database is served in region {home.Region}, which this region cannot reach now; retry", fatal: true);
+        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static void CString(ArrayBufferWriter<byte> writer, string value)

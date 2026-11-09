@@ -26,7 +26,6 @@ internal static partial class PostgresTemporal
         if (oid is PgOid.Timestamp or PgOid.Timestamptz && bytes.Length == 8)
         {
             var micros = BinaryPrimitives.ReadInt64BigEndian(bytes);
-            // Check before multiplying: PostgreSQL's range (including infinities) exceeds DateTime's.
             return micros >= -Epoch.Ticks / 10 && micros <= (DateTime.MaxValue.Ticks - Epoch.Ticks) / 10
                 ? SqlValue.Of(Format(oid, new DateTime(Epoch.Ticks + micros * 10))) : null;
         }

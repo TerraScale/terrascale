@@ -1,5 +1,7 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text;
 using TerraBase.Errors;
 using TerraBase.Tenancy;
 
@@ -23,7 +25,7 @@ internal sealed record ShapeProvisional(byte[] Json, string Digest, IReadOnlyCol
 
     public static string DigestOf(IReadOnlyList<string> ids) => ids.Count == 0
         ? Empty
-        : Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join("\n", ids))).AsSpan(0, 8));
+        : Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", ids))).AsSpan(0, 8));
 
     public static bool IsDigest(string text) => text == Empty || (text.Length == 16 && text.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f')));
 }

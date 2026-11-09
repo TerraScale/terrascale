@@ -4,30 +4,13 @@ using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.Postgres;
 
-/// <summary>
-/// Canned <c>pg_catalog</c> answers: Npgsql's type loading, the session functions, and the queries psql 16 and 17 send
-/// for <c>\dt</c>, <c>\d</c>, <c>\d table</c>, <c>\l</c> and <c>\dn</c> (src/bin/psql/describe.c), answered from the
-/// SQL tables of the database. Every other catalog query is refused.
-/// </summary>
 internal static partial class PgCatalog
 {
-    // Built-in base types a driver may name; "unknown" is a pseudo-type Npgsql also loads.
-    private static readonly (int Oid, string Name)[] Types =
-    [
-        (PgOid.Bool, "bool"), (PgOid.Bytea, "bytea"), (PgOid.Int8, "int8"), (PgOid.Int2, "int2"), (PgOid.Int4, "int4"), (PgOid.Text, "text"),
-        (PgOid.Json, "json"), (PgOid.Float4, "float4"), (PgOid.Float8, "float8"), (PgOid.Unknown, "unknown"), (PgOid.Varchar, "varchar"),
-        (PgOid.Date, "date"), (PgOid.Timestamp, "timestamp"), (PgOid.Timestamptz, "timestamptz"), (PgOid.Numeric, "numeric"),
-        (PgOid.Uuid, "uuid"), (PgOid.Jsonb, "jsonb"),
-    ];
+    private static readonly (int Oid, string Name)[] Types = [.. PgOid.Types.Select(type => (type.Oid, type.CatalogName))];
 
-    // \d+ adds storage, compression, statistics target and description.
     private static readonly string[] VerboseNames = ["attstorage", "attcompression", "attstattarget", "description"];
     private static readonly string?[] VerboseValues = ["x", "", null, null];
 
-    /// <summary>
-    /// Whether a simple query is Npgsql's type-loading batch (PostgresDatabaseInfo.LoadBackendTypes, Npgsql 10): version,
-    /// types, composite fields and enum labels, in one message.
-    /// </summary>
     public static bool IsTypeLoad(string sql) =>
         sql.Contains("FROM pg_type AS typ", StringComparison.Ordinal) && sql.Contains("pg_namespace", StringComparison.Ordinal);
 
@@ -71,7 +54,6 @@ internal static partial class PgCatalog
             .Where(entry => Visible(q, "relname", entry.Name) && Visible(q, "nspname", "public")).ToList();
         if (q.StartsWith("SELECT c.relchecks, c.relkind,", StringComparison.Ordinal))
         {
-            // psql's table header for server 12 and later: a plain heap table without indexes, rules, triggers or policies.
             return One(new(Text("relchecks", "relkind", "relhasindex", "relhasrules", "relhastriggers", "relrowsecurity", "relforcerowsecurity", "relhasoids",
                 "relispartition", "reloptions", "reltablespace", "reloftype", "relpersistence", "relreplident", "amname"),
                 table is null ? [] : [Row("0", "r", "f", "f", "f", "f", "f", "f", "f", "", "0", "", "p", "d", "heap")], table is null ? "SELECT 0" : "SELECT 1"));
@@ -107,7 +89,6 @@ internal static partial class PgCatalog
 
         if (FooterPattern().IsMatch(q))
         {
-            // \d table footers (indexes, constraints, policies, statistics, publications, inheritance): none exist.
             return One(new([], [], "SELECT 0"));
         }
 
@@ -149,32 +130,14 @@ internal static partial class PgCatalog
             }
         });
 
-    private static string TypeName(string? declared) => PostgresStatements.Oid(declared) switch
-    {
-        PgOid.Int8 => "bigint",
-        PgOid.Int2 => "smallint",
-        PgOid.Int4 => "integer",
-        PgOid.Float8 => "double precision",
-        PgOid.Numeric => "numeric",
-        PgOid.Text => "text",
-        PgOid.Varchar => "character varying",
-        PgOid.Bool => "boolean",
-        PgOid.Json => "json",
-        PgOid.Jsonb => "jsonb",
-        PgOid.Bytea => "bytea",
-        PgOid.Uuid => "uuid",
-        PgOid.Date => "date",
-        PgOid.Timestamp => "timestamp without time zone",
-        PgOid.Timestamptz => "timestamp with time zone",
-        _ => string.IsNullOrEmpty(declared) ? "text" : declared.ToLowerInvariant(),
-    };
+    private static string TypeName(string? declared) => PgOid.Name(PgOid.Of(declared)) is { } named
+        ? named
+        : string.IsNullOrEmpty(declared) ? "text" : declared.ToLowerInvariant();
 
     private static IReadOnlyList<SqlValue> Row(params string?[] values) => [.. values.Select(value => value is null ? SqlValue.Null : SqlValue.Of(value))];
 
     private static PgColumn[] Text(params string[] names) => [.. names.Select(name => new PgColumn(name, PgOid.Text))];
 
-    // A schema-qualified catalog name, or an unqualified catalog relation or view (pg_catalog is searched first). A user
-    // table that only starts with pg_, such as pg_orders, is ordinary SQL.
     [GeneratedRegex(@"\b(?:pg_catalog|information_schema)\s*\.|\b(?:FROM|JOIN)\s+(?:pg_(?:aggregate|am|amop|amproc|attrdef|attribute|auth_members|authid|available_extensions|cast|class|collation|constraint|conversion|database|db_role_setting|default_acl|depend|description|enum|event_trigger|extension|foreign_data_wrapper|foreign_server|foreign_table|group|index|indexes|inherits|language|locks|matviews|namespace|opclass|operator|opfamily|policies|policy|prepared_statements|proc|publication|range|replication_slots|rewrite|roles|rules|sequence|sequences|settings|shadow|shdepend|shdescription|statistic|statistic_ext|tables|tablespace|timezone_names|trigger|ts_config|ts_dict|type|user|user_mappings|views)|pg_stat(?:io)?_\w+)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CatalogPattern();
 

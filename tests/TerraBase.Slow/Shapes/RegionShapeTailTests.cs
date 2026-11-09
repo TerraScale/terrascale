@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
+using System.Text;
 using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
@@ -160,7 +161,7 @@ public sealed class RegionShapeTailTests
                 List<(string, string, string)> moves = [];
                 for (var attempt = 0; attempt < 8; attempt++)
                 {
-                    await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.OK).Because(System.Text.Encoding.UTF8.GetString(reply.Body));
+                    await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.OK).Because(Encoding.UTF8.GetString(reply.Body));
                     await Assert.That(boundaries.Contains(reply.NextOffset!)).IsTrue().Because("replicas advertise only home commit boundaries");
                     if (round == 0 && index > 0)
                     {
@@ -253,7 +254,7 @@ public sealed class RegionShapeTailTests
         await replication.PullAllAsync(token);
         await replication.PullAllAsync(token);
         var reply = await parked.WaitAsync(TimeSpan.FromSeconds(10), token);
-        await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.OK).Because(System.Text.Encoding.UTF8.GetString(reply.Body));
+        await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.OK).Because(Encoding.UTF8.GetString(reply.Body));
         var ops = reply.Ops.ToList();
         await Assert.That(ops.Select(op => op.GetProperty("key").GetString()!).ToList()).IsEquivalentTo(AliceNew);
         await Assert.That(ops.Single().GetProperty("row").TryGetProperty("secret", out _)).IsFalse();

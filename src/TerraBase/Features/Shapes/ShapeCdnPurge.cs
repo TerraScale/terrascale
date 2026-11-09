@@ -196,7 +196,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
                 }
             }
 
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is HttpRequestException or TaskCanceledException or JsonException)
             {
                 logger.ZLogWarning(error, $"Shape CDN purge request failed");
             }

@@ -5,9 +5,12 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Sql;
+using TerraBase.Features.Sql.Routing;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -222,9 +225,13 @@ internal sealed class HomeSqlSession(
     {
     }
 
-    public ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken) => ExecuteAsync(command, admit: null, cancellationToken);
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlPlannedCommand planned, CancellationToken cancellationToken) =>
+        ExecuteAsync(planned.Plan, planned.Command, admit: null, cancellationToken);
 
-    public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken) =>
+        ExecuteAsync(plan, command, admit: null, cancellationToken);
+
+    public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         return await CallAsync(new HomeSessionCall("execute", command.Sql, command.Args, command.Named), cancellationToken).ConfigureAwait(false) switch
@@ -252,13 +259,26 @@ internal sealed class HomeSqlSession(
         };
     }
 
+    public ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<SqlBatchOutcome?>(null);
+
+    public void Prefer(WriteOverride preference) => _ = preference;
+
+    public WriteRoute? LastRoute => null;
+
+    public void KeepCommitted()
+    {
+    }
+
+    public IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => [];
+
     public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken) =>
         ValueTask.FromResult<SqlOutcome>(SqlErrors.Error("scripts are not run over a home session"));
 
     public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken) =>
         ExecuteScriptAsync(sql, cancellationToken);
 
-    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
+    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         return await CallAsync(new HomeSessionCall("describe", command.Sql, [], NoNamed), cancellationToken).ConfigureAwait(false) switch

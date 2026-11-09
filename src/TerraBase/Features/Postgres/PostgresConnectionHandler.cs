@@ -343,7 +343,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            // A home-only database homed elsewhere relays the whole session to its home (docs/terrabase/cross-region.md).
             TenantContext tenant when (restriction is null || restriction == tenant.DatabaseId)
                 && !relayed && await AwayAsync(tenant, cancellationToken).ConfigureAwait(false) is { } home => home,
             TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until),
@@ -516,8 +515,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 output.Empty('I');
                 return null;
             case PgStatement[] statements:
-                // PostgreSQL runs one Query message as a single implicit transaction: a failure rolls back the whole
-                // message. A batch that manages transactions itself keeps today's statement-by-statement behavior.
                 var atomic = statements is { Length: > 1 } && session.Sql.IsAutocommit
                     && !Array.Exists(statements, statement => statement.Kind is PgKind.Begin or PgKind.Commit or PgKind.Rollback);
                 PgError? failure = null;
@@ -730,7 +727,15 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return null;
             default:
                 var (closed, closedName) = (message.Byte(), message.CString());
-                _ = closed == 'S' ? session.Statements.Remove(closedName) : session.Portals.Remove(closedName);
+                if (closed == 'S')
+                {
+                    session.Statements.Remove(closedName);
+                }
+                else if (session.Portals.Remove(closedName, out var closedPortal))
+                {
+                    ChargePending(closedPortal);
+                }
+
                 output.Empty('3');
                 return null;
         }
@@ -746,7 +751,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 SqlDescription? shape = null;
                 var guarded = await GuardAsync(session, async (_, token) =>
                 {
-                    switch (await session.Sql.DescribeAsync(new SqlCommand(statement.Sql, [], NoNamed), token).ConfigureAwait(false))
+                    switch (await DescribeStatementAsync(session, statement, token).ConfigureAwait(false))
                     {
                         case SqlError error:
                             return PostgresStatements.Error(error);
@@ -781,6 +786,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 return new[] { new PgResult(null, [], null) };
             case PgKind.Discard:
                 session.Statements.Clear();
+                foreach (var discarded in session.Portals.Values)
+                {
+                    ChargePending(discarded);
+                }
+
                 session.Portals.Clear();
                 return new[] { new PgResult(null, [], "DISCARD ALL") };
             case PgKind.Deallocate:
@@ -795,7 +805,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             case PgKind.Set or PgKind.Show:
                 session.Settings["terrascale.write_route"] = session.Sql.LastRoute?.Header ?? "none";
                 var answered = PostgresStatements.RunCommand(statement.Kind, statement.Text, session.Settings);
-                session.Sql.Prefer(SqlExecuteEndpoint.Preference(session.Settings["terrascale.write"]) ?? WriteOverride.Auto);
+                session.Sql.Prefer(WritePreference.Parse(session.Settings["terrascale.write"]) ?? WriteOverride.Auto);
                 return answered;
             case PgKind.Catalog when PgCatalog.Functions(statement.Text, session.Database, session.User) is { } functions:
                 return new[] { functions };
@@ -807,33 +817,52 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
             PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, statement.Text, token).ConfigureAwait(false),
             PgKind.Savepoint => await SavepointAsync(session, statement.Text, token).ConfigureAwait(false),
-            _ => await session.Sql.ExecuteAsync(new SqlCommand(statement.Sql, args, NoNamed), token).ConfigureAwait(false) switch
+            _ => await StatementAsync(session, statement, args, token).ConfigureAwait(false),
+        }, cancellationToken, counting).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<PgOutcome> StatementAsync(Session session, PgStatement statement, IReadOnlyList<SqlValue> args, CancellationToken token) =>
+        SqlScript.Classify(statement.Sql) switch
+        {
+            SqlError error => PostgresStatements.Error(error),
+            SqlStatementPlan plan => await session.Sql.ExecuteAsync(new SqlPlannedCommand(plan, new SqlCommand(statement.Sql, args, NoNamed)), token).ConfigureAwait(false) switch
             {
                 SqlResult result => new[] { PostgresStatements.Result(statement, result) with { ReadCharge = result.ReadCharge } },
                 SqlError error => PostgresStatements.Error(error),
             },
-        }, cancellationToken, counting).ConfigureAwait(false);
-    }
+        };
+
+    private static async ValueTask<SqlDescribeOutcome> DescribeStatementAsync(Session session, PgStatement statement, CancellationToken token) =>
+        SqlScript.Classify(statement.Sql) switch
+        {
+            SqlError error => error,
+            SqlStatementPlan plan => await session.Sql.DescribeAsync(plan, new SqlCommand(statement.Sql, [], NoNamed), token).ConfigureAwait(false),
+        };
 
     private static async ValueTask<PgOutcome> SavepointAsync(Session session, string text, CancellationToken cancellationToken)
     {
-        if (await session.Sql.ExecuteAsync(new SqlCommand(text, [], NoNamed), cancellationToken).ConfigureAwait(false) is SqlError error)
+        switch (SqlScript.Classify(text))
         {
-            return PostgresStatements.Error(error);
+            case SqlError error:
+                return PostgresStatements.Error(error);
+            case SqlStatementPlan plan:
+                if (await session.Sql.ExecuteAsync(new SqlPlannedCommand(plan, new SqlCommand(text, [], NoNamed)), cancellationToken).ConfigureAwait(false) is SqlError failed)
+                {
+                    return PostgresStatements.Error(failed);
+                }
+
+                break;
         }
 
         session.Failed &= !PostgresStatements.RollsBackTo(text);
         return new[] { new PgResult(null, [], text.Split(' ', 2)[0].ToUpperInvariant()) };
     }
 
-    // PostgreSQL's transaction verbs on the session: BEGIN inside a transaction and COMMIT or ROLLBACK outside one only
-    // warn, and COMMIT of an aborted transaction rolls it back. A READ ONLY BEGIN carries the access mode into the SQL
-    // session, which refuses writes with 25006; READ WRITE and an unmodified BEGIN behave as before.
     private static async ValueTask<PgOutcome> TransactionAsync(Session session, PgKind kind, string text, CancellationToken cancellationToken)
     {
         async ValueTask<PgOutcome> Run(string verb)
         {
-            return await session.Sql.ExecuteAsync(new SqlCommand(verb, [], NoNamed), cancellationToken).ConfigureAwait(false) is SqlError error
+            return await session.Sql.ExecuteAsync(SqlBatch.Control(verb), cancellationToken).ConfigureAwait(false) is SqlError error
                 ? PostgresStatements.Error(error)
                 : new[] { new PgResult(null, [], verb) };
         }
@@ -848,9 +877,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         if (kind == PgKind.Begin)
         {
-            // The tag stays BEGIN, as in PostgreSQL; only the statement the session runs carries the access mode.
             var mode = PostgresStatements.BeginReadOnly(text) ? "BEGIN READ ONLY" : verb;
-            return await session.Sql.ExecuteAsync(new SqlCommand(mode, [], NoNamed), cancellationToken).ConfigureAwait(false) is SqlError error
+            return await session.Sql.ExecuteAsync(SqlBatch.Control(mode), cancellationToken).ConfigureAwait(false) is SqlError error
                 ? PostgresStatements.Error(error)
                 : new[] { new PgResult(null, [], verb) };
         }
@@ -866,7 +894,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return outcome;
     }
 
-    // The implicit transaction of a multi-statement Query message: PostgreSQL sends no tags for it, only for its statements.
     private async ValueTask<PgError?> ControlAsync(Session session, PgKind kind, CancellationToken cancellationToken)
     {
         var statement = new PgStatement(kind, "", "", 0);
@@ -951,7 +978,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             output.Int32(columns[i].Oid);
             output.Int16(-1);
             output.Int32(-1);
-            output.Int16(Format(formats, i) == 1 && PostgresStatements.Binary(columns[i].Oid) ? 1 : 0);
+            output.Int16(Format(formats, i) == 1 && PgOid.Binary(columns[i].Oid) ? 1 : 0);
         }
 
         output.End();
@@ -977,7 +1004,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             for (var i = 0; i < row.Count; i++)
             {
                 var oid = columns is not null && i < columns.Length ? columns[i].Oid : PgOid.Text;
-                if (!PostgresStatements.TryEncode(row[i], oid, Format(formats, i) == 1 && PostgresStatements.Binary(oid), out var bytes))
+                if (!PostgresStatements.TryEncode(row[i], oid, Format(formats, i) == 1 && PgOid.Binary(oid), out var bytes))
                 {
                     return new PgError(row[i].Kind == SqlValueKind.Integer ? "22003" : "22P02", $"a value of column {i + 1} does not fit its type");
                 }
@@ -1066,6 +1093,14 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         public bool Described { get; set; }
     }
 
+    private static void ChargePending(Portal portal)
+    {
+        if (portal.Pending is PgResult[] results)
+        {
+            Array.ForEach(results, result => result.ReadCharge?.Accept());
+        }
+    }
+
     private sealed record Portal(PgStatement Statement, SqlValue[] Args, short[] Formats)
     {
         public PgColumn[]? Columns { get; set; }
@@ -1149,94 +1184,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             _position += count;
             return data.AsSpan(_position - count, count);
-        }
-    }
-    private sealed class PgWriter(PipeWriter pipe)
-    {
-        private static readonly UTF8Encoding Utf8 = new(false, true);
-        private readonly ArrayBufferWriter<byte> _body = new();
-        private byte _type;
-        public long Written { get; private set; }
-
-        public void Begin(char type)
-        {
-            _type = (byte)type;
-            _body.ResetWrittenCount();
-        }
-
-        public void Int16(int value)
-        {
-            BinaryPrimitives.WriteInt16BigEndian(_body.GetSpan(2), (short)value);
-            _body.Advance(2);
-        }
-
-        public void Int32(int value)
-        {
-            BinaryPrimitives.WriteInt32BigEndian(_body.GetSpan(4), value);
-            _body.Advance(4);
-        }
-
-        public void CString(string value)
-        {
-            Utf8.GetBytes(value, _body);
-            _body.Write([(byte)0]);
-        }
-
-        public void Value(byte[]? value)
-        {
-            Int32(value?.Length ?? -1);
-            _body.Write(value);
-        }
-
-        public void End()
-        {
-            var length = _body.WrittenCount;
-            var span = pipe.GetSpan(length + 5);
-            span[0] = _type;
-            BinaryPrimitives.WriteInt32BigEndian(span[1..], length + 4);
-            _body.WrittenSpan.CopyTo(span[5..]);
-            pipe.Advance(length + 5);
-            Written += length + 5;
-        }
-
-        public void Empty(char type)
-        {
-            Begin(type);
-            End();
-        }
-
-        public void Raw(byte value)
-        {
-            pipe.GetSpan(1)[0] = value;
-            pipe.Advance(1);
-            Written++;
-        }
-
-        public void Ready(char status)
-        {
-            Begin('Z');
-            _body.Write([(byte)status]);
-            End();
-        }
-
-        public void Error(string code, string message, bool fatal = false, string? detail = null) => Fields('E', fatal ? "FATAL" : "ERROR", code, message, detail);
-
-        public void Notice(PgError notice) => Fields('N', "WARNING", notice.Code, notice.Message, null);
-
-        public ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken) => pipe.FlushAsync(cancellationToken);
-
-        private void Fields(char type, string severity, string code, string message, string? detail)
-        {
-            Begin(type);
-            foreach (var (field, value) in detail is null ? new[] { ('S', severity), ('V', severity), ('C', code), ('M', message) }
-                : [('S', severity), ('V', severity), ('C', code), ('M', message), ('D', detail)])
-            {
-                _body.Write([(byte)field]);
-                CString(value);
-            }
-
-            _body.Write([(byte)0]);
-            End();
         }
     }
 }

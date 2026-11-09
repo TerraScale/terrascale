@@ -188,8 +188,6 @@ public sealed class SqlNativeRestTests
     [Test]
     public async Task The_free_plan_lists_ids_and_deletes_large_rows_by_id()
     {
-        // A fresh organization is on the Hobby (free) plan, whose scan budget is 16 MiB: the 24 rows below hold
-        // 24 x 700 KiB, so a scan that charged each row's payload would exceed it about 24 KiB past the limit.
         await using var db = await StartAsync();
         await db.OkAsync("CREATE TABLE blobs (id TEXT PRIMARY KEY, body BLOB NOT NULL)");
         for (var i = 0; i < 24; i++)

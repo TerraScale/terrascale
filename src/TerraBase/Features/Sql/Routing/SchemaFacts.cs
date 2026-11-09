@@ -13,12 +13,22 @@ internal sealed record TableFacts(
 
 internal sealed record SchemaFacts(IReadOnlyDictionary<string, TableFacts> Tables);
 
+internal static class SchemaDdl
+{
+    public static bool WithoutRowid(string createSql) =>
+        SqlText.TryTokenize(createSql, out var tokens) && WithoutRowid(tokens);
+
+    public static bool WithoutRowid(List<SqlToken> tokens) =>
+        tokens.Select((token, i) => token.Is("WITHOUT") && i + 1 < tokens.Count && tokens[i + 1].Is("ROWID")).Any(match => match);
+}
+
 internal sealed class SchemaFactsCache
 {
     private const int MaxEntries = 4096;
     private const int MaxTables = 512;
     private static readonly IReadOnlyDictionary<string, object?> NoNamed = new Dictionary<string, object?>();
     private readonly ConcurrentDictionary<(string Database, string Schema), SchemaFacts?> _facts = new();
+    private readonly ConcurrentQueue<(string Database, string Schema)> _entries = new();
 
     public async ValueTask<SchemaFacts?> ReadAsync(TenantContext database, IReplicaReader reader, CancellationToken cancellationToken)
     {
@@ -32,9 +42,10 @@ internal sealed class SchemaFactsCache
         }
 
         var facts = await BuildAsync(reader, schema.Rows, cancellationToken).ConfigureAwait(false);
-        if (_facts.Count >= MaxEntries)
+        _entries.Enqueue(key);
+        while (_facts.Count > MaxEntries && _entries.TryDequeue(out var oldest))
         {
-            _facts.Clear();
+            _facts.TryRemove(oldest, out _);
         }
 
         _facts[key] = facts;
@@ -117,7 +128,7 @@ internal sealed class SchemaFactsCache
         foreach (var (name, sql, key, integerKey, unique, expression, foreign) in built)
         {
             var words = SqlText.TryTokenize(sql, out var tokens) ? tokens : [];
-            var withoutRowid = words.Select((token, i) => token.Is("WITHOUT") && i + 1 < words.Count && words[i + 1].Is("ROWID")).Any(match => match);
+            var withoutRowid = SchemaDdl.WithoutRowid(words);
             var rowid = !withoutRowid && (key.Count == 0 || (key.Count == 1 && integerKey));
             var referenced = parents.TryGetValue(name, out var columns);
             var referencedColumns = new HashSet<string>(columns ?? [], StringComparer.OrdinalIgnoreCase);
