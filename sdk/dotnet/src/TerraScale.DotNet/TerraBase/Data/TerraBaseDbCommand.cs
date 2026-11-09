@@ -52,7 +52,7 @@ public sealed class TerraBaseDbCommand : DbCommand
             : throw new ArgumentException("The connection must be a TerraBaseDbConnection.", nameof(value));
     }
 
-    /// <summary>Unused until transactions arrive.</summary>
+    /// <summary>The transaction the command runs in; while one is open on the connection, it must be that transaction.</summary>
     protected override DbTransaction? DbTransaction { get; set; }
 
     /// <summary>The command's parameters.</summary>
@@ -73,19 +73,19 @@ public sealed class TerraBaseDbCommand : DbCommand
 
     /// <summary>The number of rows a write changed.</summary>
     public override async Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken) =>
-        (int)(await Database().ExecuteAsync(Statement(), cancellationToken).ConfigureAwait(false)).RowsAffected;
+        (int)(await SendAsync(cancellationToken).ConfigureAwait(false)).RowsAffected;
 
     /// <summary>The first column of the first row, or null when the result has no rows.</summary>
     public override async Task<object?> ExecuteScalarAsync(CancellationToken cancellationToken)
     {
-        var result = await Database().ExecuteAsync(Statement(), cancellationToken).ConfigureAwait(false);
+        var result = await SendAsync(cancellationToken).ConfigureAwait(false);
         return result.Rows.Count > 0 ? TerraBaseDbDataReader.Box(result.Rows[0][0]) : null;
     }
 
     /// <summary>A reader over the statement's rows.</summary>
     protected override async Task<DbDataReader> ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
     {
-        var result = await Database().ExecuteAsync(Statement(), cancellationToken).ConfigureAwait(false);
+        var result = await SendAsync(cancellationToken).ConfigureAwait(false);
         return new TerraBaseDbDataReader(result, behavior.HasFlag(CommandBehavior.SingleRow));
     }
 
@@ -100,12 +100,23 @@ public sealed class TerraBaseDbCommand : DbCommand
 
     private static NotSupportedException NotSync() => new("The TerraScale SDK is async-only; use the async method with a CancellationToken.");
 
-    private TerraBaseSqlDatabase Database() => connection?.SqlDatabase ?? throw new InvalidOperationException("The command has no TerraBaseDbConnection.");
-
-    private TerraBaseSqlStatement Statement()
+    private async Task<TerraBaseSqlStatementResult> SendAsync(CancellationToken cancellationToken)
     {
+        var connection = this.connection ?? throw new InvalidOperationException("The command has no TerraBaseDbConnection.");
         ArgumentException.ThrowIfNullOrWhiteSpace(CommandText, nameof(CommandText));
         var (args, named) = parameters.ToArguments();
-        return new(CommandText, args, named);
+        var statement = new TerraBaseSqlStatement(CommandText, args, named);
+        var open = connection.CurrentTransaction;
+        var enlisted = DbTransaction as TerraBaseDbTransaction;
+        if (open != enlisted)
+        {
+            throw new InvalidOperationException(open is null
+                ? "The command's transaction is not active on this connection."
+                : "The connection has an open transaction; set the command's Transaction property to it.");
+        }
+
+        return open is { } transaction
+            ? await transaction.Session.ExecuteAsync(statement, cancellationToken).ConfigureAwait(false)
+            : await connection.SqlDatabase.ExecuteAsync(statement, cancellationToken).ConfigureAwait(false);
     }
 }

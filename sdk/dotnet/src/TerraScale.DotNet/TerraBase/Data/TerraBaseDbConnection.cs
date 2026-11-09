@@ -12,6 +12,9 @@ public sealed class TerraBaseDbConnection(TerraBaseSqlDatabase database) : DbCon
     /// <summary>The database every command of this connection runs against.</summary>
     internal TerraBaseSqlDatabase SqlDatabase { get; } = database;
 
+    /// <summary>The connection's open transaction, or null outside one.</summary>
+    internal TerraBaseDbTransaction? CurrentTransaction { get; set; }
+
     /// <summary>Always empty; the connection is built from a <see cref="TerraBaseSqlDatabase"/>, not a connection string.</summary>
     [AllowNull]
     public override string ConnectionString
@@ -49,9 +52,42 @@ public sealed class TerraBaseDbConnection(TerraBaseSqlDatabase database) : DbCon
         return Task.CompletedTask;
     }
 
-    /// <summary>Transactions arrive in the next SDK release.</summary>
+    /// <summary>The SDK is async-only; use <see cref="DbConnection.BeginTransactionAsync(CancellationToken)"/>.</summary>
     protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) =>
-        throw new NotSupportedException("transactions arrive in the next SDK release");
+        throw new NotSupportedException("The TerraScale SDK is async-only; use the async method with a CancellationToken.");
+
+    /// <summary>Opens a SQL WebSocket session, begins a transaction on it and returns the wrapping <see cref="TerraBaseDbTransaction"/>.</summary>
+    protected override async ValueTask<DbTransaction> BeginDbTransactionAsync(IsolationLevel isolationLevel, CancellationToken cancellationToken)
+    {
+        if (isolationLevel is not (IsolationLevel.Unspecified or IsolationLevel.Serializable))
+        {
+            throw new NotSupportedException($"Only {nameof(IsolationLevel.Unspecified)} and {nameof(IsolationLevel.Serializable)} are supported.");
+        }
+
+        if (CurrentTransaction is not null) throw new InvalidOperationException("The connection already has an open transaction.");
+        var session = await SqlDatabase.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        TerraBaseDbTransaction transaction;
+        try
+        {
+            await session.BeginAsync(cancellationToken).ConfigureAwait(false);
+            transaction = new(this, session);
+        }
+        catch
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        CurrentTransaction = transaction;
+        return transaction;
+    }
+
+    /// <summary>Rolls back and closes an open transaction, then closes the connection.</summary>
+    public override async Task CloseAsync()
+    {
+        if (CurrentTransaction is { } open) await open.DisposeAsync().ConfigureAwait(false);
+        state = ConnectionState.Closed;
+    }
 
     /// <summary>Creates a command bound to this connection.</summary>
     protected override DbCommand CreateDbCommand() => new TerraBaseDbCommand(this);
