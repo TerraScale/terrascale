@@ -169,6 +169,25 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
     // Fifteen minutes, plus a minute for each further part (a sustained ~2 MiB/s).
     private static TimeSpan UploadDeadline(long parts) => RequestTimeout + TimeSpan.FromMinutes(parts - 1);
 
+    // Customer requests are untrusted endpoints: every whole operation runs under one wall-clock deadline that also
+    // covers streamed bodies the SDK's response-header timeout does not bound. Platform requests only follow the caller.
+    private CustomerDeadline CustomerStop(CancellationToken cancellationToken) => new(
+        _customer ? new CancellationTokenSource(RequestTimeout, _time) : null, cancellationToken);
+
+    private readonly struct CustomerDeadline(CancellationTokenSource? deadline, CancellationToken cancellationToken) : IDisposable
+    {
+        private readonly CancellationTokenSource? deadlineSource = deadline;
+        private readonly CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline?.Token ?? cancellationToken);
+
+        public CancellationToken Token => linked.Token;
+
+        public void Dispose()
+        {
+            linked.Dispose();
+            deadlineSource?.Dispose();
+        }
+    }
+
     private async Task PutPartsAsync(string key, SafeFileHandle file, long start, long length, int parts, CancellationToken cancellationToken)
     {
         // The completed object carries this upload's own id in its metadata, so it cannot be mistaken for an older object at the key.
@@ -347,11 +366,8 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
     public async Task<bool> ReadAsync(string key, Func<Stream, CancellationToken, Task> read, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(read);
-        // The SDK's response-header timeout does not cover streamed bodies. Pass the operation deadline into every
-        // body read, including key retrieval and decoding, so cancellation ends the underlying I/O before returning.
-        using var deadline = _customer ? new CancellationTokenSource(RequestTimeout, _time) : null;
-        using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        cancellationToken = stop?.Token ?? cancellationToken;
+        using var deadline = CustomerStop(cancellationToken);
+        cancellationToken = deadline.Token;
         GetObjectResponse response;
         try
         {
@@ -385,9 +401,8 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     public async IAsyncEnumerable<StoredObject> ListAsync(string prefix, string? startAfter, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        using var deadline = _customer ? new CancellationTokenSource(RequestTimeout, _time) : null;
-        using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        cancellationToken = stop?.Token ?? cancellationToken;
+        using var deadline = CustomerStop(cancellationToken);
+        cancellationToken = deadline.Token;
         // Leave room for metadata after sixfold XML expansion of 1024-byte keys within the customer 2 MiB limit.
         var request = new ListObjectsV2Request { BucketName = _bucket, Prefix = prefix, StartAfter = startAfter, MaxKeys = _customer ? 250 : 1000 };
         if (!_customer && prefix.StartsWith("catalog-anchor/", StringComparison.Ordinal))
@@ -450,9 +465,8 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 
     public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken)
     {
-        using var deadline = _customer ? new CancellationTokenSource(RequestTimeout, _time) : null;
-        using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        cancellationToken = stop?.Token ?? cancellationToken;
+        using var deadline = CustomerStop(cancellationToken);
+        cancellationToken = deadline.Token;
         try
         {
             await SafeAsync(_s3.DeleteObjectAsync(_bucket, key, cancellationToken)).ConfigureAwait(false);
