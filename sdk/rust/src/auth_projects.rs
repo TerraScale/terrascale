@@ -7,6 +7,7 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::auth_idp::{path_id, percent_encode, validate_non_empty, validate_page_limit};
 use crate::client::{SharedClient, SKIP_AUTH_MARKER, SKIP_SESSION_MARKER};
@@ -214,6 +215,157 @@ pub struct ProjectUserExportPage {
     pub created_before: String,
 }
 
+/// A federated provider's credentials; an omitted `client_secret` keeps the
+/// stored one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectProviderUpdate {
+    /// Client id at the provider.
+    pub client_id: String,
+    /// Client secret; omitted keeps the stored one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    /// Issuer, for the `oidc` provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
+    /// Team id, for the `apple` provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    /// Key id, for the `apple` provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+}
+
+/// One live end-user session; revoking it signs the session out.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectSession {
+    /// Session id.
+    pub id: String,
+    /// User id.
+    pub user_id: String,
+    /// Email address.
+    pub email: String,
+    /// Creation time (RFC 3339).
+    pub created_at: String,
+    /// Effective expiry (RFC 3339).
+    pub expires_at: String,
+}
+
+/// One cursor page of live sessions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectSessionPage {
+    /// Sessions in this page.
+    pub items: Vec<ProjectSession>,
+    /// Cursor for the next page; absent on the last page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+/// A project's registered OAuth client; `client_secret` appears only on
+/// confidential creation and rotation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectClient {
+    /// Client id.
+    pub client_id: String,
+    /// Display name.
+    pub name: String,
+    /// `public` or `confidential`.
+    pub r#type: String,
+    /// Exact redirect URIs.
+    pub redirect_uris: Vec<String>,
+    /// Creation time (RFC 3339).
+    pub created_at: String,
+    /// Client secret, answered exactly once for confidential clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+}
+
+/// One cursor page of the project's OAuth clients.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectClientPage {
+    /// Clients in this page.
+    pub items: Vec<ProjectClient>,
+    /// Cursor for the next page; absent on the last page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+/// Request body for OAuth client creation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateProjectClient {
+    /// Display name.
+    pub name: String,
+    /// `public` or `confidential`.
+    pub r#type: String,
+    /// Exact redirect URIs.
+    pub redirect_uris: Vec<String>,
+}
+
+/// Request body for OAuth client updates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpdateProjectClient {
+    /// Display name.
+    pub name: String,
+    /// Exact redirect URIs.
+    pub redirect_uris: Vec<String>,
+}
+
+/// A rotated client secret, answered exactly once; the previous secret keeps
+/// working until `previous_secret_expires_at`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectClientSecret {
+    /// Client id.
+    pub client_id: String,
+    /// The new client secret.
+    pub client_secret: String,
+    /// When the previous secret stops working, when a grace was given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_secret_expires_at: Option<String>,
+}
+
+fn validate_cursor(cursor: &str) -> Result<()> {
+    validate_non_empty(cursor, "after")?;
+    if cursor.trim().len() > MAX_EXPORT_CURSOR_BYTES {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_after",
+            "after must be a non-empty opaque cursor of at most 8192 bytes.",
+        ));
+    }
+    Ok(())
+}
+
+fn provider_name(provider: &str) -> Result<String> {
+    if matches!(provider, "google" | "github" | "apple" | "oidc") {
+        Ok(provider.to_owned())
+    } else {
+        Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_provider",
+            "provider must be one of google, github, apple, oidc.",
+        ))
+    }
+}
+
+fn client_type(value: &str) -> Result<()> {
+    if matches!(value, "public" | "confidential") {
+        Ok(())
+    } else {
+        Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_client_type",
+            "type must be public or confidential.",
+        ))
+    }
+}
+
+fn invalid_body(error: serde_json::Error) -> Error {
+    Error::new(
+        ErrorKind::Validation,
+        "invalid_request",
+        format!("Request body is not serializable: {error}"),
+    )
+}
+
 /// Project tenant administration client. Obtain with
 /// [`crate::TerraScaleClient::projects`].
 #[derive(Clone)]
@@ -270,7 +422,9 @@ impl ProjectsClient {
             "auth_projects.update_settings",
             Method::Put,
             &format!("/{}/settings", self.project(project_id)?),
-            Some(request),
+            Some(&serde_json::to_value(request).map_err(|error| {
+                Error::new(ErrorKind::Validation, "invalid_request", error.to_string())
+            })?),
             sign_in,
         )
         .await
@@ -352,21 +506,13 @@ impl ProjectsClient {
     /// Delete an end user; the address can sign up again
     /// (`DELETE /v1/{project}/users/{user}`).
     pub async fn delete_user(&self, sign_in: &str, project_id: &str, user_id: &str) -> Result<()> {
-        let request = self.authorize(
+        self.send_no_content(
             "auth_projects.delete_user",
             Method::Delete,
             &self.user_path(project_id, user_id)?,
-            None,
             sign_in,
-        )?;
-        let response = self.shared.send_response(request).await?;
-        if response.status != 204 {
-            let mut error =
-                response.invalid_response(format!("expected HTTP 204, got {}", response.status));
-            error.code = "expected_http_204".into();
-            return Err(error);
-        }
-        Ok(())
+        )
+        .await
     }
 
     /// Read one bounded directory export page; pass the previous page's
@@ -385,6 +531,227 @@ impl ProjectsClient {
             Method::Get,
             &format!("/{}/users/export{query}", self.project(project_id)?),
             None,
+            sign_in,
+        )
+        .await
+    }
+
+    /// Configure a federated sign-in provider; an omitted `client_secret`
+    /// keeps the stored one (`PUT /v1/{project}/providers/{provider}`).
+    pub async fn set_provider(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        provider: &str,
+        request: &ProjectProviderUpdate,
+    ) -> Result<ProjectSettings> {
+        validate_non_empty(&request.client_id, "client_id")?;
+        self.send_typed(
+            "auth_projects.set_provider",
+            Method::Put,
+            &format!(
+                "/{}/providers/{}",
+                self.project(project_id)?,
+                provider_name(provider)?
+            ),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            sign_in,
+        )
+        .await
+    }
+
+    /// Remove a federated sign-in provider; answers the settings without it
+    /// (`DELETE /v1/{project}/providers/{provider}`).
+    pub async fn delete_provider(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        provider: &str,
+    ) -> Result<ProjectSettings> {
+        self.send_typed(
+            "auth_projects.delete_provider",
+            Method::Delete,
+            &format!(
+                "/{}/providers/{}",
+                self.project(project_id)?,
+                provider_name(provider)?
+            ),
+            None,
+            sign_in,
+        )
+        .await
+    }
+
+    /// List live sessions, of one user when `user_id` is given
+    /// (`GET /v1/{project}/sessions`).
+    pub async fn list_sessions(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        user_id: Option<&str>,
+        limit: Option<u32>,
+        after: Option<&str>,
+    ) -> Result<ProjectSessionPage> {
+        let mut query = Vec::new();
+        if let Some(user_id) = user_id {
+            query.push(format!("user={}", path_id(user_id, "user_id")?));
+        }
+        if let Some(limit) = limit {
+            validate_page_limit(limit, 100, "session")?;
+            query.push(format!("limit={limit}"));
+        }
+        if let Some(cursor) = after {
+            validate_cursor(cursor)?;
+            query.push(format!("after={}", percent_encode(cursor.trim())));
+        }
+        let suffix = if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", query.join("&"))
+        };
+        self.send_typed(
+            "auth_projects.list_sessions",
+            Method::Get,
+            &format!("/{}/sessions{suffix}", self.project(project_id)?),
+            None,
+            sign_in,
+        )
+        .await
+    }
+
+    /// Revoke one live session, signing it out
+    /// (`DELETE /v1/{project}/sessions/{session}`).
+    pub async fn revoke_session(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        session_id: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.revoke_session",
+            Method::Delete,
+            &format!(
+                "/{}/sessions/{}",
+                self.project(project_id)?,
+                path_id(session_id, "session_id")?
+            ),
+            sign_in,
+        )
+        .await
+    }
+
+    /// List the project's OAuth clients in one page
+    /// (`GET /v1/{project}/clients`).
+    pub async fn list_clients(&self, sign_in: &str, project_id: &str) -> Result<ProjectClientPage> {
+        self.send_typed(
+            "auth_projects.list_clients",
+            Method::Get,
+            &format!("/{}/clients", self.project(project_id)?),
+            None,
+            sign_in,
+        )
+        .await
+    }
+
+    /// Register an OAuth client; the answer carries `client_secret` exactly
+    /// once for a confidential client (`POST /v1/{project}/clients`).
+    pub async fn create_client(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        request: &CreateProjectClient,
+        step_up_proof: &str,
+    ) -> Result<ProjectClient> {
+        client_type(&request.r#type)?;
+        self.send_proved(
+            "auth_projects.create_client",
+            Method::Post,
+            &format!("/{}/clients", self.project(project_id)?),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            step_up_proof,
+            sign_in,
+        )
+        .await
+    }
+
+    /// Rename an OAuth client or replace its exact redirect URIs
+    /// (`PUT /v1/{project}/clients/{client_id}`).
+    pub async fn update_client(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        client_id: &str,
+        request: &UpdateProjectClient,
+        step_up_proof: &str,
+    ) -> Result<ProjectClient> {
+        self.send_proved(
+            "auth_projects.update_client",
+            Method::Put,
+            &format!(
+                "/{}/clients/{}",
+                self.project(project_id)?,
+                path_id(client_id, "client_id")?
+            ),
+            Some(&serde_json::to_value(request).map_err(invalid_body)?),
+            step_up_proof,
+            sign_in,
+        )
+        .await
+    }
+
+    /// Rotate a confidential client's secret; the answer carries it exactly
+    /// once and the previous secret keeps working for `grace_seconds`
+    /// (default 3600, 0 to 86400)
+    /// (`POST /v1/{project}/clients/{client_id}/secret/rotate`).
+    pub async fn rotate_client_secret(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        client_id: &str,
+        grace_seconds: Option<u32>,
+        step_up_proof: &str,
+    ) -> Result<ProjectClientSecret> {
+        let body = match grace_seconds {
+            Some(seconds) if seconds > 86_400 => {
+                return Err(Error::new(
+                    ErrorKind::Validation,
+                    "invalid_grace_seconds",
+                    "grace_seconds must be 0 to 86400 seconds.",
+                ));
+            }
+            Some(seconds) => serde_json::json!({ "grace_seconds": seconds }),
+            None => serde_json::json!({}),
+        };
+        self.send_proved(
+            "auth_projects.rotate_client_secret",
+            Method::Post,
+            &format!(
+                "/{}/clients/{}/secret/rotate",
+                self.project(project_id)?,
+                path_id(client_id, "client_id")?
+            ),
+            Some(&body),
+            step_up_proof,
+            sign_in,
+        )
+        .await
+    }
+
+    /// Delete an OAuth client (`DELETE /v1/{project}/clients/{client_id}`).
+    pub async fn delete_client(
+        &self,
+        sign_in: &str,
+        project_id: &str,
+        client_id: &str,
+    ) -> Result<()> {
+        self.send_no_content(
+            "auth_projects.delete_client",
+            Method::Delete,
+            &format!(
+                "/{}/clients/{}",
+                self.project(project_id)?,
+                path_id(client_id, "client_id")?
+            ),
             sign_in,
         )
         .await
@@ -418,16 +785,8 @@ impl ProjectsClient {
             query.push(format!("limit={limit}"));
         }
         if let Some(cursor) = after {
-            validate_non_empty(cursor, "after")?;
-            let trimmed = cursor.trim();
-            if trimmed.len() > MAX_EXPORT_CURSOR_BYTES {
-                return Err(Error::new(
-                    ErrorKind::Validation,
-                    "invalid_after",
-                    "after must be a non-empty opaque cursor of at most 8192 bytes.",
-                ));
-            }
-            query.push(format!("after={}", percent_encode(trimmed)));
+            validate_cursor(cursor)?;
+            query.push(format!("after={}", percent_encode(cursor.trim())));
         }
         Ok(if query.is_empty() {
             String::new()
@@ -459,7 +818,8 @@ impl ProjectsClient {
         route: &str,
         method: Method,
         path: &str,
-        body: Option<&ProjectSettingsUpdate>,
+        body: Option<&Value>,
+        proof: Option<&str>,
         sign_in: &str,
     ) -> Result<Request> {
         validate_non_empty(sign_in, "sign_in")?;
@@ -477,6 +837,12 @@ impl ProjectsClient {
         request
             .headers
             .push(("authorization".to_owned(), format!("Bearer {sign_in}")));
+        if let Some(proof) = proof {
+            validate_non_empty(proof, "step_up_proof")?;
+            request
+                .headers
+                .push(("x-terrascale-step-up-proof".to_owned(), proof.to_owned()));
+        }
         request
             .headers
             .push((SKIP_AUTH_MARKER.to_owned(), String::new()));
@@ -491,10 +857,41 @@ impl ProjectsClient {
         route: &str,
         method: Method,
         path: &str,
-        body: Option<&ProjectSettingsUpdate>,
+        body: Option<&Value>,
         sign_in: &str,
     ) -> Result<T> {
-        let request = self.authorize(route, method, path, body, sign_in)?;
+        let request = self.authorize(route, method, path, body, None, sign_in)?;
         self.shared.send_typed(request).await
+    }
+
+    async fn send_proved<T: DeserializeOwned>(
+        &self,
+        route: &str,
+        method: Method,
+        path: &str,
+        body: Option<&Value>,
+        proof: &str,
+        sign_in: &str,
+    ) -> Result<T> {
+        let request = self.authorize(route, method, path, body, Some(proof), sign_in)?;
+        self.shared.send_typed(request).await
+    }
+
+    async fn send_no_content(
+        &self,
+        route: &str,
+        method: Method,
+        path: &str,
+        sign_in: &str,
+    ) -> Result<()> {
+        let request = self.authorize(route, method, path, None, None, sign_in)?;
+        let response = self.shared.send_response(request).await?;
+        if response.status != 204 {
+            let mut error =
+                response.invalid_response(format!("expected HTTP 204, got {}", response.status));
+            error.code = "expected_http_204".into();
+            return Err(error);
+        }
+        Ok(())
     }
 }
