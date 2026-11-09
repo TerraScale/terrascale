@@ -19,6 +19,8 @@ Decide recovery from the typed status and code, and from whether an operation ma
 | `421` | Wrong region: the database is served in another region. See [Wrong region](#wrong-region). |
 | `429` / `503` | Respect `Retry-After` where supplied; repeat only safe operations within a deadline. Plan quotas (`quota_exceeded`, `storage_quota`, `operation_allowance`, `read_fair_use`) carry no `Retry-After`: the message names the used and allowed amounts and the next step, so free the quota or upgrade instead of retrying. |
 
+Every error body carries a `requestId` (`{"error":{"code":...,"requestId":"..."}}`) and every response, success or error, carries the same id in its `X-Request-ID` header. Quote it to support: server logs record it as `request_id` on every log line of that request. An `unknown_route` error (404) names the method and path and points to the API reference at `/scalar/`.
+
 ## Wrong region
 
 A `421` with code `wrong_region` means the region you called does not serve the database: only its home region does. The response names the home in the `X-TerraBase-Database-Home` header, its `Location` header carries the same request URL in the home region, and the message reads `the database is served in <region>: send it to https://<host>`. Recover by sending the request to the home region — `ts db info <name>` prints a database's metadata, including its home region. The SDKs do not retry a `421` automatically: the .NET SDK raises `TerraBaseWrongRegionException` and the Go SDK returns an `*tb.APIError`, both carrying `HomeRegion` (and the regions that serve the database), so your code can resend there.

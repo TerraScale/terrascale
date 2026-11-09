@@ -375,6 +375,6 @@ internal sealed class SqlExecuteEndpoint(
             Listeners.ReplayIn(HttpContext, home);
         }
 
-        return TypedResults.Json(SqlBatch.Body(failure), TerraBaseJsonContext.Default.SqlErrorBody, statusCode: failure.Error.Status);
+        return TypedResults.Json(SqlBatch.Body(failure, HttpContext.TraceIdentifier), TerraBaseJsonContext.Default.SqlErrorBody, statusCode: failure.Error.Status);
     }
 }
