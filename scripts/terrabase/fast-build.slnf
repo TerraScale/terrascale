@@ -1,0 +1,10 @@
+{
+  "solution": {
+    "path": "../../TerraScale.slnx",
+    "projects": [
+      "tests/TerraBase.Fast/TerraBase.Fast.csproj",
+      "tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj",
+      "tests/TerraBase.E2E/TerraBase.E2E.csproj"
+    ]
+  }
+}

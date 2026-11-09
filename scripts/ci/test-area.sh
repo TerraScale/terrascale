@@ -10,6 +10,7 @@ case "$1:$2" in
     make -o restore libs-test CONFIGURATION=Release
     ;;
   build:terrabase|fast:terrabase)
+    make -o restore fmt-check SOLUTION=terrabase.slnf CONFIGURATION=Release
     publish_pid=
     publish_log=$(mktemp)
     if [[ $1 == fast ]]; then
@@ -21,12 +22,7 @@ case "$1:$2" in
       rm -f "$publish_log"
     }
     trap cleanup EXIT
-    make -o restore fmt-check SOLUTION=terrabase.slnf CONFIGURATION=Release
-    # Fast shards consume these three executables. Slow builds its independent graph in its own job; building it here
-    # also compiles ts-auth through its interoperability fixture and contributes no required Fast coverage.
-    for project in TerraBase.Fast Turso.Data.Sqlite.Tests TerraBase.E2E; do
-      dotnet build "tests/$project/$project.csproj" --configuration Release --no-restore
-    done
+    dotnet build scripts/terrabase/fast-build.slnf -m --configuration Release --no-restore
     make -o restore -o terrabase-build terrabase-check CONFIGURATION=Release
     dotnet format whitespace src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --verify-no-changes --no-restore
     if [[ -n $publish_pid ]]; then
