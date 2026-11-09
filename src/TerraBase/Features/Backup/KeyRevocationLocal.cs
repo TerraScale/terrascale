@@ -4,7 +4,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-internal sealed class KeyRevocationLocal(KeyCustody custody, Lazy<EngineManagementService> management, RegionReplication replicas,
+internal sealed class KeyRevocationLocal(KeyCustody custody, IShreddedDatabases management, RegionReplication replicas,
     ContinuousBackup backup, Shapes.ShapeMirror shapes)
 {
     internal async Task<bool> RevokeAsync(TenantContext database, CancellationToken token)
@@ -15,14 +15,14 @@ internal sealed class KeyRevocationLocal(KeyCustody custody, Lazy<EngineManageme
             return false;
         }
         custody.Revocations.Forget(scope);
-        if (!await management.Value.ObserveShreddedAsync(database, record.ShreddedAt, token).ConfigureAwait(false))
+        if (!await management.ObserveShreddedAsync(database, record.ShreddedAt, token).ConfigureAwait(false))
         {
             return false;
         }
         await replicas.DeleteShreddedAsync(database, token).ConfigureAwait(false);
-        _ = await management.Value.EraseShreddedAsync(database, token).ConfigureAwait(false);
+        _ = await management.EraseShreddedAsync(database, token).ConfigureAwait(false);
         await backup.RetireDeletedAsync(database, token).ConfigureAwait(false);
         await shapes.RetireDeletedAsync(database, token).ConfigureAwait(false);
-        return await management.Value.EraseShreddedAsync(database, token).ConfigureAwait(false);
+        return await management.EraseShreddedAsync(database, token).ConfigureAwait(false);
     }
 }

@@ -49,7 +49,7 @@ internal sealed partial class EngineManagementService
         await PutAsync(transaction, DatabasePurge.Kind, database.Id, record, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async ValueTask<bool> ObserveShreddedAsync(TenantContext database, DateTimeOffset deletedAt, CancellationToken token) =>
+    public async ValueTask<bool> ObserveShreddedAsync(TenantContext database, DateTimeOffset deletedAt, CancellationToken token) =>
         await WriteAsync<bool>(async transaction =>
         {
             if (await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false) is { } known)
@@ -68,7 +68,7 @@ internal sealed partial class EngineManagementService
             return true;
         }, static _ => false, token).ConfigureAwait(false);
 
-    internal async Task<bool> EraseShreddedAsync(TenantContext database, CancellationToken token)
+    public async Task<bool> EraseShreddedAsync(TenantContext database, CancellationToken token)
     {
         var certified = await ReadAsync<bool>(async transaction =>
             await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, token).ConfigureAwait(false) is { } purge

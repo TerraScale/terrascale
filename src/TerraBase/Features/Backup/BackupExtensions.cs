@@ -43,7 +43,7 @@ public static class BackupExtensions
             .AddSingleton<KeyCustody>()
             .AddSingleton<KeyRevocationLocal>()
             .AddSingleton<KeyRevocationPeers>()
-            .AddSingleton(provider => new Lazy<Management.EngineManagementService>(provider.GetRequiredService<Management.EngineManagementService>))
+            .AddSingleton<IShreddedDatabases>(provider => provider.GetRequiredService<Management.EngineManagementService>())
             .AddSingleton<ShreddedDatabaseSweep>()
             .AddHostedService(provider => provider.GetRequiredService<ShreddedDatabaseSweep>())
             .AddSingleton(provider => new DataKeys(provider.GetRequiredService<KeyCustody>().Store, provider.GetRequiredService<IMasterKey>(),
