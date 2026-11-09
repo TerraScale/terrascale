@@ -66,3 +66,29 @@ test("a unique violation surfaces as Prisma's UniqueConstraintViolation kind", a
   expect(error.message).toContain("UNIQUE constraint failed: people.id");
   await adapter.dispose();
 });
+
+test("executeScript splits on top-level semicolons only, keeping trigger bodies and string literals whole", async () => {
+  /** @type {string[]} */
+  const received = [];
+  const { client } = await fixture((request, response) => {
+    const statements = JSON.parse(request.body).statements;
+    received.push(...statements.map(/** @param {{ sql: string }} statement */ statement => statement.sql));
+    json(response, { results: statements.map(() => ({ columns: [], rows: [], rows_affected: 0, last_insert_rowid: null })) });
+  });
+  const adapter = await new PrismaTerraScale(client.database("app")).connect();
+  await adapter.executeScript([
+    "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+    "INSERT INTO people (id, name) VALUES (1, 'Ada; Grace');",
+    "-- a ; comment\n/* a ; block */ UPDATE people SET name = 'Linus; ' || \"x;\" WHERE id = 1;",
+    "CREATE TRIGGER touch AFTER INSERT ON people BEGIN UPDATE people SET name = 'kept; whole' WHERE id = NEW.id; UPDATE people SET score = 1; END;",
+    "SELECT ';'",
+  ].join("\n"));
+  expect(received).toEqual([
+    "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+    "INSERT INTO people (id, name) VALUES (1, 'Ada; Grace');",
+    "-- a ; comment\n/* a ; block */ UPDATE people SET name = 'Linus; ' || \"x;\" WHERE id = 1;",
+    "CREATE TRIGGER touch AFTER INSERT ON people BEGIN UPDATE people SET name = 'kept; whole' WHERE id = NEW.id; UPDATE people SET score = 1; END;",
+    "SELECT ';'",
+  ]);
+  await adapter.dispose();
+});
