@@ -15,6 +15,7 @@
     <PackageTags>terrascale;terrabase;database;sql;efcore;entityframeworkcore</PackageTags>
     <Deterministic>true</Deterministic>
     <IncludeSymbols>false</IncludeSymbols>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>

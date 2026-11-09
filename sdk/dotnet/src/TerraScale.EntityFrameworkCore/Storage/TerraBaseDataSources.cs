@@ -6,44 +6,24 @@ namespace TerraScale.EntityFrameworkCore.Storage;
 
 internal sealed class TerraBaseDataSources : IDisposable
 {
-    private static readonly string[] Keys = ["Endpoint", "Region", "Project", "Database", "ApiKey"];
+    private const int Capacity = 64;
+    private static readonly string[] Keys = ["Endpoint", "Region", "Project", "Database", "ApiKey", "AuthEndpoint"];
     private readonly Lock gate = new();
-    private readonly Dictionary<string, TerraBaseSqlDatabase> databases = new(StringComparer.Ordinal);
-    private readonly List<HttpClient> clients = [];
+    private readonly SocketsHttpHandler handler = TerraBaseHttp.CreateHandler();
+    private readonly OrderedDictionary<string, TerraBaseSqlDatabase> databases = new(StringComparer.Ordinal);
 
     public TerraBaseSqlDatabase Database(string connectionString)
     {
         lock (gate)
         {
-            if (databases.TryGetValue(connectionString, out var database)) return database;
-            var settings = new DbConnectionStringBuilder { ConnectionString = connectionString };
-            foreach (string key in settings.Keys)
+            if (databases.Remove(connectionString, out var cached))
             {
-                if (!Keys.Contains(key, StringComparer.OrdinalIgnoreCase))
-                {
-                    throw new ArgumentException($"The TerraBase connection string has an unknown key '{key}'; use {string.Join(", ", Keys)}.", nameof(connectionString));
-                }
+                databases.Add(connectionString, cached);
+                return cached;
             }
 
-            var endpoint = Value(settings, "Endpoint");
-            var options = new TerraBaseSqlClientOptions
-            {
-                BaseAddress = endpoint is null ? null : new Uri(endpoint, UriKind.Absolute),
-                Region = Value(settings, "Region"),
-                ApiKey = Value(settings, "ApiKey") ?? throw Missing("ApiKey"),
-            };
-            var http = new HttpClient(TerraBaseHttp.CreateHandler());
-            try
-            {
-                database = new TerraBaseSqlClient(http, options).Database(Value(settings, "Project") ?? throw Missing("Project"), Value(settings, "Database") ?? throw Missing("Database"));
-            }
-            catch
-            {
-                http.Dispose();
-                throw;
-            }
-
-            clients.Add(http);
+            var database = Open(connectionString);
+            if (databases.Count == Capacity) databases.RemoveAt(0);
             databases.Add(connectionString, database);
             return database;
         }
@@ -53,11 +33,34 @@ internal sealed class TerraBaseDataSources : IDisposable
     {
         lock (gate)
         {
-            foreach (var client in clients) client.Dispose();
-            clients.Clear();
             databases.Clear();
+            handler.Dispose();
         }
     }
+
+    private TerraBaseSqlDatabase Open(string connectionString)
+    {
+        var settings = new DbConnectionStringBuilder { ConnectionString = connectionString };
+        foreach (string key in settings.Keys)
+        {
+            if (!Keys.Contains(key, StringComparer.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException($"The TerraBase connection string has an unknown key '{key}'; use {string.Join(", ", Keys)}.", nameof(connectionString));
+            }
+        }
+
+        var options = new TerraBaseSqlClientOptions
+        {
+            BaseAddress = Address(settings, "Endpoint"),
+            Region = Value(settings, "Region"),
+            ApiKey = Value(settings, "ApiKey") ?? throw Missing("ApiKey"),
+            AuthAddress = Address(settings, "AuthEndpoint"),
+        };
+        return new TerraBaseSqlClient(new HttpClient(handler, disposeHandler: false), options)
+            .Database(Value(settings, "Project") ?? throw Missing("Project"), Value(settings, "Database") ?? throw Missing("Database"));
+    }
+
+    private static Uri? Address(DbConnectionStringBuilder settings, string key) => Value(settings, key) is { } text ? new Uri(text, UriKind.Absolute) : null;
 
     private static string? Value(DbConnectionStringBuilder settings, string key) =>
         settings.TryGetValue(key, out var value) && Convert.ToString(value, CultureInfo.InvariantCulture) is { Length: > 0 } text ? text : null;

@@ -1,9 +1,11 @@
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using TerraScale.EntityFrameworkCore.Metadata;
 using TerraScale.EntityFrameworkCore.Migrations;
 using TerraScale.EntityFrameworkCore.Storage;
 using TerraScale.EntityFrameworkCore.Update;
@@ -25,6 +27,7 @@ internal static class TerraBaseServiceCollectionExtensions
                 .TryAdd<IModificationCommandBatchFactory, TerraBaseModificationCommandBatchFactory>()
                 .TryAdd<IMigrationsSqlGenerator, TerraBaseMigrationsSqlGenerator>()
                 .TryAdd<IHistoryRepository, TerraBaseHistoryRepository>()
+                .TryAdd<IConventionSetPlugin, TerraBaseConventionSetPlugin>()
                 .TryAddProviderSpecificServices(provider => provider.TryAddSingleton<TerraBaseDataSources, TerraBaseDataSources>());
             services.AddEntityFrameworkSqlite();
             for (var i = services.Count - 1; i >= 0; i--)

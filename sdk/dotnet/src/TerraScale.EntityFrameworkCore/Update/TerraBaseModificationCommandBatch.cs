@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -12,13 +11,19 @@ internal sealed class TerraBaseModificationCommandBatch(ModificationCommandBatch
     : AffectedCountModificationCommandBatch(dependencies, maxBatchSize)
 {
     private const int MaxRequestBytes = 1024 * 1024;
+    private const int MaxStatementBytes = 16 * 1024;
+    private const int RequestBytes = 32;
     private const int StatementBytes = 32;
+    private const int ScalarBytes = 64;
     private readonly List<Command> commands = [];
     private int statements;
-    private long bytes = 16;
+    private long bytes = RequestBytes;
     private int unguarded;
 
     public override bool RequiresTransaction => unguarded > 0 && ModificationCommands.Count > 1;
+
+    public override void Execute(IRelationalConnection connection) =>
+        throw new NotSupportedException("TerraBase is async-only; use SaveChangesAsync.");
 
     public override async Task ExecuteAsync(IRelationalConnection connection, CancellationToken cancellationToken = default)
     {
@@ -27,7 +32,7 @@ internal sealed class TerraBaseModificationCommandBatch(ModificationCommandBatch
             await base.ExecuteAsync(connection, cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException exception) when (exception is not DbUpdateConcurrencyException
-            && exception.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SqlError } error
+            && exception.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SqlError, Message: TerraBaseUpdateSqlGenerator.RowsAffectedGuardError } error
             && commands.FindIndex(command => command.Guarded && command.FirstStatement + 1 == error.Statement) is var index and >= 0)
         {
             throw new DbUpdateConcurrencyException(
@@ -39,13 +44,19 @@ internal sealed class TerraBaseModificationCommandBatch(ModificationCommandBatch
 
     protected override void AddCommand(IReadOnlyModificationCommand modificationCommand)
     {
-        var sql = SqlBuilder.Length;
+        var start = SqlBuilder.Length;
         base.AddCommand(modificationCommand);
-        var command = new Command(
-            statements,
-            modificationCommand.EntityState is EntityState.Modified or EntityState.Deleted,
-            modificationCommand.ColumnModifications.Any(column => column.IsRead),
-            Size(SqlBuilder.ToString(sql, SqlBuilder.Length - sql), modificationCommand));
+        var sql = SqlBuilder.ToString(start, SqlBuilder.Length - start);
+        var written = modificationCommand.EntityState is EntityState.Modified or EntityState.Deleted;
+        var reads = modificationCommand.ColumnModifications.Any(column => column.IsRead);
+        var statement = written && !reads ? sql[..sql.LastIndexOf(TerraBaseUpdateSqlGenerator.RowsAffectedGuard, StringComparison.Ordinal)] : sql;
+        if (Encoding.UTF8.GetByteCount(statement) > MaxStatementBytes)
+        {
+            throw new NotSupportedException(
+                $"Saving a row of '{modificationCommand.TableName}' takes a statement longer than TerraBase's 16 KiB statement limit; split the table or its JSON columns.");
+        }
+
+        var command = new Command(statements, written, reads, Size(sql, modificationCommand));
         commands.Add(command);
         statements += command.Statements;
         bytes += command.Bytes;
@@ -83,8 +94,9 @@ internal sealed class TerraBaseModificationCommandBatch(ModificationCommandBatch
         {
             null => 4,
             string text => JsonSize(text),
+            char character => JsonSize(character.ToString()),
             byte[] blob => ((blob.Length + 2) / 3 * 4) + 14,
-            _ => JsonSize(Convert.ToString(stored, CultureInfo.InvariantCulture) ?? ""),
+            _ => ScalarBytes,
         };
     }
 
