@@ -103,6 +103,6 @@ The branch is an independent copy, so a bad migration does not reach `app`. See 
 
 ## CI
 
-In CI, set `TERRASCALE_API_KEY` to an API key instead of running `ts auth login`. Database commands such as `db`, `exec` and `migrate` then act as that key in its project. An organization key also needs `-project <id>`, for example `ts -project <id> migrate up app`. `auth`, `whoami`, `projects` and `keys` still need `ts auth login`.
+In CI, set `TERRASCALE_API_KEY` to an API key instead of running `ts auth login`. Database commands such as `db`, `sql` and `migrate` then act as that key in its project. An organization key also needs `-project <id>`, for example `ts -project <id> migrate up app`. `auth`, `whoami`, `projects` and `keys` still need `ts auth login`.
 
 </div>

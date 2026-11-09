@@ -26,6 +26,7 @@ dotnet add package Dapper
 Export your project ID and API key as in the [C# quickstart](/pt-br/getting-started/csharp), then build the client and wrap the database handle:
 
 ```csharp
+using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
 using var http = new HttpClient(TerraBaseHttp.CreateHandler());
@@ -35,6 +36,7 @@ var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions
     Region = Environment.GetEnvironmentVariable("TERRASCALE_REGION"),
 });
 TerraBaseSqlDatabase db = sql.Database(Environment.GetEnvironmentVariable("TERRASCALE_PROJECT_ID")!, "main");
+TerraScaleIdGenerator ids = new();
 
 await using var connection = new TerraBaseDbConnection(db);
 await connection.OpenAsync();
@@ -55,7 +57,7 @@ var people = await connection.QueryAsync<Person>(
     "SELECT id, name FROM people WHERE name = @name", new { name = "Ada" });
 
 var inserted = await connection.ExecuteAsync(
-    "INSERT INTO people (id, name) VALUES (@id, @name)", new { id = NewId(), name = "Ada" });
+    "INSERT INTO people (id, name) VALUES (@id, @name)", new { id = ids.NewId(), name = "Ada" });
 ```
 
 Blobs bind to `byte[]` parameters, `DateTime` values travel as UTC text, and integers arrive as exact 64-bit numbers.
@@ -81,10 +83,10 @@ await using (var tx = await connection.BeginTransactionAsync())
 {
     await connection.ExecuteAsync(
         "INSERT INTO people (id, name) VALUES (@id, @name)",
-        new { id = NewId(), name = "Grace" }, transaction: tx);
+        new { id = ids.NewId(), name = "Grace" }, transaction: tx);
     await connection.ExecuteAsync(
         "INSERT INTO people (id, name) VALUES (@id, @name)",
-        new { id = NewId(), name = "Linus" }, transaction: tx);
+        new { id = ids.NewId(), name = "Linus" }, transaction: tx);
     await tx.CommitAsync();
 }
 ```
