@@ -6,6 +6,7 @@ case "$1:$2" in
   build:libs|fast:libs)
     make -o restore fmt-check libs-build SOLUTION=libs.slnf CONFIGURATION=Release
     make -o restore -o libs-build libs-check CONFIGURATION=Release
+    scripts/ci/release-only.sh
     [[ $1 == build ]] && exit 0
     make -o restore -o libs-build libs-test CONFIGURATION=Release
     ;;
@@ -23,8 +24,10 @@ case "$1:$2" in
     }
     trap cleanup EXIT
     dotnet build scripts/terrabase/fast-build.slnf -m --configuration Release --no-restore
+    scripts/ci/release-only.sh
     make -o restore -o terrabase-build terrabase-check CONFIGURATION=Release
-    dotnet format whitespace src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --verify-no-changes --no-restore
+    Configuration=Release dotnet format whitespace src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --verify-no-changes --no-restore
+    scripts/ci/release-only.sh
     if [[ -n $publish_pid ]]; then
       wait "$publish_pid" || { publish_status=$?; publish_pid=; cat "$publish_log"; exit "$publish_status"; }
       publish_pid=
