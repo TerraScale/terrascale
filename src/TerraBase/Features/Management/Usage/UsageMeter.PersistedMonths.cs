@@ -19,7 +19,7 @@ namespace TerraBase.Features.Management.Usage;
 internal sealed partial class UsageMeter
 {
 
-internal readonly union MonthUnitsResult(UsageTotals, Unavailable);
+    internal readonly union MonthUnitsResult(UsageTotals, Unavailable);
 
     internal async ValueTask<Unavailable?> AddStorageHoursAsync(IReadOnlyDictionary<string, long> bytes, CancellationToken cancellationToken)
     {
