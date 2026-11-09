@@ -21,18 +21,18 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
     {
         await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
         var admin = await oidc.CreateUserAsync(oidc.UniqueEmail("ops"));
+
+        var (_, tokens) = await oidc.CreateSessionAndRedeemAsync(admin);
+        await Assert.That(Role(tokens)).IsNull();
+
         await SetRoleAsync(oidc.Database, admin.Id, "admin");
-
-        var (_, adminTokens) = await oidc.CreateSessionAndRedeemAsync(admin);
-        var user = await oidc.CreateUserAsync(oidc.UniqueEmail("someone"));
-        var (_, userTokens) = await oidc.CreateSessionAndRedeemAsync(user);
-
-        await Assert.That(Role(adminTokens)).IsEqualTo(OidcResults.PlatformRoleAdmin);
-        await Assert.That(Role(userTokens)).IsNull();
+        using var promoted = await oidc.RefreshAsync(tokens.GetProperty("refresh_token").GetString()!);
+        var promotedBody = await promoted.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(Role(promotedBody)).IsEqualTo(OidcResults.PlatformRoleAdmin);
 
         await SetRoleAsync(oidc.Database, admin.Id, null);
-        using var refreshed = await oidc.RefreshAsync(adminTokens.GetProperty("refresh_token").GetString()!);
-        await Assert.That(Role(await refreshed.Content.ReadFromJsonAsync<JsonElement>())).IsNull();
+        using var demoted = await oidc.RefreshAsync(promotedBody.GetProperty("refresh_token").GetString()!);
+        await Assert.That(Role(await demoted.Content.ReadFromJsonAsync<JsonElement>())).IsNull();
     }
 
     // What an operator does through TerraBase's internal listener: edits the stored user.

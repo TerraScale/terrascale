@@ -85,35 +85,20 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Another_projects_admin_gets_404_updating_a_clients_project()
-    {
-        await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
-        var (_, token, _, root) = await this.ProjectAsync(oidc);
-        var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token,
-            new { name = this.faker.Company.CompanyName(), type = "public", redirect_uris = CreateRedirect }, HttpStatusCode.Created);
-        var clientId = created.GetProperty("client_id").GetString()!;
-        var (_, otherToken, _, _) = await this.ProjectAsync(oidc, "person2");
-
-        using var denied = await oidc.CallAsync(HttpMethod.Put, $"{root}/clients/{clientId}", otherToken,
-            new { name = "Hostile rename", redirect_uris = HostileRedirect });
-        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-
-        using var deleted = await oidc.CallAsync(HttpMethod.Delete, $"{root}/clients/{clientId}", token);
-        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-    }
-
-    [Test]
-    public async Task Another_projects_admin_gets_404_rotating_a_clients_secret()
+    public async Task Another_projects_admin_gets_404_updating_or_rotating_a_clients_secret()
     {
         await using var oidc = await OidcHarness.StartSharedManagementAsync(fixture);
         var (_, token, _, root) = await this.ProjectAsync(oidc);
         var created = await oidc.OkAsync(HttpMethod.Post, $"{root}/clients", token,
             new { name = this.faker.Company.CompanyName(), type = "confidential", redirect_uris = CreateRedirect }, HttpStatusCode.Created);
         var clientId = created.GetProperty("client_id").GetString()!;
-        var (_, otherToken, _, _) = await this.ProjectAsync(oidc, "person2");
+        var (_, otherToken) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("person2"));
 
-        using var denied = await oidc.CallAsync(HttpMethod.Post, $"{root}/clients/{clientId}/secret/rotate", otherToken, new { grace_seconds = 60 });
-        await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var renamed = await oidc.CallAsync(HttpMethod.Put, $"{root}/clients/{clientId}", otherToken,
+            new { name = "Hostile rename", redirect_uris = HostileRedirect });
+        await Assert.That(renamed.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var rotated = await oidc.CallAsync(HttpMethod.Post, $"{root}/clients/{clientId}/secret/rotate", otherToken, new { grace_seconds = 60 });
+        await Assert.That(rotated.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
 
         using var deleted = await oidc.CallAsync(HttpMethod.Delete, $"{root}/clients/{clientId}", token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -151,9 +136,9 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     }
 
     // An owner signed in, with its sign-in token, an organization and a project.
-    private async Task<(UserRecord Owner, string Token, string Project, string Root)> ProjectAsync(OidcHarness oidc, string person = "person1")
+    private async Task<(UserRecord Owner, string Token, string Project, string Root)> ProjectAsync(OidcHarness oidc)
     {
-        var (owner, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail(person));
+        var (owner, token) = await oidc.CreateUserTokenAsync(oidc.UniqueEmail("person1"));
         var organization = await oidc.CreateOrganizationAsync(token, this.faker.Company.CompanyName());
         var project = await oidc.CreateProjectAsync(token, organization, this.faker.Commerce.ProductName());
         return (owner, token, project, $"/v1/{project}");
