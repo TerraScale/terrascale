@@ -47,7 +47,7 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
             cursor = new ChecksumCursor(table, after);
         }
 
-        return await tenants.FindDatabaseAsync(Value("organization"), Value("project"), Value("database"), cancellationToken).ConfigureAwait(false) switch
+        return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
         {
             NotFound error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
@@ -66,5 +66,4 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
         };
     }
 
-    private string Value(string name) => HttpContext.Request.RouteValues[name] as string ?? string.Empty;
 }

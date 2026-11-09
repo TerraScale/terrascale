@@ -126,10 +126,10 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
     }
 
     private void Reject(TenantContext tenant, string reason) => _rejected.Add(1,
-        new("plan", tenant.Plan.ToString().ToLowerInvariant()), new("tenant_bucket", Bucket(tenant)), new("reason", reason));
+        new("plan", tenant.Plan.JsonName), new("tenant_bucket", Bucket(tenant)), new("reason", reason));
 
     private void Record(TenantContext tenant, long started) => _duration.Record(Math.Max(0, time.GetElapsedTime(started).TotalSeconds),
-        new("plan", tenant.Plan.ToString().ToLowerInvariant()), new("tenant_bucket", Bucket(tenant)));
+        new("plan", tenant.Plan.JsonName), new("tenant_bucket", Bucket(tenant)));
 
     private sealed class Lane
     {

@@ -13,6 +13,11 @@ namespace TerraBase.Features.Qos;
 
 internal static class QosExtensions
 {
+    extension(HttpContext context)
+    {
+        internal void ReleaseRequestLease() => context.Features.Get<QosRequestLease>()?.Release();
+    }
+
     public static IServiceCollection AddTerraBaseQos(this IServiceCollection services) => services
         .AddSingleton<IQosAdmission, QosAdmission>()
         .AddSingleton<IStorageQuota, StorageQuota>();

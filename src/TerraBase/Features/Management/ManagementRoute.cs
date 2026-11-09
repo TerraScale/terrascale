@@ -1,6 +1,7 @@
 using System.Globalization;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
@@ -50,7 +51,7 @@ internal static class ManagementRoute
         return new Done();
     }
 
-    public static string Value(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
+    public static string Value(HttpContext context, string name) => context.RouteValue(name);
 
     public static ValueTask<GetProjectResult> ProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
         management.GetProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);

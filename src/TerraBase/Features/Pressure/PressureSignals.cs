@@ -137,7 +137,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             }
 
             tenants = [.. _tenants.OrderByDescending(pair => pair.Value.Count).ThenBy(pair => pair.Key, StringComparer.Ordinal)
-                .Take(10).Select(pair => new TenantPressure(pair.Key, pair.Value.Count / seconds, pair.Value.Plan?.ToString().ToLowerInvariant()))];
+                .Take(10).Select(pair => new TenantPressure(pair.Key, pair.Value.Count / seconds, pair.Value.Plan?.JsonName))];
             _tenants.Clear();
             untracked = _untracked;
             _untracked = 0;

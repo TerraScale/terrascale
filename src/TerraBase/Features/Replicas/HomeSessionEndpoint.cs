@@ -52,7 +52,7 @@ internal sealed class HomeSessionEndpoint(
             responseRate.MinDataRate = null;
         }
 
-        HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
+        HttpContext.ReleaseRequestLease();
         HttpContext.Response.ContentType = "application/octet-stream";
         await HttpContext.Response.StartAsync(cancellationToken).ConfigureAwait(false);
         var input = HttpContext.Request.BodyReader;

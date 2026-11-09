@@ -45,13 +45,8 @@ internal sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : Endpoin
         var project = DatabaseRoute.Project(HttpContext);
         if (key.DatabaseId is not null)
         {
-            return await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
-            {
-                TenantContext own => TypedResults.Ok(Body(own, name.Value)),
-                Validation error => ErrorResponse.From(error),
-                NotFound error => ErrorResponse.From(error),
-                Unavailable error => ErrorResponse.From(error),
-            };
+            return await DatabaseRoute.TenantAsync(HttpContext, tenants,
+                (own, _) => ValueTask.FromResult<IResult>(TypedResults.Ok(Body(own, name.Value))), cancellationToken);
         }
 
         if (key.ProjectId is not null && !string.Equals(key.ProjectId, project, StringComparison.Ordinal))

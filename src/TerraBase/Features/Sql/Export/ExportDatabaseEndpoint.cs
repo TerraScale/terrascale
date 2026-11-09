@@ -38,13 +38,7 @@ internal sealed class ExportDatabaseEndpoint(IStorageEngine engine, ITenantDirec
             return ErrorResponse.From(invalid);
         }
 
-        return await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
-        {
-            Validation error => ErrorResponse.From(error),
-            NotFound error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
-            TenantContext database => await DumpAsync(database, cancellationToken),
-        };
+        return await DatabaseRoute.TenantAsync(HttpContext, tenants, DumpAsync, cancellationToken);
     }
 
     private async ValueTask<IResult> DumpAsync(TenantContext database, CancellationToken cancellationToken)

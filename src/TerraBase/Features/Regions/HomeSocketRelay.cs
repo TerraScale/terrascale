@@ -17,7 +17,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(home);
-        context.Features.Get<QosRequestLease>()?.Lease.Dispose();
+        context.ReleaseRequestLease();
         using var upstream = new ClientWebSocket
         {
             Options =

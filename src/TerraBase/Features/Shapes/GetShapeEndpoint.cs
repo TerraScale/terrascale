@@ -95,7 +95,7 @@ internal sealed class GetShapeEndpoint(
             }
 
             HttpContext.Response.RegisterForDispose(connection);
-            HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
+            HttpContext.ReleaseRequestLease();
         }
 
         return request.Offset switch

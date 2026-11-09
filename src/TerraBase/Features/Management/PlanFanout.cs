@@ -29,7 +29,7 @@ internal sealed class PlanFanout(IRegionPeers peers, IHttpClientFactory http, In
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(PeerTimeout);
         var path = "/admin/organizations/" + Uri.EscapeDataString(organizationId) + "/plan";
-        var name = plan.ToString().ToLowerInvariant();
+        var name = plan.JsonName;
         var taken = await Task.WhenAll(others.Select(peer => PublishOneAsync(peer, path, name, timeout.Token))).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return taken.All(ok => ok) ? null : Unpublished;
