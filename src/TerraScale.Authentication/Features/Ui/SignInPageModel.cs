@@ -98,6 +98,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     public string Sub(string format) => format.Replace("{email}", System.Net.WebUtility.HtmlEncode(this.Email ?? string.Empty));
 
+    public string SubBrand(string format) => format.Replace("{brand}", System.Net.WebUtility.HtmlEncode(this.Brand));
+
     /// <summary>The correlation ID shared with the response's X-Request-ID header.</summary>
     public string RequestId { get; init; } = string.Empty;
 
@@ -181,21 +183,21 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.Reset => this.Copy.TitleReset,
         SignInStep.ResetCode => this.Copy.TitleResetCode,
         SignInStep.ResetDone => this.Copy.TitleResetDone,
-        SignInStep.SignedOut => "Signed out",
-        SignInStep.SignOutConfirm => "Sign out?",
-        SignInStep.Rejected => "Request refused",
-        SignInStep.Continue or SignInStep.SignedIn => "Signed in",
-        SignInStep.DeviceEnter => "Connect a device",
-        SignInStep.DeviceConfirm => "Approve this device?",
-        SignInStep.DeviceApproved => "Device connected",
-        SignInStep.DeviceDenied => "Request denied",
-        SignInStep.NotFound => "Page not found",
-        SignInStep.Sso => "Continue with single sign-on",
-        SignInStep.Mfa => "Two-factor authentication",
-        SignInStep.Security => "Account security",
-        SignInStep.TotpSetup => "Set up your authenticator app",
-        SignInStep.RecoveryCodes => "Save your recovery codes",
-        SignInStep.Reauthenticate => "Sign in again to continue",
+        SignInStep.SignedOut => this.Copy.TitleSignedOut,
+        SignInStep.SignOutConfirm => this.Copy.TitleSignOutConfirm,
+        SignInStep.Rejected => this.Copy.TitleRejected,
+        SignInStep.Continue or SignInStep.SignedIn => this.Copy.TitleSignedIn,
+        SignInStep.DeviceEnter => this.Copy.TitleDeviceEnter,
+        SignInStep.DeviceConfirm => this.Copy.TitleDeviceConfirm,
+        SignInStep.DeviceApproved => this.Copy.TitleDeviceApproved,
+        SignInStep.DeviceDenied => this.Copy.TitleDeviceDenied,
+        SignInStep.NotFound => this.Copy.TitleNotFound,
+        SignInStep.Sso => this.Copy.TitleSso,
+        SignInStep.Mfa => this.Copy.TitleMfa,
+        SignInStep.Security => this.Copy.TitleSecurity,
+        SignInStep.TotpSetup => this.Copy.TitleTotpSetup,
+        SignInStep.RecoveryCodes => this.Copy.TitleRecoveryCodes,
+        SignInStep.Reauthenticate => this.Copy.TitleReauthenticate,
         _ => this.Copy.TitleEmail,
     };
 
