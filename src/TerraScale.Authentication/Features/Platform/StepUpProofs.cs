@@ -252,7 +252,7 @@ public sealed class StepUpProofs(AuthStore store, AuthOptions options, TimeProvi
     private static bool Pair(string purpose, string audience) => audience switch
     {
         "ts-dashboard" => purpose is "delete_account" or "create_pat",
-        "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "change_plan" or "delete_passkey" or "create_api_key" or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "enroll_totp",
+        "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "change_plan" or "delete_passkey" or "create_api_key" or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "enroll_totp" or "create_webhook_endpoint" or "rotate_webhook_secret",
         _ => false,
     };
     private static bool Bound(string purpose) => purpose is "delete_organization" or "start_ownership_transfer" or "change_plan";

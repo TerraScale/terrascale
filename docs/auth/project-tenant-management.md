@@ -53,6 +53,10 @@ effective project role (`platform-contract.md` section 3) on every request:
 | `GET /clients` | viewer | `{items: [Client], next: null}` |
 | `POST /clients` | admin | `201 Client` with `client_secret` once for a confidential client |
 | `DELETE /clients/{client_id}` | admin | `204` |
+| `GET /webhook-endpoints` | admin | `{items: [WebhookEndpoint], next: null}` without secrets |
+| `POST /webhook-endpoints` | admin | `201 WebhookEndpoint` with `secret` once; needs a `create_webhook_endpoint` step-up proof |
+| `DELETE /webhook-endpoints/{id}` | admin | `204` |
+| `POST /webhook-endpoints/{id}/rotate-secret` | admin | `WebhookSecret` with `secret` once; needs a `rotate_webhook_secret` step-up proof |
 
 ```text
 Settings = {
@@ -66,7 +70,12 @@ Session = { id, user_id, email, created_at, expires_at }
 Client  = { client_id, name, type: "public"|"confidential", redirect_uris: [string],
             created_at, client_secret?: string }
 POST /clients body = { name, type, redirect_uris }
+WebhookEndpoint = { id, url, event_types: [string], created_at, secret?: string }
+WebhookSecret   = { id, secret, previous_secret_expires_at }
+POST /webhook-endpoints body = { url, event_types }
 ```
+
+Webhook endpoints are described in [webhooks.md](webhooks.md).
 
 - `methods`: at least one of `passcode` and `password` stays on (`400
   invalid_request` otherwise). `sign_up: false` hides self sign-up. A new project

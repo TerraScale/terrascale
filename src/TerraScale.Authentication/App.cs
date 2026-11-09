@@ -12,9 +12,9 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Ui;
-using TerraScale.Authentication.Features.Webhooks;
 using Fido2NetLib;
 using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Hosting;
@@ -161,6 +161,7 @@ public static class App
         builder.Services.AddSingleton<Invitations>();
         builder.Services.AddSingleton<TenantDirectory>();
         builder.Services.AddSingleton<ProjectAuthSettings>();
+        builder.Services.AddSingleton<WebhookEndpoints>();
         builder.Services.AddHttpClient(SsoConnections.HttpClientName, client =>
         {
             client.Timeout = TimeSpan.FromSeconds(10);
