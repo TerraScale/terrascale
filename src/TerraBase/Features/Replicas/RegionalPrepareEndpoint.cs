@@ -6,6 +6,8 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed class RegionalPrepareEndpoint(RegionalHandoff handoff, IMemoryBudget memory) : EndpointWithoutRequest<IResult>
 {
+    public const long MaxBodyBytes = 4 * 1024 * 1024;
+
     public override void Configure()
     {
         Post("/v1/rollout/prepare");
@@ -19,21 +21,25 @@ internal sealed class RegionalPrepareEndpoint(RegionalHandoff handoff, IMemoryBu
         Produces(StatusCodes.Status503ServiceUnavailable);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        AnswerAsync(HttpContext, handoff, memory, handoff.PrepareAsync, cancellationToken);
+
+    internal static async ValueTask<IResult> AnswerAsync(HttpContext context, RegionalHandoff handoff, IMemoryBudget memory,
+        Func<RegionalPrepare, CancellationToken, Task<bool>> act, CancellationToken cancellationToken)
     {
-        if (HttpContext.Request.ContentLength is not (> 0 and <= 4 * 1024 * 1024))
+        if (context.Request.ContentLength is not (> 0 and <= MaxBodyBytes))
         {
             return TypedResults.StatusCode(StatusCodes.Status413PayloadTooLarge);
         }
 
-        using var reservation = memory.TryReserve(MemoryLane.Bulk, HttpContext.Request.ContentLength.Value * 4, tenant: null);
+        using var reservation = memory.TryReserve(MemoryLane.Bulk, context.Request.ContentLength.Value * 4, tenant: null);
         if (reservation is null)
         {
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
-        var request = await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalPrepare, cancellationToken).ConfigureAwait(false);
-        return request is not null && await handoff.PrepareAsync(request, cancellationToken).ConfigureAwait(false)
+        var request = await context.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalPrepare, cancellationToken).ConfigureAwait(false);
+        return request is not null && await act(request, cancellationToken).ConfigureAwait(false)
             ? TypedResults.NoContent() : TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
     }
 }
