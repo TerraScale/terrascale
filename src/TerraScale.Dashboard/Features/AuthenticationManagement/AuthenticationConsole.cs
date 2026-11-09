@@ -13,23 +13,12 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
     {
         public const string Unreachable = "ts-auth is unreachable right now. Try again shortly.";
 
-        public static IEndpointRouteBuilder MapAuthenticationManagement(this IEndpointRouteBuilder endpoints)
+        internal static async Task<IResult> RootAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects, string prefix)
         {
-            endpoints.MapPost("/api/v1/auth-management/users/export", ExportUsersAsync);
-            foreach (var prefix in new[] { "/auth", "/authentication" })
-            {
-                endpoints.MapGet(prefix, async (HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects) =>
-                {
-                    var section = http.Request.Query["section"].ToString();
-                    return AuthenticationSection.Find(section) is not null
-                        ? HttpRedirects.SeeOther(prefix + "/" + Uri.EscapeDataString(section))
-                        : await PageAsync(http, sessions, accounts, projects, "overview");
-                });
-                endpoints.MapGet(prefix + "/{section}", async (HttpContext http, string section, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects) =>
-                    await PageAsync(http, sessions, accounts, projects, section));
-            }
-            endpoints.MapPost("/api/v1/auth-management/{**path}", PostAsync);
-            return endpoints;
+            var section = http.Request.Query["section"].ToString();
+            return AuthenticationSection.Find(section) is not null
+                ? HttpRedirects.SeeOther(prefix + "/" + Uri.EscapeDataString(section))
+                : await PageAsync(http, sessions, accounts, projects, "overview");
         }
 
         public static async Task<IResult> PostAsync(HttpContext http, string path, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects)
@@ -235,7 +224,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         [GeneratedRegex("^#[0-9a-f]{6}$")]
         private static partial Regex Color();
 
-        private static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects, string key)
+        internal static async Task<IResult> PageAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects, string key)
         {
             if (AuthenticationSection.Find(key) is null)
             {

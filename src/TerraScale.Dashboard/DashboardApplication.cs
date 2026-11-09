@@ -8,6 +8,11 @@ using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Databases;
+using TerraScale.Dashboard.Features.Data;
+using TerraScale.Dashboard.Features.Backups;
+using TerraScale.Dashboard.Features.Organizations.Invitations;
+using TerraScale.Dashboard.Features.Organizations.Audit;
+using TerraScale.Dashboard.Features.Organizations.Projects;
 using TerraScale.Dashboard.Features.Onboarding;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Notifications;
@@ -161,6 +166,58 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<RevokeSessionEndpoint>(),
                 EndpointRegistration.Create<CreateProfileAccessTokenEndpoint>(),
                 EndpointRegistration.Create<RevokeProfileAccessTokenEndpoint>(),
+                EndpointRegistration.Create<DashboardIdentityEndpoint>(),
+                EndpointRegistration.Create<SwitchOrganizationEndpoint>(),
+                EndpointRegistration.Create<SwitchProjectEndpoint>(),
+                EndpointRegistration.Create<DatabasesPageEndpoint>(),
+                EndpointRegistration.Create<ListDatabasesApiEndpoint>(),
+                EndpointRegistration.Create<DatabaseOverviewEndpoint>(),
+                EndpointRegistration.Create<DatabaseTablesEndpoint>(),
+                EndpointRegistration.Create<DatabaseGrantsPageEndpoint>(),
+                EndpointRegistration.Create<DatabaseReplicationEndpoint>(),
+                EndpointRegistration.Create<DatabaseConflictsEndpoint>(),
+                EndpointRegistration.Create<DatabaseBackupsPageEndpoint>(),
+                EndpointRegistration.Create<DatabaseBranchesEndpoint>(),
+                EndpointRegistration.Create<DatabaseDangerEndpoint>(),
+                EndpointRegistration.Create<CreateDatabaseEndpoint>(),
+                EndpointRegistration.Create<BranchDatabaseEndpoint>(),
+                EndpointRegistration.Create<DeleteDatabaseEndpoint>(),
+                EndpointRegistration.Create<SqlPageEndpoint>(),
+                EndpointRegistration.Create<SavedQueriesListEndpoint>(),
+                EndpointRegistration.Create<RunSqlEndpoint>(),
+                EndpointRegistration.Create<CheckSqlEndpoint>(),
+                EndpointRegistration.Create<SqlCatalogEndpoint>(),
+                EndpointRegistration.Create<SaveQueryEndpoint>(),
+                EndpointRegistration.Create<DeleteSavedQueryEndpoint>(),
+                EndpointRegistration.Create<ListBackupsEndpoint>(),
+                EndpointRegistration.Create<BackupRestoreStatusEndpoint>(),
+                EndpointRegistration.Create<CreateBackupEndpoint>(),
+                EndpointRegistration.Create<BackupPolicyEndpoint>(),
+                EndpointRegistration.Create<RestoreBackupEndpoint>(),
+                EndpointRegistration.Create<BackupDestinationEndpoint>(),
+                EndpointRegistration.Create<BackupDestinationRemoveEndpoint>(),
+                EndpointRegistration.Create<NotificationsPageEndpoint>(),
+                EndpointRegistration.Create<NotificationDialogEndpoint>(),
+                EndpointRegistration.Create<MarkAllNotificationsReadEndpoint>(),
+                EndpointRegistration.Create<MarkNotificationReadEndpoint>(),
+                EndpointRegistration.Create<ExportAuthUsersEndpoint>(),
+                EndpointRegistration.Create<AuthManagementPostEndpoint>(),
+                EndpointRegistration.Create<AuthPageEndpoint>(),
+                EndpointRegistration.Create<AuthenticationPageEndpoint>(),
+                EndpointRegistration.Create<AuthSectionEndpoint>(),
+                EndpointRegistration.Create<AuthenticationSectionEndpoint>(),
+                EndpointRegistration.Create<InvitationPageEndpoint>(),
+                EndpointRegistration.Create<InvitationRespondEndpoint>(),
+                EndpointRegistration.Create<InvitationSwitchAccountEndpoint>(),
+                EndpointRegistration.Create<AuditRedirectEndpoint>(),
+                EndpointRegistration.Create<AuditEventsEndpoint>(),
+                EndpointRegistration.Create<AuditExportEndpoint>(),
+                EndpointRegistration.Create<UsagePageEndpoint>(),
+                EndpointRegistration.Create<InternalSpendingCapEndpoint>(),
+                EndpointRegistration.Create<SupportPageEndpoint>(),
+                EndpointRegistration.Create<SupportRequestEndpoint>(),
+                EndpointRegistration.Create<ProjectInvitationsPageEndpoint>(),
+                EndpointRegistration.Create<RevokeProjectInvitationEndpoint>(),
             ]);
             builder.Services.AddTransient<ServerTiming.Handler>();
             builder.Services.AddTransient<RequestIdentity.Handler>();
@@ -335,17 +392,12 @@ namespace TerraScale.Dashboard
                 context.Request.Path.StartsWithSegments("/readyz") || context.Request.Path.StartsWithSegments("/health")
                 ? next(context) : throw new IOException("Dashboard state is initializing."));
             app.MapAuth();
-            app.MapAccountFeatures();
             app.MapOnboarding();
             app.MapDatabaseFeatures();
-            app.MapAuthenticationManagement();
             app.MapHome();
             app.MapAnalytics();
-            app.MapUsage();
             app.MapSettings();
             app.MapFileStorage();
-            app.MapSupport();
-            app.MapNotifications();
             app.MapAlerts();
             app.MapOrganizations();
             app.MapBilling();

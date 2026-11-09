@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 {
     public static partial class AuthenticationConsole
     {
-        private static async Task<IResult> ExportUsersAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects)
+        internal static async Task<IResult> ExportUsersAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects)
         {
             http.Response.Headers.CacheControl = "no-store";
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
