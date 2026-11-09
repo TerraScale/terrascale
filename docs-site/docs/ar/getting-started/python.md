@@ -100,7 +100,8 @@ refused: primary_key_violation statement 0 sqlstate 23505
 ## Next steps
 
 - [SDK reference](/ar/guides/sdks) — the five SDKs and their install commands
-- [JavaScript](/ar/getting-started/javascript), [C#](/ar/getting-started/csharp) and [Go](/ar/getting-started/go) quickstarts
+- [JavaScript](/ar/getting-started/javascript), [C#](/ar/getting-started/csharp), [Go](/ar/getting-started/go) and [Rust](/ar/getting-started/rust) quickstarts
 - [SQL over HTTP](/ar/guides/sql-http) for the raw HTTP interface and [concepts](/ar/concepts/sql) for the SQL dialect
+- [Use SQLAlchemy and Alembic](/ar/guides/orm-sqlalchemy) for SQLAlchemy's SQLite dialect and Alembic migrations over the Python SDK
 
 </div>

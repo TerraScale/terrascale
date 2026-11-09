@@ -157,5 +157,6 @@ refused: primary_key_violation statement 0 sqlstate 23505
 ## Next steps
 
 - [SDK reference](/guides/sdks) — the five SDKs and their install commands
-- [C#](/getting-started/csharp), [Go](/getting-started/go) and [Python](/getting-started/python) quickstarts
+- [C#](/getting-started/csharp), [Go](/getting-started/go), [Python](/getting-started/python) and [Rust](/getting-started/rust) quickstarts
 - [SQL over HTTP](/guides/sql-http) for the raw HTTP interface and [concepts](/concepts/sql) for the SQL dialect
+- [Use Drizzle ORM](/guides/orm-drizzle) and [Use Prisma ORM](/guides/orm-prisma) for ORMs over the JavaScript SDK
