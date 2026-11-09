@@ -105,6 +105,26 @@ transaction was open, every call except `rollback()` raises
 `transaction_rolled_back` until `rollback()`. After `close()` the session stays
 closed. Async calls may overlap.
 
+### SQLAlchemy
+
+Install the optional extra — SQLAlchemy stays out of the core dependency set —
+and address the engine as `terrascale://<project_id>/<database>`. The API key
+comes from `TERRASCALE_API_KEY`, as everywhere else, or from the URL query:
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine("terrascale://01J.../app")            # TERRASCALE_API_KEY, TERRASCALE_PROJECT_ID
+with engine.connect() as conn:
+    conn.execute(text("INSERT INTO notes VALUES (?, ?)"), [new_id(), "hello"])
+    print(conn.execute(text("SELECT * FROM notes")).fetchall())
+```
+
+The dialect runs in autocommit: every statement is one HTTP request that commits
+on its own, and a multi-row insert is one batched request. `rowcount` maps to
+`rows_affected` and `lastrowid` to `last_insert_rowid`. Multi-statement
+transactions are not supported through the dialect yet.
+
 ### Async
 
 ```python
