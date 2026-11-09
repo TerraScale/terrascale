@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 
@@ -56,7 +57,7 @@ public sealed record IssuedPasscode(string Email, string Code, DateTimeOffset Ex
 /// and concurrent redemptions have one winner. Callers authorize the instance, deliver the code, and answer every
 /// request and failure identically whether or not the email has an account.
 /// </summary>
-public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, TimeProvider clock, AuthOptions options)
+public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, WebhookOutbox outbox, TimeProvider clock, AuthOptions options)
 {
     /// <summary>Wrong guesses a code survives.</summary>
     public const int MaxAttempts = 5;
@@ -234,7 +235,8 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
                     && passcode.PendingTokenHash is { } stored && Tokens.FixedTimeEquals(stored, token), cancellationToken,
                 // The issuance fixes the account id: replaying one sign-up in two regions cannot create two different owners.
                 // The account is created in the redemption's own transaction (one remote-durable write, not two).
-                createAccount: passcode => users.NewAccount(instanceId, normalized, passcode.PasswordHash, passcode.UserId)).ConfigureAwait(false) is not { } consumed)
+                createAccount: async passcode => users.NewAccount(instanceId, normalized, passcode.PasswordHash, passcode.UserId,
+                    await outbox.CreateAsync(instanceId, "user.signed_up", passcode.UserId, normalized, null, cancellationToken).ConfigureAwait(false))).ConfigureAwait(false) is not { } consumed)
         {
             return null;
         }
@@ -369,7 +371,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     /// it), or <see langword="null"/>.
     /// </summary>
     private async Task<PasscodeRecord?> ConsumeAsync(string instanceId, string key, string code, PasscodePurpose purpose, Func<PasscodeRecord, bool> belongs,
-        CancellationToken cancellationToken, string? passwordHash = null, Func<PasscodeRecord, (UserRecord User, StoreOperation[] Operations)>? createAccount = null)
+        CancellationToken cancellationToken, string? passwordHash = null, Func<PasscodeRecord, Task<(UserRecord User, StoreOperation[] Operations)>>? createAccount = null)
     {
         var table = purpose == PasscodePurpose.StepUp ? AuthStore.StepUpPasscodeTable : AuthStore.PasscodeTable;
         // A round loses its write only to another charged guess, a redemption or a reissue, each bounded, so these
@@ -421,7 +423,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             var accountAt = operations.Count;
             if (matches && createAccount is not null)
             {
-                var (created, creates) = createAccount(passcode);
+                var (created, creates) = await createAccount(passcode).ConfigureAwait(false);
                 authenticated = Users.BindAuthenticationState(created);
                 operations.AddRange(creates);
             }

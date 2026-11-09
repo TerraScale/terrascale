@@ -51,6 +51,36 @@ hours, then it is refused.
 Registration and rotation consume a purpose-bound step-up proof
 ([step-up proof](step-up-proof.md)); deletion needs only the admin role.
 
+## Events
+
+Each end-user lifecycle change writes one event record in the same store
+transaction as the change itself, so an event exists if and only if the change
+committed. Events are written only when the project has at least one registered
+endpoint subscribed to that event type; nothing is dispatched yet (delivery
+arrives with a later slice).
+
+| Event | Written when |
+| --- | --- |
+| `user.signed_up` | an end user's account is created in the project (sign-up code redemption, first social sign-in) |
+| `user.signed_in` | a sign-in completes and a session opens (password, email code, passkey, MFA, social, SSO) |
+| `user.disabled` | an admin disables the end user |
+| `user.enabled` | an admin re-enables the end user |
+| `user.deleted` | the end user's account is deleted |
+| `user.provider_linked` | a social identity is linked to the end user |
+| `user.provider_unlinked` | a social identity is unlinked from the end user |
+
+A first social sign-in emits both `user.signed_up` and `user.signed_in`, and a
+hosted sign-up that opens a session does too; each is delivered per its own
+subscriptions. Platform `terrascale` accounts never emit events: these are
+end-user lifecycle events of a project only.
+
+Each event record carries the project id, the event type, a ULID event id and
+occurred-at timestamp, and a minimal payload: the end user's id and email
+address (the project already owns both through its admin APIs), plus the
+provider name on `user.provider_linked` and `user.provider_unlinked`. No other
+personal data is stored. Delivery state starts at `status: "pending"` with
+`attempts: 0` and a `next_attempt_at` equal to the occurred-at timestamp.
+
 ## Verify deliveries
 
 Deliveries follow the [Standard Webhooks](https://www.standardwebhooks.com)

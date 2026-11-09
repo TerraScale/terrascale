@@ -93,6 +93,8 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
 
     public const string WebhookEndpointCounterTable = "webhook_endpoint_counters";
 
+    public const string WebhookOutboxTable = "webhook_outbox";
+
     public static IReadOnlyList<string> RequiredTables { get; } =
     [
         UniqueTable, ChallengeTable, HealthTable, UserTable, SessionTable, PasscodeTable,
@@ -102,7 +104,7 @@ public sealed class AuthStore(TerraBaseSqlDatabase local, TimeProvider clock)
         InvitationTable, AuditEventTable, MfaTable, PasskeyTable, DeletionJobTable, DashboardDeletionCursorTable, ClosureJobTable,
         ClosureCancellationTable, ClosureCommitTable, ProjectAuthSettingsTable, OrganizationSsoTable, AccountDeletionReceiptTable,
         StepUpProofTable, StepUpDeletionGrantTable, StepUpPasscodeTable, EmailChangeTable, MailOutboxTable,
-        WebhookEndpointTable, WebhookEndpointCounterTable,
+        WebhookEndpointTable, WebhookEndpointCounterTable, WebhookOutboxTable,
     ];
 
     private static readonly TerraScaleIdGenerator Ids = new();
