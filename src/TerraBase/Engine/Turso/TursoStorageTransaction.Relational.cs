@@ -350,9 +350,28 @@ internal sealed partial class TursoStorageTransaction
 
     internal static (SqlFailure Failure, string Message) Classify(TursoDatabaseHandle native, TursoException error)
     {
-        var (failure, reported) = SqlErrors.Classify(error.Message, error is TursoNativeException { StatusCode: 5 });
+        var (message, parse) = Unwrap(error.Message);
+        var (failure, reported) = SqlErrors.Classify(message, parse, error is TursoNativeException { StatusCode: 5 });
         return failure is Unique && IsPrimaryKey(native, reported) ? (new PrimaryKey(), reported) : (failure, reported);
     }
+
+    private static (string Message, bool Parse) Unwrap(string message)
+    {
+        var parse = false;
+        foreach (var prefix in (ReadOnlySpan<string>)["Unable to prepare statement: ", "Parse error: ", "Extension error: "])
+        {
+            if (message.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                parse |= prefix != "Extension error: ";
+                message = message[prefix.Length..];
+            }
+        }
+
+        return (SqliteCoded().Match(message) is { Success: true } coded ? coded.Groups[1].Value : message, parse);
+    }
+
+    [GeneratedRegex(@"\A__turso_sqlite_error__:\d+:(.*)\z", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex SqliteCoded();
 
     private bool EndedByFailure(TursoDatabaseHandle native)
     {

@@ -84,45 +84,27 @@ internal static partial class SqlErrors
         _ => SqlError,
     }, message);
 
-    public static (SqlFailure Failure, string Message) Classify(string message, bool interrupted)
+    public static (SqlFailure Failure, string Message) Classify(string message, bool parse, bool interrupted) => message switch
     {
-        var parse = false;
-        foreach (var prefix in (ReadOnlySpan<string>)["Unable to prepare statement: ", "Parse error: ", "Extension error: "])
-        {
-            if (message.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                parse |= prefix != "Extension error: ";
-                message = message[prefix.Length..];
-            }
-        }
-
-        if (SqliteCoded().Match(message) is { Success: true } coded)
-        {
-            message = coded.Groups[1].Value;
-        }
-
-        return message switch
-        {
-            _ when Has(message, "UNIQUE constraint failed") => (new Unique(), "UNIQUE constraint failed" + Names(message)),
-            _ when Has(message, "NOT NULL constraint failed") => (new NotNull(), "NOT NULL constraint failed" + Names(message)),
-            _ when Has(message, "CHECK constraint failed") => (new Check(), "CHECK constraint failed" + Names(message)),
-            _ when Has(message, "FOREIGN KEY constraint failed") => (new ForeignKeyFailure(), "FOREIGN KEY constraint failed"),
-            _ when Has(message, "constraint failed") => (new Constraint(), "constraint failed"),
-            _ when Has(message, "no such table") => (new NoSuchTable(), "no such table" + Names(message)),
-            _ when Has(message, "no such column") => (new NoSuchColumn(), "no such column" + Names(message)),
-            _ when Has(message, "already exists") => (new AlreadyExists(), "already exists" + Existing(message)),
-            _ when Has(message, "database is locked") || Has(message, "busy") || Has(message, "schema changed") || Has(message, "schema conflict")
-                || Has(message, "write-write conflict") => (new Busy(), "the database is busy; retry"),
-            _ when interrupted || Has(message, "interrupt") => (new Interrupted(), "the statement was interrupted"),
-            _ when Has(message, "readonly") || Has(message, "read-only") || Has(message, "query_only") => (new ReadOnly(), "attempt to write a readonly database"),
-            _ when Has(message, "too big") || Has(message, "too large") || Has(message, "too many") => (new TooBig(), "a value or statement is too big"),
-            _ when Has(message, "syntax error") || Has(message, "near \"") || Has(message, "unexpected") || Has(message, "unrecognized token") =>
-                (new Syntax(), "SQL syntax error"),
-            _ when SqlPhrases.FirstOrDefault(phrase => Has(message, phrase)) is { } phrase => (new Error(), phrase),
-            _ when parse => (new Syntax(), "SQL syntax error"),
-            _ => (new Error(), "the statement failed to run"),
-        };
-    }
+        _ when Has(message, "UNIQUE constraint failed") => (new Unique(), "UNIQUE constraint failed" + Names(message)),
+        _ when Has(message, "NOT NULL constraint failed") => (new NotNull(), "NOT NULL constraint failed" + Names(message)),
+        _ when Has(message, "CHECK constraint failed") => (new Check(), "CHECK constraint failed" + Names(message)),
+        _ when Has(message, "FOREIGN KEY constraint failed") => (new ForeignKeyFailure(), "FOREIGN KEY constraint failed"),
+        _ when Has(message, "constraint failed") => (new Constraint(), "constraint failed"),
+        _ when Has(message, "no such table") => (new NoSuchTable(), "no such table" + Names(message)),
+        _ when Has(message, "no such column") => (new NoSuchColumn(), "no such column" + Names(message)),
+        _ when Has(message, "already exists") => (new AlreadyExists(), "already exists" + Existing(message)),
+        _ when Has(message, "database is locked") || Has(message, "busy") || Has(message, "schema changed") || Has(message, "schema conflict")
+            || Has(message, "write-write conflict") => (new Busy(), "the database is busy; retry"),
+        _ when interrupted || Has(message, "interrupt") => (new Interrupted(), "the statement was interrupted"),
+        _ when Has(message, "readonly") || Has(message, "read-only") || Has(message, "query_only") => (new ReadOnly(), "attempt to write a readonly database"),
+        _ when Has(message, "too big") || Has(message, "too large") || Has(message, "too many") => (new TooBig(), "a value or statement is too big"),
+        _ when Has(message, "syntax error") || Has(message, "near \"") || Has(message, "unexpected") || Has(message, "unrecognized token") =>
+            (new Syntax(), "SQL syntax error"),
+        _ when SqlPhrases.FirstOrDefault(phrase => Has(message, phrase)) is { } phrase => (new Error(), phrase),
+        _ when parse => (new Syntax(), "SQL syntax error"),
+        _ => (new Error(), "the statement failed to run"),
+    };
 
     public static bool IsLocked(string message) => message.Contains("database is locked", StringComparison.Ordinal);
 
@@ -163,9 +145,6 @@ internal static partial class SqlErrors
         ExistingPattern().Match(message) is { Success: true } match && NamePattern().IsMatch(match.Groups[2].Value)
             ? $": {match.Groups[1].Value.ToLowerInvariant()} {match.Groups[2].Value}"
             : "";
-
-    [GeneratedRegex(@"\A__turso_sqlite_error__:\d+:(.*)\z", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
-    private static partial Regex SqliteCoded();
 
     [GeneratedRegex(@"\A[\p{L}\p{N}_$.]+(?:, [\p{L}\p{N}_$.]+)*\z", RegexOptions.CultureInvariant)]
     private static partial Regex NamePattern();
