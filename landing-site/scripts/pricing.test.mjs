@@ -103,6 +103,14 @@ for (const [locale, messages] of locales) {
   });
 }
 
+test('pricing copies match the published catalog', () => {
+  const published = readFileSync(new URL('../static/pricing.json', import.meta.url));
+  for (const copy of ['../../src/TerraScale.Dashboard/Common/Accounts/pricing.json', '../../docs-site/data/canonical/pricing.json']) {
+    assert.equal(readFileSync(new URL(copy, import.meta.url)).toString('utf8'), published.toString('utf8'),
+      `${copy} must equal landing-site/static/pricing.json; copy it`);
+  }
+});
+
 test('catalog entitlements match the enforced engine tiers', () => {
   const byId = Object.fromEntries(catalog.plans.map((plan) => [plan.id, plan.entitlements]));
   assert.deepEqual(byId.free, { requestsPerSecond: 50, burstRequests: 100, concurrentRequests: 4, queryTimeoutSeconds: 1,
