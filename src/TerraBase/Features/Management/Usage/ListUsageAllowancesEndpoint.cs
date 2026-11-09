@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -33,7 +34,7 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
         var current = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
         var month = HttpContext.Request.Query["month"].ToString();
         var previous = month.Length > 0;
-        if (previous && month != current.AddMonths(-1).ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture))
+        if (previous && month != current.AddMonths(-1).ToString("yyyy-MM", CultureInfo.InvariantCulture))
         {
             return ErrorResponse.From(new Validation("month must be the previous UTC month, yyyy-MM"));
         }
