@@ -8,9 +8,6 @@ internal sealed record RegionalTable(string Name, IReadOnlyList<RegionalCell[]> 
 internal sealed record RegionalRecord(string Kind, string Id, byte[] Json);
 internal sealed record RegionalCatalogSnapshot(IReadOnlyList<RegionalTable> Tables, IReadOnlyList<RegionalRecord> Records);
 
-// Copies admission and management authority, never node-local R10 holds, clocks, logs or metering. The relational
-// catalog and its plan/revocation records move as one transaction; customer database positions alone cannot authorize
-// promotion: the first request must see the same admission policy.
 internal static class RegionalCatalog
 {
     private const int MaxRows = 10_000;

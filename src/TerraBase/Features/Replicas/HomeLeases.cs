@@ -29,7 +29,7 @@ internal interface IHomeWriteLease
     ValueTask<bool> PrepareAsync(TenantContext database, CancellationToken cancellationToken);
 }
 
-internal sealed class HomeLeases(
+internal sealed partial class HomeLeases(
     TerraBaseOptions options, IReplicaCatalog catalog, IReplicaPeers peers, IDatabaseReplicas replicas, DatabaseFences fences, HomeLeaseGate leaseGate,
     RegionReplication replication, IStorageEngine engine, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, TimeProvider time,
     ILogger<HomeLeases> logger, RegionalOwners owners) : BackgroundService, IHomeWriteLease
@@ -63,8 +63,6 @@ internal sealed class HomeLeases(
 
     private string NodeKey => "node." + options.MachineId;
 
-    // Only cross-region replicated databases use global per-database keys.
-    // Region-only databases use the region-scoped RegionalHandoff owner key.
     private static string HomeKey(string database) => "home." + database;
 
     private static bool RegionOnly(DatabasePlacement placement) => !placement.AllRegions && placement.Replicas.Count == 0;
@@ -138,7 +136,6 @@ internal sealed class HomeLeases(
             return false;
         }
 
-        // Serialize with the scan so creation cannot finish just before its first confirmation fences active writes.
         await _confirming.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -164,7 +161,6 @@ internal sealed class HomeLeases(
 
     internal async ValueTask<bool> TakeAsync(TenantContext database, string fromRegion, long epoch, HomeLease? failedHome, CancellationToken cancellationToken)
     {
-        // An expired global record cannot promote an independent regional copy.
         if (fromRegion == options.Region || PlatformDatabase(database.DatabaseId!)
             || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
             || RegionOnly(placement))
@@ -232,9 +228,6 @@ internal sealed class HomeLeases(
             leaseGate.Lease(database.DatabaseId!, held: false);
             return true;
         }
-        // Region-only builtins intentionally reuse IDs across regions. Their
-        // regional writer fence suffices; a global home lease would collide
-        // with another region's independent database carrying the same ID.
         if (placement is { AllRegions: false, Replicas.Count: 0 })
         {
             leaseGate.Unlease(database.DatabaseId!);
@@ -260,9 +253,6 @@ internal sealed class HomeLeases(
             }
 
             var previous = current?.Value is { } bytes ? Decode(bytes) : null;
-            // Identity is mandatory even for a same-region source lease.
-            // A dead or mismatched holder stays isolated at this KV revision;
-            // its liveness never grants permission to overwrite its identity.
             if (previous is not null && (previous.OrganizationId != database.OrganizationId || previous.ProjectId != database.ProjectId
                 || previous.DatabaseId != database.DatabaseId || previous.Epoch < placement.Version))
             {
@@ -271,9 +261,6 @@ internal sealed class HomeLeases(
             }
             if (previous is not null && previous.Home != options.Region)
             {
-                // A legitimate cross-region move may precede this regional
-                // catalog's refresh. Fence just that database and follow its
-                // newer placement; it must not block the entire region.
                 leaseGate.Lease(database.DatabaseId!, held: false);
                 fences.Moved(database.DatabaseId!, previous.Home);
                 await catalog.UpdatePlacementAsync(database, Moved(placement, previous), cancellationToken).ConfigureAwait(false);
@@ -299,8 +286,6 @@ internal sealed class HomeLeases(
         }
         catch (Exception error) when (error is NatsKVWrongLastRevisionException or NatsKVCreateException)
         {
-            // A single database lost its lease CAS. Keep it fenced; its normal
-            // confirmation/watch path retries without blocking regional admission.
             _homes.TryRemove(database.DatabaseId!, out _);
             leaseGate.Lease(database.DatabaseId!, held: false);
             return true;
@@ -348,71 +333,6 @@ internal sealed class HomeLeases(
         }
 
         await Task.WhenAll(RenewAsync(js, _kv, stoppingToken), WatchAsync(_kv, stoppingToken), ScanAsync(_kv, stoppingToken)).ConfigureAwait(false);
-    }
-
-    private async Task RenewAsync(NatsJSContext js, INatsKVStore kv, CancellationToken cancellationToken)
-    {
-        using var timer = new PeriodicTimer(RenewEvery, time);
-        do
-        {
-            var sent = time.GetTimestamp();
-            try
-            {
-                var lease = JsonSerializer.SerializeToUtf8Bytes(new NodeLease(options.MachineId, options.Region, _session), TerraBaseJsonContext.Default.NodeLease);
-                var fresh = _nodeRevision is null;
-                _nodeRevision = _nodeRevision is { } revision
-                    ? await PublishNodeAsync(js, lease, revision, cancellationToken).ConfigureAwait(false)
-                    : await TakeNodeAsync(js, kv, lease, cancellationToken).ConfigureAwait(false);
-                leaseGate.Renewed(sent + (long)((Ttl - Margin).TotalSeconds * time.TimestampFrequency));
-                if (fresh)
-                {
-                    logger.ZLogInformation($"This node holds a new home lease session");
-                    await ConfirmAllAsync(kv, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            catch (NatsJSApiException error) when (error.Error.ErrCode == WrongLastSequence)
-            {
-                Lapse();
-                logger.ZLogWarning($"This node's home lease expired; its databases with replicas refuse writes until it confirms each lease again");
-            }
-            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                logger.ZLogInformation($"The home lease renewal failed; it retries: {error.GetType().Name:@Error}");
-            }
-        }
-        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false));
-    }
-
-    private void Lapse()
-    {
-        _nodeRevision = null;
-        _session = Ulid.NewUlid().ToString();
-        foreach (var database in leaseGate.Leased)
-        {
-            leaseGate.Lease(database, held: false);
-        }
-    }
-
-    private async Task<ulong> TakeNodeAsync(NatsJSContext js, INatsKVStore kv, byte[] lease, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await kv.CreateAsync(NodeKey, lease, Ttl, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-        catch (NatsKVCreateException)
-        {
-            var current = await kv.GetEntryAsync<byte[]>(NodeKey, cancellationToken: cancellationToken).ConfigureAwait(false);
-            return await PublishNodeAsync(js, lease, current.Revision, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private async Task<ulong> PublishNodeAsync(NatsJSContext js, byte[] lease, ulong revision, CancellationToken cancellationToken)
-    {
-        var headers = new NatsHeaders { ["Nats-TTL"] = ((long)Ttl.TotalSeconds).ToString(CultureInfo.InvariantCulture) + "s" };
-        var answer = await js.PublishAsync($"$KV.{Bucket}.{NodeKey}", lease, headers: headers,
-            opts: new NatsJSPubOpts { ExpectedLastSubjectSequence = revision }, cancellationToken: cancellationToken).ConfigureAwait(false);
-        answer.EnsureSuccess();
-        return answer.Seq;
     }
 
     private async Task ScanAsync(INatsKVStore kv, CancellationToken cancellationToken)
@@ -617,9 +537,6 @@ internal sealed class HomeLeases(
             return;
         }
 
-        // Legacy platform keys have no region and may be replayed forever. They
-        // never describe this region's independent platform databases, even if
-        // the tenant IDs and the database IDs happen to match exactly.
         if (PlatformDatabase(home.DatabaseId) || entry.Key != HomeKey(home.DatabaseId))
         {
             return;
@@ -665,8 +582,6 @@ internal sealed class HomeLeases(
     {
         foreach (var (id, (lease, _)) in _homes)
         {
-            // Same-region authority is exclusively RegionalHandoff's decision.
-            // Node TTL expiry during an owner restart must never promote its follower.
             if (lease.Home == options.Region || lease.Node != gone.Node || PlatformDatabase(id) || _isolated.ContainsKey(id))
             {
                 continue;
@@ -774,8 +689,6 @@ internal sealed class HomeLeases(
         }
         if (home.Home == options.Region)
         {
-            // Same-region promotion changes the writer, never the database's placement.
-            // Keep the old primary readable until its peer proves the final position.
             leaseGate.Lease(id, held: false);
             return;
         }

@@ -6,13 +6,11 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed record ReplicaPeer(string Region, string Name, Uri Internal);
 
-// One peer per region: a database's home node is its home region's node.
 internal interface IReplicaPeers
 {
     ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken);
 }
 
-// A region of several nodes is reached at its observed CAS-fenced writer; its standby also follows that writer.
 internal sealed class PeersFileReplicaPeers(TerraBaseOptions options, RegionalOwners owners) : IReplicaPeers
 {
     public async ValueTask<IReadOnlyList<ReplicaPeer>> ListAsync(CancellationToken cancellationToken)

@@ -32,8 +32,6 @@ public sealed partial class RegionalWriterCrashTests
             await stoppedAt.WaitAsync(TimeSpan.FromSeconds(15), token);
             if (cut == "legacy-marker-first")
             {
-                // Reconstruct the exact old crash state: durable self-certificate
-                // and protocol marker, but Version:0/Previous:null owner unchanged.
                 _ = await store.PutAsync("protocol.gru", "2"u8.ToArray(), cancellationToken: token);
                 await Assert.That(await drill.OwnerAsync(token)).IsEqualTo(legacy);
                 var certificate = await store.GetEntryAsync<byte[]>("prepared.gru.gru-1", cancellationToken: token);

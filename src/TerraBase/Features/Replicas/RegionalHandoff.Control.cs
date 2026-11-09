@@ -18,9 +18,6 @@ internal sealed partial class RegionalHandoff
     private static readonly TimeSpan ActivationBudget = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AttemptBudget = TimeSpan.FromSeconds(2);
 
-    // With a working quorum and a healthy retained source, an activation that
-    // failed before publishing activation recovers within 30 seconds of the owner CAS:
-    // 10 s activation deadline + <=6 s old lease + bounded refresh/activation.
     internal static readonly TimeSpan RecoveryBound = TimeSpan.FromSeconds(30);
 
     private async Task RenewWriterAsync(INatsKVStore kv, NatsKVEntry<byte[]> entry, RegionalOwner owner, CancellationToken token)
@@ -31,9 +28,6 @@ internal sealed partial class RegionalHandoff
         }
         if (owner.Transfer is { Phase: Preparing, Source: var draining } && draining == options.MachineId)
         {
-            // An abandoned preparation must first be cancelled by CAS at a new
-            // epoch. Never resume from a read while a delayed owner CAS could
-            // still consume that preparation's certificate.
             return;
         }
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -58,8 +52,6 @@ internal sealed partial class RegionalHandoff
                 return;
             }
 
-            // Activation may have consumed most of the admission lease. Renew
-            // again before publishing its durable activation marker.
             if (await writer.RenewAsync(owner.Epoch, attempt.Token).ConfigureAwait(false) is not { } until)
             {
                 return;
@@ -74,14 +66,9 @@ internal sealed partial class RegionalHandoff
                     Transfer = owner.Transfer is { Phase: Activating } pending ? pending with { Phase = Retiring }
                         : owner.Transfer is { Phase: Recovering } ? null : owner.Transfer,
                 };
-                // This CAS races the rollback CAS. Only one can win; the source
-                // never rolls back an activation that might acknowledge writes.
                 _ = await kv.UpdateAsync(options.Region, Encode(active), entry.Revision, cancellationToken: attempt.Token).ConfigureAwait(false);
                 Observe(active);
             }
-            // Commit authority first. A crash before this advisory marker now
-            // leaves an activated owner whose retained certificate can resume.
-            // Reassert once per process, including a restart after that crash.
             if (!_protocolPublished)
             {
                 _ = await kv.PutAsync("protocol." + options.Region, "2"u8.ToArray(), cancellationToken: attempt.Token).ConfigureAwait(false);
@@ -96,8 +83,6 @@ internal sealed partial class RegionalHandoff
         }
         catch (NatsKVWrongLastRevisionException)
         {
-            // Another process committed recovery or a newer owner. Admission
-            // must not use the lease acquired for this stale owner record.
         }
     }
 
@@ -105,21 +90,12 @@ internal sealed partial class RegionalHandoff
     {
         if (owner.Transfer is not { } transfer)
         {
-            // A legacy owner never held the exclusive admission lease. Even a
-            // certificate written by its in-place upgrade cannot authorize a
-            // different node to reclaim it during the mixed-version window.
-            // Only the retained owner may complete Version:0 bootstrap.
             if (owner.Version == 0 || owner.Activated || owner.Previous is null || entry.Created + ActivationBudget > DateTimeOffset.UtcNow)
             {
                 return false;
             }
-            // A manual CAS is not a data-preparation proof. If it cannot
-            // activate, return to its retained previous writer automatically.
             transfer = new RegionalTransfer(Guid.NewGuid().ToString("N"), owner.Previous, owner.Node, "", Activating, entry.Created + ActivationBudget);
         }
-        // Refresh holds the same change gate as Drain. If this process is the
-        // recorded source, a preparation seen here has no live drain handler.
-        // Recover immediately after quorum returns, including after restart.
         var abandonedHere = transfer.Phase == Preparing && transfer.Source == options.MachineId;
         if ((!abandonedHere && transfer.Deadline > DateTimeOffset.UtcNow) || transfer.Phase == Retiring)
         {
@@ -127,9 +103,6 @@ internal sealed partial class RegionalHandoff
         }
         if (transfer.Phase == Recovering)
         {
-            // The selected source keeps retrying activation on every refresh.
-            // If it died before admission, either live process can instead
-            // activate the already certified target; never choose a stale copy.
             if (owner.Activated || await NodeReadyAsync(owner.Node, token).ConfigureAwait(false))
             {
                 return false;
@@ -147,8 +120,6 @@ internal sealed partial class RegionalHandoff
                 Transfer: transfer with { Phase = Activating, Deadline = DateTimeOffset.UtcNow + ActivationBudget },
                 Version: ProtocolVersion,
                 Prepared: new RegionalPrepared(owner.Node, transfer.Target, owner.Epoch, transfer.Id));
-            // Embed the derived certificate in this same owner CAS. A failed
-            // CAS must not leave a reusable proof if the source activated first.
             return await CommitRecoveryAsync(kv, entry, fallback, transfer.Id, token).ConfigureAwait(false);
         }
 
@@ -157,8 +128,6 @@ internal sealed partial class RegionalHandoff
         {
             if (!await NodeReadyAsync(transfer.Source, token).ConfigureAwait(false))
             {
-                // Do not hand ownership to a dead source. The certified target
-                // may retry its activation; its exclusive lease still fences it.
                 if (await HasPreparedAsync(kv, owner, token).ConfigureAwait(false)
                     && await NodeReadyAsync(owner.Node, token).ConfigureAwait(false))
                 {
@@ -168,8 +137,6 @@ internal sealed partial class RegionalHandoff
                 }
                 return false;
             }
-            // Either live node can undo an unactivated owner CAS. Partial
-            // per-database lease acquisitions are reclaimed from Previous.
             recovered = new RegionalOwner(options.Region, transfer.Source, owner.Epoch + 1, owner.Node,
                 Transfer: transfer with { Phase = Recovering, Deadline = DateTimeOffset.UtcNow + ActivationBudget }, Version: ProtocolVersion);
         }
@@ -197,7 +164,6 @@ internal sealed partial class RegionalHandoff
         }
         catch (NatsKVWrongLastRevisionException)
         {
-            // Activation or another recovery won the same record revision.
         }
         return true;
     }
@@ -212,17 +178,13 @@ internal sealed partial class RegionalHandoff
         attempt.CancelAfter(AttemptBudget);
         try
         {
-            var peers = await new PeersFile(options).ListAsync(attempt.Token).ConfigureAwait(false);
-            var peer = peers.FirstOrDefault(peer => peer.Name == node && peer.Region == options.Region);
+            var peer = await SelfRegionPeerAsync(node, attempt.Token).ConfigureAwait(false);
             if (peer is null)
             {
                 return false;
             }
-            var address = peer.InternalListener(options.InternalPort);
-            using var response = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), attempt.Token).ConfigureAwait(false);
-            return response.IsSuccessStatusCode
-                && await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, attempt.Token).ConfigureAwait(false)
-                    is { Ready: true, Node: var actual } && actual == node;
+            return await StatusAsync(new Uri(peer.InternalListener(options.InternalPort), "/v1/rollout/status"), attempt.Token).ConfigureAwait(false)
+                is { Ready: true, Node: var actual } && actual == node;
         }
         catch (Exception error) when (error is HttpRequestException || error is OperationCanceledException && !token.IsCancellationRequested)
         {
@@ -232,8 +194,6 @@ internal sealed partial class RegionalHandoff
 
     private async Task RecoverUncommittedAsync(INatsKVStore kv)
     {
-        // Recovery attempts are bounded, but the persisted phase survives this
-        // attempt and process. Refresh retries after a quorum partition heals.
         using var recovery = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try
         {
@@ -285,9 +245,6 @@ internal sealed partial class RegionalHandoff
         var entry = await ReadAsync(kv, PreparedKey(owner.Node), token).ConfigureAwait(false);
         var prepared = owner.Prepared ?? (entry?.Value is { } bytes
             ? JsonSerializer.Deserialize(bytes, TerraBaseJsonContext.Default.RegionalPrepared) : null);
-        // A retained legacy owner can have Previous=null. Its in-place proof
-        // names itself as Source. Accept that exact proof even if an older
-        // attempt published the protocol marker then died before the owner CAS.
         var source = owner.Previous ?? (owner.Version == 0 ? owner.Node : null);
         return prepared is not null && prepared.Target == owner.Node && prepared.Source == source && prepared.Epoch == owner.Epoch - 1
             && (owner.Transfer is not { Phase: Activating } transfer || transfer.Id == prepared.Operation);
@@ -297,15 +254,10 @@ internal sealed partial class RegionalHandoff
     {
         if (owner is { Epoch: 1, Previous: null })
         {
-            // The committed deterministic owner is authority; local peer-file
-            // enumeration order must not revoke its epoch-one admission.
             return true;
         }
         if (owner.Transfer is { Phase: Recovering } recovered && recovered.Source == owner.Node)
         {
-            // Recovery's CAS proved the candidate never activated, so the
-            // retained source contains every acknowledged home write. Persist
-            // its proof before admitting it, including across a process restart.
             await WritePreparedAsync(kv, new RegionalPrepared(owner.Previous!, owner.Node, owner.Epoch - 1, recovered.Id), token).ConfigureAwait(false);
             return true;
         }
@@ -316,9 +268,6 @@ internal sealed partial class RegionalHandoff
         if (owner.Version == 0 && _startupOwner == owner
             && await ReadAsync(kv, "protocol." + options.Region, token).ConfigureAwait(false) is null)
         {
-            // One-time bootstrap of an already serving legacy owner. There is
-            // no shadow process on a node. Once upgraded, a global protocol
-            // marker prevents a later manual CAS from replaying this exception.
             await WritePreparedAsync(kv, new RegionalPrepared(owner.Previous ?? owner.Node, owner.Node, owner.Epoch - 1, null), token).ConfigureAwait(false);
             return true;
         }
@@ -327,20 +276,11 @@ internal sealed partial class RegionalHandoff
 
     private async Task<NatsKVEntry<byte[]>?> BeginDrainAsync(INatsKVStore kv, string target, CancellationToken token)
     {
-        var peers = await new PeersFile(options).ListAsync(token).ConfigureAwait(false);
-        var candidate = peers.FirstOrDefault(peer => peer.Name == target && peer.Region == options.Region);
-        if (candidate is null)
-        {
-            return null;
-        }
-        var candidateAddress = candidate.InternalListener(options.InternalPort);
-        using var candidateResponse = await _http.GetAsync(new Uri(candidateAddress, "/v1/rollout/status"), token).ConfigureAwait(false);
-        if (!candidateResponse.IsSuccessStatusCode
-            || await candidateResponse.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, token).ConfigureAwait(false)
+        var candidate = await SelfRegionPeerAsync(target, token).ConfigureAwait(false);
+        if (candidate is null
+            || await StatusAsync(new Uri(candidate.InternalListener(options.InternalPort), "/v1/rollout/status"), token).ConfigureAwait(false)
                 is not { Ready: true, Session.Length: > 0, Node: var candidateNode } || candidateNode != target)
         {
-            // A legacy peer cannot persist activation or hold exclusive writer
-            // admission. It may be replaced as a follower, never promoted by v2.
             return null;
         }
         var entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
@@ -353,8 +293,6 @@ internal sealed partial class RegionalHandoff
         {
             if (prior is { Phase: Retiring } && prior.Source == options.MachineId && prior.SourceSession == _session && prior.Target == target)
             {
-                // A controller restart can repeat permission for this same
-                // process. It cannot authorize stopping the surviving peer.
                 return entry;
             }
             if (prior.Phase != Retiring || !await ReplacedSourceReadyAsync(prior, owner, token).ConfigureAwait(false))
@@ -383,22 +321,18 @@ internal sealed partial class RegionalHandoff
 
     private async Task<bool> ReplacedSourceReadyAsync(RegionalTransfer transfer, RegionalOwner owner, CancellationToken token)
     {
-        var peers = await new PeersFile(options).ListAsync(token).ConfigureAwait(false);
-        var source = peers.FirstOrDefault(peer => peer.Name == transfer.Source && peer.Region == options.Region);
+        var source = await SelfRegionPeerAsync(transfer.Source, token).ConfigureAwait(false);
         if (source is null)
         {
             return false;
         }
         var address = source.InternalListener(options.InternalPort);
-        using var response = await _http.GetAsync(new Uri(address, "/v1/rollout/status"), token).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode || await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionalStatus, token).ConfigureAwait(false)
+        if (await StatusAsync(new Uri(address, "/v1/rollout/status"), token).ConfigureAwait(false)
             is not { Ready: true, Session.Length: > 0 } status || status.Node != transfer.Source
             || status.Session == transfer.SourceSession || status.Owner != owner.Node || status.Epoch < owner.Epoch)
         {
             return false;
         }
-        // Readiness alone is insufficient: the replacement must have resumed
-        // regional replication from the live writer before another stop.
         using var primed = await _http.PostAsync(new Uri(address, "/v1/rollout/prime?source=" + Uri.EscapeDataString(owner.Node)), null, token).ConfigureAwait(false);
         return primed.IsSuccessStatusCode;
     }

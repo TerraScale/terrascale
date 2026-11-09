@@ -6,7 +6,6 @@ using System.Text;
 
 namespace TerraBase.Slow.Sync;
 
-/// <summary>Real NATS transport with fixture-owned publication loss and partitions.</summary>
 internal sealed class RegionalNatsFault : IAsyncDisposable
 {
     private readonly TcpListener _listener = new(IPAddress.Loopback, 0);

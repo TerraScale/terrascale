@@ -12,7 +12,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-// A replica region client session run at the home (docs/terrabase/region-replicas.md#writes-and-transactions).
 internal sealed class HomeSessionEndpoint(
     ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local)
     : EndpointWithoutRequest<IResult>
@@ -80,7 +79,6 @@ internal sealed class HomeSessionEndpoint(
         }
         catch (Exception error) when (error is InvalidDataException or IOException or OperationCanceledException)
         {
-            // A broken or cut stream ends the session; disposing it rolled its transaction back.
         }
 
         return Results.Empty;
@@ -215,7 +213,6 @@ internal sealed class HomeSessionEndpoint(
         };
     }
 
-    // The home charges a read when it answers it: the replica region relays every answer it receives.
     private static HomeSessionAnswer Answered(ISqlSession session, SqlResult result)
     {
         result.ReadCharge?.Accept();

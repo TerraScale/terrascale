@@ -84,7 +84,6 @@ public sealed partial class RegionalWriterCrashTests
             }
             catch (HttpRequestException)
             {
-                // The process was killed with the native write transaction open, before COMMIT.
             }
             File.Delete(writer.Arm);
             await writer.StartAsync(token);
@@ -97,9 +96,6 @@ public sealed partial class RegionalWriterCrashTests
                 return body.GetProperty("writer").GetBoolean() && body.GetProperty("ready").GetBoolean();
             }, TimeSpan.FromSeconds(15));
             await ExecuteAsync(recovered, "INSERT INTO acked VALUES ('after-restart')");
-            // The controller refuses a target whose regional status has not yet
-            // published readiness with its process session; under load that can
-            // lag the restarted host. Wait for the real signal, not a sleep.
             using var standby = PeerTls.CreateClient(follower.Address);
             await TerraBaseTestServer.EventuallyAsync(async _ =>
             {
@@ -209,8 +205,6 @@ public sealed partial class RegionalWriterCrashTests
         var nativeRows = ExportNativeRowsAsync(api.Server.Services, directory, token);
         await File.WriteAllTextAsync(directory + ".ready.new", $"server_ms={hosting.Elapsed.TotalMilliseconds:F0}", token);
         File.Move(directory + ".ready.new", directory + ".ready", overwrite: true);
-        // Fixture-only IPC exports an actual source snapshot without changing
-        // runtime admission. The manual-CAS drill sends it through real Prepare.
         var requestPath = directory + ".snapshot-request";
         using var requests = new FileSystemWatcher(Path.GetDirectoryName(directory)!, Path.GetFileName(requestPath));
         var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -272,8 +266,6 @@ public sealed partial class RegionalWriterCrashTests
         public ValueTask<IReadOnlyList<string>> ServingAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IReadOnlyList<string>>(["gru", "sjc"]);
     }
 
-    // Keep the fake external bucket alive across the app's SIGKILL. A successful
-    // fake object-store response persists its objects before catalog anchoring returns.
     private sealed class PersistObjects(FakeS3 storage, string path) : DelegatingHandler
     {
         private static readonly SemaphoreSlim Saving = new(1, 1);
@@ -302,8 +294,6 @@ public sealed partial class RegionalWriterCrashTests
         }
     }
 
-    // Observe the real warning at emission; TUnit may buffer console output
-    // until a test ends, which cannot synchronize a running child host.
     private sealed class RecoveryLog(string path) : ILoggerProvider, ILogger
     {
         private readonly object _logGate = new();

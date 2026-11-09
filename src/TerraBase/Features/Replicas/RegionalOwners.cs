@@ -28,7 +28,6 @@ internal sealed class RegionalOwners(TerraBaseOptions options)
         var previous = Find(owner.Region);
         if (owner.Region == options.Region && (previous is null || previous.Node != owner.Node || previous.Epoch != owner.Epoch))
         {
-            // A former writer's unexpired renewal must never admit a new epoch before activation.
             Volatile.Write(ref _until, 0);
         }
         _owners[owner.Region] = owner;

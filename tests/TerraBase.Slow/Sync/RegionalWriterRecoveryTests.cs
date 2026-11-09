@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Sockets;
+using System.Text;
 using System.Security.Cryptography;
 using System.Text.Json;
 using NATS.Client.Core;
@@ -34,9 +36,6 @@ public sealed partial class RegionalWriterCrashTests
         catch (Exception error) when (error is NatsKVKeyNotFoundException or NatsKVKeyDeletedException)
         {
         }
-        // Kill the source handler first so it cannot roll back in its finally
-        // block. Restart it while the unadmitted target can still supply reads:
-        // its normal follower path can retain a same-region replica in memory.
         var restart = Stopwatch.StartNew();
         await drill.Source.KillAsync();
         await IgnoreControllerDisconnectAsync(draining);
@@ -77,8 +76,6 @@ public sealed partial class RegionalWriterCrashTests
         drill.SourceNats.Allow();
         drill.SourceNats.Heal();
         await RecoveryDrill.WaitWriterAsync(drill.SourceHttp, RegionalHandoff.RecoveryBound, token);
-        // Admission must follow the rollback CAS, never a read of the old
-        // preparing record while a delayed activation CAS could still land.
         var restored = await drill.OwnerAsync(token);
         await Assert.That(restored.Transfer is null && restored.Epoch > 1).IsTrue();
         await drill.ExecuteAsync(drill.SourceHttp, "INSERT INTO acked VALUES ('healed')", token);
@@ -147,9 +144,6 @@ public sealed partial class RegionalWriterCrashTests
         var current = await owners.GetEntryAsync<byte[]>("gru", cancellationToken: token);
         var previous = JsonSerializer.Deserialize(current.Value!, TerraBaseJsonContext.Default.RegionalOwner)!;
         var writers = await context.GetStoreAsync(RegionalWriterLease.Bucket, token);
-        // Certify through the real recovery-prepare path while the source is
-        // still connected and renewing admission. Blocking its owner reads
-        // before preparation would race its five-second admission deadline.
         var recoverable = previous with
         {
             Transfer = new RegionalTransfer("manual-cas-proof", "gru-1", "gru-2",
@@ -157,7 +151,7 @@ public sealed partial class RegionalWriterCrashTests
         };
         var revision = await owners.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(recoverable, TerraBaseJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
         using var payload = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(snapshot with { Epoch = previous.Epoch }, TerraBaseJsonContext.Default.RegionalPrepare));
-        payload.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        payload.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         using (var prepared = await drill.TargetHttp.PostAsync(ManagementApi.Uri("/v1/rollout/prepare"), payload, token))
         {
             await Assert.That(prepared.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await prepared.Content.ReadAsStringAsync(token)
@@ -166,13 +160,11 @@ public sealed partial class RegionalWriterCrashTests
         var certificate = await owners.GetEntryAsync<byte[]>("prepared.gru.gru-2", cancellationToken: token);
         await Assert.That(JsonSerializer.Deserialize(certificate.Value!, TerraBaseJsonContext.Default.RegionalPrepared))
             .IsEqualTo(new RegionalPrepared("gru-1", "gru-2", previous.Epoch, null));
-        // Only now lose owner reads. TCP, node lease traffic and SQL stay live;
-        // the source still owns the exclusive writer key at the manual CAS.
         var blocked = drill.SourceNats.Drop(static (subject, payload) =>
             subject.StartsWith("$JS.API.", StringComparison.Ordinal)
             && subject.Contains("KV_" + RegionalHandoff.Bucket, StringComparison.Ordinal)
             && (subject.EndsWith(".gru", StringComparison.Ordinal)
-                || System.Text.Encoding.UTF8.GetString(payload.Span).Contains("$KV." + RegionalHandoff.Bucket + ".gru", StringComparison.Ordinal)));
+                || Encoding.UTF8.GetString(payload.Span).Contains("$KV." + RegionalHandoff.Bucket + ".gru", StringComparison.Ordinal)));
         var held = await writers.GetEntryAsync<byte[]>("gru", cancellationToken: token);
         await Assert.That(JsonSerializer.Deserialize(held.Value!, TerraBaseJsonContext.Default.RegionalWriter)!.Node).IsEqualTo("gru-1");
         await Assert.That((await RecoveryDrill.StatusAsync(drill.SourceHttp, token)).Writer).IsTrue();
@@ -190,8 +182,6 @@ public sealed partial class RegionalWriterCrashTests
         }
         await RecoveryDrill.WaitWriterAsync(drill.TargetHttp, TimeSpan.FromSeconds(10), token);
         await drill.ExecuteAsync(drill.TargetHttp, "INSERT INTO acked VALUES ('target-committed')", token);
-        // The source still has its cached owner and a real open transaction.
-        // Its monotonic admission expires before the target can obtain the key.
         File.Delete(drill.Source.Arm);
         using (var refused = await writing)
         {
@@ -218,7 +208,6 @@ public sealed partial class RegionalWriterCrashTests
         var writers = await new NatsKVContext(new NatsJSContext(drill.Connection)).GetStoreAsync(RegionalWriterLease.Bucket, token);
         var held = await writers.GetEntryAsync<byte[]>("gru", cancellationToken: token);
         await Assert.That(JsonSerializer.Deserialize(held.Value!, TerraBaseJsonContext.Default.RegionalWriter)!.Node).IsEqualTo("gru-2");
-        // No surviving handler may undo this in a finally block.
         await drill.Source.KillAsync();
         await drill.Target.KillAsync();
         await IgnoreControllerDisconnectAsync(draining);
@@ -278,8 +267,6 @@ public sealed partial class RegionalWriterCrashTests
         await Assert.That(pending is { Node: "gru-2", Activated: false }).IsTrue();
         await drill.Source.KillAsync();
         await IgnoreControllerDisconnectAsync(draining);
-        // A refreshed persisted activation deadline proves the recovery path
-        // ran with the source dead. No sleep and no guessed owner CAS.
         await TerraBaseTestServer.EventuallyAsync(async cancellation =>
             (await drill.OwnerAsync(cancellation)).Transfer!.Deadline > pending.Transfer!.Deadline,
             RegionalHandoff.RecoveryBound);
@@ -300,8 +287,6 @@ public sealed partial class RegionalWriterCrashTests
         var retained = JsonSerializer.Deserialize(before.Value!, TerraBaseJsonContext.Default.HomeLease)!;
         await Assert.That(retained.Node).IsEqualTo("gru-1");
         await drill.Source.KillAsync();
-        // Cover node TTL, the entire 15s scan period and the 5s claim grace.
-        // The real follower and its replica/ack holds remain live throughout.
         await Task.Delay(HomeLeases.Ttl + TimeSpan.FromSeconds(22), token);
         var after = await homes.GetEntryAsync<byte[]>("home." + drill.Database, cancellationToken: token);
         await Assert.That(JsonSerializer.Deserialize(after.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(retained);

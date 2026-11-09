@@ -7,8 +7,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.LocalAck;
 
-// System records of kind local_holds keyed <origin>.<organization>.<project>.<database>.<sequence:D20>, so one
-// origin's transactions of one database list in stream order. Every write is synced to disk before it returns.
 internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDisposable
 {
     internal const string Kind = "local_holds";
