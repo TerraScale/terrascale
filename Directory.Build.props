@@ -53,11 +53,6 @@
     <!-- Services consume the SDK source from the same monorepo revision. -->
     <TsDotnetRoot Condition="'$(TsDotnetRoot)' == ''">$(MSBuildThisFileDirectory)sdk/dotnet</TsDotnetRoot>
   </PropertyGroup>
-  <!-- DECISION (issue #977, slice 1): src/TerraScale.Dashboard now builds under the monorepo policy;
-       only tests/TerraScale.Dashboard keeps ts-dashboard's .NET 10 default policy until its diagnostics
-       are fixed in follow-up slices. Remaining rule families there: CA1861 x94, CA1859 x16, CA1305 x16,
-       CA1822 x14, CA1854 x10, CA2026 x6, CA1875 x6, CA1051 x6, CA1001 x6, IL3000 x4, CA1865 x2,
-       CA1848 x2, CA1725 x2. -->
   <PropertyGroup Condition="'$(IsDashboardTestArea)' == 'true'">
     <AnalysisLevel>10.0</AnalysisLevel>
     <AnalysisMode>Default</AnalysisMode>
