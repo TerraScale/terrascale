@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Enforce the design-time-only Newtonsoft boundary of an Entity Framework Core design host."""
 import json
 from pathlib import Path
 import sys

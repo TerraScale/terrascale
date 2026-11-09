@@ -38,7 +38,7 @@ public sealed class TerraBaseOptionsExtension : RelationalOptionsExtension
     }
 
     /// <summary>Registers the TerraBase provider's services.</summary>
-    /// <param name="services">EF Core's internal service collection.</param>
+    /// <param name="services">EF Core's internal services.</param>
     public override void ApplyServices(IServiceCollection services) => services.AddEntityFrameworkTerraBase();
 
     /// <summary>Checks that exactly one of a <see cref="TerraBaseSqlDatabase"/> or a connection string is set.</summary>
