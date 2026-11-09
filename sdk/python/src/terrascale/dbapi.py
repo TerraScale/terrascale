@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from .client import Database, TerraScale
+from .client import TerraScale
 from .errors import SqlError, SqlErrorCodes, TerraScaleError
+from .session import SqlSession
 from .sql import StatementResult
 
 apilevel = "2.0"
@@ -107,8 +109,8 @@ def _type_code(decltype: str | None) -> int:
 
 
 class Cursor:
-    def __init__(self, database: Database) -> None:
-        self._db = database
+    def __init__(self, connection: Connection) -> None:
+        self._conn = connection
         self._rows: list[tuple[Any, ...]] = []
         self._pos = 0
         self.description: tuple[tuple[str, int, None, None, None, None, None], ...] | None = None
@@ -129,7 +131,7 @@ class Cursor:
 
     def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> None:
         try:
-            result = self._db.execute(operation, list(parameters) if parameters is not None else None)
+            result = self._conn._run(operation, list(parameters) if parameters is not None else None)
         except TerraScaleError as error:
             raise _translated(error) from error
         self._apply([result])
@@ -144,7 +146,7 @@ class Cursor:
             self.lastrowid = None
             return
         try:
-            results = self._db.batch(statements)
+            results = self._conn._run_many(statements)
         except TerraScaleError as error:
             raise _translated(error) from error
         self._apply(results)
@@ -185,7 +187,6 @@ class Connection:
         timeout: float = 30.0,
         http_client: Any = None,
     ) -> None:
-        self.isolation_level: str | None = None
         self._client = TerraScale(
             project=project,
             api_key=api_key,
@@ -196,17 +197,67 @@ class Connection:
             http_client=http_client,
         )
         self._db = self._client.database(database)
+        self._session: SqlSession | None = None
+        self._isolation_level: str | None = "SERIALIZABLE"
+
+    @property
+    def isolation_level(self) -> str | None:
+        return self._isolation_level
+
+    @isolation_level.setter
+    def isolation_level(self, value: str | None) -> None:
+        self._isolation_level = value
+        session, self._session = self._session, None
+        if value != "SERIALIZABLE" and session is not None:
+            with contextlib.suppress(TerraScaleError):
+                if session.in_transaction:
+                    session.rollback()
+            with contextlib.suppress(TerraScaleError):
+                session.close()
+
+    def _ensure_session(self) -> SqlSession:
+        if self._session is None:
+            self._session = self._db.connect()
+        return self._session
+
+    def _begin(self, session: SqlSession) -> None:
+        if not session.in_transaction:
+            session.begin()
+
+    def _run(self, sql: str, args: list[Any] | None) -> StatementResult:
+        if self.isolation_level == "AUTOCOMMIT":
+            return self._db.execute(sql, args)
+        session = self._ensure_session()
+        self._begin(session)
+        return session.execute(sql, args)
+
+    def _run_many(self, statements: list[tuple[str, list[Any] | None]]) -> list[StatementResult]:
+        if self.isolation_level == "AUTOCOMMIT":
+            return self._db.batch(statements)
+        session = self._ensure_session()
+        self._begin(session)
+        return session.batch(statements)
 
     def cursor(self) -> Cursor:
-        return Cursor(self._db)
+        return Cursor(self)
 
     def commit(self) -> None:
-        pass
+        if self._session is not None and self._session.in_transaction:
+            try:
+                self._session.commit()
+            except TerraScaleError as error:
+                raise _translated(error) from error
 
     def rollback(self) -> None:
-        pass
+        if self._session is not None and self._session.in_transaction:
+            with contextlib.suppress(TerraScaleError):
+                self._session.rollback()
 
     def close(self) -> None:
+        session, self._session = self._session, None
+        if session is not None:
+            with contextlib.suppress(TerraScaleError):
+                session.close()
         self._client.close()
 
 

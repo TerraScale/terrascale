@@ -122,10 +122,16 @@ with engine.connect() as conn:
     print(conn.execute(text("SELECT * FROM notes")).fetchall())
 ```
 
-The dialect runs in autocommit: every statement is one HTTP request that commits
-on its own, and a multi-row insert is one batched request. `rowcount` maps to
-`rows_affected` and `lastrowid` to `last_insert_rowid`. Multi-statement
-transactions are not supported through the dialect yet.
+The dialect defaults to real transactions: the first statement after connect,
+commit or rollback implicitly opens a transaction over one SQL WebSocket
+session, `commit()` and `rollback()` end it, and `begin_nested()` maps to
+SAVEPOINT/RELEASE/ROLLBACK TO as plain SQL. Interactive transactions last at
+most 5 seconds on the server; past that the statement fails with
+`OperationalError` and the transaction was rolled back. For the one-request-
+per-statement HTTP path instead, set
+`create_engine(..., isolation_level="AUTOCOMMIT")` or
+`conn.execution_options(isolation_level="AUTOCOMMIT")`. `rowcount` maps to
+`rows_affected` and `lastrowid` to `last_insert_rowid`.
 
 ### Async
 
