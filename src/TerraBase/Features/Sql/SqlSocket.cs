@@ -173,7 +173,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
 
     private async ValueTask<bool> RefuseAsync(long? id, SqlError error, CancellationToken cancellationToken)
     {
-        await SendAsync(new SqlSocketError(id, "error", SqlBatch.Body(new SqlBatchFailure(error, 0)).Error, false), TerraBaseJsonContext.Default.SqlSocketError,
+        await SendAsync(new SqlSocketError(id, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), context.TraceIdentifier).Error, false), TerraBaseJsonContext.Default.SqlSocketError,
             cancellationToken).ConfigureAwait(false);
         await CloseAsync(WebSocketCloseStatus.PolicyViolation, error.Code).ConfigureAwait(false);
         return false;
@@ -410,7 +410,7 @@ internal sealed class SqlSocket(HttpContext context, WebSocket socket) : IDispos
     }
 
     private ValueTask<long> SendErrorAsync(long? id, SqlBatchFailure failure, CancellationToken cancellationToken) =>
-        SendAsync(new SqlSocketError(id, "error", SqlBatch.Body(failure).Error, !Session.IsAutocommit), TerraBaseJsonContext.Default.SqlSocketError, cancellationToken);
+        SendAsync(new SqlSocketError(id, "error", SqlBatch.Body(failure, context.TraceIdentifier).Error, !Session.IsAutocommit), TerraBaseJsonContext.Default.SqlSocketError, cancellationToken);
 
     private async ValueTask<long> SendAsync<T>(T frame, JsonTypeInfo<T> type, CancellationToken cancellationToken)
     {
