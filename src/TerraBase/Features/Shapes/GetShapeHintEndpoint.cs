@@ -50,19 +50,15 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                 return ErrorResponse.From(new Unauthorized("the credential is missing, unknown or expired", "invalid_key"));
             }
 
-            var tenant = await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken).ConfigureAwait(false);
-            if (tenant is not TenantContext)
-            {
-                return tenant switch
-                {
-                    Validation error => ErrorResponse.From(error),
-                    NotFound error => ErrorResponse.From(error),
-                    Unavailable error => ErrorResponse.From(error),
-                    TenantContext => throw new UnreachableException(),
-                };
-            }
+            return await DatabaseRoute.TenantAsync(HttpContext, tenants, (_, ct) => ServeAsync(ct), cancellationToken)
+                .ConfigureAwait(false);
         }
 
+        return await ServeAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<IResult> ServeAsync(CancellationToken cancellationToken)
+    {
         if (!HttpContext.WebSockets.IsWebSocketRequest)
         {
             return ErrorResponse.From(new Validation("connect with a WebSocket upgrade", "websocket_required"));

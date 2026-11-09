@@ -74,14 +74,11 @@ internal sealed class SqlSocketEndpoint(
         }
 
         var canWrite = (await authorization.AuthorizeAsync(HttpContext.User, HttpContext, ApiKeyScopes.SqlWrite)).Succeeded;
-        return await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
-        {
-            Validation error => ErrorResponse.From(error),
-            NotFound error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
-            TenantContext when !HttpContext.WebSockets.IsWebSocketRequest => Upgrade(),
-            TenantContext database => await ServeAsync(database, canWrite, cancellationToken),
-        };
+        return await DatabaseRoute.TenantAsync(HttpContext, tenants,
+            (database, _) => !HttpContext.WebSockets.IsWebSocketRequest
+                ? ValueTask.FromResult(Upgrade())
+                : ServeAsync(database, canWrite, cancellationToken),
+            cancellationToken);
     }
 
     private static IResult Upgrade() => ErrorResponse.From(new Validation("connect with a WebSocket upgrade", "websocket_required"));

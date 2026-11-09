@@ -46,26 +46,23 @@ internal sealed class SqlExecuteEndpoint(
         Metadata(ListenerMetadata.Client, new DatabaseRegions.ReplicaReads());
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        DatabaseRoute.TenantAsync(HttpContext, tenants, ServeAsync, cancellationToken);
+
+    private async ValueTask<IResult> ServeAsync(TenantContext database, CancellationToken cancellationToken) =>
+        DatabaseRoute.CheckParameters(HttpContext) switch
         {
             Validation error => ErrorResponse.From(error),
-            NotFound error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
-            TenantContext database => DatabaseRoute.CheckParameters(HttpContext) switch
+            _ => await DatabaseRoute.CheckBodyAsync(HttpContext, SqlBatch.MaxBytes, "invalid_request", cancellationToken, DatabaseRoute.JsonMediaType) switch
             {
                 Validation error => ErrorResponse.From(error),
-                _ => await DatabaseRoute.CheckBodyAsync(HttpContext, SqlBatch.MaxBytes, "invalid_request", cancellationToken, DatabaseRoute.JsonMediaType) switch
+                PayloadTooLarge error => ErrorResponse.From(error),
+                UnsupportedMediaType error => ErrorResponse.From(error),
+                byte[] body => RequestJson.Read<SqlExecuteRequest>(body, "invalid_request") switch
                 {
                     Validation error => ErrorResponse.From(error),
-                    PayloadTooLarge error => ErrorResponse.From(error),
-                    UnsupportedMediaType error => ErrorResponse.From(error),
-                    byte[] body => RequestJson.Read<SqlExecuteRequest>(body, "invalid_request") switch
-                    {
-                        Validation error => ErrorResponse.From(error),
-                        SqlExecuteRequest { Durability: not (null or "local" or "all") } => ErrorResponse.From(new Validation("durability is local or all", "invalid_request")),
-                        SqlExecuteRequest request => await ExecuteAsync(database, request.Statements ?? [], body, request.Durability == "all", cancellationToken),
-                    },
+                    SqlExecuteRequest { Durability: not (null or "local" or "all") } => ErrorResponse.From(new Validation("durability is local or all", "invalid_request")),
+                    SqlExecuteRequest request => await ExecuteAsync(database, request.Statements ?? [], body, request.Durability == "all", cancellationToken),
                 },
             },
         };

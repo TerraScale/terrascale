@@ -170,7 +170,7 @@ internal sealed class SqlSocket(
         }
 
         var region = options.Region;
-        switch (await DatabaseRegions.RecordAsync(context, (string)context.Request.RouteValues["project"]!, (string)context.Request.RouteValues["database"]!)
+        switch (await DatabaseRegions.RecordAsync(context, context.RouteValue("project"), context.RouteValue("database"))
             .ConfigureAwait(false))
         {
             case ManagedDatabase record when !record.PlacedIn(region) && !record.AllRegions && !record.Replicas.Contains(region):

@@ -63,7 +63,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
             return ErrorResponse.From(new Validation(invalid));
         }
 
-        var found = await tenants.FindDatabaseAsync(Value("organization"), Value("project"), Value("database"), cancellationToken).ConfigureAwait(false);
+        var found = await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false);
         if (found is not TenantContext database)
         {
             return found is Unavailable unavailable ? ErrorResponse.From(unavailable) : ErrorResponse.From(new NotFound("the database does not exist"));
@@ -138,5 +138,4 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         return null;
     }
 
-    private string Value(string name) => HttpContext.Request.RouteValues[name] as string ?? string.Empty;
 }

@@ -65,7 +65,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
             return ErrorResponse.From(new Validation(refusal, "unsupported_pull"));
         }
 
-        return await tenants.FindDatabaseAsync(RouteValue("organization"), RouteValue("project"), RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
+        return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
         {
             NotFound error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
@@ -73,7 +73,6 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         };
     }
 
-    private string RouteValue(string name) => HttpContext.Request.RouteValues[name] as string ?? string.Empty;
 
     private async ValueTask<byte[]?> ReadBodyAsync(CancellationToken cancellationToken)
     {
