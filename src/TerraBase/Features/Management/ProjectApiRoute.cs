@@ -4,6 +4,7 @@ public sealed class ProjectManagementRoute;
 
 public sealed record LegacyManagementRoute(string OrganizationId, string OriginalPath);
 
+// The project hierarchy of the public API: docs/api.md.
 internal static class ProjectApiRoute
 {
     public const string Project = "/v1/projects/{project}";

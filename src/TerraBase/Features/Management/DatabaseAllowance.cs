@@ -3,6 +3,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
+// The plans' allowances: https://terrascale.tech/pricing.json.
 internal sealed class DatabaseAllowance
 {
     public DatabaseAllowance() : this(plan => QosPolicy.For(plan).Databases) { }

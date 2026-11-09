@@ -123,6 +123,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
             };
         }
 
+        // Enrollment must place the same binding in every other region's catalog at once; it is idempotent (TS-1394).
         if (firstDatabase)
         {
             _ = enrollment.EnrollAsync(project, organization, CancellationToken.None);

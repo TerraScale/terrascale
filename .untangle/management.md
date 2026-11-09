@@ -64,3 +64,7 @@ Decisions already made: comments removed (keep only external-constraint comments
 - Features/Functions (FunctionScheduler.cs, FunctionService.cs) calls Management-owned SystemCatalog.ListAllAsync directly; consider a typed seam when Functions is reworked.
 - Features/Replicas consumes Management-owned IHomeMoveCatalog/HomeMoveMarker (existing seam, fine).
 - Features/Functions/FunctionRoute.cs reuses ManagementRoute.DatabaseAsync (small public type, fine).
+
+## Coordinator follow-up
+
+- Restored 26 short `//` comments carrying external citations at their original anchors: docs/cross-region.md (x4), docs/terrabase/region-replicas.md (x3), docs/terrabase/project-closure.md (x3: endpoint, record, test), docs/terrabase/multi-region-replication.md section 15, docs/api.md, docs/auth/signing-keys.md, pricing.json (x4), TS-1394 (x2), TS-994, TS-519, TS-1421, GitHub #1098, decision 0007, RFC 3339, RFC 6750, Cloudflare refusal behavior.

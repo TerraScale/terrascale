@@ -35,6 +35,7 @@ internal sealed partial class EngineManagementService
 
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, TenantContext Tenant)> _tenants = new();
 
+    // The records the placement check reads on every data request keep the validity of docs/cross-region.md.
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, ManagedDatabase? Record)> _records = new();
 
     private readonly Lock _planGate = new();
@@ -179,6 +180,7 @@ internal sealed partial class EngineManagementService
         };
     }
 
+    // The catalog replicates to every region (docs/terrabase/multi-region-replication.md section 15).
     private async ValueTask<EnsureLocalDatabaseResult> InitializeLocalAsync(TenantContext tenant, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is not null)
@@ -318,6 +320,7 @@ internal sealed partial class EngineManagementService
                 : ManagementErrors.NotFound;
         }
 
+        // Only the home holds a database file; a replica region records it and pulls its pages (docs/terrabase/region-replicas.md).
         if (placement.Home == options.Region)
         {
             return await AddDatabaseAsync(database.OrganizationId, project, name, sourceId: null, branchedFrom: null, cancellationToken, id: database.DatabaseId, placement: placement)

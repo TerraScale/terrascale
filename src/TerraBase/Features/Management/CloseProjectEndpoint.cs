@@ -5,6 +5,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
+// ts-auth's project closure handoff: docs/terrabase/project-closure.md.
 internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<ProjectClosureRequest, IResult>
 {
     public override void Configure()
