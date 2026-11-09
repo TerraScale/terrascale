@@ -66,3 +66,7 @@ def test_sqlalchemy_engine_round_trip() -> None:
     raw.close()
     engine.dispose()
     http.close()
+    keyed = sa.create_engine(f"terrascale://:ts-secret-key@{PROJECT}/app")
+    assert "ts-secret-key" not in str(keyed.url)
+    assert "***" in str(keyed.url)
+    keyed.dispose()

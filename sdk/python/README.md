@@ -109,12 +109,14 @@ closed. Async calls may overlap.
 
 Install the optional extra — SQLAlchemy stays out of the core dependency set —
 and address the engine as `terrascale://<project_id>/<database>`. The API key
-comes from `TERRASCALE_API_KEY`, as everywhere else, or from the URL query:
+comes from `TERRASCALE_API_KEY`, as everywhere else, or from the URL password,
+which SQLAlchemy renders as `***` in reprs and logs:
 
 ```python
 from sqlalchemy import create_engine
 
 engine = create_engine("terrascale://01J.../app")            # TERRASCALE_API_KEY, TERRASCALE_PROJECT_ID
+engine = create_engine("terrascale://:<api_key>@01J.../app")  # or the key as the URL password
 with engine.connect() as conn:
     conn.execute(text("INSERT INTO notes VALUES (?, ?)"), [new_id(), "hello"])
     print(conn.execute(text("SELECT * FROM notes")).fetchall())

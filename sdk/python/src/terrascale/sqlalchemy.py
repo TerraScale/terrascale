@@ -33,11 +33,11 @@ class TerraScaleDialect(SQLiteDialect_pysqlite):
         if not url.host or not url.database:
             from sqlalchemy import exc
 
-            raise exc.ArgumentError(
-                f"Invalid TerraScale URL: {url}\nValid form: terrascale://<project_id>/<database>[?api_key=...]"
-            )
+            raise exc.ArgumentError("Invalid TerraScale URL\nValid form: terrascale://:<api_key>@<project_id>/<database>")
         opts: dict[str, Any] = {"project": url.host, "database": url.database}
-        for key in ("api_key", "token", "base_url", "region"):
+        if url.password:
+            opts["api_key"] = url.password
+        for key in ("base_url", "region"):
             value = url.query.get(key)
             if value:
                 opts[key] = value
