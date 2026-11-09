@@ -663,22 +663,6 @@ internal static class ChangeLog
                 open = kind is Upsert or Delete or Create or Drop;
                 switch (kind)
                 {
-                    case Upsert:
-                        ReadString(segment);
-                        ReadInt64(segment);
-                        ReadBytes(segment);
-                        break;
-                    case Delete:
-                        ReadString(segment);
-                        ReadInt64(segment);
-                        break;
-                    case Create:
-                        ReadString(segment);
-                        break;
-                    case Drop:
-                        ReadString(segment);
-                        ReadString(segment);
-                        break;
                     case Commit when !reached:
                         return new(before, false, previous, "a transaction it needs has no recorded time (its log predates them, or the clock went back within it)");
                     case Commit:
@@ -712,7 +696,8 @@ internal static class ChangeLog
                         before = reached ? before : segment.Position;
                         break;
                     default:
-                        throw new InvalidDataException("a change log record has an unknown kind");
+                        SkipPayload(segment, kind);
+                        break;
                 }
             }
 
@@ -733,35 +718,13 @@ internal static class ChangeLog
             while ((kind = segment.ReadByte()) >= 0)
             {
                 mark = null;
-                switch (kind)
+                if (kind == ReadMark)
                 {
-                    case Upsert:
-                        ReadString(segment);
-                        ReadInt64(segment);
-                        ReadBytes(segment);
-                        break;
-                    case Delete:
-                        ReadString(segment);
-                        ReadInt64(segment);
-                        break;
-                    case Create:
-                        ReadString(segment);
-                        break;
-                    case Drop:
-                        ReadString(segment);
-                        ReadString(segment);
-                        break;
-                    case Commit:
-                        break;
-                    case TimedCommit:
-                        ReadInt64(segment);
-                        ReadInt64(segment);
-                        break;
-                    case ReadMark:
-                        mark = DateTimeOffset.FromUnixTimeMilliseconds(ReadInt64(segment));
-                        break;
-                    default:
-                        throw new InvalidDataException("a change log record has an unknown kind");
+                    mark = DateTimeOffset.FromUnixTimeMilliseconds(ReadInt64(segment));
+                }
+                else
+                {
+                    SkipPayload(segment, kind);
                 }
             }
 
@@ -770,6 +733,40 @@ internal static class ChangeLog
         catch (Exception error) when (error is EndOfStreamException or DecoderFallbackException)
         {
             throw new InvalidDataException("a change log is malformed", error);
+        }
+    }
+
+    private static void SkipPayload(Stream segment, int kind)
+    {
+        switch (kind)
+        {
+            case Upsert:
+                ReadString(segment);
+                ReadInt64(segment);
+                ReadBytes(segment);
+                break;
+            case Delete:
+                ReadString(segment);
+                ReadInt64(segment);
+                break;
+            case Create:
+                ReadString(segment);
+                break;
+            case Drop:
+                ReadString(segment);
+                ReadString(segment);
+                break;
+            case Commit:
+                break;
+            case TimedCommit:
+                ReadInt64(segment);
+                ReadInt64(segment);
+                break;
+            case ReadMark:
+                ReadInt64(segment);
+                break;
+            default:
+                throw new InvalidDataException("a change log record has an unknown kind");
         }
     }
 
