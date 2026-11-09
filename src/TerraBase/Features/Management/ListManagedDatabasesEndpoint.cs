@@ -36,7 +36,6 @@ internal sealed class ListManagedDatabasesEndpoint(
         {
             Validation error => ErrorResponse.From(error),
             PageQuery page => await ListAsync(page, cancellationToken).ConfigureAwait(false),
-            _ => throw new UnreachableException(),
         };
 
     private async ValueTask<IResult> ListAsync(PageQuery page, CancellationToken cancellationToken)
@@ -96,7 +95,6 @@ internal sealed class ListManagedDatabasesEndpoint(
             ManagementPage<ManagedDatabase> local => TypedResults.Ok(await MergedAsync(local, restricted is not null, page, project, cancellationToken).ConfigureAwait(false)),
             NotFound error => grant is null ? ErrorResponse.From(error) : ErrorResponse.From(Unknown()),
             Unavailable unavailable => ErrorResponse.From(unavailable),
-            _ => throw new InvalidOperationException(),
         };
 
     private async ValueTask<ManagementPage<ManagedDatabaseBody>> MergedAsync(

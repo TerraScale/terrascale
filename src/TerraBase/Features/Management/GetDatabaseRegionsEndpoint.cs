@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -43,7 +44,7 @@ internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, 
             {
                 NotFound error => ManagementRoute.DatabaseNotFound(error),
                 Unavailable error => ErrorResponse.From(error),
-                _ => throw new InvalidOperationException("unexpected database lookup result"),
+                ManagedDatabase => throw new UnreachableException(),
             };
         }
 
