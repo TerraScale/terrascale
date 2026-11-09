@@ -74,7 +74,6 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     : IUsageMeter, IDisposable
 {
 
-    internal static bool ByteMeter(string meter) => meter is "client_bytes" or "storage_bytes";
 
     private const string Ops = "ops";
 

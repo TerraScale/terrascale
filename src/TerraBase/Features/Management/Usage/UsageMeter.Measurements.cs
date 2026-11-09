@@ -11,8 +11,6 @@ namespace TerraBase.Features.Management.Usage;
 internal sealed partial class UsageMeter
 {
     internal const int MaxDimensions = 256;
-    internal const int MaxEntryMeasurementBytes = 256 * 1024;
-    internal const int MaxBatchMeasurementBytes = 1024 * 1024;
     private const int MaxMeasurementKeys = 256;
     private const long MeasurementBytes = 2048;
     private const long MeasurementKeyBytes = 4096;
@@ -21,16 +19,6 @@ internal sealed partial class UsageMeter
     private readonly ConcurrentDictionary<object, Action> _active = new();
     private readonly Dictionary<UsageKey, List<IMemoryReservation>> _measurementMemory = [];
 
-    internal long MeasurementBytesHeld
-    {
-        get
-        {
-            lock (_measurements)
-            {
-                return _measurementMemory.Values.Sum(reservations => reservations.Sum(reservation => reservation.Bytes));
-            }
-        }
-    }
     private readonly Counter<long> _measurementDrops = meters.Create(Telemetry.MeterName).CreateCounter<long>(
         "terrabase.usage.observations.dropped", "{observation}", "Usage observations dropped by bounded memory admission.");
     public void RecordOperation(TenantContext database, string kind, int count)
