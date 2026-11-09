@@ -91,8 +91,8 @@ public static class TerraBaseSqlErrorCodes
 /// </summary>
 public sealed class TerraBaseSqlException : TerraBaseException
 {
-    internal TerraBaseSqlException(HttpStatusCode? statusCode, string message, string code, int statement, string sqlstate)
-        : base(statusCode, message, code, statement)
+    internal TerraBaseSqlException(HttpStatusCode? statusCode, string message, string code, int statement, string sqlstate, Exception? inner = null)
+        : base(statusCode, message, code, statement, inner)
     {
         Code = code;
         Statement = statement;

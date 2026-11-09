@@ -13,8 +13,8 @@ public class TerraBaseException : HttpRequestException
     private const int MaxErrorBytes = 64 * 1024;
     private const int MaxMessageLength = 1024;
 
-    internal TerraBaseException(HttpStatusCode? statusCode, string message, string? errorCode, int? operationIndex)
-        : base(message, inner: null, statusCode)
+    internal TerraBaseException(HttpStatusCode? statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(message, inner, statusCode)
     {
         ErrorCode = errorCode;
         OperationIndex = operationIndex;
@@ -48,7 +48,7 @@ public class TerraBaseException : HttpRequestException
     /// <summary>Bounded JSON Schema validation details, when supplied.</summary>
     public IReadOnlyList<TerraBaseValidationDetail> Details { get; private set; } = [];
 
-    internal static async Task<TerraBaseException> FromResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    internal static async Task<TerraBaseException> FromResponseAsync(HttpResponseMessage response, Exception? inner, CancellationToken cancellationToken)
     {
         var status = response.StatusCode;
         var content = response.Content;
@@ -100,25 +100,25 @@ public class TerraBaseException : HttpRequestException
         var text = Clean(message) ?? $"TerraBase answered HTTP {(int)status}{(code is null ? null : $" ({Clean(code)})")}.";
         TerraBaseException exception = (int)status switch
         {
-            _ when code is not null && statement is { } failed && sqlstate is not null => new TerraBaseSqlException(status, text, code, failed, sqlstate),
-            400 or 413 or 415 => new TerraBaseValidationException(status, text, code, op),
-            401 when code == "key_revoked" => new TerraBaseKeyRevokedException(status, text, code, op),
-            401 when code == "key_expired" => new TerraBaseKeyExpiredException(status, text, code, op),
-            401 => new TerraBaseAuthenticationException(status, text, code, op),
-            403 => new TerraBaseForbiddenException(status, text, code, op),
-            404 => new TerraBaseNotFoundException(status, text, code, op),
-            409 => new TerraBaseConflictException(status, text, code, op),
-            410 when code == "cursor_expired" => new TerraBaseCursorExpiredException(status, text, code, op),
-            429 => new TerraBaseRateLimitedException(status, text, code, op),
-            412 => new TerraBasePreconditionFailedException(status, text, code, op),
-            421 => new TerraBaseWrongRegionException(status, text, code, op)
+            _ when code is not null && statement is { } failed && sqlstate is not null => new TerraBaseSqlException(status, text, code, failed, sqlstate, inner),
+            400 or 413 or 415 => new TerraBaseValidationException(status, text, code, op, inner),
+            401 when code == "key_revoked" => new TerraBaseKeyRevokedException(status, text, code, op, inner),
+            401 when code == "key_expired" => new TerraBaseKeyExpiredException(status, text, code, op, inner),
+            401 => new TerraBaseAuthenticationException(status, text, code, op, inner),
+            403 => new TerraBaseForbiddenException(status, text, code, op, inner),
+            404 => new TerraBaseNotFoundException(status, text, code, op, inner),
+            409 => new TerraBaseConflictException(status, text, code, op, inner),
+            410 when code == "cursor_expired" => new TerraBaseCursorExpiredException(status, text, code, op, inner),
+            429 => new TerraBaseRateLimitedException(status, text, code, op, inner),
+            412 => new TerraBasePreconditionFailedException(status, text, code, op, inner),
+            421 => new TerraBaseWrongRegionException(status, text, code, op, inner)
             {
                 HomeRegion = RegionHeader(response, "X-TerraBase-Database-Home"),
                 Regions = [.. (RegionHeader(response, "X-TerraBase-Database-Regions", list: true) ?? string.Empty)
                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(TerraBaseRegion.IsValid)],
             },
-            503 => new TerraBaseUnavailableException(status, text, code, op),
-            _ => new TerraBaseException(status, text, code, op),
+            503 => new TerraBaseUnavailableException(status, text, code, op, inner),
+            _ => new TerraBaseException(status, text, code, op, inner),
         };
         exception.Machine = machine;
         exception.OutcomeRegion = outcomeRegion;
@@ -162,8 +162,8 @@ public class TerraBaseException : HttpRequestException
 /// </summary>
 public sealed class TerraBaseWrongRegionException : TerraBaseException
 {
-    internal TerraBaseWrongRegionException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex)
+    internal TerraBaseWrongRegionException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner)
     {
     }
 
@@ -177,8 +177,8 @@ public sealed class TerraBaseWrongRegionException : TerraBaseException
 /// <summary>400, 413 or 415: the request broke a validation rule (<c>invalid_request</c>, <c>invalid_query</c>, <c>invalid_patch</c>, …).</summary>
 public sealed class TerraBaseValidationException : TerraBaseException
 {
-    internal TerraBaseValidationException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex)
+    internal TerraBaseValidationException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner)
     {
     }
 }
@@ -186,8 +186,8 @@ public sealed class TerraBaseValidationException : TerraBaseException
 /// <summary>401: the API key or service credential is missing or unknown.</summary>
 public class TerraBaseAuthenticationException : TerraBaseException
 {
-    internal TerraBaseAuthenticationException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex)
+    internal TerraBaseAuthenticationException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner)
     {
     }
 }
@@ -195,22 +195,22 @@ public class TerraBaseAuthenticationException : TerraBaseException
 /// <summary>401 key_revoked: replace the key; never retry or exchange it again.</summary>
 public sealed class TerraBaseKeyRevokedException : TerraBaseAuthenticationException
 {
-    internal TerraBaseKeyRevokedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex) { }
+    internal TerraBaseKeyRevokedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner) { }
 }
 
 /// <summary>401 key_expired: replace the key; never retry or exchange it again.</summary>
 public sealed class TerraBaseKeyExpiredException : TerraBaseAuthenticationException
 {
-    internal TerraBaseKeyExpiredException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex) { }
+    internal TerraBaseKeyExpiredException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner) { }
 }
 
 /// <summary>403: the key lacks a scope, or the acting member's role does not allow the operation.</summary>
 public sealed class TerraBaseForbiddenException : TerraBaseException
 {
-    internal TerraBaseForbiddenException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex)
+    internal TerraBaseForbiddenException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner)
     {
     }
 }
@@ -222,8 +222,8 @@ public sealed class TerraBaseForbiddenException : TerraBaseException
 /// </summary>
 public sealed class TerraBaseNotFoundException : TerraBaseException
 {
-    internal TerraBaseNotFoundException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex)
+    internal TerraBaseNotFoundException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner)
     {
     }
 }
@@ -235,8 +235,8 @@ public sealed class TerraBaseNotFoundException : TerraBaseException
 /// </summary>
 public sealed class TerraBaseConflictException : TerraBaseException
 {
-    internal TerraBaseConflictException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex)
+    internal TerraBaseConflictException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner)
     {
     }
 }
@@ -244,8 +244,8 @@ public sealed class TerraBaseConflictException : TerraBaseException
 /// <summary>412 <c>precondition_failed</c>: an <c>If-Match</c> version or <c>If-None-Match: *</c> did not hold. Re-read before retrying.</summary>
 public sealed class TerraBasePreconditionFailedException : TerraBaseException
 {
-    internal TerraBasePreconditionFailedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex)
+    internal TerraBasePreconditionFailedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner)
     {
     }
 }
@@ -253,8 +253,8 @@ public sealed class TerraBasePreconditionFailedException : TerraBaseException
 /// <summary>503: TerraBase cannot serve the request now (<c>capacity</c>, or a Management catalog that needs an operator).</summary>
 public sealed class TerraBaseUnavailableException : TerraBaseException
 {
-    internal TerraBaseUnavailableException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex)
+    internal TerraBaseUnavailableException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner)
     {
     }
 }
@@ -262,15 +262,15 @@ public sealed class TerraBaseUnavailableException : TerraBaseException
 /// <summary>410 cursor_expired: resume data is no longer retained. Re-read and restart with cursor=now explicitly.</summary>
 public sealed class TerraBaseCursorExpiredException : TerraBaseException
 {
-    internal TerraBaseCursorExpiredException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex) { }
+    internal TerraBaseCursorExpiredException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner) { }
 }
 
 /// <summary>429: stream slots or tenant capacity exhausted. RetryAfter is advisory; the SDK never retries automatically.</summary>
 public sealed class TerraBaseRateLimitedException : TerraBaseException
 {
-    internal TerraBaseRateLimitedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
-        : base(statusCode, message, errorCode, operationIndex) { }
+    internal TerraBaseRateLimitedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex, Exception? inner = null)
+        : base(statusCode, message, errorCode, operationIndex, inner) { }
 }
 
 /// <summary>One schema validation failure, without input values.</summary>

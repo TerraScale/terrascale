@@ -39,7 +39,7 @@ public sealed class TerraBaseHealthClient
         {
             var response = opened.Response;
             if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.ServiceUnavailable))
-                throw await TerraBaseException.FromResponseAsync(response, opened.Token).ConfigureAwait(false);
+                throw await TerraBaseException.FromResponseAsync(response, null, opened.Token).ConfigureAwait(false);
             var bytes = await connection.ReadBodyAsync(response, opened.Token).ConfigureAwait(false);
             return new TerraBaseProbeResult(response.StatusCode, TerraBaseConnection.ReadResponse(bytes, Json.TerraBaseStatus, response.StatusCode));
         }, cancellationToken);

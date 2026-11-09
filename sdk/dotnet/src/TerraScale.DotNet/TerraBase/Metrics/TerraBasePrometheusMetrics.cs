@@ -33,7 +33,7 @@ public sealed partial class TerraBaseProjectClient
             {
                 var response = opened.Response;
                 if (!response.IsSuccessStatusCode)
-                    throw await TerraBaseException.FromResponseAsync(response, opened.Token).ConfigureAwait(false);
+                    throw await TerraBaseException.FromResponseAsync(response, null, opened.Token).ConfigureAwait(false);
                 var media = response.Content.Headers.ContentType;
                 if (response.StatusCode != HttpStatusCode.OK || media is null
                     || !string.Equals(media.MediaType, "text/plain", StringComparison.OrdinalIgnoreCase)
