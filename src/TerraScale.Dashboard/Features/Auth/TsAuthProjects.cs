@@ -20,6 +20,8 @@ namespace TerraScale.Dashboard.Features.Auth
         Task<IReadOnlyList<TsAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
         // A confidential client's secret is in this answer only; never log or store it.
         Task<TsAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TsAuthProjectCreateOAuthClient request, string proof, CancellationToken cancellationToken);
+        Task<TsAuthProjectOAuthClient> UpdateClientAsync(SessionRecord session, string projectId, string clientId, TsAuthProjectClientUpdate request, string proof, CancellationToken cancellationToken);
+        Task<TsAuthProjectClientSecret> RotateClientSecretAsync(SessionRecord session, string projectId, string clientId, string proof, CancellationToken cancellationToken);
         Task DeleteClientAsync(SessionRecord session, string projectId, string clientId, CancellationToken cancellationToken);
     }
 
@@ -88,6 +90,18 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             return string.IsNullOrEmpty(proof) ? throw StepUpFlow.Required() :
             ProjectAsync(() => Client().Projects.CreateClientAsync(Bearer(session), Id(projectId), request, proof, cancellationToken));
+        }
+
+        public Task<TsAuthProjectOAuthClient> UpdateClientAsync(SessionRecord session, string projectId, string clientId, TsAuthProjectClientUpdate request, string proof, CancellationToken cancellationToken)
+        {
+            return string.IsNullOrEmpty(proof) ? throw StepUpFlow.Required() :
+            ProjectAsync(() => Client().Projects.UpdateClientAsync(Bearer(session), Id(projectId), Id(clientId), request, proof, cancellationToken));
+        }
+
+        public Task<TsAuthProjectClientSecret> RotateClientSecretAsync(SessionRecord session, string projectId, string clientId, string proof, CancellationToken cancellationToken)
+        {
+            return string.IsNullOrEmpty(proof) ? throw StepUpFlow.Required() :
+            ProjectAsync(() => Client().Projects.RotateClientSecretAsync(Bearer(session), Id(projectId), Id(clientId), proof, cancellationToken));
         }
 
         public Task DeleteClientAsync(SessionRecord session, string projectId, string clientId, CancellationToken cancellationToken)

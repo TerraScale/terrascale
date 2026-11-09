@@ -12,6 +12,8 @@ namespace TerraScale.Dashboard.E2E.Demo
         public IAuthStepUpGateway? StepUp { get; set; }
         private int createdClients;
         public int CreatedClients => Volatile.Read(ref createdClients);
+        private int rotatedClients;
+        public int RotatedClients => Volatile.Read(ref rotatedClients);
         public const int PageSize = 3;
         private readonly ConcurrentDictionary<string, Tenant> tenants = new(StringComparer.Ordinal);
         private readonly TerraScaleIdGenerator ids = new();
@@ -195,6 +197,38 @@ namespace TerraScale.Dashboard.E2E.Demo
             var tenant = For(projectId);
             Locked(tenant, () => tenant.Clients.RemoveAll(item => item.ClientId == clientId) == 0 ? throw Missing() : true);
             return Task.CompletedTask;
+        }
+
+        public async Task<TsAuthProjectOAuthClient> UpdateClientAsync(SessionRecord session, string projectId, string clientId, TsAuthProjectClientUpdate request, string proof, CancellationToken cancellationToken)
+        {
+            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "update_oauth_client", "ts-auth", null, cancellationToken);
+            var tenant = For(projectId);
+            return Locked(tenant, () =>
+            {
+                var index = tenant.Clients.FindIndex(item => item.ClientId == clientId);
+                if (index < 0)
+                {
+                    throw Missing();
+                }
+
+                return tenant.Clients[index] = tenant.Clients[index] with { Name = request.Name!, RedirectUris = request.RedirectUris!.ToArray() };
+            });
+        }
+
+        public async Task<TsAuthProjectClientSecret> RotateClientSecretAsync(SessionRecord session, string projectId, string clientId, string proof, CancellationToken cancellationToken)
+        {
+            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "rotate_oauth_client", "ts-auth", null, cancellationToken);
+            Interlocked.Increment(ref rotatedClients);
+            var tenant = For(projectId);
+            return Locked(tenant, () =>
+            {
+                if (tenant.Clients.FindIndex(item => item.ClientId == clientId && item.Type == "confidential") < 0)
+                {
+                    throw Missing();
+                }
+
+                return new TsAuthProjectClientSecret(clientId, "tsas_test_" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)), DateTimeOffset.UtcNow.AddHours(1));
+            });
         }
     }
 }

@@ -12,6 +12,9 @@
         else { <button class="ts-btn ts-btn-danger ts-btn-sm" type="submit" data-on:click="@("confirm('" + confirm + "') || evt.preventDefault()")">@label</button> }
         </form>
     }
+    void ClientActions(TerraScale.Dashboard.Platform.TsAuth.TsAuthProjectOAuthClient client) {
+        <div class="ts-row"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="@(client.ClientId + "-edit")">Edit</button>@if (client.Type == "confidential") { Action("clients/" + client.ClientId + "/rotate", "Rotate secret"); } Action("clients/" + client.ClientId + "/delete", "Delete", "Delete this application? Its users can no longer sign in through it."); }</div>
+    }
     void Empty(string title) { <div class="ts-empty" role="status"><p class="ts-empty-title">@title</p></div> }
     void CopyValue(string id, string value, string label, bool link = false, bool secret = false) {
         <div class="ts-stack-sm" data-auth-copy><div class="ts-idp-copy">
@@ -31,6 +34,9 @@
 @if (!manage && current.Key != "overview") { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">You can view this configuration. Organization owners and admins can change it.</p></div> }
 @if (Model.Created is { } created) {
 <section class="ts-alert ts-alert-success" id="auth-created" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Created @created.Name</h2><p class="ts-alert-body">Client ID</p>@{ CopyValue("auth-created-client-id", created.ClientId, "new client ID"); }@if (created.ClientSecret is { } secret) { <p class="ts-alert-body">Client secret · Copy it now: it is shown only once.</p>CopyValue("auth-client-secret", secret, "client secret", secret: true); }</section>
+}
+@if (Model.Rotated is { } rotated) {
+<section class="ts-alert ts-alert-success" id="auth-rotated" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Rotated secret</h2><p class="ts-alert-body">Client secret · Copy it now: it is shown only once.</p>@{ CopyValue("auth-rotated-secret", rotated.ClientSecret, "client secret", secret: true); }<p class="ts-alert-body">@(rotated.PreviousSecretExpiresAt is { } until ? "The previous secret works until " + Date(until) + "." : "The previous secret no longer works.")</p></section>
 }
 <section class="@(current.Key == "branding" ? null : "ts-card")" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
 @if (current.Key == "overview") {
@@ -57,7 +63,13 @@ Card(Model.User.Length > 0 ? "Sessions of one user" : "Live sessions");
 else if (current.Key == "clients") {
 Card("OAuth applications");
 <div class="ts-card-body">@if (Model.Clients is not { Count: > 0 } clients) { Empty("No OAuth applications yet"); } else {
-<div class="ts-table-wrap" tabindex="0" role="region" aria-label="OAuth applications"><table class="ts-table"><thead><tr><th>Application</th><th>Client ID</th><th>Type</th><th>Redirect URIs</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var client in clients) { <tr><td class="ts-table-strong">@client.Name</td><td>@{ CopyValue("auth-client-" + client.ClientId, client.ClientId, "client ID for " + client.Name); }</td><td><span class="ts-badge">@client.Type</span></td><td class="ts-mono">@string.Join(", ", client.RedirectUris)</td><td>@if (manage) { Action("clients/" + client.ClientId + "/delete", "Delete", "Delete this application? Its users can no longer sign in through it."); }</td></tr> }</tbody></table></div> }
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="OAuth applications"><table class="ts-table"><thead><tr><th>Application</th><th>Client ID</th><th>Type</th><th>Redirect URIs</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var client in clients) { <tr><td class="ts-table-strong">@client.Name</td><td>@{ CopyValue("auth-client-" + client.ClientId, client.ClientId, "client ID for " + client.Name); }</td><td><span class="ts-badge">@client.Type</span></td><td class="ts-mono">@string.Join(", ", client.RedirectUris)</td><td>@if (manage) { ClientActions(client); }</td></tr> }</tbody></table></div>
+@foreach (var client in clients) { var editId = client.ClientId + "-edit";
+<dialog id="@editId" class="ts-dialog" closedby="any" aria-labelledby="@(editId + "-title")"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(editId + "-title")">Edit @client.Name</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@editId">@Icons.Render("X", 18)</button></header>
+<form class="ts-form" method="post" action="@("/api/v1/auth-management/clients/" + client.ClientId + "/edit")"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<div class="ts-field"><label class="ts-label" for="@(editId + "-name")">Application name</label><input class="ts-input" id="@(editId + "-name")" name="name" required maxlength="64" value="@client.Name" autocomplete="off" /></div>
+<div class="ts-field"><label class="ts-label" for="@(editId + "-uris")">Redirect URIs</label><textarea class="ts-input ts-mono" id="@(editId + "-uris")" name="redirect_uris" rows="3" required spellcheck="false" placeholder="https://app.example.com/callback (one per line, up to 10)">@string.Join("\n", client.RedirectUris)</textarea></div>
+<div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="@editId">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Save</button></div></form></div></dialog> } }
 @if (manage) {
 <form class="ts-form" method="post" action="/api/v1/auth-management/clients" id="auth-create-client"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><h3 class="ts-strong">Add an application</h3>
 <div class="ts-field"><label class="ts-label" for="auth-client-name">Application name</label><input class="ts-input" id="auth-client-name" name="name" required maxlength="64" placeholder="Web app" autocomplete="off" /></div>
