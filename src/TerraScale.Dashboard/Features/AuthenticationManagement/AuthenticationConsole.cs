@@ -27,10 +27,10 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
             var known = parts switch
             {
-                ["settings" or "branding" or "configuration" or "clients"] or ["danger", "users" or "sessions" or "clients"] => true,
+                ["settings" or "branding" or "configuration" or "clients" or "webhooks"] or ["danger", "users" or "sessions" or "clients"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
-                ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] => true,
+                ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate"] => true,
                 _ => false
             };
             if (!known)
@@ -129,6 +129,26 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         var rotated = await projects.RotateClientSecretAsync(session, project, id, rotateIntent.Challenge.Proof, cancel);
                         return await PageAsync(http, context, projects, "clients", rotated: rotated);
                     case ["clients", var id, "delete"]: await projects.DeleteClientAsync(session, project, id, cancel); break;
+                    case ["webhooks"]:
+                        var webhook = NewWebhook(form["url"], form["event_types"].Select(value => (string?)value));
+                        var createIntent = StepUpFlow.Intent(http, context, "create_webhook_endpoint");
+                        if (createIntent is null)
+                        {
+                            return await StepUpFlow.StartAsync(http, context, "create_webhook_endpoint", "ts-auth");
+                        }
+
+                        var registered = await projects.CreateWebhookEndpointAsync(session, project, webhook, createIntent.Challenge.Proof, cancel);
+                        return await PageAsync(http, context, projects, "webhooks", createdWebhook: registered);
+                    case ["webhooks", var id, "rotate"]:
+                        var secretIntent = StepUpFlow.Intent(http, context, "rotate_webhook_secret");
+                        if (secretIntent is null)
+                        {
+                            return await StepUpFlow.StartAsync(http, context, "rotate_webhook_secret", "ts-auth");
+                        }
+
+                        var rotatedSecret = await projects.RotateWebhookSecretAsync(session, project, id, secretIntent.Challenge.Proof, cancel);
+                        return await PageAsync(http, context, projects, "webhooks", rotatedWebhook: rotatedSecret);
+                    case ["webhooks", var id, "delete"]: await projects.DeleteWebhookEndpointAsync(session, project, id, cancel); break;
                     case ["sessions", var id, _]: await projects.RevokeSessionAsync(session, project, id, cancel); break;
                     case ["users", var id, "delete"]: await projects.DeleteUserAsync(session, project, id, cancel); break;
                     case ["users", var id, var action]: await projects.SetUserDisabledAsync(session, project, id, action == "disable", cancel); break;
@@ -240,6 +260,28 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return new(name.Trim(), type, uris);
         }
 
+        public static readonly string[] LifecycleEvents =
+            ["user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked"];
+
+        public static TsAuthCreateWebhookEndpoint NewWebhook(string? url, IEnumerable<string?> eventTypes)
+        {
+            var trimmed = url?.Trim();
+            if (trimmed is not { Length: > 0 and <= 2048 }
+                || !Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
+                || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length > 0 || uri.Fragment.Length > 0)
+            {
+                throw new AccountAccessException("The URL must be an absolute https URL of up to 2048 characters.", 422);
+            }
+
+            var events = eventTypes.Where(value => value is not null).Select(value => value!).Distinct().ToArray();
+            if (events.Length == 0 || events.Any(value => !LifecycleEvents.Contains(value)))
+            {
+                throw new AccountAccessException("Choose at least one lifecycle event.", 422);
+            }
+
+            return new(trimmed, events);
+        }
+
         public static TsAuthProjectClientUpdate ClientUpdate(string? name, IEnumerable<string> redirectUris)
         {
             var uris = redirectUris.Select(uri => uri.Trim()).Where(uri => uri.Length > 0).ToArray();
@@ -286,7 +328,8 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         }
 
         private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200,
-            TsAuthProjectOAuthClient? created = null, TsAuthProjectClientSecret? rotated = null)
+            TsAuthProjectOAuthClient? created = null, TsAuthProjectClientSecret? rotated = null,
+            TsAuthWebhookEndpoint? createdWebhook = null, TsAuthWebhookSecret? rotatedWebhook = null)
         {
             var section = AuthenticationSection.Find(key)!;
             if (key == "branding")
@@ -296,7 +339,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
             var query = http.Request.Query;
             var page = new AuthenticationPage(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section,
-                query["q"].ToString(), query["after"].ToString(), query["user"].ToString(), error, created, rotated)
+                query["q"].ToString(), query["after"].ToString(), query["user"].ToString(), error, created, rotated, createdWebhook, rotatedWebhook)
             { Draft = status >= 400 && http.Request.HasFormContentType ? await http.Request.ReadFormAsync(http.RequestAborted) : null, Saved = query["saved"] == "1" };
             var (session, project, cancel) = (context.Session, context.Project!.Id, http.RequestAborted);
             try
@@ -314,6 +357,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case "users": var users = await projects.ListUsersAsync(session, project, Value(page.Search), Value(page.After), cancel); page = page with { Users = users.Items, Next = users.Next }; break;
                     case "sessions": var live = await projects.ListSessionsAsync(session, project, Value(page.User), Value(page.After), cancel); page = page with { Sessions = live.Items, Next = live.Next }; break;
                     case "clients": page = page with { Clients = await projects.ListClientsAsync(session, project, cancel) }; break;
+                    case "webhooks": page = page with { Webhooks = context.CanManageProject ? await projects.ListWebhookEndpointsAsync(session, project, cancel) : [] }; break;
                     default: page = page with { Settings = await projects.GetSettingsAsync(session, project, cancel) }; break;
                 }
             }
@@ -331,13 +375,14 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
     }
 
     public sealed record AuthenticationPage(ShellModel Shell, AuthenticationSection Section, string Search, string After, string User, string Error,
-        TsAuthProjectOAuthClient? Created, TsAuthProjectClientSecret? Rotated)
+        TsAuthProjectOAuthClient? Created, TsAuthProjectClientSecret? Rotated, TsAuthWebhookEndpoint? CreatedWebhook, TsAuthWebhookSecret? RotatedWebhook)
     {
         public AccountContext Context => Shell.Context;
         public TsAuthProjectSettings? Settings { get; init; }
         public IReadOnlyList<TsAuthProjectUser>? Users { get; init; }
         public IReadOnlyList<TsAuthProjectSession>? Sessions { get; init; }
         public IReadOnlyList<TsAuthProjectOAuthClient>? Clients { get; init; }
+        public IReadOnlyList<TsAuthWebhookEndpoint>? Webhooks { get; init; }
         public string? Next { get; init; }
         public IFormCollection? Draft { get; init; }
         public bool Saved { get; init; }
@@ -360,6 +405,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             new("social", "Social sign-in", "Fingerprint", "Sign-in"),
             new("configuration", "Configuration", "Settings", "Sign-in"),
             new("clients", "OAuth applications", "Boxes", "Developers"),
+            new("webhooks", "Webhooks", "Zap", "Developers"),
             new("branding", "Branding", "Wand2", "Customize"),
             new("danger", "Danger zone", "TriangleAlert", "Danger")
         ];

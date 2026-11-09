@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 
 namespace TerraScale.Dashboard.Platform.TsAuth
@@ -9,9 +10,10 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             CancellationToken cancellationToken)
         {
             string? code;
+            string? message = null;
             try
             {
-                code = await ReadErrorCodeAsync(response.Content, cancellationToken).ConfigureAwait(false);
+                (code, message) = await ReadErrorAsync(response.Content, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is IOException or HttpRequestException)
             {
@@ -22,7 +24,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 response.StatusCode,
                 $"ts-auth returned HTTP {(int)response.StatusCode}.",
                 code,
-                ResolveRetryAfter(response), response);
+                ResolveRetryAfter(response), response,
+                response.StatusCode == HttpStatusCode.Conflict ? message : null);
         }
 
         internal static TimeSpan? ResolveRetryAfter(HttpResponseMessage? response)
@@ -43,38 +46,44 @@ namespace TerraScale.Dashboard.Platform.TsAuth
 
         private const int MaximumErrorBytes = 64 * 1024;
 
-        private static async Task<string?> ReadErrorCodeAsync(HttpContent? content, CancellationToken cancellationToken)
+        private const int MaximumConflictMessageCharacters = 200;
+
+        private static async Task<(string? Code, string? Message)> ReadErrorAsync(HttpContent? content, CancellationToken cancellationToken)
         {
-            if (content is null || content.Headers.ContentLength > MaximumErrorBytes) return null;
+            if (content is null || content.Headers.ContentLength > MaximumErrorBytes) return (null, null);
             using var destination = new BoundedHttpBodyStream(MaximumErrorBytes, () => new ErrorBodyLimitException(), cancellationToken);
             try
             {
                 await content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
             }
-            catch (ErrorBodyLimitException) { return null; }
+            catch (ErrorBodyLimitException) { return (null, null); }
             var buffer = destination.ToArray();
 
             try
             {
                 using var json = JsonDocument.Parse(buffer);
                 var root = json.RootElement;
-                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("error", out var error)) return null;
+                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("error", out var error)) return (null, null);
                 var code = error.ValueKind == JsonValueKind.String ? error.GetString()
                     : error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var nested) && nested.ValueKind == JsonValueKind.String
                         ? nested.GetString() : null;
-                return code is not null && KnownErrorCodes.TryGetValue(code, out var known) ? known : null;
+                var message = error.ValueKind == JsonValueKind.Object && error.TryGetProperty("message", out var detail)
+                    && detail.ValueKind == JsonValueKind.String ? detail.GetString() : null;
+                return (code is not null && KnownErrorCodes.TryGetValue(code, out var known) ? known : null,
+                    message is { Length: > 0 and <= MaximumConflictMessageCharacters } ? message : null);
             }
             catch (Exception exception) when (exception is JsonException or InvalidOperationException)
             {
-                return null;
+                return (null, null);
             }
         }
 
         private sealed class ErrorBodyLimitException : Exception;
 
         // Fixed error identities from the source-pinned C# platform and legacy contracts and
-        // the OAuth error vocabulary. No producer-supplied free text is retained.
+        // the OAuth error vocabulary. Codes never carry producer free text; only a 409 keeps
+        // ts-auth's own bounded message so conflicts name their cause.
         private static readonly HashSet<string> KnownErrorCodes = new(StringComparer.Ordinal)
         {
             "already_member",

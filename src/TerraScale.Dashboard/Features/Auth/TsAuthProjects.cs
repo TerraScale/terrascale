@@ -23,6 +23,11 @@ namespace TerraScale.Dashboard.Features.Auth
         Task<TsAuthProjectOAuthClient> UpdateClientAsync(SessionRecord session, string projectId, string clientId, TsAuthProjectClientUpdate request, string proof, CancellationToken cancellationToken);
         Task<TsAuthProjectClientSecret> RotateClientSecretAsync(SessionRecord session, string projectId, string clientId, string proof, CancellationToken cancellationToken);
         Task DeleteClientAsync(SessionRecord session, string projectId, string clientId, CancellationToken cancellationToken);
+        Task<IReadOnlyList<TsAuthWebhookEndpoint>> ListWebhookEndpointsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
+        // A webhook endpoint's signing secret is in this answer only; never log or store it.
+        Task<TsAuthWebhookEndpoint> CreateWebhookEndpointAsync(SessionRecord session, string projectId, TsAuthCreateWebhookEndpoint request, string proof, CancellationToken cancellationToken);
+        Task<TsAuthWebhookSecret> RotateWebhookSecretAsync(SessionRecord session, string projectId, string webhookEndpointId, string proof, CancellationToken cancellationToken);
+        Task DeleteWebhookEndpointAsync(SessionRecord session, string projectId, string webhookEndpointId, CancellationToken cancellationToken);
     }
 
     public sealed partial class TsAuthGateway : ITsAuthProjects
@@ -109,6 +114,28 @@ namespace TerraScale.Dashboard.Features.Auth
             return ProjectAsync(async () => { await Client().Projects.DeleteClientAsync(Bearer(session), Id(projectId), Id(clientId), cancellationToken); return true; });
         }
 
+        public async Task<IReadOnlyList<TsAuthWebhookEndpoint>> ListWebhookEndpointsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
+        {
+            return (await ProjectAsync(() => Client().Projects.ListWebhookEndpointsAsync(Bearer(session), Id(projectId), cancellationToken))).Items ?? throw new IOException("ts-auth returned an invalid page.");
+        }
+
+        public Task<TsAuthWebhookEndpoint> CreateWebhookEndpointAsync(SessionRecord session, string projectId, TsAuthCreateWebhookEndpoint request, string proof, CancellationToken cancellationToken)
+        {
+            return string.IsNullOrEmpty(proof) ? throw StepUpFlow.Required() :
+            ProjectAsync(() => Client().Projects.CreateWebhookEndpointAsync(Bearer(session), Id(projectId), request, proof, cancellationToken));
+        }
+
+        public Task<TsAuthWebhookSecret> RotateWebhookSecretAsync(SessionRecord session, string projectId, string webhookEndpointId, string proof, CancellationToken cancellationToken)
+        {
+            return string.IsNullOrEmpty(proof) ? throw StepUpFlow.Required() :
+            ProjectAsync(() => Client().Projects.RotateWebhookSecretAsync(Bearer(session), Id(projectId), Id(webhookEndpointId), proof, cancellationToken));
+        }
+
+        public Task DeleteWebhookEndpointAsync(SessionRecord session, string projectId, string webhookEndpointId, CancellationToken cancellationToken)
+        {
+            return ProjectAsync(async () => { await Client().Projects.DeleteWebhookEndpointAsync(Bearer(session), Id(projectId), Id(webhookEndpointId), cancellationToken); return true; });
+        }
+
         private static string? Blank(string? value)
         {
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -133,7 +160,7 @@ namespace TerraScale.Dashboard.Features.Auth
                     401 => "Sign in again to continue.",
                     403 => "Your project role does not allow this change.",
                     404 => "Authentication for this project, or the requested record, is unavailable.",
-                    409 => "The change conflicts with the current state.",
+                    409 => error.ServerMessage is { Length: > 0 } conflict ? conflict : "The change conflicts with the current state.",
                     429 => "Too many requests. Try again shortly.",
                     _ => "The request was rejected."
                 }, status == 400 ? StatusCodes.Status422UnprocessableEntity : status, error.ErrorCode ?? "");

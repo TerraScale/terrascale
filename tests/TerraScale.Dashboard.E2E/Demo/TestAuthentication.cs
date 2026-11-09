@@ -26,6 +26,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             public readonly List<TsAuthProjectUser> Users = [];
             public readonly List<TsAuthProjectSession> Sessions = [];
             public readonly List<TsAuthProjectOAuthClient> Clients = [];
+            public readonly List<TsAuthWebhookEndpoint> Webhooks = [];
             // Configured providers; the stand-in keeps no secrets, like ts-auth never returns them.
             public readonly Dictionary<string, TsAuthProjectProviderUpdate> Providers = new(StringComparer.Ordinal);
         }
@@ -229,6 +230,52 @@ namespace TerraScale.Dashboard.E2E.Demo
 
                 return new TsAuthProjectClientSecret(clientId, "tsas_test_" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)), DateTimeOffset.UtcNow.AddHours(1));
             });
+        }
+
+        public Task<IReadOnlyList<TsAuthWebhookEndpoint>> ListWebhookEndpointsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
+        {
+            var tenant = For(projectId);
+            return Task.FromResult(Locked(tenant, () => (IReadOnlyList<TsAuthWebhookEndpoint>)tenant.Webhooks.Select(hook => hook with { Secret = null }).ToArray()));
+        }
+
+        public async Task<TsAuthWebhookEndpoint> CreateWebhookEndpointAsync(SessionRecord session, string projectId, TsAuthCreateWebhookEndpoint request, string proof, CancellationToken cancellationToken)
+        {
+            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "create_webhook_endpoint", "ts-auth", null, cancellationToken);
+            var tenant = For(projectId);
+            return Locked(tenant, () =>
+            {
+                if (tenant.Webhooks.Count >= 3)
+                {
+                    throw new AccountAccessException("A project registers at most 3 webhook endpoints.", 409, "webhook_endpoint_limit");
+                }
+
+                var hook = new TsAuthWebhookEndpoint(ids.NewId(), request.Url!, request.EventTypes!.ToArray(), DateTimeOffset.UtcNow,
+                    "whsec_test_" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)));
+                tenant.Webhooks.Add(hook with { Secret = null });
+                return hook;
+            });
+        }
+
+        public async Task<TsAuthWebhookSecret> RotateWebhookSecretAsync(SessionRecord session, string projectId, string webhookEndpointId, string proof, CancellationToken cancellationToken)
+        {
+            await (StepUp ?? throw StepUpFlow.Required()).ConsumeAsync(session, proof, "rotate_webhook_secret", "ts-auth", null, cancellationToken);
+            var tenant = For(projectId);
+            return Locked(tenant, () =>
+            {
+                if (tenant.Webhooks.FindIndex(hook => hook.Id == webhookEndpointId) < 0)
+                {
+                    throw Missing();
+                }
+
+                return new TsAuthWebhookSecret(webhookEndpointId, "whsec_test_" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)), DateTimeOffset.UtcNow.AddHours(24));
+            });
+        }
+
+        public Task DeleteWebhookEndpointAsync(SessionRecord session, string projectId, string webhookEndpointId, CancellationToken cancellationToken)
+        {
+            var tenant = For(projectId);
+            Locked(tenant, () => tenant.Webhooks.RemoveAll(hook => hook.Id == webhookEndpointId) == 0 ? throw Missing() : true);
+            return Task.CompletedTask;
         }
     }
 }

@@ -38,6 +38,12 @@
 @if (Model.Rotated is { } rotated) {
 <section class="ts-alert ts-alert-success" id="auth-rotated" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Rotated secret</h2><p class="ts-alert-body">Client secret · Copy it now: it is shown only once.</p>@{ CopyValue("auth-rotated-secret", rotated.ClientSecret, "client secret", secret: true); }<p class="ts-alert-body">@(rotated.PreviousSecretExpiresAt is { } until ? "The previous secret works until " + Date(until) + "." : "The previous secret no longer works.")</p></section>
 }
+@if (Model.CreatedWebhook is { } registered) {
+<section class="ts-alert ts-alert-success" id="auth-webhook-created" data-init="history.replaceState(null, '', '/auth/webhooks')"><h2 class="ts-alert-title">Registered endpoint</h2><p class="ts-alert-body ts-break">@registered.Url</p>@if (registered.Secret is { } secret) { <p class="ts-alert-body">Signing secret · Copy it now: it is shown only once.</p>CopyValue("auth-webhook-created-secret", secret, "signing secret", secret: true); }</section>
+}
+@if (Model.RotatedWebhook is { } rotatedSecret) {
+<section class="ts-alert ts-alert-success" id="auth-webhook-rotated" data-init="history.replaceState(null, '', '/auth/webhooks')"><h2 class="ts-alert-title">Rotated signing secret</h2><p class="ts-alert-body">Signing secret · Copy it now: it is shown only once.</p>@{ CopyValue("auth-webhook-rotated-secret", rotatedSecret.Secret, "signing secret", secret: true); }<p class="ts-alert-body">@(rotatedSecret.PreviousSecretExpiresAt is { } until ? "The previous secret works until " + Date(until) + "." : "The previous secret no longer works.")</p></section>
+}
 <section class="@(current.Key == "branding" ? null : "ts-card")" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
 @if (current.Key == "overview") {
 Card("Project authentication");
@@ -76,6 +82,16 @@ Card("OAuth applications");
 <div class="ts-field"><label class="ts-label" for="auth-client-type">Client type</label><select class="ts-select" id="auth-client-type" name="type"><option value="public">Public (PKCE, no secret)</option><option value="confidential">Confidential (client secret)</option></select></div>
 <div class="ts-field"><label class="ts-label" for="auth-client-uris">Redirect URIs</label><textarea class="ts-input ts-mono" id="auth-client-uris" name="redirect_uris" rows="3" required spellcheck="false" placeholder="https://app.example.com/callback (one per line, up to 10)"></textarea></div>
 <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Add application</button></div></form> }</div>
+}
+else if (current.Key == "webhooks") {
+Card("Webhooks");
+<div class="ts-card-body">@if (Model.Webhooks is not { Count: > 0 } hooks) { Empty(manage ? "No webhook endpoints yet" : "Webhook endpoints unavailable"); } else {
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Webhook endpoints"><table class="ts-table"><thead><tr><th>URL</th><th>Events</th><th>Created</th><th><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var hook in hooks) { <tr><td class="ts-table-strong ts-break">@hook.Url</td><td class="ts-mono">@string.Join(", ", hook.EventTypes)</td><td class="ts-idp-nowrap">@Date(hook.CreatedAt)</td><td>@if (manage) { <div class="ts-row">@{ Action("webhooks/" + hook.Id + "/rotate", "Rotate secret"); }@{ Action("webhooks/" + hook.Id + "/delete", "Delete", "Delete this webhook endpoint? It receives no further events."); }</div> }</td></tr> }</tbody></table></div> }
+@if (manage) {
+<form class="ts-form" method="post" action="/api/v1/auth-management/webhooks" id="auth-create-webhook"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><h3 class="ts-strong">Add a webhook endpoint</h3>
+<div class="ts-field"><label class="ts-label" for="auth-webhook-url">URL</label><input class="ts-input ts-mono" id="auth-webhook-url" name="url" type="url" required maxlength="2048" placeholder="https://hooks.example.com/lifecycle" autocomplete="off" /></div>
+<fieldset class="ts-field ts-stack-sm"><legend class="ts-label">Events</legend>@foreach (var name in TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationConsole.LifecycleEvents) { <label><input type="checkbox" name="event_types" value="@name" /> @name</label> }</fieldset>
+<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Add webhook endpoint</button></div></form> }</div>
 }
 else if (current.Key == "sign-in") {
 Card("Sign-in methods");
