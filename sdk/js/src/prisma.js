@@ -1,6 +1,8 @@
 import { ExactDecimal } from "./v1/json.js";
+import { SqlError } from "./v1/errors.js";
 /** @import { V1Database } from "./v1/terrabase-v1.js" */
-/** @import { V1SqlColumn } from "./v1/sql-execute.js" */
+/** @import { V1SqlColumn, V1SqlExecuteResult } from "./v1/sql-execute.js" */
+/** @import { V1SqlSocket } from "./v1/sql-socket.js" */
 /** @import { V1SqlValue } from "./v1/sql-execute.js" */
 
 /** @typedef {0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 64 | 65 | 66 | 67 | 68 | 69 | 70 | 71 | 72 | 73 | 74 | 75 | 76 | 77 | 78 | 128} PrismaColumnType */
@@ -17,6 +19,43 @@ import { ExactDecimal } from "./v1/json.js";
  */
 
 /** @typedef {{ readonly scalarType?: string | undefined }} PrismaArgType */
+
+/** @typedef {"READ UNCOMMITTED" | "READ COMMITTED" | "REPEATABLE READ" | "SNAPSHOT" | "SERIALIZABLE"} PrismaIsolationLevel */
+
+/**
+ * @param {PrismaSqlQuery} query
+ * @returns {import("./v1/sql-execute.js").V1SqlArgument[]}
+ */
+function sqlArguments(query) {
+  return query.args.map((arg, index) => mapArgument(arg, query.argTypes?.[index]));
+}
+
+/**
+ * @param {V1SqlExecuteResult} result
+ * @returns {PrismaSqlResultSet}
+ */
+function sqlResultSet(result) {
+  const types = columnTypes(result.columns, result.rows);
+  /** @type {PrismaSqlResultSet} */
+  const resultSet = {
+    columnTypes: types,
+    columnNames: result.columns.map(column => column.name),
+    rows: result.rows.map(row => row.map((value, index) => mapValue(value, types[index] ?? columnTypeEnum.Int32))),
+  };
+  if (result.lastInsertRowid !== null) resultSet.lastInsertId = String(result.lastInsertRowid);
+  return resultSet;
+}
+
+/**
+ * @param {unknown} error
+ * @returns {unknown}
+ */
+function transactionError(error) {
+  if (error instanceof SqlError && error.code === "query_canceled" && error.message.includes("5 seconds"))
+    return new Error(`Interactive transaction timed out: the server ends one transaction after 5 seconds (${error.message}).`);
+  return error;
+}
+
 
 const columnTypeEnum = Object.freeze({
   Int32: 0, Int64: 1, Float: 2, Double: 3, Numeric: 4, Boolean: 5, Character: 6, Text: 7,
@@ -102,7 +141,7 @@ function mapArgument(arg, argType) {
 
 /**
  * A driver-adapter factory over one TerraBase database: `new PrismaTerraScale(client.database(name))`
- * passed to the ORM as its adapter. Queries run over HTTPS; interactive transactions arrive in the next release.
+ * passed to the ORM as its adapter. Queries run over HTTPS; interactive transactions run over the SQL WebSocket.
  */
 export class PrismaTerraScale {
   /** @type {"sqlite"} */
@@ -143,16 +182,7 @@ export class PrismaTerraScaleAdapter {
    * @returns {Promise<PrismaSqlResultSet>}
    */
   async queryRaw(query) {
-    const result = await this.#database.execute(query.sql, query.args.map((arg, index) => mapArgument(arg, query.argTypes?.[index])));
-    const types = columnTypes(result.columns, result.rows);
-    /** @type {PrismaSqlResultSet} */
-    const resultSet = {
-      columnTypes: types,
-      columnNames: result.columns.map(column => column.name),
-      rows: result.rows.map(row => row.map((value, index) => mapValue(value, types[index] ?? columnTypeEnum.Int32))),
-    };
-    if (result.lastInsertRowid !== null) resultSet.lastInsertId = String(result.lastInsertRowid);
-    return resultSet;
+    return sqlResultSet(await this.#database.execute(query.sql, sqlArguments(query)));
   }
 
   /**
@@ -161,7 +191,7 @@ export class PrismaTerraScaleAdapter {
    * @returns {Promise<number>}
    */
   async executeRaw(query) {
-    const result = await this.#database.execute(query.sql, query.args.map((arg, index) => mapArgument(arg, query.argTypes?.[index])));
+    const result = await this.#database.execute(query.sql, sqlArguments(query));
     return result.rowsAffected;
   }
 
@@ -173,11 +203,115 @@ export class PrismaTerraScaleAdapter {
     await this.#database.batch(script.split(";").map(statement => statement.trim()).filter(statement => statement !== ""));
   }
 
-  /** @returns {Promise<never>} */
-  async startTransaction() {
-    throw new Error("interactive transactions arrive in the next release");
+  /**
+   * Opens a SQL WebSocket session and begins one interactive transaction of at most 5 seconds on it.
+   * @param {PrismaIsolationLevel} [isolationLevel]
+   * @returns {Promise<PrismaTerraScaleTransaction>}
+   */
+  async startTransaction(isolationLevel) {
+    if (isolationLevel !== undefined && isolationLevel !== "SERIALIZABLE")
+      throw new Error(`Unsupported isolation level: ${isolationLevel}. Only SERIALIZABLE is supported.`);
+    const socket = await this.#database.connect();
+    try {
+      await socket.begin();
+    } catch (error) {
+      socket.close();
+      throw error;
+    }
+    return new PrismaTerraScaleTransaction(socket);
   }
 
   /** @returns {Promise<void>} */
   async dispose() {}
+}
+
+/** One interactive transaction over a dedicated SQL WebSocket session. */
+export class PrismaTerraScaleTransaction {
+  /** @type {"sqlite"} */
+  provider = "sqlite";
+  /** @type {string} */
+  adapterName = "@terrascale/sdk/prisma";
+  /** @type {{ usePhantomQuery: boolean }} */
+  options = { usePhantomQuery: false };
+  /** @type {V1SqlSocket} */
+  #socket;
+
+  /** @param {V1SqlSocket} socket */
+  constructor(socket) {
+    this.#socket = socket;
+  }
+
+  /**
+   * Runs one statement in the transaction and returns its typed result set.
+   * @param {PrismaSqlQuery} query
+   * @returns {Promise<PrismaSqlResultSet>}
+   */
+  async queryRaw(query) {
+    try {
+      return sqlResultSet(await this.#socket.execute(query.sql, sqlArguments(query)));
+    } catch (error) {
+      throw transactionError(error);
+    }
+  }
+
+  /**
+   * Runs one statement in the transaction and returns the number of affected rows.
+   * @param {PrismaSqlQuery} query
+   * @returns {Promise<number>}
+   */
+  async executeRaw(query) {
+    try {
+      return (await this.#socket.execute(query.sql, sqlArguments(query))).rowsAffected;
+    } catch (error) {
+      throw transactionError(error);
+    }
+  }
+
+  /**
+   * @param {string} name
+   * @returns {Promise<void>}
+   */
+  async createSavepoint(name) {
+    await this.#socket.execute(`SAVEPOINT ${name}`);
+  }
+
+  /**
+   * @param {string} name
+   * @returns {Promise<void>}
+   */
+  async rollbackToSavepoint(name) {
+    await this.#socket.execute(`ROLLBACK TO SAVEPOINT ${name}`);
+  }
+
+  /**
+   * @param {string} name
+   * @returns {Promise<void>}
+   */
+  async releaseSavepoint(name) {
+    await this.#socket.execute(`RELEASE SAVEPOINT ${name}`);
+  }
+
+  /** Commits the transaction and closes the session. */
+  async commit() {
+    await this.#end("commit");
+  }
+
+  /** Rolls the transaction back and closes the session. */
+  async rollback() {
+    await this.#end("rollback");
+  }
+
+  /**
+   * @param {"commit" | "rollback"} verb
+   * @returns {Promise<void>}
+   */
+  async #end(verb) {
+    try {
+      await this.#socket[verb]();
+    } catch (error) {
+      this.#socket.close();
+      throw transactionError(error);
+    }
+    this.#socket.close();
+  }
 }

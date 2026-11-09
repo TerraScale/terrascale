@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import { PrismaTerraScale } from "../src/prisma.js";
 import { fixture, json } from "./helpers/v1-http.js";
+import { sqlSocketFixture } from "./helpers/sql-socket-server.js";
 
 const created = {
   columns: [{ name: "id", decltype: "INTEGER" }, { name: "name", decltype: "TEXT" }, { name: "score", decltype: "REAL" }, { name: "avatar", decltype: "BLOB" }],
@@ -26,6 +27,26 @@ test("adapter maps typed columns, rows, affected rows and the last insert id", a
   expect(result.lastInsertId).toBeUndefined();
   const insert = await adapter.queryRaw({ sql: "INSERT INTO people (name) VALUES (?)", args: ["Ada"], argTypes: [] });
   expect(insert.lastInsertId).toBe("9007199254740993");
-  await expect(adapter.startTransaction()).rejects.toThrow("interactive transactions arrive in the next release");
+  await adapter.dispose();
+});
+
+test("interactive transactions run begin, statements and rollback or commit over one socket each", async () => {
+  const { client, frames, upgrades } = await sqlSocketFixture((frame, peer) => {
+    const results = frame.type === "execute"
+      ? [{ columns: [], rows: [], rows_affected: 1, last_insert_rowid: null }]
+      : [];
+    peer.send({ id: frame.id, type: "result", results, transaction: frame.type === "begin" || frame.type === "execute" });
+  });
+  const adapter = await new PrismaTerraScale(client.database("app")).connect();
+  const rolledBack = await adapter.startTransaction();
+  expect(rolledBack.options).toEqual({ usePhantomQuery: false });
+  await rolledBack.executeRaw({ sql: "INSERT INTO people (name) VALUES (?)", args: ["Ada"], argTypes: [] });
+  await rolledBack.rollback();
+  const committed = await adapter.startTransaction("SERIALIZABLE");
+  expect(await committed.queryRaw({ sql: "SELECT * FROM people", args: [], argTypes: [] })).toMatchObject({ columnNames: [], rows: [] });
+  await committed.commit();
+  expect(frames.map(frame => frame.type)).toEqual(["begin", "execute", "rollback", "begin", "execute", "commit"]);
+  expect(upgrades).toHaveLength(2);
+  await expect(adapter.startTransaction("READ COMMITTED")).rejects.toThrow("Unsupported isolation level: READ COMMITTED");
   await adapter.dispose();
 });
