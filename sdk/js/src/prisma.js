@@ -57,8 +57,6 @@ function transactionError(error) {
 }
 
 /**
- * Maps a refused statement to Prisma's driver-adapter error kinds by SQLSTATE;
- * anything else surfaces as the generic `sqlite` kind with the server's message.
  * @param {unknown} error
  * @returns {unknown}
  */
@@ -83,6 +81,77 @@ function mappedErrorKind(sqlstate) {
   }
 }
 
+/**
+ * @param {string} script
+ * @returns {string[]}
+ */
+function splitScript(script) {
+  const statements = [];
+  let start = 0;
+  let index = 0;
+  let firstWord = "";
+  let word = "";
+  let createTrigger = false;
+  let bodyDepth = 0;
+  const takeWord = () => {
+    if (word === "") return;
+    const upper = word.toUpperCase();
+    if (firstWord === "") firstWord = upper;
+    if (upper === "TRIGGER" && firstWord === "CREATE") createTrigger = true;
+    else if (upper === "BEGIN" && createTrigger) bodyDepth += 1;
+    else if (upper === "END" && createTrigger && bodyDepth > 0) bodyDepth -= 1;
+    word = "";
+  };
+  while (index < script.length) {
+    const character = script[index];
+    if (character === "'") {
+      takeWord();
+      index += 1;
+      while (index < script.length && script[index] !== "'") index += 1;
+      index += 1;
+    } else if (character === '"' || character === "`") {
+      takeWord();
+      const quote = character;
+      index += 1;
+      while (index < script.length && script[index] !== quote) index += 1;
+      index += 1;
+    } else if (character === "[") {
+      takeWord();
+      index += 1;
+      while (index < script.length && script[index] !== "]") index += 1;
+      index += 1;
+    } else if (character === "-" && script[index + 1] === "-") {
+      takeWord();
+      while (index < script.length && script[index] !== "\n") index += 1;
+    } else if (character === "/" && script[index + 1] === "*") {
+      takeWord();
+      index += 2;
+      while (index < script.length && !(script[index] === "*" && script[index + 1] === "/")) index += 1;
+      index = Math.min(index + 2, script.length);
+    } else if (/[A-Za-z_]/u.test(character ?? "")) {
+      word += character;
+      index += 1;
+    } else if (character === ";") {
+      takeWord();
+      if (!createTrigger || bodyDepth === 0) {
+        const statement = script.slice(start, index + 1).trim();
+        if (statement !== "" && statement !== ";") statements.push(statement);
+        start = index + 1;
+        firstWord = "";
+        createTrigger = false;
+        bodyDepth = 0;
+      }
+      index += 1;
+    } else {
+      takeWord();
+      index += 1;
+    }
+  }
+  takeWord();
+  const rest = script.slice(start).trim();
+  if (rest !== "") statements.push(rest);
+  return statements;
+}
 
 const columnTypeEnum = Object.freeze({
   Int32: 0, Int64: 1, Float: 2, Double: 3, Numeric: 4, Boolean: 5, Character: 6, Text: 7,
@@ -235,7 +304,7 @@ export class PrismaTerraScaleAdapter {
    */
   async executeScript(script) {
     try {
-      await this.#database.batch(script.split(";").map(statement => statement.trim()).filter(statement => statement !== ""));
+      await this.#database.batch(splitScript(script));
     } catch (error) {
       throw adapterError(error);
     }
