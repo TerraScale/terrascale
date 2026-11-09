@@ -176,6 +176,11 @@ public static class App
         builder.Services.AddSingleton<Features.Social.PlatformSocialSignIn>();
         builder.Services.AddHttpClient(Features.Social.PlatformSocialSignIn.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(10))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = PublicAddresses.ConnectionLifetime });
+        builder.Services.AddHttpClient(Features.Webhooks.WebhookHttp.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(20);
+            client.MaxResponseContentBufferSize = 64 * 1024;
+        }).ConfigurePrimaryHttpMessageHandler(Features.Webhooks.WebhookHttp.GuardedHandler);
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
         builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseSqlDatabase>()));
