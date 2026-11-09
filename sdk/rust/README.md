@@ -93,7 +93,13 @@ headers.
 `Database::create` creates a database; `create_with_placement` takes a `DatabasePlacement` naming its
 `home_region`. Without a home region the called region is the home. `Client::list_databases`,
 `Database::get_database`, `Client::rename_database`, `Database::branch_database` (plus `branch_database_if_id`/`delete_database_if_id` guarded by the immutable database ID) and backups/point-in-time restore
-use the same project client.
+use the same project client. Backup operations are typed: `create_backup`/`list_backups` return
+`Backup`/`BackupList`, `get_backup_policy`/`set_backup_policy` use `BackupPolicy` and
+`BackupPolicyRequest`, `get_restore_window` returns `RestoreWindow`, `plan_point_in_time` returns
+`PointInTimePlan` from a `PointInTimeRequest`, and `restore_backup`/`restore_point_in_time` poll a
+`RestoreOperation` to its ten-minute deadline before returning the `RestoredDatabase`.
+`get_backup_destination`/`set_backup_destination` use `ProjectBackupDestination`; its request's
+credentials are write-only and never printed.
 
 A database has one home region for writes and can have encrypted read replicas in other serving regions.
 REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
