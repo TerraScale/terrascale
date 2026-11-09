@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using Stripe;
 using TerraScale.Dashboard.Features.Billing.Invoices;
 using TerraScale.Dashboard.Platform.Mcp;
+using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.Validation;
 
 namespace TerraScale.Dashboard.Features.Billing
@@ -44,21 +45,50 @@ namespace TerraScale.Dashboard.Features.Billing
             return Invoke(() => billing.PreviewPlanChangeAsync(Scope(organizationId, projectId), plan, Interval(plan, interval), Cancellation));
         }
 
-        [McpServerTool(Name = "change_plan", Title = "Change plan", OpenWorld = true, Idempotent = true, Destructive = false, UseStructuredContent = true), Description("Change a subscribed organization's plan. Upgrades apply now (charging a prorated amount); downgrades and switching a Personal workspace to free are scheduled for renewal and can be undone with undo_plan_change. Owner only.")]
+        [McpServerTool(Name = "change_plan", Title = "Change plan", OpenWorld = true, Idempotent = true, Destructive = false, UseStructuredContent = true), Description("Change a subscribed organization's plan. Upgrades apply now (charging a prorated amount); downgrades and switching a Personal workspace to free are scheduled for renewal and can be undone with undo_plan_change. Owner only. Always returns step_up_required: a plan change is confirmed with fresh credentials on the dashboard's billing page, never through unattended MCP.")]
         public Task<PlanChanged> ChangePlan(
             [Description("Plan key from list_plans, such as starter or pro. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
             [Description(IntervalDescription)] string interval = "",
             string? organizationId = null, string? projectId = null)
         {
-            return Invoke(async () =>
-            new PlanChanged(await billing.ChangePlanAsync(Scope(organizationId, projectId), plan, Interval(plan, interval), Cancellation)));
+            return Invoke<PlanChanged>(async () =>
+        {
+            var context = Scope(organizationId, projectId);
+            RequireBillingOwner(context);
+            var key = plan.Trim().ToLowerInvariant();
+            var catalog = PlanCatalog.For(key);
+            if (catalog.Key == "free" && context.Organization?.Kind != "personal")
+            {
+                throw new AccountAccessException(catalog.Name + " is available only for Personal workspaces.", 400);
+            }
+
+            _ = Interval(key, interval);
+            throw ConfirmedInDashboard(context);
+        });
         }
 
-        [McpServerTool(Name = "undo_plan_change", Title = "Undo scheduled plan change", OpenWorld = true, Idempotent = true, Destructive = false, UseStructuredContent = true), Description("Cancel a plan change scheduled for renewal so the current plan continues. Owner only.")]
+        [McpServerTool(Name = "undo_plan_change", Title = "Undo scheduled plan change", OpenWorld = true, Idempotent = true, Destructive = false, UseStructuredContent = true), Description("Cancel a plan change scheduled for renewal so the current plan continues. Owner only. Always returns step_up_required: the undo is confirmed with fresh credentials on the dashboard's billing page, never through unattended MCP.")]
         public Task<PlanChanged> UndoPlanChange(string? organizationId = null, string? projectId = null)
         {
-            return Invoke(async () =>
-            new PlanChanged(await billing.UndoPlanChangeAsync(Scope(organizationId, projectId), Cancellation)));
+            return Invoke<PlanChanged>(async () =>
+        {
+            var context = Scope(organizationId, projectId);
+            RequireBillingOwner(context);
+            throw ConfirmedInDashboard(context);
+        });
+        }
+
+        private static void RequireBillingOwner(AccountContext context)
+        {
+            if (context.Organization is null || context.Role != "owner")
+            {
+                throw new AccountAccessException("Only organization owners manage billing.");
+            }
+        }
+
+        private static AccountAccessException ConfirmedInDashboard(AccountContext context)
+        {
+            return new("Confirm this in the dashboard: " + WorkspaceUrl.For(context, "/organization?tab=billing"), 403, "step_up_required");
         }
 
         [McpServerTool(Name = "list_plans", Title = "List plans", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = true, Idempotent = true), Description("List the paid plans an organization can subscribe to, with prices in cents, limits, and which plan is current.")]

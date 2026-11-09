@@ -14,9 +14,9 @@ dashboard callback origin, without a query or fragment.
 
 Supported pairs are `delete_account` with `ts-dashboard` or `ts-auth`,
 `create_pat` with `ts-dashboard`, and `delete_organization`,
-`start_ownership_transfer`, `create_api_key`, `rotate_api_key`,
+`start_ownership_transfer`, `change_plan`, `create_api_key`, `rotate_api_key`,
 `create_oauth_client`, `update_oauth_client`, `rotate_oauth_client`,
-`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). Organization deletion and starting an ownership transfer consume their proof exactly like API-key creation, and their proofs additionally bind the exact `organization_id`: the minting request carries it and consumption refuses a proof minted for another organization. The hosted page identifies the operation
+`change_email`, `add_passkey`, `enroll_totp` or `delete_passkey` with `ts-auth` (see `email-change.md`). Organization deletion, starting an ownership transfer and dashboard plan changes consume their proof's single-use encrypted intent, and their proofs additionally bind the exact `organization_id`: the minting request carries it and the dashboard refuses a proof minted for another organization. The hosted page identifies the operation
 and account. It requires a fresh password, or one explicitly requested email
 code for a passwordless account, followed by a fresh active MFA factor.
 Opening the page sends no email. An attempt requests at most one code and uses

@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 await PostAsync("/billing/change", new() { ["plan"] = "starter", ["interval"] = "monthly" });
                 await Assert.That(await MutationsAsync(path => path == "/v1/subscription_schedules")).IsEqualTo(schedules);
                 await PostAsync("/billing/change", new() { ["plan"] = "pro", ["interval"] = "monthly" }, 409);
-                await SubmitAsync(page, "form:is([action=\"/billing/change/undo\"],[action^=\"/billing/change/undo?\"])", "Undo scheduled change");
+                await BrowserAudit.SubmitConfirmedAsync(page, fixture.Origin, () => page.Locator("form:is([action=\"/billing/change/undo\"],[action^=\"/billing/change/undo?\"])").GetByRole(AriaRole.Button, new() { Name = "Undo scheduled change", Exact = true }).ClickAsync());
                 await Assert.That(await page.GetByText("Change scheduled", new() { Exact = true }).CountAsync()).IsEqualTo(0);
                 await ChooseAsync("free");
                 await ConfirmAsync();
@@ -229,7 +229,14 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                     form.Set(key, value);
                 }
 
-                var response = await owner.APIRequest.PostAsync(origin + path, new() { Headers = new Dictionary<string, string> { ["Origin"] = origin }, Form = form, MaxRedirects = 0 });
+                var response = await owner.APIRequest.PostAsync(origin + path, new() { Headers = new Dictionary<string, string> { ["Origin"] = origin, ["Sec-Fetch-Mode"] = "navigate" }, Form = form, MaxRedirects = 0 });
+                if (response.Status == 302 && response.Headers.TryGetValue("location", out var hosted) &&
+                    hosted.StartsWith("https://auth.terrascale.tech/ui/terrascale/step-up/", StringComparison.Ordinal))
+                {
+                    var approved = await owner.APIRequest.GetAsync(origin + "/__test/step-up/" + new Uri(hosted).Segments.Last() + "?approve=yes", new() { MaxRedirects = 0 });
+                    response = await owner.APIRequest.GetAsync(origin + approved.Headers["location"], new() { MaxRedirects = 0 });
+                }
+
                 await Assert.That(response.Status).IsEqualTo(expected).Because(path + ": " + await response.TextAsync());
                 return response;
             }
@@ -281,7 +288,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 await navigation;
                 await page.Locator("#review-billing-plan[open]").WaitForAsync();
             }
-            Task ConfirmAsync() => SubmitAsync(page, "#review-billing-plan form", "Confirm change");
+            Task ConfirmAsync() => BrowserAudit.SubmitConfirmedAsync(page, fixture.Origin, () => page.Locator("#review-billing-plan form").GetByRole(AriaRole.Button, new() { Name = "Confirm change", Exact = true }).ClickAsync());
             async Task ScreenshotAsync(string name)
             {
                 await page.ScreenshotAsync(new() { Path = Path.Combine(output, name + ".png"), FullPage = true, Caret = ScreenshotCaret.Hide });
@@ -304,7 +311,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             using var missingCsrf = await HttpJourney.PostFormAsync(client, "/billing/change", new() { ["plan"] = "pro", ["interval"] = "monthly" });
             await Assert.That(missingCsrf.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
             var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
-            using var invalid = await HttpJourney.PostFormAsync(client, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "reserved", ["interval"] = "monthly" });
+            using var invalid = await HttpJourney.PostConfirmedFormAsync(client, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "reserved", ["interval"] = "monthly" });
             await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             await Assert.That(invalid.Content.Headers.ContentType!.MediaType).IsEqualTo("text/plain");
             using var foreignReturn = await client.GetAsync("/billing/checkout/return?session_id=foreign-checkout");
