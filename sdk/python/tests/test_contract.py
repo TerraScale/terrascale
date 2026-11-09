@@ -28,6 +28,7 @@ def _exercise(ts: TerraScale) -> None:
     ts.list_databases()
     db = ts.database("main")
     db.info()
+    db.regions()
     db.execute("CREATE TABLE notes (id TEXT PRIMARY KEY)")
     db.query("SELECT ?", [1])
     db.batch(["SELECT 1", ("SELECT ?", [2])])
@@ -41,7 +42,7 @@ def _exercise(ts: TerraScale) -> None:
 def test_every_sync_request_is_a_published_route(ts: TerraScale, fake: Fake) -> None:
     _exercise(ts)
     api = [r for r in fake.requests if r.url.host != "auth.test"]
-    assert len(api) == 11
+    assert len(api) == 12
     bad = [f"{r.method} {r.url.path}" for r in api if not _route_ok(r.method, r.url.path)]
     assert bad == []
 

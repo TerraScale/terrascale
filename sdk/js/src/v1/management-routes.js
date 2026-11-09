@@ -1,4 +1,4 @@
-/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "listDatabaseLogs" | "getProjectMetrics" | "listRegions" | "listFunctions" | "deployFunction" | "getFunction" | "deleteFunction" | "invokeFunction" | "listFunctionLogs"} ManagementOperation */
+/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "listDatabaseLogs" | "getProjectMetrics" | "getDatabaseRegions" | "listRegions" | "listFunctions" | "deployFunction" | "getFunction" | "deleteFunction" | "invokeFunction" | "listFunctionLogs"} ManagementOperation */
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
   route("executeSql", "POST", "/v1/projects/{project}/databases/{database}/sql/execute"),
@@ -31,6 +31,7 @@ export const managementV1Routes = Object.freeze([
   route("getDatabaseAnalytics", "GET", "/v1/projects/{project}/databases/{database}/analytics"),
   route("listDatabaseLogs", "GET", "/v1/projects/{project}/databases/{database}/logs"),
   route("getProjectMetrics", "GET", "/v1/projects/{project}/metrics"),
+  route("getDatabaseRegions", "GET", "/v1/projects/{project}/databases/{database}/regions"),
   route("listRegions", "GET", "/v1/regions"),
   route("listFunctions", "GET", "/v1/projects/{project}/databases/{database}/functions", 200,
     { permission: "sql:read", additionalPermissions: ["sql:write"] }),

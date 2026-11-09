@@ -385,6 +385,11 @@ class Database:
         Recording is best effort, without a cursor or export guarantee."""
         return self._c._send(_spec.list_database_logs(*self._p, status))
 
+
+    def regions(self) -> models.DatabaseRegions:
+        """The database's home region and home-observed replica pull progress; not application acknowledgements."""
+        return self._c._send(_spec.get_database_regions(*self._p))
+
     def delete(self) -> None:
         """Delete in the database's home region. HTTP 204 confirms logical deletion and local cleanup;
         remote erasure is retried durably and may complete later."""

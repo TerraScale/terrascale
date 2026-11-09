@@ -22,6 +22,7 @@ mod backups;
 mod buckets;
 mod client;
 mod database;
+mod database_regions;
 mod errors;
 mod file_transfer;
 mod files;
@@ -51,6 +52,7 @@ pub use client::{
     MAX_REQUEST_BYTES,
 };
 pub use database::{Database, ProjectDatabaseInfo};
+pub use database_regions::{DatabaseRegions, ReplicaStatus};
 pub use errors::{Error, Result, SqlError};
 pub use files::{FileObject, FileObjectPage, FileSignedUrl, FileUploadRequest};
 pub use functions::{Function, FunctionDeployment, FunctionInvocation, FunctionLog};

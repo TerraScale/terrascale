@@ -120,6 +120,7 @@ of `replica_regions` (an empty list removes every replica) or `all_regions`, and
 `Client::move_database_home(database, region)` moves the home to one of its replica regions; it waits up to
 `MOVE_HOME_TIMEOUT` (5 minutes) and retries only `503 move_unresolved`, at most five times, after
 `Retry-After` or 1 second. `ManagedDatabase` carries `home_region`, `replica_regions` and `all_regions`.
+`Database::get_database_regions` reads the home region and home-observed replica pull progress.
 Contract fixtures in `contracts/terrabase/placement/` qualify the HTTP boundary.
 
 ```rust,no_run

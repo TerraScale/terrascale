@@ -159,7 +159,8 @@ db = ts.create_database("orders", home_region="gru", replica_regions=["sjc"])
 ts.set_database_placement(db.id, replica_regions=["sjc", "fra"])
 ```
 
-`Database` carries `home_region`, `replica_regions` and `all_regions`. `set_database_placement` takes exactly one of
+`Database` carries `home_region`, `replica_regions` and `all_regions`. `db.regions()` reads the home region and
+home-observed replica pull progress. `set_database_placement` takes exactly one of
 `replica_regions` or `all_regions`. `move_database_home` waits for the move with no read timeout and resends only on
 `503 move_unresolved` (at most 5 times, after `Retry-After` or 1 s). Tests cover the recorded fixtures in
 `sdk/dotnet/contracts/terrabase/placement/`; live producer qualification has not run.

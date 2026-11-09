@@ -180,7 +180,7 @@ HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See 
 `TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public HTTPS client listener.
 `TerraBaseSqlClient` runs SQL; see [SQL](#sql). `TerraBaseDatabaseClient` addresses projects and databases:
 `Project(projectId)` creates, lists, reads, renames and deletes databases and reads usage, analytics, saved queries and
-backup destinations; `Database(projectId, name)` reads usage and analytics, branches (including `BranchIfIdAsync`/`DeleteIfIdAsync` guarded by the immutable database ID), backs up and restores, and
+backup destinations; `Database(projectId, name)` reads usage and analytics, home-region and replica progress (`GetRegionsAsync`), branches (including `BranchIfIdAsync`/`DeleteIfIdAsync` guarded by the immutable database ID), backs up and restores, and
 deploys and invokes functions. `TerraBaseManagementClient` covers the Management API: organizations, the current
 organization, plans, projects (including close and erase), history erasure, members, invitations, ownership transfer,
 audit retention and audit events. Databases and branches are not management operations; they live on

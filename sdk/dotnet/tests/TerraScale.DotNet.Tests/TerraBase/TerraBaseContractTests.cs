@@ -50,6 +50,7 @@ public sealed class TerraBaseContractTests
         yield return ("database", "deleteDatabase", client => Db(client).DeleteAsync());
         yield return ("database", "cancelClosure", client => Db(client).CancelClosureAsync(User, User));
         yield return ("database", "getDatabaseUsage", client => Db(client).GetUsageAsync());
+        yield return ("database", "getDatabaseRegions", client => Db(client).GetRegionsAsync());
         yield return ("database", "branchDatabase", client => Db(client).BranchAsync("copy"));
         yield return ("database", "branchDatabaseIfId", client => Db(client).BranchIfIdAsync("copy", User));
         yield return ("database", "deleteDatabaseIfId", client => Db(client).DeleteIfIdAsync(User));

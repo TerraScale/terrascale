@@ -14,6 +14,8 @@ __all__ = [
     "ApiKeySecret",
     "Database",
     "DatabasePage",
+    "DatabaseRegions",
+    "ReplicaStatus",
     "ProjectClient",
     "ProjectClientPage",
     "ProjectClientSecret",
@@ -36,6 +38,56 @@ class Regions:
         if any(regions[i - 1] >= regions[i] for i in range(1, len(regions))):
             raise ValueError("invalid region catalog")
         return cls(list(regions))
+
+
+@dataclass(frozen=True)
+class ReplicaStatus:
+    """One replica's pull progress as observed by the database's home region; unknowns are None."""
+
+    region: str
+    lag_ms: float | None = None
+    last_pulled_at: str | None = None
+    last_verified: str | None = None
+    revision: str | None = None
+
+
+@dataclass(frozen=True)
+class DatabaseRegions:
+    """The database's home region and home-observed replica pull progress, sampled at observed_at."""
+
+    database_id: str
+    home_region: str
+    observed_at: str
+    replicas: list[ReplicaStatus] = field(default_factory=list)
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> DatabaseRegions:
+        if any(not isinstance(body[k], str) or not body[k] for k in ("homeRegion", "observedAt")):
+            raise ValueError("invalid database regions")
+        replicas = body.get("replicas", [])
+        if not isinstance(replicas, list):
+            raise ValueError("invalid database regions replicas")
+        statuses = []
+        for item in replicas:
+            if not isinstance(item, dict) or not isinstance(item.get("region"), str) or not item["region"]:
+                raise ValueError("invalid database regions replicas")
+            lag = item.get("lagMs")
+            if lag is not None and not isinstance(lag, (int, float)):
+                raise ValueError("invalid replica lagMs")
+            timestamps = {}
+            for name in ("lastPulledAt", "lastVerified"):
+                value = item.get(name)
+                if value is not None and (not isinstance(value, str) or not value):
+                    raise ValueError(f"invalid replica {name}")
+                timestamps[name] = value
+            revision = item.get("revision")
+            if revision is not None and (not isinstance(revision, str) or not revision):
+                raise ValueError("invalid replica revision")
+            statuses.append(ReplicaStatus(region=item["region"], lag_ms=lag,
+                                          last_pulled_at=timestamps["lastPulledAt"],
+                                          last_verified=timestamps["lastVerified"], revision=revision))
+        return cls(database_id=validate_id(body["databaseId"]), home_region=body["homeRegion"],
+                   observed_at=body["observedAt"], replicas=statuses)
 
 
 @dataclass(frozen=True)
