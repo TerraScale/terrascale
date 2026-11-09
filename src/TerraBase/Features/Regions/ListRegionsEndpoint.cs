@@ -3,13 +3,8 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Regions;
 
-/// <summary>
-/// <c>GET /v1/regions</c>: the region catalog, every region TerraBase serves now. Unauthenticated, so the dashboard, SDKs and
-/// sign-up offer the same regions a database can be placed in; every region answers the same list.
-/// </summary>
 public sealed class ListRegionsEndpoint(IRegionCatalog catalog) : EndpointWithoutRequest<RegionsBody>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/regions");
@@ -21,7 +16,6 @@ public sealed class ListRegionsEndpoint(IRegionCatalog catalog) : EndpointWithou
         Metadata(ListenerMetadata.Client);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<RegionsBody> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "public, max-age=5";

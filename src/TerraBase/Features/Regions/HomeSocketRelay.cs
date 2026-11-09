@@ -8,18 +8,13 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Regions;
 
-/// <summary>
-/// Relays a session WebSocket to the database's home: opens a WebSocket to the home's client route over the mesh
-/// (RFC 8441, HTTP/2 extended CONNECT on the internal listener) with the client's subprotocols, headers and address,
-/// then accepts the client and pumps frames both ways for the socket's whole life. The home serves the socket exactly
-/// as one that reached it directly, so every region answers alike (docs/terrabase/cross-region.md).
-/// </summary>
+// The home serves the relayed socket exactly as one that reached it directly, so every region answers alike
+// (RFC 8441, HTTP/2 extended CONNECT on the internal listener; docs/terrabase/cross-region.md).
 internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredential credential)
 {
     private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>Serves <paramref name="context"/> from <paramref name="home"/> for the socket's whole life.</summary>
     public async Task RunAsync(HttpContext context, HomeNode home, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -102,7 +97,6 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             KeepAliveTimeout = KeepAlive,
         });
 
-        // Two independent pumps: the first direction to end closes both sockets.
         var toHome = PumpAsync(client, upstream, cancellationToken);
         var toClient = PumpAsync(upstream, client, cancellationToken);
         await Task.WhenAll(toHome, toClient).ConfigureAwait(false);
@@ -127,7 +121,6 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         _ => "the home refused the session",
     };
 
-    /// <summary>Pumps one direction until it ends or breaks, never throwing; the other side is then closed best-effort.</summary>
     private static async Task PumpAsync(WebSocket from, WebSocket to, CancellationToken cancellationToken)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);

@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Diagnostics.Metrics;
 using System.Net;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
@@ -96,7 +98,7 @@ internal sealed class HomeMoves(
         {
             if (peer is null || caughtUpAnswer is not { IsSuccessStatusCode: true })
             {
-                logger.ZLogWarning($"A home move to {marker.Target:@Target} stopped: its replica did not catch up ({(caughtUpAnswer is null ? "no answer" : ((int)caughtUpAnswer.StatusCode).ToString(System.Globalization.CultureInfo.InvariantCulture)):@Answer})");
+                logger.ZLogWarning($"A home move to {marker.Target:@Target} stopped: its replica did not catch up ({(caughtUpAnswer is null ? "no answer" : ((int)caughtUpAnswer.StatusCode).ToString(CultureInfo.InvariantCulture)):@Answer})");
                 await moves.AbortHomeMoveAsync(marker, CancellationToken.None).ConfigureAwait(false);
                 return ReplicaNotReady;
             }
@@ -214,7 +216,7 @@ internal sealed class HomeMoves(
 
     private async Task<HttpResponseMessage?> PostAsync(ReplicaPeer peer, HomeMoveMarker marker, string action, HttpContent? content, CancellationToken cancellationToken)
     {
-        var address = new Uri(peer.Internal, $"/v1/sync/organizations/{marker.OrganizationId}/projects/{marker.ProjectId}/databases/{marker.DatabaseId}/{action}");
+        var address = new Uri(peer.Internal, ReplicaRoutes.DatabasePath(marker.Database, action));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(PeerTimeout);
         try
@@ -231,9 +233,6 @@ internal sealed class HomeMoves(
             content?.Dispose();
         }
     }
-
-    public async Task<bool> CatchUpAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false);
 
     public async Task<PromoteResult> PromoteAsync(TenantContext database, HomePromoteRequest request, CancellationToken cancellationToken)
     {
@@ -384,7 +383,7 @@ internal sealed class HomeMoves(
         {
             if (detached is not null)
             {
-                TerraBase.Engine.Turso.TursoReplicas.DeleteDetached(detached);
+                TursoReplicas.DeleteDetached(detached);
             }
         }
     }

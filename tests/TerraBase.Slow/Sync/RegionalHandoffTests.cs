@@ -141,7 +141,7 @@ public sealed class RegionalHandoffTests
             // the replacement's actual ready/owner/session proof before asking
             // for a second stop; refusal before that point is intentional.
             await TerraBaseTestServer.EventuallyAsync(async cancellation =>
-                await returned.Server.Services.GetRequiredService<RegionalHandoff>().StatusAsync(cancellation)
+                await returned.Server.Services.GetRequiredService<RegionalHandoff>().StatusAsync(null, cancellation)
                     is { Ready: true, Owner: "gru-2", Epoch: >= 2, Session.Length: > 0 }, TimeSpan.FromSeconds(10));
             await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().DrainAsync("gru-1", token)).IsTrue();
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(returned.Server.Services.GetRequiredService<RegionalOwners>().Writer), TimeSpan.FromSeconds(10));

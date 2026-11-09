@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Hosting;
@@ -39,7 +40,7 @@ internal sealed class ReplicaStatusReportEndpoint(IReplicaStatus status) : Endpo
         {
             report = await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.ReplicaStatusReport, cancellationToken).ConfigureAwait(false);
         }
-        catch (System.Text.Json.JsonException)
+        catch (JsonException)
         {
             report = null;
         }

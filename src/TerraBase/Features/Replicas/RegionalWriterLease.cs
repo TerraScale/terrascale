@@ -9,11 +9,8 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed record RegionalWriter(string Node, long Epoch, string Session);
 
-/// <summary>
-/// A separate, exclusive admission lease survives an owner CAS. A new owner
-/// cannot commit while the former owner's admission might still be valid.
-/// All calls are serialized by RegionalHandoff's change gate.
-/// </summary>
+// A separate, exclusive admission lease survives an owner CAS: a new owner cannot commit while the former owner's
+// admission might still be valid. All calls are serialized by RegionalHandoff's change gate.
 internal sealed class RegionalWriterLease(NatsJSContext js, INatsKVStore kv, string region, string node, string session)
 {
     internal const string Bucket = "terrabase-region-writers";

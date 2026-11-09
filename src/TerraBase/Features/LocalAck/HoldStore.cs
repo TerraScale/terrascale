@@ -3,14 +3,12 @@ using System.Globalization;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.LocalAck;
 
-/// <summary>
-/// The transactions this node holds for its in-region partners, as system records of kind <c>local_holds</c> keyed
-/// <c>&lt;origin&gt;.&lt;organization&gt;.&lt;project&gt;.&lt;database&gt;.&lt;sequence:D20&gt;</c>, so one origin's
-/// transactions of one database list in stream order. Every write is synced to disk before it returns.
-/// </summary>
+// System records of kind local_holds keyed <origin>.<organization>.<project>.<database>.<sequence:D20>, so one
+// origin's transactions of one database list in stream order. Every write is synced to disk before it returns.
 internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDisposable
 {
     internal const string Kind = "local_holds";
@@ -27,26 +25,14 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
     private long _count;
     private long _bytes;
 
-    internal long Count
-    {
-        get
-        {
-            lock (_totalsGate)
-            {
-                return _count;
-            }
-        }
-    }
+    internal long Count => Interlocked.Read(ref _count);
 
     public void Dispose() => _counting.Dispose();
 
-    /// <summary>Records that <paramref name="origin"/> reached this node now.</summary>
     public void Touch(string origin) => _contacts[origin] = time.GetUtcNow();
 
-    /// <summary>When <paramref name="origin"/> last reached this node; this node's start when it has not since.</summary>
     public DateTimeOffset LastContact(string origin) => _contacts.TryGetValue(origin, out var last) ? last : _started;
 
-    /// <summary>Stores <paramref name="held"/> durably; false when this node already holds its limit.</summary>
     public async ValueTask<bool> PutAsync(HeldTransaction held, CancellationToken cancellationToken)
     {
         await CountAsync(cancellationToken).ConfigureAwait(false);
@@ -88,7 +74,6 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
         }
     }
 
-    /// <summary>Drops <paramref name="origin"/>'s transactions of the database up to sequence <paramref name="through"/>.</summary>
     public async ValueTask ReleaseAsync(string origin, string organization, string project, string database, ulong through, CancellationToken cancellationToken)
     {
         await CountAsync(cancellationToken).ConfigureAwait(false);
@@ -129,7 +114,7 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
         }
     }
 
-    internal async Task DeleteDatabaseAsync(TerraBase.Tenancy.TenantContext database, CancellationToken cancellationToken)
+    internal async Task DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken)
     {
         foreach (var origin in await OriginsAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -137,7 +122,6 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
         }
     }
 
-    /// <summary>Drops one held transaction once the home answered it.</summary>
     public async ValueTask DropAsync(HeldTransaction held, CancellationToken cancellationToken)
     {
         await CountAsync(cancellationToken).ConfigureAwait(false);
@@ -152,7 +136,6 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
         }
     }
 
-    /// <summary>The origins this node holds transactions for.</summary>
     public async ValueTask<IReadOnlyList<string>> OriginsAsync(CancellationToken cancellationToken)
     {
         var origins = new List<string>();
@@ -173,7 +156,6 @@ internal sealed class HoldStore(IStorageEngine engine, TimeProvider time) : IDis
         }
     }
 
-    /// <summary>Up to <paramref name="limit"/> of <paramref name="origin"/>'s held transactions after <paramref name="after"/>, in key order.</summary>
     public async ValueTask<IReadOnlyList<HeldTransaction>> ListAsync(string origin, HeldTransaction? after, int limit, CancellationToken cancellationToken)
     {
         var prefix = origin + ".";

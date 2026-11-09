@@ -13,5 +13,9 @@ internal static class ReplicaRoutes
             : null;
     }
 
+    public static string DatabasePath(TenantContext database, string? suffix = null) =>
+        $"/v1/sync/organizations/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}"
+        + (suffix is null ? "" : "/" + suffix);
+
     private static string Value(HttpContext context, string name) => context.Request.RouteValues[name] as string ?? string.Empty;
 }

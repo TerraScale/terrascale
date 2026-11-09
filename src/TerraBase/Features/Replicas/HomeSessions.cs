@@ -15,25 +15,20 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed record HomeSessionOpen(string Organization, string Project, string Database, string Region, bool CanWrite, ulong? PushThrough, long Epoch);
 
-/// <summary>One call on a home session: <c>execute</c> or <c>describe</c> one statement.</summary>
 internal sealed record HomeSessionCall(
     string Op, string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named, IReadOnlyList<HomeSessionCall>? Batch = null,
     ulong? PushThrough = null);
 
-/// <summary>A statement's result as the home answered it.</summary>
 internal sealed record HomeSessionResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid);
 
-/// <summary>The home's answer to the open frame or a call, and whether the home session is outside a transaction after it.</summary>
 internal sealed record HomeSessionAnswer(
     bool Autocommit, SqlError? Error = null, HomeSessionResult? Result = null, SqlDescription? Description = null, IReadOnlyList<HomeSessionResult>? Batch = null, int Statement = 0);
 
-/// <summary>
-/// Length-prefixed JSON frames of a home session (docs/terrabase/region-replicas.md#writes-and-transactions): a 4-byte
-/// big-endian length, then that many bytes of UTF-8 JSON. Frames are reserved against the memory budget before they are read.
-/// </summary>
+// Frames are a 4-byte big-endian length, then that many bytes of UTF-8 JSON, reserved against the memory budget
+// before they are read (docs/terrabase/region-replicas.md#writes-and-transactions).
 internal static class HomeSessionFrames
 {
-    /// <summary>A result holds at most 8 MiB of values (<see cref="SqlSession.MaxBytes"/>); JSON and base64 at most triple it.</summary>
+    // A result holds at most 8 MiB of values (SqlSession.MaxBytes); JSON and base64 at most triple it.
     internal const int MaxBytes = 24 * 1024 * 1024;
 
     public static async ValueTask<T?> ReadAsync<T>(PipeReader input, JsonTypeInfo<T> type, IMemoryBudget memory, TenantContext? tenant, CancellationToken cancellationToken)
@@ -105,10 +100,6 @@ internal static class HomeSessionFrames
     }
 }
 
-/// <summary>
-/// Opens home sessions: the writes, transactions and lagging reads of a replica region's SQL session run on one SQL session at
-/// the database's home, reached over the private mesh on its internal listener with the peer credential.
-/// </summary>
 internal sealed class HomeSessions(
     TerraBaseOptions options, IReplicaPeers peers, InternalCredential credential, IMemoryBudget memory, HomePush.ILocalWrites local) : IDisposable
 {
@@ -116,7 +107,6 @@ internal sealed class HomeSessions(
 
     private readonly HttpClient _http = CreateClient(credential);
 
-    /// <summary>A session at <paramref name="home"/>, or the error a statement answers when the home cannot be reached.</summary>
     public async ValueTask<HomeSessionOutcome> OpenAsync(TenantContext database, string home, long epoch, bool canWrite, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
@@ -210,13 +200,10 @@ internal sealed class HomeSessions(
     }
 }
 
-/// <summary>A home session, or why it could not open.</summary>
 internal readonly union HomeSessionOutcome(HomeSqlSession, SqlError);
 
-/// <summary>
-/// One SQL session at a database's home, driven from a replica region. Calls are answered in order; a broken stream ends the
-/// session, and every later call answers <see cref="SqlErrors.Unavailable"/> naming the home.
-/// </summary>
+// Calls are answered in order; a broken stream ends the session, and every later call answers SqlErrors.Unavailable
+// naming the home.
 internal sealed class HomeSqlSession(
     HttpRequestMessage request, HttpResponseMessage response, PipeWriter upstream, PipeReader downstream, CancellationTokenSource stop,
     IMemoryBudget memory, TenantContext database, SqlError unreachable, HomePush.ILocalWrites local) : ISqlSession
@@ -229,7 +216,6 @@ internal sealed class HomeSqlSession(
 
     public bool IsAutocommit => _autocommit;
 
-    /// <summary>Whether the stream to the home broke; the session answers nothing more.</summary>
     public bool IsBroken => _broken;
 
     public void BeginRequest()

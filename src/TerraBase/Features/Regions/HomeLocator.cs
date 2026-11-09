@@ -36,11 +36,9 @@ internal sealed class HomeLocator(IRegionPeers peers, IHttpClientFactory http, I
 
         using var ask = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         ask.CancelAfter(AskTimeout);
-        var pending = others.Select(peer => AskAsync(peer, project, database, ask.Token)).ToList();
-        while (pending.Count > 0)
+        var asks = others.Select(peer => AskAsync(peer, project, database, ask.Token)).ToList();
+        await foreach (var done in Task.WhenEach(asks).ConfigureAwait(false))
         {
-            var done = await Task.WhenAny(pending).ConfigureAwait(false);
-            pending.Remove(done);
             if (await done.ConfigureAwait(false) is { } home)
             {
                 await ask.CancelAsync().ConfigureAwait(false);

@@ -1,6 +1,8 @@
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.HomePush;
+using static TerraBase.Features.HomePush.HomePush;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -45,7 +47,7 @@ internal sealed class HoldEndpoint(HoldStore holds, IMemoryBudget memory) : Endp
         {
             held = await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.HeldTransaction, cancellationToken).ConfigureAwait(false);
         }
-        catch (System.Text.Json.JsonException)
+        catch (JsonException)
         {
             held = null;
         }
@@ -71,7 +73,7 @@ internal sealed class HoldEndpoint(HoldStore holds, IMemoryBudget memory) : Endp
         _ when !EntityIds.IsValid(held.Organization) || !EntityIds.IsValid(held.Project) || !EntityIds.IsValid(held.Database) =>
             "organization, project and database must be ULIDs",
         { Sequence: 0 } => "sequence must be positive",
-        { Payload: not { Length: >= TransactionCrypto.Overhead and <= TerraBase.Features.HomePush.HomePush.MaxPayloadBytes } } => "payload must be a sealed TBP1 transaction",
+        { Payload: not { Length: >= TransactionCrypto.Overhead and <= MaxPayloadBytes } } => "payload must be a sealed TBP1 transaction",
         _ when !held.Payload.AsSpan(0, 4).SequenceEqual("TBP1"u8) => "payload must be a sealed TBP1 transaction",
         _ => null,
     };
