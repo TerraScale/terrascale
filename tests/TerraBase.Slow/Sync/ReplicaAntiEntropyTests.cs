@@ -35,12 +35,11 @@ public sealed class ReplicaAntiEntropyTests
             {
                 await replicas.OpenAsync(database, source, http, token);
                 var verifier = new ReplicaVerifier(replicas, http);
-                await Assert.That(await verifier.RoundAsync(database, source, null, token)).IsEqualTo(new VerificationRound(ReplicaVerdict.Equal, null, null));
+                await Assert.That(await verifier.RoundAsync(database, source, null, token)).IsEqualTo(new VerificationRound(new Equal(), null, null));
 
                 await server.ExecuteAsync(database, "UPDATE items SET v = 'moved' WHERE id = 'r0300'");
-                // Background verification observes the held revision without fetching newer pages or blocking notices.
-                await Assert.That((await verifier.ObserveAsync(database, source, null, token)).Verdict).IsEqualTo(ReplicaVerdict.Moved);
-                await Assert.That(await verifier.RoundAsync(database, source, null, token)).IsEqualTo(new VerificationRound(ReplicaVerdict.Equal, null, null));
+                await Assert.That((await verifier.ObserveAsync(database, source, null, token)).Verdict).IsEqualTo<ReplicaVerdict>(new Moved());
+                await Assert.That(await verifier.RoundAsync(database, source, null, token)).IsEqualTo(new VerificationRound(new Equal(), null, null));
             }
 
             await TamperAsync(directory, database, source, http);
@@ -49,11 +48,11 @@ public sealed class ReplicaAntiEntropyTests
             await reopened.OpenAsync(database, source, http, token);
             var healing = new ReplicaVerifier(reopened, http);
             var diverged = await healing.RoundAsync(database, source, null, token);
-            await Assert.That(diverged.Verdict).IsEqualTo(ReplicaVerdict.Diverged);
+            await Assert.That(diverged.Verdict).IsEqualTo<ReplicaVerdict>(new Diverged());
             await Assert.That(diverged.Where).Contains("256 rows and");
 
             await healing.HealAsync(database, source, token);
-            await Assert.That(await healing.RoundAsync(database, source, null, token)).IsEqualTo(new VerificationRound(ReplicaVerdict.Equal, null, null));
+            await Assert.That(await healing.RoundAsync(database, source, null, token)).IsEqualTo(new VerificationRound(new Equal(), null, null));
             await using var reader = (await reopened.BeginReadAsync(database, token))!;
             var rows = await reader.ExecuteAsync(new SqlStatement("SELECT count(*), sum(v = 'moved') FROM items", [], new Dictionary<string, object?>(), 1, 1024, TimeSpan.FromSeconds(5)), token);
             await Assert.That(rows.Rows.Single()).IsEquivalentTo(new object?[] { 600L, 1L });

@@ -1,9 +1,10 @@
-using System.IO.Pipelines;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
+using System.IO.Pipelines;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -12,7 +13,6 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-// A replica region client session run at the home (docs/terrabase/region-replicas.md#writes-and-transactions).
 internal sealed class HomeSessionEndpoint(
     ISqlService sql, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options, HomePush.ILocalWrites local)
     : EndpointWithoutRequest<IResult>
@@ -52,14 +52,14 @@ internal sealed class HomeSessionEndpoint(
             responseRate.MinDataRate = null;
         }
 
-        HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
+        HttpContext.ReleaseRequestLease();
         HttpContext.Response.ContentType = "application/octet-stream";
         await HttpContext.Response.StartAsync(cancellationToken).ConfigureAwait(false);
         var input = HttpContext.Request.BodyReader;
         var output = HttpContext.Response.BodyWriter;
         try
         {
-            var open = await HomeSessionFrames.ReadAsync(input, TerraBaseJsonContext.Default.HomeSessionOpen, memory, tenant: null, cancellationToken).ConfigureAwait(false);
+            var open = await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionOpen, memory, tenant: null, cancellationToken).ConfigureAwait(false);
             if (open is null)
             {
                 return Results.Empty;
@@ -80,7 +80,6 @@ internal sealed class HomeSessionEndpoint(
         }
         catch (Exception error) when (error is InvalidDataException or IOException or OperationCanceledException)
         {
-            // A broken or cut stream ends the session; disposing it rolled its transaction back.
         }
 
         return Results.Empty;
@@ -115,7 +114,7 @@ internal sealed class HomeSessionEndpoint(
         await using (session.ConfigureAwait(false))
         {
             await AnswerAsync(output, new HomeSessionAnswer(true), cancellationToken).ConfigureAwait(false);
-            while (await HomeSessionFrames.ReadAsync(input, TerraBaseJsonContext.Default.HomeSessionCall, memory, database, cancellationToken).ConfigureAwait(false) is { } call)
+            while (await HomeSessionFrames.ReadAsync(input, ReplicasJsonContext.Default.HomeSessionCall, memory, database, cancellationToken).ConfigureAwait(false) is { } call)
             {
                 HomeSessionAnswer answer;
                 if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, cancellationToken).ConfigureAwait(false))
@@ -132,15 +131,23 @@ internal sealed class HomeSessionEndpoint(
                         var command = new SqlCommand(call.Sql, call.Args ?? [], call.Named ?? new Dictionary<string, SqlValue>());
                         answer = call.Op switch
                         {
-                            "execute" => await session.ExecuteAsync(command, cancellationToken).ConfigureAwait(false) switch
+                            "execute" => SqlScript.Classify(call.Sql) switch
                             {
-                                SqlResult result => Answered(session, result),
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
+                                SqlStatementPlan plan => await session.ExecuteAsync(new SqlPlannedCommand(plan, command), cancellationToken).ConfigureAwait(false) switch
+                                {
+                                    SqlResult result => Answered(session, result),
+                                    SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
+                                },
                             },
-                            "describe" => await session.DescribeAsync(command, cancellationToken).ConfigureAwait(false) switch
+                            "describe" => SqlScript.Classify(call.Sql) switch
                             {
-                                SqlDescription description => new HomeSessionAnswer(session.IsAutocommit, Description: description),
                                 SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
+                                SqlStatementPlan plan => await session.DescribeAsync(plan, command, cancellationToken).ConfigureAwait(false) switch
+                                {
+                                    SqlDescription description => new HomeSessionAnswer(session.IsAutocommit, Description: description),
+                                    SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
+                                },
                             },
                             "batch" => await BatchAsync(session, call.Batch, cancellationToken).ConfigureAwait(false),
                             _ => new HomeSessionAnswer(session.IsAutocommit, new SqlError(SqlErrors.InvalidRequest, "op is execute, describe or batch")),
@@ -168,12 +175,35 @@ internal sealed class HomeSessionEndpoint(
             return new HomeSessionAnswer(session.IsAutocommit, SqlBatch.TooManyStatements);
         }
 
-        var commands = batch.Select(call => new SqlCommand(call.Sql, call.Args ?? [], call.Named ?? new Dictionary<string, SqlValue>())).ToList();
-        var control = commands.FindIndex(command => SqlScript.Classify(command.Sql) is SqlStatementPlan { IsControl: true });
+        var commands = new List<SqlPlannedCommand>(batch.Count);
+        SqlError? refused = null;
+        var refusal = -1;
+        var control = -1;
+        for (var i = 0; i < batch.Count; i++)
+        {
+            switch (SqlScript.Classify(batch[i].Sql))
+            {
+                case SqlStatementPlan { IsControl: true } when control < 0:
+                    control = i;
+                    break;
+                case SqlError refusedError when refused is null:
+                    (refused, refusal) = (refusedError, i);
+                    break;
+                case SqlStatementPlan plan:
+                    commands.Add(new(plan, new SqlCommand(batch[i].Sql ?? "", batch[i].Args ?? [], batch[i].Named ?? new Dictionary<string, SqlValue>())));
+                    break;
+            }
+        }
+
         if (control >= 0)
         {
             return new HomeSessionAnswer(session.IsAutocommit,
                 new SqlError(SqlErrors.TransactionState, "BEGIN, COMMIT and ROLLBACK are not statements here: a batch runs as one transaction"), Statement: control);
+        }
+
+        if (refused is not null)
+        {
+            return new HomeSessionAnswer(session.IsAutocommit, refused, Statement: refusal);
         }
 
         return await SqlBatch.RunAsync(session, commands, cancellationToken).ConfigureAwait(false) switch
@@ -184,7 +214,6 @@ internal sealed class HomeSessionEndpoint(
         };
     }
 
-    // The home charges a read when it answers it: the replica region relays every answer it receives.
     private static HomeSessionAnswer Answered(ISqlSession session, SqlResult result)
     {
         result.ReadCharge?.Accept();
@@ -192,5 +221,5 @@ internal sealed class HomeSessionEndpoint(
     }
 
     private static ValueTask AnswerAsync(PipeWriter output, HomeSessionAnswer answer, CancellationToken cancellationToken) =>
-        HomeSessionFrames.WriteAsync(output, answer, TerraBaseJsonContext.Default.HomeSessionAnswer, cancellationToken);
+        HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, cancellationToken);
 }

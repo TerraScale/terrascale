@@ -79,7 +79,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
         var columns = shape.Filter?.Columns.ToArray() ?? current.Columns;
         var condition = shape.Filter?.Where is { } where ? $"({where}) AND " : "";
 
-        var workspace = memory.TryReserve(MemoryLane.Bulk, ShapeSnapshots.WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException();
+        var workspace = memory.TryReserve(ShapeSnapshots.WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException();
         IMemoryReservation? rowMemory = null;
         try
         {
@@ -147,7 +147,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
 
                         if (candidate > ShapeSnapshots.PageBytes)
                         {
-                            rowMemory = memory.TryReserve(MemoryLane.Bulk, checked(candidate * 2L), store.Tenant) ?? throw new StorageBusyException();
+                            rowMemory = memory.TryReserve(checked(candidate * 2L), store.Tenant) ?? throw new StorageBusyException();
                         }
 
                         if (count > 0)
@@ -168,7 +168,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
             }
 
             var body = ShapeSnapshots.EncodePage(shape, offset, page, more, operations.WrittenSpan);
-            var resultMemory = memory.TryReserve(MemoryLane.Bulk, checked(body.Length * 3L + 4096), store.Tenant) ?? throw new StorageBusyException();
+            var resultMemory = memory.TryReserve(checked(body.Length * 3L + 4096), store.Tenant) ?? throw new StorageBusyException();
             return new ShapeSnapshotPage(body, more ? last : null, resultMemory);
         }
         finally
@@ -268,7 +268,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
                 throw new InvalidDataException("a stored snapshot page exceeds its byte limit");
             }
 
-            var reservation = memory.TryReserve(MemoryLane.Foreground, checked(bytes * 3 + 4096), store.Tenant) ?? throw new StorageBusyException();
+            var reservation = memory.TryReserve(checked(bytes * 3 + 4096), store.Tenant) ?? throw new StorageBusyException();
             try
             {
                 var body = Command("SELECT body FROM _tb_shape_snapshot WHERE handle = $handle AND offset = $offset AND page = $page;");

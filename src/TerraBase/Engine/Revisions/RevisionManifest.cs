@@ -4,14 +4,8 @@ namespace TerraBase.Engine.Revisions;
 
 internal sealed record SealedGeneration(ulong Generation, ulong EndFrame, bool Full, IReadOnlyDictionary<uint, ulong> Pages);
 
-internal sealed class HorizonBucket(ulong firstGeneration)
+internal sealed record HorizonBucket(ulong FirstGeneration, IReadOnlyList<ulong> EndFrames, IReadOnlySet<uint> Pages)
 {
-    public ulong FirstGeneration { get; } = firstGeneration;
-
-    public List<ulong> EndFrames { get; } = [];
-
-    public HashSet<uint> Pages { get; } = [];
-
     public ulong LastGeneration => FirstGeneration + (ulong)EndFrames.Count - 1;
 }
 
@@ -35,7 +29,13 @@ internal sealed class LiveGeneration
         new() { BaseFrame = frame, MaxFrame = frame, CheckpointSequence = checkpointSequence, DatabaseSize = databaseSize };
 }
 
-internal sealed class RevisionManifest
+internal sealed record RevisionManifest(
+    Ulid Incarnation,
+    ulong Generation,
+    (uint First, uint Second)? WalSalt,
+    FileStamp? DatabaseFile,
+    IReadOnlyList<SealedGeneration> Sealed,
+    IReadOnlyList<HorizonBucket> Horizon)
 {
     internal const int RetainedGenerations = 8;
     internal const int HorizonBuckets = 8;
@@ -43,52 +43,51 @@ internal sealed class RevisionManifest
     internal const int MaxGenerationPages = 16_384;
     internal const int MaxBucketPages = 32_768;
 
-    public required Ulid Incarnation { get; init; }
-
-    public ulong Generation { get; set; } = 1;
-
-    public (uint First, uint Second)? WalSalt { get; set; }
-
-    public FileStamp? DatabaseFile { get; set; }
-
-    public List<SealedGeneration> Sealed { get; } = [];
-
-    public List<HorizonBucket> Horizon { get; } = [];
-
-    public static RevisionManifest NewIncarnation() => new() { Incarnation = EntityIds.New() };
+    public static RevisionManifest NewIncarnation() => new(EntityIds.New(), 1, null, null, [], []);
 
     public DatabaseRevision Current(ulong frame) => new(Incarnation, Generation, frame);
 
-    public void Seal(LiveGeneration live)
+    public RevisionManifest Seal(LiveGeneration live)
     {
         var full = live.Full || live.Pages.Count > MaxGenerationPages;
-        Sealed.Add(new SealedGeneration(Generation, live.MaxFrame, full, live.Pages.Where(_ => !full).ToDictionary()));
-        Generation++;
-        WalSalt = null;
-        while (Sealed.Count > RetainedGenerations)
+        var sealedGenerations = new List<SealedGeneration>(Sealed)
         {
-            var oldest = Sealed[0];
-            Sealed.RemoveAt(0);
+            new(Generation, live.MaxFrame, full, full ? new Dictionary<uint, ulong>() : live.Pages.ToDictionary()),
+        };
+        var horizon = new List<HorizonBucket>(Horizon);
+        while (sealedGenerations.Count > RetainedGenerations)
+        {
+            var oldest = sealedGenerations[0];
+            sealedGenerations.RemoveAt(0);
             if (oldest.Full)
             {
-                Horizon.Clear();
+                horizon.Clear();
                 continue;
             }
 
-            if (Horizon.Count == 0
-                || Horizon[^1].EndFrames.Count >= BucketGenerations
-                || Horizon[^1].Pages.Count + oldest.Pages.Count > MaxBucketPages)
+            if (horizon.Count == 0
+                || horizon[^1].EndFrames.Count >= BucketGenerations
+                || horizon[^1].Pages.Count + oldest.Pages.Count > MaxBucketPages)
             {
-                Horizon.Add(new HorizonBucket(oldest.Generation));
+                horizon.Add(new HorizonBucket(oldest.Generation, [], new HashSet<uint>()));
             }
 
-            var bucket = Horizon[^1];
-            bucket.EndFrames.Add(oldest.EndFrame);
-            bucket.Pages.UnionWith(oldest.Pages.Keys);
-            if (Horizon.Count > HorizonBuckets)
+            var bucket = horizon[^1];
+            var pages = new HashSet<uint>(bucket.Pages);
+            pages.UnionWith(oldest.Pages.Keys);
+            horizon[^1] = bucket with { EndFrames = [.. bucket.EndFrames, oldest.EndFrame], Pages = pages };
+            if (horizon.Count > HorizonBuckets)
             {
-                Horizon.RemoveRange(0, Horizon.Count - HorizonBuckets);
+                horizon.RemoveRange(0, horizon.Count - HorizonBuckets);
             }
         }
+
+        return this with { Generation = Generation + 1, WalSalt = null, Sealed = sealedGenerations, Horizon = horizon };
     }
+
+    public RevisionManifest RewoundFull() => this with
+    {
+        Sealed = [.. Sealed.Select(entry => entry with { Full = true, Pages = new Dictionary<uint, ulong>() })],
+        Horizon = [],
+    };
 }

@@ -1,7 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Connections;
+using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Management;
+using TerraBase.Features.Management.Logs;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -11,7 +16,17 @@ using System.Net.WebSockets;
 
 namespace TerraBase.Features.Sql;
 
-internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
+internal sealed class SqlSocketEndpoint(
+    IHostApplicationLifetime lifetime,
+    ISqlService sql,
+    IAuthorizationService authorization,
+    ITenantDirectory tenants,
+    TerraBaseOptions options,
+    IMemoryBudget memory,
+    TimeProvider time,
+    IQosAdmission admission,
+    IUsageMeter usage,
+    IRequestLogs logs) : EndpointWithoutRequest<IResult>
 {
     public const string Protocol = "terrascale.sql.v1";
 
@@ -20,8 +35,6 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
     public override void Configure()
     {
         Get(DatabaseRoute.Template + "/sql/ws");
-        // CONNECT is the extended CONNECT of a WebSocket relayed from another region (RFC 8441): the same upgrade,
-        // served the same way.
         Verbs(HttpMethods.Get, "CONNECT");
         Name("connectSql");
         Summary("Runs SQL over a WebSocket");
@@ -62,21 +75,18 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
         }
 
         var canWrite = (await authorization.AuthorizeAsync(HttpContext.User, HttpContext, ApiKeyScopes.SqlWrite)).Succeeded;
-        return await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
-        {
-            Validation error => ErrorResponse.From(error),
-            NotFound error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
-            TenantContext when !HttpContext.WebSockets.IsWebSocketRequest => Upgrade(),
-            TenantContext database => await ServeAsync(database, canWrite, cancellationToken),
-        };
+        return await DatabaseRoute.TenantAsync(HttpContext, tenants,
+            (database, _) => !HttpContext.WebSockets.IsWebSocketRequest
+                ? ValueTask.FromResult(Upgrade())
+                : ServeAsync(database, canWrite, cancellationToken),
+            cancellationToken);
     }
 
     private static IResult Upgrade() => ErrorResponse.From(new Validation("connect with a WebSocket upgrade", "websocket_required"));
 
     private async ValueTask<IResult> ServeAsync(TenantContext? database, bool canWrite, CancellationToken cancellationToken)
     {
-        HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
+        HttpContext.ReleaseRequestLease();
         var offered = HttpContext.WebSockets.WebSocketRequestedProtocols.Contains(Protocol, StringComparer.Ordinal);
         using var socket = await HttpContext.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext
         {
@@ -84,7 +94,7 @@ internal sealed class SqlSocketEndpoint(IAuthorizationService authorization, ITe
             KeepAliveInterval = KeepAlive,
             KeepAliveTimeout = KeepAlive,
         });
-        using var connection = new SqlSocket(HttpContext, socket);
+        using var connection = new SqlSocket(HttpContext, socket, lifetime, sql, authorization, tenants, options, memory, time, admission, usage, logs);
         try
         {
             await connection.RunAsync(database, canWrite, cancellationToken);

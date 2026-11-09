@@ -52,8 +52,6 @@ public sealed class HomeMoveTests
         await replication.PullAllAsync(token);
         await Assert.That(replication.Following.Select(database => database.DatabaseId)).Contains(id);
 
-        // Lease observations carry all-regions mode without an explicit region list. A same-epoch
-        // catalog answer must not make that replica stop following or reject a home-session open.
         using (var placement = await viaGru.PatchAsJsonAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/{id}"), new { allRegions = true }, token))
         {
             await Assert.That(placement.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await placement.Content.ReadAsStringAsync(token));
@@ -88,7 +86,6 @@ public sealed class HomeMoveTests
                 var row = EntityIds.New().ToString();
                 while (true)
                 {
-                    // A paused request can stay in this retry loop across move completion.
                     if (homeMoved.Task.IsCompletedSuccessfully)
                     {
                         target = viaSjc;
@@ -147,7 +144,6 @@ public sealed class HomeMoveTests
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
             {
-                // The fixture owns this writer and cancels its final in-flight request.
             }
         }
 

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Sql;
 using Turso.Raw.Public;
 using Turso.Raw.Public.Handles;
 using Turso.Raw.Public.Value;
@@ -9,13 +10,6 @@ namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoStorageTransaction
 {
-    private static readonly string[] SqlPhrases =
-    [
-        "no such function", "ambiguous column", "misuse of aggregate", "misuse of window function", "circular reference",
-        "wrong number of arguments", "datatype mismatch", "integer overflow", "not supported", "not allowed", "cannot",
-        "malformed JSON", "must be",
-    ];
-
     private long _pageSize;
     private bool _sqlChanged;
 
@@ -159,12 +153,12 @@ internal sealed partial class TursoStorageTransaction
     internal static (TursoStatementHandle Prepared, int Consumed) Prepare(TursoDatabaseHandle native, string sql, bool first)
     {
         var prepared = TursoBindings.PrepareFirst(native, sql, out var tail)
-            ?? throw new SqlStatementException(SqlFailure.Error, "the statement is empty", transactionEnded: false);
+            ?? throw new SqlStatementException(new Error(), "the statement is empty", transactionEnded: false);
         var consumed = sql.Length - tail;
         if (!first && !(SqlText.TryTokenize(sql[consumed..], out var rest) && rest.TrueForAll(token => token.Kind == SqlTokenKind.Semicolon)))
         {
             Release(prepared);
-            throw new SqlStatementException(SqlFailure.Error, "an engine call runs exactly one SQL statement", transactionEnded: false);
+            throw new SqlStatementException(new Error(), "an engine call runs exactly one SQL statement", transactionEnded: false);
         }
 
         return (prepared, consumed);
@@ -347,7 +341,7 @@ internal sealed partial class TursoStorageTransaction
         var ended = EndedByFailure(native);
         if (damaged)
         {
-            return new SqlStatementException(SqlFailure.Error, "the database reported an I/O error or corruption", ended, error);
+            return new SqlStatementException(new Error(), "the database reported an I/O error or corruption", ended, error);
         }
 
         var (failure, reported) = Classify(native, error);
@@ -356,7 +350,13 @@ internal sealed partial class TursoStorageTransaction
 
     internal static (SqlFailure Failure, string Message) Classify(TursoDatabaseHandle native, TursoException error)
     {
-        var message = error.Message;
+        var (message, parse) = Unwrap(error.Message);
+        var (failure, reported) = SqlErrors.Classify(message, parse, error is TursoNativeException { StatusCode: 5 });
+        return failure is Unique && IsPrimaryKey(native, reported) ? (new PrimaryKey(), reported) : (failure, reported);
+    }
+
+    private static (string Message, bool Parse) Unwrap(string message)
+    {
         var parse = false;
         foreach (var prefix in (ReadOnlySpan<string>)["Unable to prepare statement: ", "Parse error: ", "Extension error: "])
         {
@@ -367,34 +367,11 @@ internal sealed partial class TursoStorageTransaction
             }
         }
 
-        if (SqliteCoded().Match(message) is { Success: true } coded)
-        {
-            message = coded.Groups[1].Value;
-        }
-
-        var (failure, reported) = message switch
-        {
-            _ when Has(message, "UNIQUE constraint failed") => (SqlFailure.Unique, "UNIQUE constraint failed" + Names(message)),
-            _ when Has(message, "NOT NULL constraint failed") => (SqlFailure.NotNull, "NOT NULL constraint failed" + Names(message)),
-            _ when Has(message, "CHECK constraint failed") => (SqlFailure.Check, "CHECK constraint failed" + Names(message)),
-            _ when Has(message, "FOREIGN KEY constraint failed") => (SqlFailure.ForeignKey, "FOREIGN KEY constraint failed"),
-            _ when Has(message, "constraint failed") => (SqlFailure.Constraint, "constraint failed"),
-            _ when Has(message, "no such table") => (SqlFailure.NoSuchTable, "no such table" + Names(message)),
-            _ when Has(message, "no such column") => (SqlFailure.NoSuchColumn, "no such column" + Names(message)),
-            _ when Has(message, "already exists") => (SqlFailure.AlreadyExists, "already exists" + Existing(message)),
-            _ when Has(message, "database is locked") || Has(message, "busy") || Has(message, "schema changed") || Has(message, "schema conflict")
-                || Has(message, "write-write conflict") => (SqlFailure.Busy, "the database is busy; retry"),
-            _ when error is TursoNativeException { StatusCode: 5 } || Has(message, "interrupt") => (SqlFailure.Interrupted, "the statement was interrupted"),
-            _ when Has(message, "readonly") || Has(message, "read-only") || Has(message, "query_only") => (SqlFailure.ReadOnly, "attempt to write a readonly database"),
-            _ when Has(message, "too big") || Has(message, "too large") || Has(message, "too many") => (SqlFailure.TooBig, "a value or statement is too big"),
-            _ when Has(message, "syntax error") || Has(message, "near \"") || Has(message, "unexpected") || Has(message, "unrecognized token") =>
-                (SqlFailure.Syntax, "SQL syntax error"),
-            _ when SqlPhrases.FirstOrDefault(phrase => Has(message, phrase)) is { } phrase => (SqlFailure.Error, phrase),
-            _ when parse => (SqlFailure.Syntax, "SQL syntax error"),
-            _ => (SqlFailure.Error, "the statement failed to run"),
-        };
-        return failure == SqlFailure.Unique && IsPrimaryKey(native, message) ? (SqlFailure.PrimaryKey, reported) : (failure, reported);
+        return (SqliteCoded().Match(message) is { Success: true } coded ? coded.Groups[1].Value : message, parse);
     }
+
+    [GeneratedRegex(@"\A__turso_sqlite_error__:\d+:(.*)\z", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex SqliteCoded();
 
     private bool EndedByFailure(TursoDatabaseHandle native)
     {
@@ -416,7 +393,7 @@ internal sealed partial class TursoStorageTransaction
 
     private static bool IsPrimaryKey(TursoDatabaseHandle native, string message)
     {
-        var named = ConstraintColumns(message);
+        var named = SqlErrors.ConstraintColumns(message);
         if (named.Count == 0 || named.Select(column => column.Table).Distinct(StringComparer.OrdinalIgnoreCase).ToList() is not [var table])
         {
             return false;
@@ -449,39 +426,4 @@ internal sealed partial class TursoStorageTransaction
         }
     }
 
-    private static bool Has(string message, string phrase) => message.Contains(phrase, StringComparison.OrdinalIgnoreCase);
-
-    private static string Names(string message)
-    {
-        var colon = message.IndexOf(": ", StringComparison.Ordinal);
-        if (colon < 0)
-        {
-            return "";
-        }
-
-        var names = message[(colon + 2)..];
-        var end = names.IndexOf(" (", StringComparison.Ordinal);
-        names = (end < 0 ? names : names[..end]).Trim();
-        return names.Length is > 0 and <= 512 && NamePattern().IsMatch(names) ? ": " + names : "";
-    }
-
-    private static List<(string Table, string Name)> ConstraintColumns(string message)
-    {
-        var names = Names(message);
-        return names.Length == 0 ? [] : [.. names[2..].Split(", ").Select(name => name.Split('.')).Where(parts => parts.Length == 2).Select(parts => (parts[0], parts[1]))];
-    }
-
-    private static string Existing(string message) =>
-        ExistingPattern().Match(message) is { Success: true } match && NamePattern().IsMatch(match.Groups[2].Value)
-            ? $": {match.Groups[1].Value.ToLowerInvariant()} {match.Groups[2].Value}"
-            : "";
-
-    [GeneratedRegex(@"\A__turso_sqlite_error__:\d+:(.*)\z", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
-    private static partial Regex SqliteCoded();
-
-    [GeneratedRegex(@"\A[\p{L}\p{N}_$.]+(?:, [\p{L}\p{N}_$.]+)*\z", RegexOptions.CultureInvariant)]
-    private static partial Regex NamePattern();
-
-    [GeneratedRegex(@"\b(table|index|view|trigger)\s+[""'`\[]?([^\s""'`\]]+)[""'`\]]?\s+already exists", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex ExistingPattern();
 }

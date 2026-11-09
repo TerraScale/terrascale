@@ -84,7 +84,7 @@ builder.Services.ConfigureHttpClientDefaults(http => http
 builder.Services.ConfigureHttpJsonOptions(json =>
 {
     json.SerializerOptions.MaxDepth = TerraBaseJsonContext.Default.Options.MaxDepth;
-    json.SerializerOptions.TypeInfoResolverChain.Insert(0, TerraBaseJsonContext.Default);
+    json.SerializerOptions.TypeInfoResolverChain.Insert(0, TerraBaseJson.Resolver);
 });
 builder.Services.AddTerraScaleEndpoints(endpoints =>
 {
@@ -148,7 +148,6 @@ try
     app.UseTerraBasePressure();
     app.UseTerraBaseUsage();
     app.UseTerraBaseBadRequests();
-    app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
     app.UseWebSockets();
     app.UseTerraBaseClientCors();

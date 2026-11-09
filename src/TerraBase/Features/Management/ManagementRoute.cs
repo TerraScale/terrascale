@@ -1,6 +1,7 @@
 using System.Globalization;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
@@ -24,8 +25,6 @@ internal static class ManagementRoute
     public const string Organization = Organizations + "/{organization}";
     public const string Projects = Organization + "/projects";
     public const string Project = Projects + "/{project}";
-    public const string Databases = Project + "/databases";
-    public const string Database = Databases + "/{database}";
     public const string IdentityDescription =
         "Authorization: Bearer <ts-auth access token>; its sub is the acting user. On the internal listener only, the "
         + "platform operator instead, with X-TerraBase-User-Id naming the acting user. Organizations the user did not create answer 404.";
@@ -50,41 +49,32 @@ internal static class ManagementRoute
         return new Done();
     }
 
-    public static string Value(HttpContext context, string name) => (string)context.Request.RouteValues[name]!;
-
     public static ValueTask<GetProjectResult> ProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        management.GetProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);
+        management.GetProjectAsync(UserId(context), OrganizationId(context), context.RouteValue("project"), cancellationToken);
 
     public static ValueTask<DatabaseTenantResult> DatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        management.GetDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
+        management.GetDatabaseTenantAsync(UserId(context), OrganizationId(context), context.RouteValue("project"), context.RouteValue("database"), cancellationToken);
 
     public static ValueTask<WritableDatabaseTenantResult> CheckWritableDatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        management.GetWritableDatabaseTenantAsync(UserId(context), OrganizationId(context), Value(context, "project"), Value(context, "database"), cancellationToken);
+        management.GetWritableDatabaseTenantAsync(UserId(context), OrganizationId(context), context.RouteValue("project"), context.RouteValue("database"), cancellationToken);
 
     public static ValueTask<WritableProjectResult> CheckWritableProjectAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        management.GetWritableProjectAsync(UserId(context), OrganizationId(context), Value(context, "project"), cancellationToken);
+        management.GetWritableProjectAsync(UserId(context), OrganizationId(context), context.RouteValue("project"), cancellationToken);
 
     public static IResult DatabaseNotFound(NotFound error) =>
         ErrorResponse.From(ProjectAccess.Current is not null ? new NotFound(Code: "unknown_route") : error);
 
-    public static string ProjectPath(HttpContext context, Project project) =>
-        context.Features.Get<LegacyManagementRoute>() is not null
-            ? $"{Organizations}/{OrganizationId(context)}/projects/{project.Id}"
-            : $"/v1/projects/{project.Id}";
+    public static string ProjectPath(HttpContext context, Project project) => $"/v1/projects/{project.Id}";
 
     public static string DatabasePath(HttpContext context, TenantContext database) =>
-        context.Features.Get<LegacyManagementRoute>() is not null
-            ? $"{Organizations}/{database.OrganizationId}/projects/{database.ProjectId}/databases/{database.DatabaseId}"
-            : $"/v1/projects/{database.ProjectId}/databases/{Value(context, "databaseName")}";
+        $"/v1/projects/{database.ProjectId}/databases/{context.RouteValue("databaseName")}";
 
     public static string CreatedDatabasePath(HttpContext context, ManagedDatabase database) =>
-        context.Features.Get<LegacyManagementRoute>() is not null
-            ? $"{Organizations}/{OrganizationId(context)}/projects/{database.ProjectId}/databases/{database.Id}"
-            : $"/v1/projects/{database.ProjectId}/databases/{database.Name}";
+        $"/v1/projects/{database.ProjectId}/databases/{database.Name}";
 
     public static string UserId(HttpContext context) => context.User.UserId();
 
-    public static string OrganizationId(HttpContext context) => Value(context, "organization");
+    public static string OrganizationId(HttpContext context) => context.RouteValue("organization");
 
     public static Valid<string> CheckDisplayName(NameRequest request)
     {

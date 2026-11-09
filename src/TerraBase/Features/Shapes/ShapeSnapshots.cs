@@ -70,7 +70,7 @@ internal sealed class ShapeSnapshots(
 
     public async ValueTask<ShapeSnapshot?> NewestAsync(IDatabaseStore store, string handle, CancellationToken cancellationToken)
     {
-        using var admission = memory.TryReserve(MemoryLane.Bulk, 4096, store.Tenant) ?? throw new StorageBusyException();
+        using var admission = memory.TryReserve(4096, store.Tenant) ?? throw new StorageBusyException();
         await using var transaction = await transactions.BeginAsync(store, write: false, cancellationToken).ConfigureAwait(false);
         var newest = await Storage(transaction).NewestShapeSnapshotAsync(handle, cancellationToken).ConfigureAwait(false);
         return newest is not null && newest.Offset <= await FrontierAsync(transaction, cancellationToken).ConfigureAwait(false) ? newest : null;
@@ -79,7 +79,7 @@ internal sealed class ShapeSnapshots(
     public async ValueTask<ShapeSnapshot> SealIfDueAsync(IDatabaseStore store, ShapeSealDefinition shape, CancellationToken cancellationToken)
     {
         ShapeTables.Validate(shape);
-        using (var admission = memory.TryReserve(MemoryLane.Bulk, 4096, store.Tenant) ?? throw new StorageBusyException())
+        using (var admission = memory.TryReserve(4096, store.Tenant) ?? throw new StorageBusyException())
         await using (var probe = await transactions.BeginAsync(store, write: false, cancellationToken).ConfigureAwait(false))
         {
             if (!await Storage(probe).ShapeSnapshotDueAsync(shape.Handle, time.GetUtcNow().ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false))
@@ -95,8 +95,8 @@ internal sealed class ShapeSnapshots(
 
         try
         {
-            using var admission = memory.TryReserve(MemoryLane.Bulk, 4096, store.Tenant) ?? throw new StorageBusyException();
-            (memory.TryReserve(MemoryLane.Bulk, 256 * 1024 + WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException()).Dispose();
+            using var admission = memory.TryReserve(4096, store.Tenant) ?? throw new StorageBusyException();
+            (memory.TryReserve(256 * 1024 + WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException()).Dispose();
             await using var reader = await transactions.BeginAsync(store, write: false, cancellationToken).ConfigureAwait(false);
             var storage = Storage(reader);
             var started = Stopwatch.GetTimestamp();
@@ -160,7 +160,7 @@ internal sealed class ShapeSnapshots(
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
         ArgumentOutOfRangeException.ThrowIfNegative(page);
-        using var admission = memory.TryReserve(MemoryLane.Foreground, 4096, store.Tenant) ?? throw new StorageBusyException();
+        using var admission = memory.TryReserve(4096, store.Tenant) ?? throw new StorageBusyException();
         await using var transaction = await transactions.BeginAsync(store, write: false, cancellationToken).ConfigureAwait(false);
         return offset <= await FrontierAsync(transaction, cancellationToken).ConfigureAwait(false)
             ? await Storage(transaction).ReadShapeSnapshotPageAsync(handle, offset, page, memory, cancellationToken).ConfigureAwait(false)

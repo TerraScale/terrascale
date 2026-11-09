@@ -12,8 +12,6 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
     internal const string Recorded = "storage.fault.recorded";
     private const long Faulting = 0;
 
-    // This process's intents: a clean stop clears them, so every other non-faulting intent a start finds was left by a
-    // process that exited uncleanly.
     private readonly long _run = Random.Shared.NextInt64(1, long.MaxValue);
     private const int Page = 128;
     private const int MaxReason = 256;
@@ -412,7 +410,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
         await InSystemAsync(system, command => ReadRow(command, key), cancellationToken, write: false).ConfigureAwait(false);
 
     private IMemoryReservation? Reserve(int rows) =>
-        memory is null ? null : memory.TryReserve(MemoryLane.Bulk, rows * RowBytes, tenant: null) ?? throw new StorageBusyException();
+        memory is null ? null : memory.TryReserve(rows * RowBytes, tenant: null) ?? throw new StorageBusyException();
 
     private static string Bounded(string reason) => reason.Length <= MaxReason ? reason : reason[..MaxReason];
 

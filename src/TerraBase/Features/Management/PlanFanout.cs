@@ -1,5 +1,6 @@
 using System.Net;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -28,7 +29,7 @@ internal sealed class PlanFanout(IRegionPeers peers, IHttpClientFactory http, In
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(PeerTimeout);
         var path = "/admin/organizations/" + Uri.EscapeDataString(organizationId) + "/plan";
-        var name = plan.ToString().ToLowerInvariant();
+        var name = plan.JsonName;
         var taken = await Task.WhenAll(others.Select(peer => PublishOneAsync(peer, path, name, timeout.Token))).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return taken.All(ok => ok) ? null : Unpublished;
@@ -43,7 +44,7 @@ internal sealed class PlanFanout(IRegionPeers peers, IHttpClientFactory http, In
                 Version = HttpVersion.Version20,
                 VersionPolicy = HttpVersionPolicy.RequestVersionExact,
                 Headers = { { ScopeHeader, RegionScope } },
-                Content = JsonContent.Create(new PlanRequest(plan), TerraBaseJsonContext.Default.PlanRequest),
+                Content = JsonContent.Create(new PlanRequest(plan), ManagementJsonContext.Default.PlanRequest),
             };
             credential.Sign(request.Headers);
             using var client = http.CreateClient(HomeLocator.HttpClientName);

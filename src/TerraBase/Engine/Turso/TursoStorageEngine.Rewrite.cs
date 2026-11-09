@@ -30,7 +30,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         }
         catch (OperationCanceledException error) when (openingDeadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested && !_stopping.IsCancellationRequested)
         {
-            throw new RewriteRefusedException("the rewrite could not open the database in time", error, RewriteRefusal.Deadline);
+            throw new RewriteRefusedException("the rewrite could not open the database in time", error, new Deadline());
         }
         var (key, path) = database is null ? ((Organization: SystemName, Project: SystemName, Database: SystemName), LocateSystem()) : Locate(database);
         var step = database ?? SystemCheckpoint;
@@ -142,11 +142,11 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                 }
                 catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && heldBudget.IsCancellationRequested)
                 {
-                    throw new RewriteRefusedException("the final rewrite delta exceeded its time budget", error, RewriteRefusal.Budget);
+                    throw new RewriteRefusedException("the final rewrite delta exceeded its time budget", error, new Budget());
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested && budget.Expired && error is OperationCanceledException or RewriteRefusedException)
                 {
-                    throw new RewriteRefusedException(budget.Reason == RewriteRefusal.Pressure
+                    throw new RewriteRefusedException(budget.Reason is Pressure
                         ? "the off-writer rewrite stopped under storage or memory pressure"
                         : "the off-writer rewrite exceeded its total deadline", error, budget.Reason);
                 }
@@ -183,8 +183,8 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         }
         catch (RewriteRefusedException error)
         {
-            _rewriteRefused.Add(1, new KeyValuePair<string, object?>("reason", error.Reason.ToString()));
-            _logger.ZLogInformation($"Healthy rewrite refused: {error.Reason} ({error.Message})");
+            _rewriteRefused.Add(1, new KeyValuePair<string, object?>("reason", error.Reason.Label));
+            _logger.ZLogInformation($"Healthy rewrite refused: {error.Reason.Label} ({error.Message})");
             throw;
         }
         finally

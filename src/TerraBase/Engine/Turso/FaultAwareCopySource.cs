@@ -32,8 +32,6 @@ internal sealed class FaultAwareCopySource(string connectionString, Action<Excep
         return true;
     });
 
-    // The compatibility provider's SqliteCommand.GetNativeSqliteErrorCode maps these actual local statuses to
-    // SQLITE_NOTADB, SQLITE_CORRUPT and SQLITE_IOERR. Observe them without translating or replacing the native exception.
     private bool NoteDamage(Exception error)
     {
         if (error is TursoNativeException { StatusCode: 132 or 133 or 134 } || TursoStorageTransaction.Damaged(error))

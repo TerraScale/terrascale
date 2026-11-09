@@ -10,10 +10,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Slow.Sync;
 
-/// <summary>
-/// A delete and a concurrent home move cannot both win (ku TS-1438): while the old home holds the move's marker it
-/// still owns the record, so its delete is refused; once the move settles, the new home's delete wins.
-/// </summary>
 public sealed class HomeMoveDeleteFenceTests
 {
     private static readonly Faker Faker = new();
@@ -58,7 +54,6 @@ public sealed class HomeMoveDeleteFenceTests
         }, token);
         await park.Parked.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
 
-        // The move holds the database: the old home's delete is refused, not interleaved with the adoption.
         try
         {
             using var refused = await viaGru.DeleteAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/{name}"), token);
@@ -73,7 +68,6 @@ public sealed class HomeMoveDeleteFenceTests
 
         await Assert.That(await move.WaitAsync(TimeSpan.FromSeconds(30), token)).IsEqualTo("sjc");
 
-        // The move settled; the delete follows the database to its new home and wins there.
         using (var deleted = await viaSjc.DeleteAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/{name}"), token))
         {
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync(token));
@@ -83,7 +77,6 @@ public sealed class HomeMoveDeleteFenceTests
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
-    /// <summary>Parks the move where its target imported the home file but has not recorded the placement yet.</summary>
     private sealed class Park
     {
         public string? Promoting;
@@ -102,8 +95,6 @@ public sealed class HomeMoveDeleteFenceTests
             {
                 services.Replace(ServiceDescriptor.Singleton<DatabaseLifecycleCheckpoint>((step, database) =>
                 {
-                    // The promote's import published the new home file but has not recorded the placement yet: exactly
-                    // the window where a delete at the old home and the move's adoption race.
                     if (step == "create.published" && database.DatabaseId == checkpoint.Promoting)
                     {
                         checkpoint.Parked.TrySetResult();

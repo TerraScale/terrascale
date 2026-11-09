@@ -9,18 +9,30 @@ internal interface IHealthyRewrite
 
 internal readonly record struct HealthyRewrite(Ulid SourceIncarnation, Ulid TargetIncarnation, long Offset);
 
-internal enum RewriteRefusal
+internal closed record class RewriteRefusal;
+internal sealed record class Safety : RewriteRefusal;
+internal sealed record class Budget : RewriteRefusal;
+internal sealed record class Deadline : RewriteRefusal;
+internal sealed record class Pressure : RewriteRefusal;
+
+internal static class RewriteRefusalExtensions
 {
-    Safety,
-    Budget,
-    Deadline,
-    Pressure,
+    extension(RewriteRefusal refusal)
+    {
+        public string Label => refusal switch
+        {
+            Safety => "Safety",
+            Budget => "Budget",
+            Deadline => "Deadline",
+            Pressure => "Pressure",
+        };
+    }
 }
 
-internal sealed class RewriteRefusedException(string message, Exception? innerException = null, RewriteRefusal reason = RewriteRefusal.Safety)
+internal sealed class RewriteRefusedException(string message, Exception? innerException = null, RewriteRefusal? reason = null)
     : IOException(message, innerException)
 {
-    internal RewriteRefusal Reason { get; } = reason;
+    internal RewriteRefusal Reason { get; } = reason ?? new Safety();
 }
 
 internal sealed class RewriteUncertainException(Exception innerException)

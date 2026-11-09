@@ -28,7 +28,7 @@ internal sealed class ListManagedDatabasesEndpoint(
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
@@ -36,18 +36,17 @@ internal sealed class ListManagedDatabasesEndpoint(
         {
             Validation error => ErrorResponse.From(error),
             PageQuery page => await ListAsync(page, cancellationToken).ConfigureAwait(false),
-            _ => throw new UnreachableException(),
         };
 
     private async ValueTask<IResult> ListAsync(PageQuery page, CancellationToken cancellationToken)
     {
-        var project = ManagementRoute.Value(HttpContext, "project");
+        var project = HttpContext.RouteValue("project");
+        var actor = ManagementRoute.UserId(HttpContext);
         if (HttpContext.Request.RouteValues.TryGetValue("organization", out var bound) && bound is string known)
         {
-            return await ListAsync(ManagementRoute.UserId(HttpContext), known, project, null, null, page, cancellationToken).ConfigureAwait(false);
+            return await ListAsync(actor, known, project, null, null, page, cancellationToken).ConfigureAwait(false);
         }
 
-        var actor = ManagementRoute.UserId(HttpContext);
         var resolved = await catalog.ResolveProjectAsync(project, actor, createIn: null, cancellationToken).ConfigureAwait(false);
         if (resolved is not string owner)
         {
@@ -96,7 +95,6 @@ internal sealed class ListManagedDatabasesEndpoint(
             ManagementPage<ManagedDatabase> local => TypedResults.Ok(await MergedAsync(local, restricted is not null, page, project, cancellationToken).ConfigureAwait(false)),
             NotFound error => grant is null ? ErrorResponse.From(error) : ErrorResponse.From(Unknown()),
             Unavailable unavailable => ErrorResponse.From(unavailable),
-            _ => throw new InvalidOperationException(),
         };
 
     private async ValueTask<ManagementPage<ManagedDatabaseBody>> MergedAsync(

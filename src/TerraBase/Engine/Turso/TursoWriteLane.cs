@@ -4,20 +4,16 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
 {
     internal static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(10);
 
-    // A linked list lets cancellation unlink a queued call at once, as TursoIoPool does.
     private readonly LinkedList<Action> _work = [];
     private readonly object _gate = new();
     private bool _started;
     private int _executing;
 
-    // Calls queued, readable without the lock while the thread spins.
     private int _pending;
 
-    // The lane whose thread is the current thread, if any.
     [ThreadStatic]
     private static TursoWriteLane? t_lane;
 
-    // The lane a group commit loop's flow stays on (Resident): its calls to that lane resume on the lane's thread and run there inline.
     private static readonly AsyncLocal<TursoWriteLane?> ResidentFlow = new();
 
     internal void Resident() => ResidentFlow.Value = this;
@@ -64,7 +60,6 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
         using var diagnostic = Diagnostics?.Submit();
         var result = new TaskCompletionSource<T>(resident ? TaskCreationOptions.None : TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // 0 queued, 1 running, 2 cancelled before it ran.
         var context = io.CaptureContext();
         var state = 0;
         var node = new LinkedListNode<Action>(Run);
@@ -84,7 +79,6 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
                 diagnostic?.Cancel();
                 if (resident)
                 {
-                    // Never resume a resident flow on the thread that cancelled.
                     ThreadPool.UnsafeQueueUserWorkItem(_ => result.TrySetCanceled(cancellationToken), null);
                 }
                 else
@@ -142,7 +136,6 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
                 Interlocked.Decrement(ref _executing);
             }
 
-            // An awaiting caller can release the writer immediately; publish only after this call is marked finished.
             if (failure is not null)
             {
                 result.TrySetException(failure);
@@ -161,8 +154,6 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
         t_lane = this;
         while (true)
         {
-            // A transaction's next call usually arrives within microseconds of the previous one returning: spin
-            // briefly before sleeping, so back-to-back calls do not pay a thread wake-up each.
             var spin = new SpinWait();
             while (Volatile.Read(ref _pending) == 0 && !spin.NextSpinWillYield)
             {

@@ -32,15 +32,15 @@ internal static class BuildCheck
 
     internal static void Probe(Holder? holder)
     {
-        Get(); // TB0001
-        Later(); // TB0001
-        Later().ConfigureAwait(false); // TB0001
-        NullableLater(); // TB0001
-        NullableLater().ConfigureAwait(false); // TB0001
-        ConfiguredNullable(); // TB0001
-        holder?.Get(); // TB0001
-        holder?.Configured(); // TB0001
-        Derived(); // TB0001
+        Get();
+        Later();
+        Later().ConfigureAwait(false);
+        NullableLater();
+        NullableLater().ConfigureAwait(false);
+        ConfiguredNullable();
+        holder?.Get();
+        holder?.Configured();
+        Derived();
 
         _ = Get();
         _ = Later();
@@ -50,10 +50,10 @@ internal static class BuildCheck
 
     internal static async Task ProbeAwaitAsync()
     {
-        await Later().ConfigureAwait(false); // TB0001
-        await NullableLater().ConfigureAwait(false); // TB0001
-        await ConfiguredNullable(); // TB0001
-        await Derived().ConfigureAwait(false); // TB0001
+        await Later().ConfigureAwait(false);
+        await NullableLater().ConfigureAwait(false);
+        await ConfiguredNullable();
+        await Derived().ConfigureAwait(false);
 
         _ = await Later().ConfigureAwait(false);
         var kept = await Later().ConfigureAwait(false);
@@ -62,13 +62,13 @@ internal static class BuildCheck
 
     internal static void ProbeGeneric<T>(Func<T> call) where T : IUnion
     {
-        call(); // TB0001
+        call();
         _ = call();
     }
 
     internal static void ProbeGenericTask<T>(Func<T> call) where T : Task<ProbeResult>
     {
-        call(); // TB0001
+        call();
         _ = call();
     }
 

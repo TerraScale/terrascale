@@ -68,7 +68,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private readonly ILogger<TursoStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
-    private readonly Action<TursoDatabaseStore>? _afterBootstrap;
 
     internal TursoIoPool Io { get; }
 
@@ -99,8 +98,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private Task<bool>? _probe;
     private long _probeStarted;
     private long? _probeCompleted;
-
-    internal TimeProvider ReadinessClock { get; set; } = TimeProvider.System;
 
     private static readonly StoragePressure UnknownStoragePressure = new(null, []);
     private StoragePressure _storagePressure = UnknownStoragePressure;
@@ -234,9 +231,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 return false;
             }
 
-            var now = ReadinessClock.GetTimestamp();
+            var now = Time.GetTimestamp();
             if (_probe is null || (_probe.IsCompleted && _probeCompleted is { } completed
-                && ReadinessClock.GetElapsedTime(completed, now) >= _readinessCacheTtl))
+                && Time.GetElapsedTime(completed, now) >= _readinessCacheTtl))
             {
                 _probeStarted = now;
                 _probeCompleted = null;
@@ -245,13 +242,13 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             }
 
             probe = _probe;
-            remaining = StalledProbe - ReadinessClock.GetElapsedTime(_probeStarted, now);
+            remaining = StalledProbe - Time.GetElapsedTime(_probeStarted, now);
         }
 
         try
         {
 
-            var writable = await probe.WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, ReadinessClock, cancellationToken).ConfigureAwait(false);
+            var writable = await probe.WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, Time, cancellationToken).ConfigureAwait(false);
             return writable && !Volatile.Read(ref _disposed);
         }
         catch (TimeoutException)
@@ -276,7 +273,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         {
             lock (_readinessGate)
             {
-                _probeCompleted = ReadinessClock.GetTimestamp();
+                _probeCompleted = Time.GetTimestamp();
             }
         }
     }
@@ -293,19 +290,16 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal TursoSessionPool Pool { get; }
 
     public TursoStorageEngine(
-    string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<TursoStorageEngine> logger,
-    IMasterKey masterKey,
-    TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, int? maxWriters = null, Func<ThreadStart, Thread>? createWorker = null,
-    TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
-    Action<TursoDatabaseStore>? afterBootstrap = null, TimeSpan? queryBudget = null,
-    TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null,
+    StorageEngineOptions configured, Meter meter, ILogger<TursoStorageEngine> logger, IMasterKey masterKey,
+    DatabaseLifecycleCheckpoint? checkpoint = null, IMemoryBudget? schemaMemory = null,
     INativeTemporaryStorage? nativeTemporaryStorage = null, IDiskBudget? diskBudget = null)
     {
         ArgumentNullException.ThrowIfNull(masterKey);
+        var clock = configured.Time ?? TimeProvider.System;
         Encryption = new DatabaseKeys(masterKey);
-        _dataDirectory = dataDirectory;
-        Fences = new DatabaseFences(Path.Combine(dataDirectory, ".fences"));
-        Disk = diskBudget ?? new DiskBudget(dataDirectory, meter);
+        _dataDirectory = configured.DataDirectory;
+        Fences = new DatabaseFences(Path.Combine(configured.DataDirectory, ".fences"), clock);
+        Disk = diskBudget ?? new DiskBudget(configured.DataDirectory, meter);
         _schemaMemory = schemaMemory;
         _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Instrumented record and shape SELECT executions, by path (point, query, shape, shape_body).");
         _writerHeld = meter.CreateHistogram<double>("terrabase.storage.writer_held", "s",
@@ -319,30 +313,29 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             "Healthy rewrite work by bounded step and database kind.",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = WriterHeldBuckets });
         _logger = logger;
-        _shutdownGrace = shutdownGrace;
+        _shutdownGrace = configured.ShutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
-        _afterBootstrap = afterBootstrap;
-        HostTime = backupTime ?? TimeProvider.System;
-        _readinessCacheTtl = readinessCacheTtl ?? TimeSpan.FromSeconds(1);
-        Time = time ?? TimeProvider.System;
-        QueryBudget = queryBudget ?? TursoDatabaseStore.DefaultQueryBudget;
+        HostTime = configured.BackupTime ?? clock;
+        _readinessCacheTtl = configured.ReadinessCacheTtl ?? TimeSpan.FromSeconds(1);
+        Time = clock;
+        QueryBudget = configured.QueryBudget ?? TursoDatabaseStore.DefaultQueryBudget;
 
-        _pragmas = TursoSession.Pragmas(memoryBudget, threads);
-        Pool = new(maxIdle: maxIdle ?? 4 * Environment.ProcessorCount, maxIdlePerDatabase: maxIdlePerDatabase ?? Environment.ProcessorCount,
-            maxWriters: maxWriters ?? Math.Max(64, 8 * threads));
+        _pragmas = TursoSession.Pragmas(configured.MemoryBudget, configured.Threads);
+        Pool = new(maxIdle: 4 * Environment.ProcessorCount, maxIdlePerDatabase: Environment.ProcessorCount,
+            maxWriters: configured.MaxWriters ?? Math.Max(64, 8 * configured.Threads));
         meter.CreateObservableGauge("terrabase.cdc.retained.rows", () => _stores.Values.Sum(store => store.RetainedCdcRows),
             description: "Retained CDC row span across open tenant databases, sampled by retention maintenance.");
         meter.CreateObservableGauge("terrabase.storage.open_writers", () => Pool.OpenWriters, description: "Client databases holding an open writer connection.");
-        _ownership = Own(dataDirectory);
+        _ownership = Own(configured.DataDirectory);
         try
         {
             nativeTemporaryStorage?.Initialize();
             CheckIntentJournal();
             DeleteRewriteScratch();
             Ledger = new StorageFaultLedger(this, logger, schemaMemory);
-            Leases = new HomeLeaseGate();
+            Leases = new HomeLeaseGate(clock);
 
-            Io = new(threads, queue, meter, createWorker);
+            Io = new(configured.Threads, configured.Queue, meter);
         }
         catch
         {
@@ -1065,106 +1058,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         }
     }
 
-    private static FileStream Own(string dataDirectory)
-    {
-        FileStream ownership;
-        try
-        {
-            Directory.CreateDirectory(dataDirectory);
-
-            ownership = new FileStream(Path.Combine(dataDirectory, LockFileName), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        }
-        catch (IOException error) when (IsLockConflict(error))
-        {
-            throw new TerraBaseConfigurationException("data-directory is in use by another TerraBase process; stop it, then start again");
-        }
-        catch (IOException)
-        {
-
-            throw new TerraBaseConfigurationException("data-directory must be a directory where this process can create and lock files");
-        }
-        catch (UnauthorizedAccessException)
-        {
-            throw new TerraBaseConfigurationException("data-directory must be a directory this process can write to");
-        }
-
-        try
-        {
-            CheckLayout(dataDirectory, ownership);
-            return ownership;
-        }
-        catch
-        {
-            ownership.Dispose();
-            throw;
-        }
-    }
-
-    private static void CheckLayout(string dataDirectory, FileStream ownership)
-    {
-        var recorded = ownership.Length > 0;
-        if (recorded)
-        {
-            var format = RecordedFormat(ownership);
-            if (format != StorageFormat.Id)
-            {
-                throw new TerraBaseConfigurationException(
-                    $"data directory has storage format {format}; this build writes {StorageFormat.Id}; start with an empty data directory (no automatic migration)");
-            }
-        }
-
-        var entries = Directory.EnumerateFileSystemEntries(dataDirectory)
-            .Select(entry => Path.GetFileName(entry))
-            .Where(name => !string.Equals(name, LockFileName, StringComparison.Ordinal));
-        if (recorded ? entries.Any(IsFlatDatabaseFile) : entries.Any())
-        {
-            throw new TerraBaseConfigurationException(PreTenancyLayout);
-        }
-
-        if (!recorded)
-        {
-            ownership.Write(LayoutRecord);
-            ownership.Flush(flushToDisk: true);
-        }
-    }
-
-    private static string RecordedFormat(FileStream ownership)
-    {
-        if (ownership.Length > 32)
-        {
-            return "unversioned";
-        }
-
-        Span<byte> record = stackalloc byte[(int)ownership.Length];
-        ownership.Position = 0;
-        ownership.ReadExactly(record);
-        var text = Encoding.ASCII.GetString(record);
-        return text.Contains('-', StringComparison.Ordinal) && !text.AsSpan().ContainsAnyExcept(FormatCharacters) ? text : "unversioned";
-    }
-
-    internal static bool IsLockConflict(IOException error)
-    {
-        ArgumentNullException.ThrowIfNull(error);
-        return error.GetType() == typeof(IOException) && error.HResult is 11 or unchecked((int)0x80070020) or unchecked((int)0x80070021);
-    }
-
-    private static bool IsReservedRootName(ref FileSystemEntry entry)
-    {
-        foreach (var reserved in ReservedRootNames)
-        {
-            if (entry.FileName.SequenceEqual(reserved))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsFlatDatabaseFile(string name) =>
-        !ReservedRootNames.Contains(name)
-        && (name.EndsWith(FileExtension, StringComparison.Ordinal)
-            || Sidecars.Any(sidecar => name.EndsWith(FileExtension + sidecar, StringComparison.Ordinal)));
 
     private ((string Organization, string Project, string Database) Key, string Path) Locate(TenantContext database)
     {
@@ -1592,7 +1485,6 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             RejectDatabaseLinks(path);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
-            _afterBootstrap?.Invoke(store);
 
             await Ledger.LoadAsync(store, lifetime.Token).ConfigureAwait(false);
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);

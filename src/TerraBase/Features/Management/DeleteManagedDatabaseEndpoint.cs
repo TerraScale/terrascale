@@ -24,7 +24,7 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware(), new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware(), new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
     }
 
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
@@ -45,7 +45,7 @@ internal sealed class DeleteManagedDatabaseEndpoint(IManagementService managemen
             };
         }
 
-        return await management.DeleteDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"), ManagementRoute.Value(context, "database"), cancellationToken) switch
+        return await management.DeleteDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), context.RouteValue("project"), context.RouteValue("database"), cancellationToken) switch
         {
             Done => TypedResults.NoContent(),
             NotFound error => ManagementRoute.DatabaseNotFound(error),

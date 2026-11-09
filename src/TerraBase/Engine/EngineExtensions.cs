@@ -35,12 +35,13 @@ public static class EngineExtensions
         {
             var configured = provider.GetRequiredService<TerraBaseOptions>();
             return new TursoStorageEngine(
-                configured.DataDirectory, configured.StorageThreads, configured.StorageQueue, configured.MemoryBudget,
+                new StorageEngineOptions(
+                    configured.DataDirectory, configured.StorageThreads, configured.StorageQueue, configured.MemoryBudget,
+                    configured.ShutdownGrace, ReadinessCacheTtl: configured.ReadinessCacheTtl, QueryBudget: configured.QueryBudget,
+                    Time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), BackupTime: provider.GetService<TimeProvider>()),
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(DatabaseMasterKey), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
+                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(DatabaseMasterKey),
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
-                time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
-                backupTime: provider.GetService<TimeProvider>(),
                 schemaMemory: provider.GetRequiredService<IMemoryBudget>(),
                 nativeTemporaryStorage: provider.GetRequiredService<INativeTemporaryStorage>(),
                 diskBudget: provider.GetRequiredService<IDiskBudget>());

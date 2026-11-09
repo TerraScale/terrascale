@@ -48,7 +48,6 @@ public sealed class HealthTests
         await Assert.That(body.RootElement.GetProperty("status").GetString()).IsEqualTo(state);
         await Assert.That(body.RootElement.GetProperty("version").GetString()).IsEqualTo("0.1.0");
         await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("test-region");
-        // The source commit the build was made from: the checkout's HEAD here, TERRABASE_REVISION in a CI image.
         await Assert.That(ServiceVersion.Revision).Matches("^[0-9a-f]{40}$");
         if (anonymous)
         {

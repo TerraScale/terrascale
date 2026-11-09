@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -35,7 +36,7 @@ internal sealed class ReplicaPlacementEndpoint(IReplicaCatalog catalog) : Endpoi
             TenantDatabaseRecord { Placement: var placement } record => TypedResults.Json(
                 new ReplicaCatalogEntry(database.OrganizationId, database.ProjectId!, database.DatabaseId!, record.Name,
                     placement.Home, placement.Replicas, placement.Version, placement.AllRegions),
-                TerraBaseJsonContext.Default.ReplicaCatalogEntry),
+                ReplicasJsonContext.Default.ReplicaCatalogEntry),
             Unavailable error => ErrorResponse.From(error),
             _ => ErrorResponse.From(new NotFound("the database does not exist")),
         };

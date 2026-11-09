@@ -1,5 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.HomeApply;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -26,7 +27,7 @@ internal sealed class ApplyStateEndpoint(IHomeApply apply, ITenantDirectory tena
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var id = Value("transaction");
+        var id = HttpContext.RouteValue("transaction");
         if (!EntityIds.IsValid(id))
         {
             return ErrorResponse.From(new NotFound("the transaction does not exist"));
@@ -35,10 +36,10 @@ internal sealed class ApplyStateEndpoint(IHomeApply apply, ITenantDirectory tena
         HttpContext.Response.Headers.CacheControl = "no-store";
         try
         {
-            return await tenants.FindDatabaseAsync(Value("organization"), Value("project"), Value("database"), cancellationToken).ConfigureAwait(false) switch
+            return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
             {
                 TenantContext database when await apply.StateAsync(database, id, cancellationToken).ConfigureAwait(false) is { } state =>
-                    TypedResults.Json(state, TerraBaseJsonContext.Default.HomeApplyResult),
+                    TypedResults.Json(state, HomeApplyJsonContext.Default.HomeApplyResult),
                 Unavailable error => ErrorResponse.From(error),
                 _ => ErrorResponse.From(new NotFound("the database does not exist")),
             };
@@ -49,5 +50,4 @@ internal sealed class ApplyStateEndpoint(IHomeApply apply, ITenantDirectory tena
         }
     }
 
-    private string Value(string name) => HttpContext.Request.RouteValues[name] as string ?? string.Empty;
 }

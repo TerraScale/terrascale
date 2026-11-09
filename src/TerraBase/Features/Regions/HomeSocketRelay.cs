@@ -8,8 +8,6 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Regions;
 
-// The home serves the relayed socket exactly as one that reached it directly, so every region answers alike
-// (RFC 8441, HTTP/2 extended CONNECT on the internal listener; docs/terrabase/cross-region.md).
 internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredential credential)
 {
     private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(20);
@@ -19,7 +17,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(home);
-        context.Features.Get<QosRequestLease>()?.Lease.Dispose();
+        context.ReleaseRequestLease();
         using var upstream = new ClientWebSocket
         {
             Options =
@@ -35,12 +33,10 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             upstream.Options.AddSubProtocol(protocol);
         }
 
-        // The same headers a forwarded request carries, so the home runs the same token, IP-allowlist and scope checks.
         foreach (var (name, values) in context.Request.Headers)
         {
             if (HomeForwarding.IsForwardable(name) && !name.StartsWith("Sec-WebSocket-", StringComparison.OrdinalIgnoreCase))
             {
-                // SetRequestHeader replaces, so one header joins its values as the wire format does.
                 upstream.Options.SetRequestHeader(name, string.Join(", ", values.Where(value => value is not null)));
             }
         }
@@ -58,8 +54,6 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
         catch (WebSocketException) when (upstream.HttpStatusCode is not 0)
         {
-            // The home answered the upgrade with a refusal: the client sees the same status it would have seen there,
-            // with the refusal headers the home set.
             var status = upstream.HttpStatusCode;
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers["X-TerraBase-Region"] = home.Region;
@@ -79,8 +73,6 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
         catch (Exception error) when (error is WebSocketException or HttpRequestException or OperationCanceledException)
         {
-            // The home cannot be reached: the client sees the forwarded request's 421 wrong_region, naming the home,
-            // so both surfaces answer alike.
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers["X-TerraBase-Database-Home"] = home.Region;
             var url = HomeForwarding.RetryUrl(context, home.Region);

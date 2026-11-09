@@ -1,6 +1,7 @@
-using System.Text.Json;
 using NATS.Client.Core;
+using System.Text.Json;
 using TerraBase.Configuration;
+using TerraBase.Features.Clock;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Clock;
@@ -30,7 +31,7 @@ internal sealed class ClockReports(TerraBaseOptions options) : IAsyncDisposable
         try
         {
             var response = await _connection.RequestAsync<byte[], byte[]>("terrabase.clock.report",
-                JsonSerializer.SerializeToUtf8Bytes(report, TerraBaseJsonContext.Default.ClockReport), cancellationToken: timeout.Token).ConfigureAwait(false);
+                JsonSerializer.SerializeToUtf8Bytes(report, ClockJsonContext.Default.ClockReport), cancellationToken: timeout.Token).ConfigureAwait(false);
             using var ack = JsonDocument.Parse(response.Data ?? []);
             return ack.RootElement.TryGetProperty("stored", out var stored) && stored.ValueKind == JsonValueKind.True;
         }

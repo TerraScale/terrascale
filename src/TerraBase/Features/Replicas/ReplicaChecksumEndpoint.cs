@@ -1,7 +1,8 @@
 using System.Globalization;
-using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
+using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -46,7 +47,7 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
             cursor = new ChecksumCursor(table, after);
         }
 
-        return await tenants.FindDatabaseAsync(Value("organization"), Value("project"), Value("database"), cancellationToken).ConfigureAwait(false) switch
+        return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
         {
             NotFound error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
@@ -61,9 +62,8 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
         {
             null => ErrorResponse.From(new NotFound("the database is not stored on this node")),
             var round => TypedResults.Json(new ReplicaChecksumPage(round.Revision.ToString(), round.Ranges is null, round.Ranges ?? [], round.Next),
-                TerraBaseJsonContext.Default.ReplicaChecksumPage),
+                ReplicasJsonContext.Default.ReplicaChecksumPage),
         };
     }
 
-    private string Value(string name) => HttpContext.Request.RouteValues[name] as string ?? string.Empty;
 }

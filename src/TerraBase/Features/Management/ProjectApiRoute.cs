@@ -2,9 +2,8 @@ namespace TerraBase.Features.Management;
 
 public sealed class ProjectManagementRoute;
 
-public sealed record LegacyManagementRoute(string OrganizationId, string OriginalPath);
+public sealed class ManagementUserRoute;
 
-// The project hierarchy of the public API: docs/api.md.
 internal static class ProjectApiRoute
 {
     public const string Project = "/v1/projects/{project}";

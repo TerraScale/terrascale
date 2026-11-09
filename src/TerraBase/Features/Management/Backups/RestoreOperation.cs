@@ -1,3 +1,4 @@
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using ZLogger;
 
@@ -55,9 +56,7 @@ internal static class RestoreOperationRoute
 
     public static IResult Accepted(HttpContext context, RestoreOperationRecord record)
     {
-        context.Response.Headers.Location = context.Features.Get<LegacyManagementRoute>() is not null
-            ? $"{ManagementRoute.Organizations}/{record.OrganizationId}/projects/{record.ProjectId}/databases/{record.SourceDatabaseId}/restores/{record.Id}"
-            : $"/v1/projects/{record.ProjectId}/databases/{ManagementRoute.Value(context, "databaseName")}/restores/{record.Id}";
-        return TypedResults.Json(ToBody(record), TerraBaseJsonContext.Default.RestoreOperation, statusCode: StatusCodes.Status202Accepted);
+        context.Response.Headers.Location = $"/v1/projects/{record.ProjectId}/databases/{context.RouteValue("databaseName")}/restores/{record.Id}";
+        return TypedResults.Json(ToBody(record), ManagementJsonContext.Default.RestoreOperation, statusCode: StatusCodes.Status202Accepted);
     }
 }

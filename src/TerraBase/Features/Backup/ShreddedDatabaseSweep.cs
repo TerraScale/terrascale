@@ -3,8 +3,6 @@ using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
-// The unsnapshotted custody tombstone is deletion authority even when a region's catalog was offline at DELETE.
-// Each pass scans at most 128 keys. Every node, including regional hold partners, consumes the same authority.
 internal sealed class ShreddedDatabaseSweep(KeyCustody custody, KeyRevocationLocal local, TimeProvider time,
     ILogger<ShreddedDatabaseSweep> logger) : BackgroundService
 {
@@ -45,7 +43,7 @@ internal sealed class ShreddedDatabaseSweep(KeyCustody custody, KeyRevocationLoc
                 }
                 if (record is null || !await local.RevokeAsync(tenant, token).ConfigureAwait(false))
                 {
-                    return; // Never advance past authority the catalog could not durably accept.
+                    return;
                 }
             }
             _after = item.Key;

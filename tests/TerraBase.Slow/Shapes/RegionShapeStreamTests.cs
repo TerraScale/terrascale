@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -27,9 +28,7 @@ public sealed class RegionShapeStreamTests
         await world.Overlay.Ready.WaitAsync(TimeSpan.FromSeconds(5), token);
         await using var wire = await world.Client.SubscribeCoreAsync<byte[]>("terrabase.provisional.sjc.>", cancellationToken: token);
         _ = await world.Client.PingAsync(token);
-        // An older node's raw local notices must never enter the sealed provisional stream during a rollout.
         await world.Client.PublishAsync($"terrabase.local.sjc.{world.Database.OrganizationId}.{world.Database.ProjectId}.{world.Database.DatabaseId}", "raw local notice"u8.ToArray(), cancellationToken: token);
-        // fra joins after the original insert. Home assigns the same rowid to a different primary key.
         var inserted = await world.LocalAsync(false, ["INSERT INTO items (id, v) VALUES ('p', 'first')"], token);
         var encrypted = await wire.Msgs.ReadAsync(token).AsTask().WaitAsync(TimeSpan.FromSeconds(5), token);
         await Assert.That(encrypted.Data!.AsSpan(0, 4).SequenceEqual("TBP1"u8)).IsTrue();
@@ -58,7 +57,6 @@ public sealed class RegionShapeStreamTests
         var confirmed = await fra.NextAsync(token);
         await Assert.That(Settled(confirmed, "confirmed")).IsEquivalentTo([inserted.Id, commit.Id]);
         await Assert.That(Pending(confirmed).Count).IsEqualTo(0);
-        // A delayed direct message after the pages arrived must never resurrect the provisional copy.
         await DeliverAsync(world, fra, duplicate, token);
         fra.Local = "1111111111111111";
         await Assert.That(Pending(await fra.NextAsync(token)).Count).IsEqualTo(0);
@@ -107,7 +105,6 @@ public sealed class RegionShapeStreamTests
         await Assert.That(ops.Count).IsEqualTo(1);
         await Assert.That(ops[0].GetProperty("row").GetProperty("v").GetString()).IsEqualTo("sjc");
         link.Restore();
-        // The same ID through a late direct delivery is filtered against the home pages.
         await DeliverAsync(world, fra, world.Overlay.Snapshot(world.Database).Single(), token);
         fra.Local = "1111111111111111";
         var replay = await fra.NextAsync(token);
@@ -169,12 +166,12 @@ public sealed class RegionShapeStreamTests
                     services.GetRequiredService<IShapeFlights<ShapeRead>>(), services.GetRequiredService<ShapeControls>(), overlay);
                 var shape = await tails.ResolveAsync(world.Database, "items", new ShapeQuery(null, null), token);
                 var resolved = shape is ResolvedShape found ? found : throw new InvalidOperationException("fra did not resolve the shape");
-                var offset = long.Parse(client.NextOffset, System.Globalization.CultureInfo.InvariantCulture);
+                var offset = long.Parse(client.NextOffset, CultureInfo.InvariantCulture);
                 await using var reader = (await replicas.BeginShapeReadAsync(world.Database, token))!;
                 while (await reader.ReadAsync(resolved.Scope, resolved.Lineage, offset, services.GetRequiredService<IMemoryBudget>(), token) is ShapeBody body)
                 {
                     body.Lease?.Dispose();
-                    offset = long.Parse(body.NextOffset, System.Globalization.CultureInfo.InvariantCulture);
+                    offset = long.Parse(body.NextOffset, CultureInfo.InvariantCulture);
                     if (body.UpToDate)
                     {
                         break;
@@ -205,7 +202,7 @@ public sealed class RegionShapeStreamTests
             using (body.Lease)
             {
                 var json = JsonElement.Parse(body.Json.Span);
-                _offset = long.Parse(json.GetProperty("next_offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
+                _offset = long.Parse(json.GetProperty("next_offset").GetString()!, CultureInfo.InvariantCulture);
                 Local = json.GetProperty("local").GetString()!;
                 return json;
             }
@@ -224,7 +221,6 @@ public sealed class RegionShapeStreamTests
         }
     }
 
-    // An owned TCP link for only the fra provisional connection. R7 and HTTP page pulls bypass it.
     private sealed class Link : IAsyncDisposable
     {
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);

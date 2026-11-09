@@ -69,7 +69,7 @@ public sealed class PointInTimeLeaseTests
     {
         var (kind, id) = ContinuousBackup.RecordKey(host.Tenant);
         return await catalog.ReadAsync(
-            transaction => GetAsync(transaction, kind, id, TerraBaseJsonContext.Default.BackupStatusRecord, cancellationToken),
+            transaction => GetAsync(transaction, kind, id, BackupJsonContext.Default.BackupStatusRecord, cancellationToken),
             static _ => (BackupStatusRecord?)null, cancellationToken);
     }
 
@@ -77,7 +77,7 @@ public sealed class PointInTimeLeaseTests
     {
         var leases = await catalog.ReadAsync(
             transaction => SystemCatalog.ListAllAsync(
-                transaction, BackupCatalog.GenerationLeases(host.Database.Organization), TerraBaseJsonContext.Default.RestoreGenerationLease, cancellationToken),
+                transaction, BackupCatalog.GenerationLeases(host.Database.Organization), ManagementJsonContext.Default.RestoreGenerationLease, cancellationToken),
             static _ => new List<RestoreGenerationLease>(), cancellationToken);
         return leases.FirstOrDefault(lease => lease.OperationId == operationId)?.Until;
     }

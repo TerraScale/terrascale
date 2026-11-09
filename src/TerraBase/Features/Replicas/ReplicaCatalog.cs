@@ -5,8 +5,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replicas;
 
-// Every catalog read and write region replicas make. One seam, so the SQL catalog (PIVOT E2) can replace the record
-// catalog behind it without touching callers.
 internal interface IReplicaCatalog
 {
     ValueTask<DatabaseRecordResult> FindAsync(TenantContext database, CancellationToken cancellationToken);

@@ -1,4 +1,6 @@
 using System.Buffers;
+using System.Collections;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -61,7 +63,7 @@ internal sealed partial class TursoShapeReader(
 
                 return filter;
             default:
-                throw new System.Diagnostics.UnreachableException();
+                throw new UnreachableException();
         }
     }
 
@@ -517,8 +519,6 @@ internal sealed partial class TursoShapeReader(
                     }
                     else if (values is not null && keyColumns.Count > 0)
                     {
-                        // A receiver may have missed the insert, and the writer's replica rowid can belong to a
-                        // different home row. Local writes have an immutable declared primary key (PushChanges).
                         var find = Command($"SELECT rowid FROM {Quote(shape.Table)} WHERE {string.Join(" AND ", keyColumns.Select(index => Quote(columns[index]) + " IS $k" + index.ToString(CultureInfo.InvariantCulture)))} LIMIT 1;");
                         foreach (var index in keyColumns)
                         {
@@ -540,7 +540,6 @@ internal sealed partial class TursoShapeReader(
                     }
                     else
                     {
-                        // A local transaction without a usable key cannot be mapped safely; use the home path.
                         continue;
                     }
 
@@ -717,7 +716,7 @@ internal sealed partial class TursoShapeReader(
                 case (1, _, false) or (0, false, false) or (-1, false, _):
                     return false;
                 case (0, true, true) when output.Selected.All(index =>
-                    System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(before![index], after![index])):
+                    StructuralComparisons.StructuralEqualityComparer.Equals(before![index], after![index])):
                     return false;
                 case (0, false, true):
                     (type, move) = (1, "in");
@@ -857,7 +856,7 @@ internal sealed partial class TursoShapeReader(
 
         public long Bytes => _reservations.Sum(reservation => reservation.Bytes);
 
-        public void Reserve(long bytes) => _reservations.Add(memory.TryReserve(MemoryLane.Bulk, bytes, tenant) ?? throw new QosMemoryException());
+        public void Reserve(long bytes) => _reservations.Add(memory.TryReserve(bytes, tenant) ?? throw new QosMemoryException());
 
         public void TransferTo(ShapeMemory owner)
         {

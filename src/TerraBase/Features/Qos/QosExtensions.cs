@@ -13,6 +13,11 @@ namespace TerraBase.Features.Qos;
 
 internal static class QosExtensions
 {
+    extension(HttpContext context)
+    {
+        internal void ReleaseRequestLease() => context.Features.Get<QosRequestLease>()?.Release();
+    }
+
     public static IServiceCollection AddTerraBaseQos(this IServiceCollection services) => services
         .AddSingleton<IQosAdmission, QosAdmission>()
         .AddSingleton<IStorageQuota, StorageQuota>();
@@ -32,16 +37,13 @@ internal static class QosExtensions
             using var scope = QosContext.Enter(null, budget);
             try
             {
-                using var lookup = budget.TryReserve(MemoryLane.Foreground, 16 * 1024, null) ?? throw new QosMemoryException();
+                using var lookup = budget.TryReserve(16 * 1024, null) ?? throw new QosMemoryException();
                 context.Features.Set(new LookupMemory(lookup));
                 await next(context).ConfigureAwait(false);
             }
             catch (QosMemoryException) when (!context.Response.HasStarted)
             {
-                context.Response.Clear();
-                context.Response.Headers.RetryAfter = "1";
-                context.Response.Headers.CacheControl = "no-store";
-                await BadRequests.WriteAsync(context, StatusCodes.Status429TooManyRequests, "tenant_memory", "organization memory budget exceeded", null).ConfigureAwait(false);
+                await RejectTenantMemoryAsync(context).ConfigureAwait(false);
             }
         });
         return app;
@@ -101,14 +103,11 @@ internal static class QosExtensions
         }
 
         using var scope = QosContext.Enter(tenant, admission: admission);
-        // Known lengths reserve before decoding; chunked bodies reserve before each bounded read.
         var bodyBytes = context.Request.ContentLength ?? 0;
-        using var body = budget.TryReserve(MemoryLane.Foreground, 16 * 1024 + bodyBytes * 3);
+        using var body = budget.TryReserve(16 * 1024 + bodyBytes * 3);
         if (body is null)
         {
-            context.Response.Headers.RetryAfter = "1";
-            context.Response.Headers.CacheControl = "no-store";
-            await BadRequests.WriteAsync(context, StatusCodes.Status429TooManyRequests, "tenant_memory", "organization memory budget exceeded", null).ConfigureAwait(false);
+            await RejectTenantMemoryAsync(context).ConfigureAwait(false);
             return;
         }
 
@@ -131,6 +130,14 @@ internal static class QosExtensions
         }
     }
 
+    private static async Task RejectTenantMemoryAsync(HttpContext context)
+    {
+        context.Response.Clear();
+        context.Response.Headers.RetryAfter = "1";
+        context.Response.Headers.CacheControl = "no-store";
+        await BadRequests.WriteAsync(context, StatusCodes.Status429TooManyRequests, "tenant_memory", "organization memory budget exceeded", null).ConfigureAwait(false);
+    }
+
     private readonly union QosTenant(TenantContext, Done, Unavailable);
 
     private static async ValueTask<QosTenant> ResolveTenantAsync(HttpContext context)
@@ -144,13 +151,31 @@ internal static class QosExtensions
             return await ResolvePlanAsync(context, key.OrganizationId).ConfigureAwait(false);
         }
         if (context.User.Identity?.IsAuthenticated == true
-            && (context.Request.RouteValues["organization"] as string
-                ?? context.Features.Get<LegacyManagementRoute>()?.OrganizationId) is string organizationId)
+            && context.Request.RouteValues["organization"] as string is string organizationId)
         {
             return await context.RequestServices.GetRequiredService<IManagementService>()
                 .GetOrganizationAsync(context.User.UserId(), organizationId, context.RequestAborted).ConfigureAwait(false) switch
             {
                 Organization organization => new TenantContext(organization.Id, organization.Plan),
+                NotFound => new Done(),
+                Unavailable error => error,
+            };
+        }
+        if (context.GetEndpoint()?.Metadata.GetMetadata<ManagementUserRoute>() is not null
+            && UserAuthExtensions.Identity(context.User)?.FindFirst("project_id") is null
+            && context.User.Identity?.IsAuthenticated == true
+            && context.Request.RouteValues["project"] as string is string projectId)
+        {
+            return await context.RequestServices.GetRequiredService<IProjectCatalog>()
+                .ResolveProjectAsync(projectId, context.User.UserId(), createIn: null, context.RequestAborted).ConfigureAwait(false) switch
+            {
+                string owner => await context.RequestServices.GetRequiredService<IManagementService>()
+                    .GetOrganizationAsync(context.User.UserId(), owner, context.RequestAborted).ConfigureAwait(false) switch
+                {
+                    Organization organization => new TenantContext(organization.Id, organization.Plan),
+                    NotFound => new Done(),
+                    Unavailable error => error,
+                },
                 NotFound => new Done(),
                 Unavailable error => error,
             };

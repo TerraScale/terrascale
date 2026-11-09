@@ -31,7 +31,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
     }
 
     public override async ValueTask<IResult> HandleAsync(DatabaseRegionsRequest request, CancellationToken cancellationToken)
@@ -92,11 +92,6 @@ internal sealed class CreateManagedDatabaseEndpoint(
             };
         }
 
-        if (HttpContext.Features.Get<LegacyManagementRoute>() is not null)
-        {
-            return await CreateAsync(name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false);
-        }
-
         var restricted = HttpContext.User.FindFirst("database")?.Value;
         if (restricted is not null && restricted != name)
         {
@@ -104,7 +99,12 @@ internal sealed class CreateManagedDatabaseEndpoint(
         }
 
         var actor = ManagementRoute.UserId(HttpContext);
-        var project = ManagementRoute.Value(HttpContext, "project");
+        var project = HttpContext.RouteValue("project");
+        if (HttpContext.User.FindFirst("project_id") is null)
+        {
+            return await CreateAsync(name, replicas, all, request.TtlSeconds, cancellationToken).ConfigureAwait(false);
+        }
+
         var owner = HttpContext.User.FindFirst("org_id")?.Value;
         if (owner is null)
         {
@@ -123,7 +123,6 @@ internal sealed class CreateManagedDatabaseEndpoint(
             };
         }
 
-        // Enrollment must place the same binding in every other region's catalog at once; it is idempotent (TS-1394).
         if (firstDatabase)
         {
             _ = enrollment.EnrollAsync(project, organization, CancellationToken.None);
@@ -137,11 +136,12 @@ internal sealed class CreateManagedDatabaseEndpoint(
         return result;
     }
 
+
     private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, bool all, long? ttlSeconds, CancellationToken cancellationToken)
     {
         var organization = ManagementRoute.OrganizationId(HttpContext);
         return await apply.PrepareReplicatedAsync(organization, options.Region, await management.CreateDatabaseAsync(
-            ManagementRoute.UserId(HttpContext), organization, ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas, all, ttlSeconds),
+            ManagementRoute.UserId(HttpContext), organization, HttpContext.RouteValue("project"), name, cancellationToken, replicas, all, ttlSeconds),
             cancellationToken) switch
         {
             ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),

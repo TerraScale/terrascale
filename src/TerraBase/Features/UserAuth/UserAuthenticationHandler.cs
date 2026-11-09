@@ -27,7 +27,6 @@ internal sealed class UserAuthenticationHandler(
 
     private static readonly JsonWebTokenHandler Tokens = new();
 
-    // Asymmetric signatures only: "none" and HMAC (HS*) are never accepted.
     private static readonly string[] Algorithms =
     [
         SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512,
@@ -35,22 +34,17 @@ internal sealed class UserAuthenticationHandler(
         SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.RsaSsaPssSha384, SecurityAlgorithms.RsaSsaPssSha512,
     ];
 
-    // RFC 9068 §4: an access token, so an ID token or another JWT from the same issuer is refused.
     private static readonly string[] Types = ["at+jwt", "application/at+jwt"];
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        // The scheme name is case-insensitive (RFC 9110); the token is not.
         var header = Request.Headers.Authorization.ToString();
-        // Public calls only: the internal listener takes the platform operator instead.
         if (terraBase.AuthIssuer is null || Listeners.ArrivedOn(Context) != TerraBaseListener.Client
             || !header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
             return AuthenticateResult.NoResult();
         }
 
-        // TerraBase starts without waiting for ts-auth: a token that arrives before the keys load joins the running fetch,
-        // and fails closed while ts-auth does not answer. Requests never start a fetch here.
         if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(Context.RequestAborted).ConfigureAwait(false)) is not { } keys)
         {
             return AuthenticateResult.Fail("ts-auth signing keys are not loaded");
@@ -67,7 +61,6 @@ internal sealed class UserAuthenticationHandler(
         var result = await Tokens.ValidateTokenAsync(token, Parameters(keys)).ConfigureAwait(false);
         if (result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            // A key ts-auth rotated in after the last fetch: one rate-limited refresh, then one more attempt.
             var refreshed = await issuerKeys.RefreshAsync(Context.RequestAborted).ConfigureAwait(false);
             if (refreshed is IReadOnlyList<SecurityKey> refreshedKeys && !ReferenceEquals(refreshedKeys, keys))
             {
@@ -78,7 +71,6 @@ internal sealed class UserAuthenticationHandler(
 
         if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt)
         {
-            // The failure kind only, never the token.
             return AuthenticateResult.Fail(result.Exception?.GetType().Name ?? "invalid token");
         }
 
@@ -90,7 +82,6 @@ internal sealed class UserAuthenticationHandler(
 
         if (jwt.TryGetPayloadValue<bool>("is_anonymous", out var anonymous) && anonymous)
         {
-            // ts-auth guests sign in without an account; they must not own organizations.
             return AuthenticateResult.Fail("guest tokens are not accepted");
         }
 
@@ -131,7 +122,6 @@ internal sealed class UserAuthenticationHandler(
 
         if (endUser)
         {
-            // Inspect JSON types before IdentityModel can coerce a role or linkage value to a string.
             using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(jwt.EncodedPayload));
             if (project is null || !payload.RootElement.TryGetProperty("instance_id", out var instance)
                 || instance.ValueKind != JsonValueKind.String || instance.GetString() != project
@@ -153,15 +143,13 @@ internal sealed class UserAuthenticationHandler(
             {
                 claims.AddRange(tables.EnumerateArray().Select(table => table.GetString()!).Distinct(StringComparer.Ordinal).Select(table => new Claim("tables", table)));
             }
-            // The endpoint gate admits end users only to shapes and file storage; read grants and bucket rules decide each operation.
             claims.Add(new Claim("scope", "sql:read"));
             claims.Add(new Claim("scope", "sql:write"));
         }
 
         if (jwt.TryGetPayloadValue<string>("database", out var database))
         {
-            // Only the immutable ULID narrows a token: a name could later belong to another database.
-            if (!EntityIds.IsValid(database))
+            if (project is null || !EntityIds.IsValid(database))
             {
                 return AuthenticateResult.Fail("invalid database claim");
             }
@@ -194,7 +182,6 @@ internal sealed class UserAuthenticationHandler(
             }
         }
 
-        // An API key's token names its key and key string; the project check asks ts-auth whether both still act.
         (string Id, string Generation)? key = null;
         var hasKey = jwt.TryGetPayloadValue<string>("key_id", out var keyId);
         if (hasKey | jwt.TryGetPayloadValue<string>("key_gen", out var generation))
@@ -207,13 +194,11 @@ internal sealed class UserAuthenticationHandler(
             key = (keyId, generation);
         }
 
-        // A platform role rides only on a user's own sign-in token, never on a project token.
         if (project is null && jwt.TryGetPayloadValue<string>(Platform.PlatformExplore.RoleClaim, out var role) && role == Platform.PlatformExplore.AdminRole)
         {
             claims.Add(new Claim(Platform.PlatformExplore.RoleClaim, role));
         }
 
-        // Exactly the list the signature was checked against: a later refresh replaces it and so retires the entry.
         scope = endUser ? "sql:read sql:write" : scope;
         accepted = new ValidatedTokens.Accepted(
             checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists, key);
@@ -238,10 +223,8 @@ internal sealed class UserAuthenticationHandler(
     {
         ValidIssuer = terraBase.AuthIssuer,
         ValidAudiences = terraBase.AuthAudiences,
-        // aud values are compared as exact strings, like iss: "https://terrabase.test/" is another audience.
         IgnoreTrailingSlashWhenValidatingAudience = false,
         IssuerSigningKeys = keys,
-        // The kid must name a cached key; an unknown one triggers the refresh above instead of trying every key.
         TryAllIssuerSigningKeys = false,
         ValidAlgorithms = Algorithms,
         ValidTypes = Types,

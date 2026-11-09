@@ -10,11 +10,12 @@ using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 using TerraBase.Features.Sql.Routing;
 
+using TerraBase.Features.Sql;
+
 namespace TerraBase.Features.Sql;
 
 internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
-    [FromKeyedServices(SqlLimits.TransactionClock)] TimeProvider transactionTime,
     IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options, IHomeApply apply,
     WriteRouter router, DatabaseFences fences, RegionalOwners owners) : ISqlService
 {
@@ -23,9 +24,9 @@ internal sealed class SqlService(
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, transactionTime, database, canWrite, apply, fences);
+        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, database, canWrite, apply, fences);
         return replicas.Holds(database)
-            ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, transactionTime, database, canWrite, Local)
+            ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, time, database, canWrite, Local)
             : Local();
     }
 
@@ -34,7 +35,7 @@ internal sealed class SqlService(
             is TenantDatabaseRecord { Placement.Home: var home } && home == options.Region;
 
     public ValueTask<ReplicaSqlOutcome> ExecuteOnReplicaAsync(
-        TenantContext database, IReplicaReader reader, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements, CancellationToken cancellationToken)
+        TenantContext database, IReplicaReader reader, IReadOnlyList<SqlPlannedCommand> statements, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(reader);
         return ExecuteOnCopyAsync(database, statement => reader.ExecuteAsync(statement, cancellationToken), statements, write: false, cancellationToken);
@@ -49,7 +50,7 @@ internal sealed class SqlService(
     }
 
     public async ValueTask<ReplicaSqlOutcome> ExecuteOnCopyAsync(
-        TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<(SqlStatementPlan Plan, SqlCommand Command)> statements,
+        TenantContext database, Func<SqlStatement, ValueTask<SqlStatementResult>> run, IReadOnlyList<SqlPlannedCommand> statements,
         bool write, CancellationToken cancellationToken, Action<string, double>? timing = null)
     {
         ArgumentNullException.ThrowIfNull(database);
@@ -182,7 +183,7 @@ internal sealed class SqlService(
 
 
 internal sealed class SqlSession(
-    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time, TimeProvider transactionTime,
+    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     TenantContext database, bool canWrite, IHomeApply apply, DatabaseFences fences)
     : ISqlSession
 {
@@ -216,8 +217,6 @@ internal sealed class SqlSession(
     private SqlError? _lost;
     private int _generation;
     private int _expiring = -1;
-    private string? _plannedSql;
-    private SqlPlanOutcome _planned;
     private List<IReadOnlyList<CapturedRowChange>>? _committed;
 
     public bool IsAutocommit => !_inTransaction;
@@ -232,26 +231,32 @@ internal sealed class SqlSession(
         _requestExecution = 0;
     }
 
-    public ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken) =>
-        ExecuteAsync(command, admit: null, cancellationToken);
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlPlannedCommand planned, CancellationToken cancellationToken) =>
+        ExecuteAsync(planned.Plan, planned.Command, admit: null, cancellationToken);
 
-    public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken) =>
+        ExecuteAsync(plan, command, admit: null, cancellationToken);
+
+    public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return Plan(command.Sql) switch
-            {
-                SqlError error => error,
-                SqlStatementPlan plan => await ExecuteLockedAsync(plan, command, admit, first: false, cancellationToken).ConfigureAwait(false),
-            };
+            return await ExecuteLockedAsync(plan, command, admit, first: false, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _gate.Release();
         }
     }
+
+    public ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<SqlBatchOutcome?>(null);
+
+    public void Prefer(WriteOverride preference) => _ = preference;
+
+    public WriteRoute? LastRoute => null;
 
     public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken) =>
         ExecuteScriptAsync(sql, MaxStatements, cancellationToken);
@@ -325,18 +330,12 @@ internal sealed class SqlSession(
         return last;
     }
 
-    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
+    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var planned = Plan(command.Sql);
-            if (planned is not SqlStatementPlan plan)
-            {
-                return planned is SqlError error ? error : SqlErrors.Error("the statement cannot be described");
-            }
-
             await ExpireIfDueAsync().ConfigureAwait(false);
             if (_lost is { } lost)
             {
@@ -416,7 +415,7 @@ internal sealed class SqlSession(
             return plan.Run;
         }
 
-        var found = await run(Internal("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_ts_conflicts'")).ConfigureAwait(false);
+        var found = await run(Internal($"SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '{ConflictTable.Name}'")).ConfigureAwait(false);
         return found.Rows.Count > 0 ? plan.Run : without;
     }
 
@@ -428,17 +427,6 @@ internal sealed class SqlSession(
     private void ChargeExecution(TimeSpan execution)
     {
         _requestExecution += execution.Ticks;
-    }
-
-    private SqlPlanOutcome Plan(string sql)
-    {
-        if (!string.Equals(sql, _plannedSql, StringComparison.Ordinal))
-        {
-            _planned = SqlScript.Classify(sql);
-            _plannedSql = sql;
-        }
-
-        return _planned;
     }
 
     private TimeSpan StatementTimeout()
@@ -456,7 +444,7 @@ internal sealed class SqlSession(
 
         if (_pinned is { } pinned)
         {
-            timeout = Min(timeout, SqlLimits.MaxTransactionTime - transactionTime.GetElapsedTime(pinned.Opened));
+            timeout = Min(timeout, SqlLimits.MaxTransactionTime - time.GetElapsedTime(pinned.Opened));
         }
 
         return timeout > TimeSpan.FromMilliseconds(1) ? timeout : TimeSpan.FromMilliseconds(1);
@@ -692,7 +680,7 @@ internal sealed class SqlSession(
     }
 
     private SqlError LostReason() =>
-        _expiring == _generation || (_pinned is { } pinned && transactionTime.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime) ? Expired : Aborted;
+        _expiring == _generation || (_pinned is { } pinned && time.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime) ? Expired : Aborted;
 
     private async ValueTask<(SqlOutcome Outcome, bool Ended)> RunAsync(
         IStorageTransaction transaction, SqlStatementPlan plan, SqlCommand command, Tally tally, Func<SqlResult, SqlError?>? admit, bool first,
@@ -719,7 +707,7 @@ internal sealed class SqlSession(
         }
         catch (SqlStatementException error)
         {
-            return (error.Failure == SqlFailure.Interrupted && RequestExpired ? SqlErrors.Deadline : Map(error), error.TransactionEnded);
+            return (error.Failure is Interrupted && RequestExpired ? SqlErrors.Deadline : Map(error), error.TransactionEnded);
         }
         catch (Exception error) when (Failure(error) is { } failure)
         {
@@ -960,8 +948,8 @@ internal sealed class SqlSession(
         }
 
         var generation = ++_generation;
-        var timer = transactionTime.CreateTimer(_ => _ = ExpireLaterAsync(generation), null, SqlLimits.MaxTransactionTime, Timeout.InfiniteTimeSpan);
-        _pinned = new Pinned(transaction, lease, write, transactionTime.GetTimestamp(), baseline, timer, new Tally(), []);
+        var timer = time.CreateTimer(_ => _ = ExpireLaterAsync(generation), null, SqlLimits.MaxTransactionTime, Timeout.InfiniteTimeSpan);
+        _pinned = new Pinned(transaction, lease, write, time.GetTimestamp(), baseline, timer, new Tally(), []);
         return (_pinned, null);
     }
 
@@ -989,7 +977,7 @@ internal sealed class SqlSession(
 
     private async ValueTask ExpireIfDueAsync()
     {
-        if (_pinned is { } pinned && _lost is null && transactionTime.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime)
+        if (_pinned is { } pinned && _lost is null && time.GetElapsedTime(pinned.Opened) >= SqlLimits.MaxTransactionTime)
         {
             await LoseAsync(Expired).ConfigureAwait(false);
         }
@@ -1087,21 +1075,21 @@ internal sealed class SqlSession(
 
     internal static SqlError Map(SqlStatementException error, bool canWrite) => error.Failure switch
     {
-        SqlFailure.PrimaryKey => new SqlError(SqlErrors.PrimaryKeyViolation, error.Message),
-        SqlFailure.Unique => new SqlError(SqlErrors.UniqueViolation, error.Message),
-        SqlFailure.NotNull => new SqlError(SqlErrors.NotNullViolation, error.Message),
-        SqlFailure.Check => new SqlError(SqlErrors.CheckViolation, error.Message),
-        SqlFailure.ForeignKey => new SqlError(SqlErrors.ForeignKeyViolation, error.Message),
-        SqlFailure.Constraint => new SqlError(SqlErrors.ConstraintViolation, error.Message),
-        SqlFailure.Syntax => new SqlError(SqlErrors.SyntaxError, error.Message),
-        SqlFailure.NoSuchTable => new SqlError(SqlErrors.UndefinedTable, error.Message),
-        SqlFailure.NoSuchColumn => new SqlError(SqlErrors.UndefinedColumn, error.Message),
-        SqlFailure.AlreadyExists => new SqlError(SqlErrors.DuplicateObject, error.Message),
-        SqlFailure.Busy => SqlErrors.Busy(error.Message),
-        SqlFailure.TooBig => SqlErrors.TooBig(error.Message),
-        SqlFailure.Interrupted => SqlErrors.Interrupt,
-        SqlFailure.ReadOnly => canWrite ? new SqlError(SqlErrors.ReadOnlyTransaction, error.Message) : SqlErrors.Auth,
-        _ => SqlErrors.Error(error.Message),
+        PrimaryKey => new SqlError(SqlErrors.PrimaryKeyViolation, error.Message),
+        Unique => new SqlError(SqlErrors.UniqueViolation, error.Message),
+        NotNull => new SqlError(SqlErrors.NotNullViolation, error.Message),
+        Check => new SqlError(SqlErrors.CheckViolation, error.Message),
+        ForeignKeyFailure => new SqlError(SqlErrors.ForeignKeyViolation, error.Message),
+        Constraint => new SqlError(SqlErrors.ConstraintViolation, error.Message),
+        Syntax => new SqlError(SqlErrors.SyntaxError, error.Message),
+        NoSuchTable => new SqlError(SqlErrors.UndefinedTable, error.Message),
+        NoSuchColumn => new SqlError(SqlErrors.UndefinedColumn, error.Message),
+        AlreadyExists => new SqlError(SqlErrors.DuplicateObject, error.Message),
+        Busy => SqlErrors.Busy(error.Message),
+        TooBig => SqlErrors.TooBig(error.Message),
+        Interrupted => SqlErrors.Interrupt,
+        ReadOnly => canWrite ? new SqlError(SqlErrors.ReadOnlyTransaction, error.Message) : SqlErrors.Auth,
+        Error => SqlErrors.Error(error.Message),
     };
 
     private static SqlError? Failure(Exception error) => error switch

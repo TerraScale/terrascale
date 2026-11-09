@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
@@ -52,7 +53,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
                 reserved = entries.RemoveOldest().Memory;
                 _count--;
             }
-            else if (_count >= MaxPending || memory.TryReserve(MemoryLane.Foreground, MaxRecordBytes, tenant: null) is not { } admitted)
+            else if (_count >= MaxPending || memory.TryReserve(MaxRecordBytes, tenant: null) is not { } admitted)
             {
                 RecordingLimited = true;
                 _drops.Add(1);
@@ -83,7 +84,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         try
         {
             lock (_gate) { if (_disposed) { return new Unavailable("request logs are shutting down"); } }
-            reserved = memory.TryReserve(MemoryLane.Foreground, ReadBytes, database);
+            reserved = memory.TryReserve(ReadBytes, database);
             if (reserved is null) { return new Unavailable("request logs are at memory capacity", "capacity"); }
             var admission = reserved;
             var result = await catalog.ReadAsync<RequestLogReadResult>(async transaction =>
@@ -158,7 +159,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     private async ValueTask<bool> FlushOwnerAsync(DatabaseOwner owner, CancellationToken cancellationToken)
     {
         lock (_gate) { if (!_pending.ContainsKey(owner)) { return true; } }
-        using var admission = memory.TryReserve(MemoryLane.Foreground, FlushBytes, tenant: null);
+        using var admission = memory.TryReserve(FlushBytes, tenant: null);
         if (admission is null) { return false; }
         DatabaseRequestLog[] batch;
         lock (_gate)
@@ -196,7 +197,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             var kept = Recent(previous.Concat(batch)).Take(Kept).ToArray();
             var ids = kept.Select(log => log.Id).ToHashSet(StringComparer.Ordinal);
             foreach (var id in savedIds.Where(id => !ids.Contains(id))) { await transaction.DeleteAsync(kind, id, cancellationToken).ConfigureAwait(false); }
-            foreach (var log in kept.Where(log => batch.Any(item => item.Id == log.Id))) { await PutAsync(transaction, kind, log.Id, new RequestLogRecord(Format, log), TerraBaseJsonContext.Default.RequestLogRecord, cancellationToken).ConfigureAwait(false); }
+            foreach (var log in kept.Where(log => batch.Any(item => item.Id == log.Id))) { await PutAsync(transaction, kind, log.Id, new RequestLogRecord(Format, log), ManagementJsonContext.Default.RequestLogRecord, cancellationToken).ConfigureAwait(false); }
             return true;
         }, static _ => false, cancellationToken).ConfigureAwait(false);
         if (!saved) { return true; }
@@ -251,7 +252,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     {
         if (stored.Json.Length > MaxRecordBytes) { return null; }
         RequestLogRecord? record;
-        try { record = EntityPayload.Read(stored, TerraBaseJsonContext.Default.RequestLogRecord); }
+        try { record = EntityPayload.Read(stored, ManagementJsonContext.Default.RequestLogRecord); }
         catch (Exception error) when (error is JsonException or InvalidOperationException) { return null; }
         if (record is not { Format: Format, Request: { } log } || log.Id != stored.Id || !EntityIds.IsValid(log.Id)
             || log.Time == default || log.Route is not { Length: > 0 and <= 512 } || log.Route.Contains('?', StringComparison.Ordinal)

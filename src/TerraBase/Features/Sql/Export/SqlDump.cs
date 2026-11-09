@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO.Pipelines;
 using System.Text;
 using TerraBase.Engine;
+using TerraBase.Features.Sql.Routing;
 
 namespace TerraBase.Features.Sql;
 
@@ -23,7 +24,7 @@ internal static class SqlDump
             }
 
             Write(output, Statement(create));
-            if (create.Contains("WITHOUT ROWID", StringComparison.OrdinalIgnoreCase))
+            if (SchemaDdl.WithoutRowid(create))
             {
                 await WriteKeyedRowsAsync(transaction, name, output, cancellationToken).ConfigureAwait(false);
             }

@@ -74,7 +74,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
             });
             _attached = writer;
             CheckpointLocked(writer);
-            _manifest.DatabaseFile = Stamp(path);
+            _manifest = _manifest! with { DatabaseFile = Stamp(path) };
             Store();
             _replicaProgress.Reset(_manifest.Current(_live.MaxFrame));
         }
@@ -210,7 +210,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
                 throw new InvalidOperationException("a pull snapshot must match the revision index it was planned against");
             }
 
-            var reservation = memory?.TryReserve(MemoryLane.Bulk, BaseBytes + (IndexedPages() * PageNumberBytes * 2) + RevisionPullPlan.BatchBytes + pageSize, tenant);
+            var reservation = memory?.TryReserve(BaseBytes + (IndexedPages() * PageNumberBytes * 2) + RevisionPullPlan.BatchBytes + pageSize, tenant);
             if (memory is not null && reservation is null)
             {
                 throw new StorageBusyException();
@@ -283,18 +283,14 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
             return;
         }
 
-        if (memory.TryReserve(MemoryLane.Bulk, needed, tenant) is { } fresh)
+        if (memory.TryReserve(needed, tenant) is { } fresh)
         {
             _retained?.Dispose();
             _retained = fresh;
             return;
         }
 
-        _manifest.Horizon.Clear();
-        for (var index = 0; index < _manifest.Sealed.Count; index++)
-        {
-            _manifest.Sealed[index] = _manifest.Sealed[index] with { Full = true, Pages = new Dictionary<uint, ulong>() };
-        }
+        _manifest = _manifest!.RewoundFull();
 
         _live.Full = true;
         _live.Pages.Clear();
@@ -304,7 +300,6 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
     private bool CheckpointLocked(SqliteConnection writer)
     {
         ThrowIfFenced();
-        var manifest = _manifest!;
         Refresh(writer);
         if (_live.MaxFrame == 0 && !_live.Full)
         {
@@ -312,7 +307,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         }
 
         var end = _live.MaxFrame;
-        manifest.Seal(_live);
+        _manifest = _manifest!.Seal(_live);
         Store();
         bool truncated;
         try
@@ -329,14 +324,13 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
         _live = truncated
             ? LiveGeneration.After(0, state.CheckpointSequence, size)
             : LiveGeneration.After(end, state.CheckpointSequence, _live.DatabaseSize);
-        manifest.DatabaseFile = Stamp(path);
+        _manifest = _manifest! with { DatabaseFile = Stamp(path) };
         Store();
         return truncated;
     }
 
     private void Refresh(SqliteConnection writer)
     {
-        var manifest = _manifest!;
         var restarted = Snapshot(writer, () =>
         {
             var state = writer.GetWalState();
@@ -347,7 +341,7 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
             }
 
             _live.Full = true;
-            manifest.Seal(_live);
+            _manifest = _manifest!.Seal(_live);
             _live = LiveGeneration.After(0, state.CheckpointSequence, PageCount(writer));
             Index(writer, state.MaxFrame);
             return true;
@@ -357,9 +351,9 @@ internal sealed class TursoRevisionLedger(string path, IMemoryBudget? memory, Te
             Store();
         }
 
-        if (_live.MaxFrame > 0 && manifest.WalSalt is null)
+        if (_live.MaxFrame > 0 && _manifest!.WalSalt is null)
         {
-            manifest.WalSalt = ReadWalSalt(path + "-wal");
+            _manifest = _manifest with { WalSalt = ReadWalSalt(path + "-wal") };
             Store();
         }
     }

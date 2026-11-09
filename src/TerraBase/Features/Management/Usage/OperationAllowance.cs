@@ -20,7 +20,6 @@ public interface IOperationAllowance
     ValueTask<OperationAllowanceCheck> CheckAsync(TenantContext database, MeteredOperation operation, CancellationToken cancellationToken);
 }
 
-// The monthly plan limits of https://terrascale.tech/pricing.json.
 internal sealed class OperationAllowance : IOperationAllowance
 {
     private readonly UsageMeter _meter;
@@ -77,7 +76,7 @@ internal sealed class OperationAllowance : IOperationAllowance
             return new Done();
         }
 
-        var name = plan.ToString().ToLowerInvariant();
+        var name = plan.JsonName;
         return operation == MeteredOperation.Write
             ? new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
                 $"the organization reached its {name} plan cap of {limit:N0} write units this month; upgrade the plan at https://dash.terrascale.tech/organization?tab=billing to continue writing. Reads remain available"),

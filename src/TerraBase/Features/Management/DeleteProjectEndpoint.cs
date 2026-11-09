@@ -25,7 +25,7 @@ internal sealed class DeleteProjectEndpoint(IManagementService management) : End
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await management.DeleteProjectAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), cancellationToken) switch
+        await management.DeleteProjectAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), HttpContext.RouteValue("project"), cancellationToken) switch
         {
             Done => TypedResults.NoContent(),
             NotFound error => ErrorResponse.From(error),

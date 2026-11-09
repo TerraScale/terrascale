@@ -3,7 +3,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Testing;
 
-/// <summary>Creates a tenant's database through the data listener and resolves its storage identity.</summary>
 internal static class TenantDatabases
 {
     public static async Task<TenantContext> ContextAsync(this Tenant tenant, TerraBaseTestServer server, string name, CancellationToken cancellationToken = default)

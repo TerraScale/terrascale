@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -149,7 +150,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
                 await running.StartAsync(CancellationToken.None);
             }
 
-            var region = new HomePush(options, new Peers("gru"), new Placed(), replicas, new NoApply(), new TestClock("sjc-1"), ack, services,
+            var region = new HomePush(options, new Peers("gru"), new Placed(), replicas, new NoApply(), new TestClock("sjc-1"), ack, new RegionalOwners(options), services,
                 services.GetRequiredService<IMeterFactory>(), TimeProvider.System, NullLogger<HomePush>.Instance);
             var client = new NatsConnection(new NatsOpts { Url = nats.Url.ToString(), AuthOpts = new NatsAuthOpts { Token = nats.Token } });
             var pulls = PeerTls.CreateClient(api.Server.BaseAddress);
@@ -177,7 +178,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
     {
         var options = Options(_api, _nats, "gru", Path.Combine(_directory, "home-" + EntityIds.New()));
         var node = new HomePush(options, new Peers("sjc"), new Placed(), _api.Server.Services.GetRequiredService<IDatabaseReplicas>(),
-            _api.Server.Services.GetRequiredService<IHomeApply>(), new TestClock("gru-1"), new Holds(healthy: true), _services, _services.GetRequiredService<IMeterFactory>(),
+            _api.Server.Services.GetRequiredService<IHomeApply>(), new TestClock("gru-1"), new Holds(healthy: true), new RegionalOwners(options), _services, _services.GetRequiredService<IMeterFactory>(),
             TimeProvider.System, NullLogger<HomePush>.Instance);
         await node.StartAsync(CancellationToken.None);
         return new Node(node);
@@ -206,7 +207,7 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
     public async Task<string?> RegionScalarAsync(string sql, CancellationToken cancellationToken)
     {
         await using var reader = (await Replicas.BeginReadAsync(Database, cancellationToken))!;
-        return Convert.ToString((await reader.ExecuteAsync(ApplySql.Statement(sql), cancellationToken)).Rows.Single()[0], System.Globalization.CultureInfo.InvariantCulture);
+        return Convert.ToString((await reader.ExecuteAsync(ApplySql.Statement(sql), cancellationToken)).Rows.Single()[0], CultureInfo.InvariantCulture);
     }
 
     public async Task<JsonElement> HomeSqlAsync(string sql)

@@ -36,11 +36,10 @@ public sealed class RegionalHandoffTests
             History = 1,
             LimitMarkerTTL = HomeLeases.Ttl,
         }, token);
-        // Replay the exact platform tenant and database IDs used independently in every region.
         var foreignPlatform = new HomeLease(PlatformDatabases.OrganizationId, PlatformDatabases.AuthProjectId,
             PlatformDatabases.AuthId, "sjc", "sjc-2", 3, EntityIds.New().ToString());
         _ = await homes.PutAsync("home." + foreignPlatform.DatabaseId,
-            JsonSerializer.SerializeToUtf8Bytes(foreignPlatform, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            JsonSerializer.SerializeToUtf8Bytes(foreignPlatform, ReplicasJsonContext.Default.HomeLease), cancellationToken: token);
         using var issuer = new TestIssuer();
         var storage = new FakeS3();
         var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -77,23 +76,19 @@ public sealed class RegionalHandoffTests
             var sql = ManagementApi.Uri(basePath + "/" + database + "/sql/execute");
             await ExecuteAsync(viaFirst, "CREATE TABLE acked(id TEXT PRIMARY KEY)");
             await ExecuteAsync(viaFirst, "INSERT INTO acked VALUES ('before')");
-            // Regional-only databases can reuse IDs in independent regions.
-            // A foreign global lease for that ID must not block promotion here.
             using var regionalOnly = await viaFirst.PostAsJsonAsync(ManagementApi.Uri(basePath), new { name = "regional-only", replicaRegions = Array.Empty<string>() }, token);
             await Assert.That(regionalOnly.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await regionalOnly.Content.ReadAsStringAsync(token));
             var regionalId = (await regionalOnly.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
             await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().PrimeAsync("gru-1", token)).IsTrue();
             var foreign = new HomeLease(organization, project, regionalId, "sjc", "sjc-1", 1, EntityIds.New().ToString());
-            _ = await homes.PutAsync("home." + regionalId, JsonSerializer.SerializeToUtf8Bytes(foreign, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            _ = await homes.PutAsync("home." + regionalId, JsonSerializer.SerializeToUtf8Bytes(foreign, ReplicasJsonContext.Default.HomeLease), cancellationToken: token);
             var foreignDashboard = foreignPlatform with { ProjectId = PlatformDatabases.DashboardProjectId, DatabaseId = PlatformDatabases.DashboardId };
             _ = await homes.PutAsync("home." + foreignDashboard.DatabaseId,
-                JsonSerializer.SerializeToUtf8Bytes(foreignDashboard, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
-            // An ordinary replicated lease is an ordered watch barrier: both nodes
-            // must process the preceding foreign replay before these assertions.
+                JsonSerializer.SerializeToUtf8Bytes(foreignDashboard, ReplicasJsonContext.Default.HomeLease), cancellationToken: token);
             var observed = await homes.GetEntryAsync<byte[]>("home." + database, cancellationToken: token);
-            var barrier = JsonSerializer.Deserialize(observed.Value!, TerraBaseJsonContext.Default.HomeLease)!;
+            var barrier = JsonSerializer.Deserialize(observed.Value!, ReplicasJsonContext.Default.HomeLease)!;
             barrier = barrier with { Epoch = barrier.Epoch + 1 };
-            _ = await homes.PutAsync("home." + database, JsonSerializer.SerializeToUtf8Bytes(barrier, TerraBaseJsonContext.Default.HomeLease), cancellationToken: token);
+            _ = await homes.PutAsync("home." + database, JsonSerializer.SerializeToUtf8Bytes(barrier, ReplicasJsonContext.Default.HomeLease), cancellationToken: token);
             foreach (var api in new[] { first, second })
             {
                 var leases = api.Server.Services.GetRequiredService<HomeLeases>();
@@ -112,13 +107,10 @@ public sealed class RegionalHandoffTests
             var localPlatform = new TenantContext(PlatformDatabases.OrganizationId, PlanTier.Hobby, PlatformDatabases.AuthProjectId, PlatformDatabases.AuthId);
             await Assert.That(await first.Server.Services.GetRequiredService<HomeLeases>().TakeAsync(localPlatform, "sjc", 4, foreignPlatform, token)).IsFalse();
             await Assert.That(await first.Server.Services.GetRequiredService<HomeLeases>().PrepareAsync(localPlatform, token)).IsTrue();
-            // Keep a real native backup tap open across replacement of the
-            // target's old primary. It must end, never read the disposed store.
             _ = await second.Server.Services.GetRequiredService<IStorageEngine>().CreateDatabaseAsync(localPlatform, token);
             await using var replacedTap = await second.Server.Services.GetRequiredService<IWalBackup>().OpenTapAsync(localPlatform, token);
             await Assert.That(replacedTap).IsNotNull();
             await second.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(token);
-            // Bound a failed activation so the negative control cannot hang the drill.
             using var activation = CancellationTokenSource.CreateLinkedTokenSource(token);
             activation.CancelAfter(RegionalHandoff.RecoveryBound);
             var handoff = first.Server.Services.GetRequiredService<RegionalHandoff>();
@@ -131,14 +123,9 @@ public sealed class RegionalHandoffTests
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await read.Content.ReadAsStringAsync(token));
             await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows")[0][0].GetInt32()).IsEqualTo(2);
             await Assert.That(first.Server.Services.GetRequiredService<RegionalOwners>().Writer).IsFalse();
-            // A durable stop intent survives the first drain response. Another
-            // controller cannot stop the surviving writer before replacement.
             await Assert.That(await second.Server.Services.GetRequiredService<RegionalHandoff>().DrainAsync("gru-1", token)).IsFalse();
             await first.DisposeAsync();
             await using var returned = await StartAsync("gru-1", "127.0.0.2");
-            // Listener startup precedes the first ownership refresh. Wait for
-            // the replacement's actual ready/owner/session proof before asking
-            // for a second stop; refusal before that point is intentional.
             await TerraBaseTestServer.EventuallyAsync(async cancellation =>
                 await returned.Server.Services.GetRequiredService<RegionalHandoff>().StatusAsync(null, cancellation)
                     is { Ready: true, Owner: "gru-2", Epoch: >= 2, Session.Length: > 0 }, TimeSpan.FromSeconds(10));
@@ -151,11 +138,11 @@ public sealed class RegionalHandoffTests
             var ids = (await reconciled.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows");
             await Assert.That(ids.EnumerateArray().Select(row => row[0].GetString()!).ToArray()).IsEquivalentTo(AcknowledgedRows);
             var retained = await homes.GetEntryAsync<byte[]>("home." + regionalId, cancellationToken: token);
-            await Assert.That(JsonSerializer.Deserialize(retained.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(foreign);
+            await Assert.That(JsonSerializer.Deserialize(retained.Value!, ReplicasJsonContext.Default.HomeLease)).IsEqualTo(foreign);
             foreach (var ignored in new[] { foreignPlatform, foreignDashboard })
             {
                 var original = await homes.GetEntryAsync<byte[]>("home." + ignored.DatabaseId, cancellationToken: token);
-                await Assert.That(JsonSerializer.Deserialize(original.Value!, TerraBaseJsonContext.Default.HomeLease)).IsEqualTo(ignored);
+                await Assert.That(JsonSerializer.Deserialize(original.Value!, ReplicasJsonContext.Default.HomeLease)).IsEqualTo(ignored);
             }
 
             async Task ExecuteAsync(HttpClient client, string statement)

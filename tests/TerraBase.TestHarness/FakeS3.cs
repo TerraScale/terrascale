@@ -6,20 +6,16 @@ using System.Net;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Web;
 using System.Xml.Linq;
 using Amazon.Util;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Configuration;
 using TerraBase.Features.Backup;
 
 namespace TerraBase.Testing;
 
-/// <summary>
-/// The platform and customer S3-compatible buckets (path-style), in memory, for continuous backup. <see cref="Route"/>
-/// serves both through message handlers that replace the server's transports (no socket), and counts the master key's
-/// data key generations and unwraps.
-/// </summary>
 public sealed partial class FakeS3
 {
     public const string Bucket = "backup-test";
@@ -42,8 +38,6 @@ public sealed partial class FakeS3
     private readonly List<(string Version, DateTimeOffset At)> _snapshots = [];
     private readonly ConcurrentDictionary<string, Upload> _uploads = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<int, int> _partRequests = new();
-    // User metadata and ETag of completed multipart objects, attached to their exact content: replacing or deleting the object
-    // drops them with it, and they never keep a deleted body alive.
     private readonly ConditionalWeakTable<byte[], UploadedObject> _uploadedMetadata = [];
     private int _startedUploads;
     private int _completedUploads;
@@ -56,149 +50,96 @@ public sealed partial class FakeS3
     private int _listRequests;
     private string? _lastListStartAfter;
 
-    /// <summary>Objects the bucket's retention rule protects from deletion, answered <c>RetentionRuleViolation</c>.</summary>
     public Func<string, bool> Locked { get; set; } = _ => false;
 
-    /// <summary>Object PUTs refused with <c>AccessDenied</c>, without storing their content.</summary>
     public Func<string, bool> FailPut { get; set; } = _ => false;
 
-    /// <summary>While set, every request to the platform bucket is answered 404 <c>NoSuchBucket</c>.</summary>
     public bool PlatformBucketMissing { get; set; }
 
-    /// <summary>Platform anchor GETs missing Tigris's consistent-read header.</summary>
     public int InconsistentAnchorReads => Volatile.Read(ref _inconsistentAnchorReads);
 
-    /// <summary>An optional asynchronous barrier before an object PUT; receives its bucket key, never its content.</summary>
     public Func<string, CancellationToken, Task>? BeforePut { get; set; }
 
-    /// <summary>An optional asynchronous barrier before an object GET returns; receives the bucket key, never its content.</summary>
     public Func<string, CancellationToken, Task>? BeforeGet { get; set; }
 
-    /// <summary>An optional asynchronous barrier before an object LIST returns; receives the requested prefix.</summary>
     public Func<string, CancellationToken, Task>? BeforeList { get; set; }
 
-    /// <summary>The single prefix whose LIST count and last cursor are observed.</summary>
     public string? ObservedListPrefix { get; set; }
 
-    /// <summary>LIST requests for <see cref="ObservedListPrefix"/>.</summary>
     public int ListRequests => Volatile.Read(ref _listRequests);
 
-    /// <summary>The last <c>start-after</c> for the observed prefix; empty means a full listing.</summary>
     public string? LastListStartAfter => Volatile.Read(ref _lastListStartAfter);
 
-    /// <summary>Customer PUTs refused with AccessDenied, to simulate a destination becoming unavailable.</summary>
     public Func<string, bool> RejectCustomerWrites { get; set; } = _ => false;
 
-    /// <summary>Replaces a customer listing after normal prefix filtering, including deliberately foreign keys.</summary>
     public Func<string, IReadOnlyList<string>, IReadOnlyList<string>>? CustomerListingOverride { get; set; }
 
-    /// <summary>Replaces the next token of a truncated customer page; receives its prefix and normal token.</summary>
     public Func<string, string, string>? CustomerContinuationTokenOverride { get; set; }
 
-    /// <summary>Overrides a listed customer object's size, including malformed negative sizes.</summary>
     public Func<string, long?>? CustomerListingSizeOverride { get; set; }
 
-    /// <summary>Overrides a customer GET's S3 error code with a 404, to distinguish a missing bucket from a missing key.</summary>
     public Func<string, string?>? CustomerReadError { get; set; }
 
-    /// <summary>Customer prefixes returning empty truncated pages with alternating continuation tokens.</summary>
     public Func<string, bool>? EmptyCustomerPages { get; set; }
 
-    /// <summary>Replaces a customer GET body; null retains the stored object's body.</summary>
     public Func<string, byte[]?>? CustomerReadOverride { get; set; }
 
-    /// <summary>Replaces customer GET content, including a streamed body; null retains the normal body.</summary>
     public Func<string, HttpContent?>? CustomerContentOverride { get; set; }
 
-    /// <summary>Replaces platform GET content, including a streamed body; null retains the stored body.</summary>
     public Func<string, HttpContent?>? PlatformContentOverride { get; set; }
 
-    /// <summary>Adjusts headers on a successful existing-object customer GET, after content and ETag creation.</summary>
     public Action<string, HttpResponseMessage>? CustomerGetResponseCreated { get; set; }
 
-    /// <summary>Runs before a customer PUT is accepted; gates must observe the request's cancellation token.</summary>
     public Func<string, CancellationToken, Task>? BeforeCustomerWrite { get; set; }
 
-    /// <summary>Runs before customer DELETE lock checks or mutation; observes the transport cancellation token.</summary>
     public Func<string, CancellationToken, Task>? BeforeCustomerDelete { get; set; }
 
-    /// <summary>Multipart part uploads answered 500 <c>InternalError</c> without storing the part; receives the key and part number.</summary>
     public Func<string, int, bool> FailPart { get; set; } = (_, _) => false;
 
-    /// <summary>An optional barrier before a part is checked and stored; receives the key and part number, never the content.</summary>
     public Func<string, int, CancellationToken, Task>? BeforePart { get; set; }
 
-    /// <summary>Runs after a part is stored; receives the key and part number.</summary>
     public Action<string, int>? PartStored { get; set; }
 
-    /// <summary>Multipart aborts answered 500 <c>InternalError</c>, leaving the upload pending; receives the key.</summary>
     public Func<string, bool> FailAbort { get; set; } = _ => false;
 
-    /// <summary>
-    /// Answers a multipart completion with 200 and the returned XML body instead of completing it, such as an
-    /// <c>&lt;Error&gt;</c> body (how some S3-compatible services report a failed completion) or a success result that stored
-    /// nothing; the upload stays pending. Receives the key; null completes normally.
-    /// </summary>
     public Func<string, string?>? CompleteAnswer { get; set; }
 
-    /// <summary>Replaces the <c>Content-Length</c> an object HEAD reports for an existing key; null reports its stored length.</summary>
     public Func<string, long?>? HeadLengthOverride { get; set; }
 
-    /// <summary>Completed multipart objects keep no user metadata, like S3-compatible stores that drop it.</summary>
     public bool DropUploadMetadata { get; set; }
 
-    /// <summary>
-    /// S3-style ETags: a part's is its MD5, and a completed multipart object's is the MD5 of its parts' binary MD5s, then
-    /// <c>-</c> and the part count. Otherwise every ETag is an opaque UUID, like stores whose ETags are not MD5s.
-    /// </summary>
     public bool Md5ETags { get; set; }
 
-    /// <summary>Part upload requests by part number, failed ones included.</summary>
     public IReadOnlyDictionary<int, int> PartRequests => _partRequests;
 
-    /// <summary>Multipart uploads started (CreateMultipartUpload).</summary>
     public int StartedUploads => Volatile.Read(ref _startedUploads);
 
-    /// <summary>Multipart uploads completed into an object.</summary>
     public int CompletedUploads => Volatile.Read(ref _completedUploads);
 
-    /// <summary>Multipart uploads aborted.</summary>
     public int AbortedUploads => Volatile.Read(ref _abortedUploads);
 
-    /// <summary>Multipart uploads neither completed nor aborted; their parts are not objects.</summary>
     public int PendingUploads => _uploads.Count;
 
-    /// <summary>The keys of <see cref="PendingUploads"/>.</summary>
     public IReadOnlyList<string> PendingUploadKeys => [.. _uploads.Values.Select(upload => upload.Key)];
 
-    /// <summary>Observes object requests without retaining an unbounded request history; true identifies the customer.</summary>
     public Action<bool, HttpMethod, string>? ObjectRequested { get; set; }
 
-    /// <summary>Every stored object, by key.</summary>
     public IReadOnlyDictionary<string, byte[]> Objects => _objects;
 
-    /// <summary>Customer bucket objects, separate from the platform bucket.</summary>
     public IReadOnlyDictionary<string, byte[]> CustomerObjects => _customerObjects;
 
-    /// <summary>Customer requests whose SigV4 signature did not verify; they were refused.</summary>
     public int BadSignatures => Volatile.Read(ref _badSignatures);
 
-    /// <summary>Data keys the master key generated.</summary>
     public int GeneratedKeys => Volatile.Read(ref _generatedKeys);
 
-    /// <summary>The clock Tigris snapshots are dated with; tests on a fake clock set theirs.</summary>
     public TimeProvider Time { get; set; } = TimeProvider.System;
 
-    /// <summary>Whether the platform bucket has Tigris snapshots enabled, as HeadBucket reports it.</summary>
     public bool SnapshotsEnabled { get; set; } = true;
 
-    /// <summary>Refuses snapshot takes with 403 while true.</summary>
     public bool RejectSnapshots { get; set; }
 
-    /// <summary>Refuses snapshot expiry with 403 while true.</summary>
     public bool RejectSnapshotDeletes { get; set; }
 
-    /// <summary>The platform bucket's Tigris snapshots, oldest first.</summary>
     public IReadOnlyList<(string Version, DateTimeOffset At)> Snapshots
     {
         get
@@ -210,10 +151,8 @@ public sealed partial class FakeS3
         }
     }
 
-    /// <summary>DeleteBucket requests without a snapshot version: deleting the bucket itself, which TerraBase never asks.</summary>
     public int BucketDeletes => Volatile.Read(ref _bucketDeletes);
 
-    /// <summary>Seeds a Tigris snapshot of the platform bucket taken at <paramref name="at"/>.</summary>
     public void SeedSnapshot(DateTimeOffset at)
     {
         lock (_snapshots)
@@ -224,7 +163,6 @@ public sealed partial class FakeS3
 
     private void RecordGeneratedKey() => Interlocked.Increment(ref _generatedKeys);
 
-    /// <summary>Observes GETs and unwraps of a persisted key, with at most 16 explicitly registered keys and no request log.</summary>
     public KeyRequests ObserveKey(string key)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -251,7 +189,6 @@ public sealed partial class FakeS3
         }
     }
 
-    /// <summary>Seeds an object owned by this test, such as an unrelated file under a backup prefix.</summary>
     public void StoreObject(string key, byte[] content)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -259,7 +196,6 @@ public sealed partial class FakeS3
         _objects[key] = content;
     }
 
-    /// <summary>Seeds an object in this test's bucket, including historical keys whose timestamp is encoded in the key.</summary>
     public void SeedObject(bool customer, string key, byte[] content)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -267,11 +203,6 @@ public sealed partial class FakeS3
         (customer ? _customerObjects : _objects)[key] = [.. content];
     }
 
-    /// <summary>Sets every backup setting to this fake.</summary>
-    /// <summary>
-    /// Serves the platform bucket at an R2 account endpoint, so the server links shape objects through the CDN and purges
-    /// them through the Cloudflare API (<see cref="FakeCloudflare"/>).
-    /// </summary>
     public bool R2 { get; init; }
 
     private string ObjectStorage => R2 ? R2Storage : "https://objectstorage.test";
@@ -295,20 +226,16 @@ public sealed partial class FakeS3
         settings["master-key"] = Convert.ToBase64String(_masterKey);
     }
 
-    /// <summary>Wraps <paramref name="key"/> with this fake's master key, as a persisted backup key holds it.</summary>
     public string Wrap(byte[] key) => new MasterKey(_masterKey).Wrap(key);
 
-    /// <summary>Unwraps a persisted backup key wrapped by this fake's master key.</summary>
     public byte[] Unwrap(string wrapped) => new MasterKey(_masterKey).Unwrap(wrapped);
 
-    /// <summary>Routes the server's object storage clients here and counts its master key's work.</summary>
     public void Route(IServiceCollection services)
     {
         RoutePlatform(services);
         services.AddHttpClient("backup-s3-customer").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
     }
 
-    /// <summary>Replaces only the platform transport and the master key, leaving the real customer connection handler intact.</summary>
     public void RoutePlatform(IServiceCollection services)
     {
         services.AddHttpClient("backup-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
@@ -331,8 +258,6 @@ public sealed partial class FakeS3
         services.AddHttpClient("shapes-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
     }
 
-    // One exact allocation for a body of known length (ReadAsByteArrayAsync buffers it, then copies): parts are 128 MiB, and
-    // the suite's parallel tests share one process.
     private static async Task<byte[]> ReadBodyAsync(HttpContent content, CancellationToken cancellationToken)
     {
         if (content.Headers.ContentLength is not { } length)
@@ -398,7 +323,6 @@ public sealed partial class FakeS3
             return S3Error(HttpStatusCode.Forbidden, "SignatureDoesNotMatch");
         }
 
-        // A presigned platform URL carries its SigV4 in the query; it is verified before the object is touched.
         if (!customer && uri.Query.Contains("X-Amz-", StringComparison.OrdinalIgnoreCase) && !PresignedSignatureVerifies(request))
         {
             return S3Error(HttpStatusCode.Forbidden, "SignatureDoesNotMatch");
@@ -413,17 +337,17 @@ public sealed partial class FakeS3
 
         if (key.Length == 0 && request.Method == HttpMethod.Get && uri.Query.TrimStart('?').Split('&').Any(part => part is "versions" or "versions="))
         {
-            return PurgeVersions(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
+            return PurgeVersions(customer, bucket, HttpUtility.ParseQueryString(uri.Query));
         }
 
         if (key.Length == 0 && request.Method == HttpMethod.Get && uri.Query.TrimStart('?').Split('&').Any(part => part is "uploads" or "uploads="))
         {
-            return PurgeUploads(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
+            return PurgeUploads(customer, bucket, HttpUtility.ParseQueryString(uri.Query));
         }
 
         if (key.Length == 0 && request.Method == HttpMethod.Get)
         {
-            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var query = HttpUtility.ParseQueryString(uri.Query);
             var prefix = query["prefix"] ?? "";
             var startAfter = query["start-after"] ?? "";
             var after = query["continuation-token"] ?? startAfter;
@@ -490,7 +414,7 @@ public sealed partial class FakeS3
             return Xml(HttpStatusCode.OK, result);
         }
 
-        if (System.Web.HttpUtility.ParseQueryString(uri.Query) is var multipart && (multipart["uploadId"] is not null || request.Method == HttpMethod.Post))
+        if (HttpUtility.ParseQueryString(uri.Query) is var multipart && (multipart["uploadId"] is not null || request.Method == HttpMethod.Post))
         {
             return await MultipartResponseAsync(request, customer, bucket, key, multipart, body, cancellationToken);
         }
@@ -507,7 +431,6 @@ public sealed partial class FakeS3
                 return S3Error(HttpStatusCode.Forbidden, "AccessDenied");
             }
 
-            // Attached before the store, so a reader that finds the object also finds its metadata.
             _uploadedMetadata.AddOrUpdate(body, new(UploadHeaders(request), ETag(body)));
             if (Header(request, "If-None-Match") == "*")
             {
@@ -585,7 +508,6 @@ public sealed partial class FakeS3
             var head = new HttpResponseMessage(key.Length == 0 || objects.ContainsKey(key) ? HttpStatusCode.OK : HttpStatusCode.NotFound);
             if (objects.TryGetValue(key, out var headed))
             {
-                // Like S3, a HEAD of an object reports its length, its ETag, and the user metadata it was uploaded with.
                 head.Content = new ByteArrayContent([]);
                 head.Content.Headers.ContentLength = HeadLengthOverride?.Invoke(key) ?? headed.Length;
                 var uploaded = _uploadedMetadata.TryGetValue(headed, out var entry);
@@ -618,7 +540,6 @@ public sealed partial class FakeS3
 
         if (request.Method == HttpMethod.Delete)
         {
-            // Like S3: deleting a missing key succeeds too.
             objects.TryRemove(key, out _);
             return new HttpResponseMessage(HttpStatusCode.NoContent) { Content = new ByteArrayContent([]) };
         }
@@ -626,8 +547,6 @@ public sealed partial class FakeS3
         return S3Error(HttpStatusCode.MethodNotAllowed, "MethodNotAllowed");
     }
 
-    // S3 multipart uploads. Parts may arrive in any order and be replaced; Complete must list every part from 1 with the ETag it
-    // was stored under, and every part but the last must hold at least 5 MiB, as S3 requires.
     private async Task<HttpResponseMessage> MultipartResponseAsync(
         HttpRequestMessage request, bool customer, string bucket, string key, NameValueCollection query, byte[] body, CancellationToken cancellationToken)
     {
@@ -726,8 +645,6 @@ public sealed partial class FakeS3
 
     private string PartETag(byte[] part) => Md5ETags ? $"\"{Convert.ToHexStringLower(CryptoUtilFactory.CryptoInstance.ComputeMD5Hash(part))}\"" : ETag(part);
 
-    // ListMultipartUploads in S3's order (key, then upload id), resuming after key-marker and upload-id-marker. Like a store
-    // that pages early, one upload per page, so a caller must follow the markers.
     private HttpResponseMessage ListUploads(bool customer, string bucket, NameValueCollection query)
     {
         var prefix = query["prefix"] ?? "";
@@ -757,12 +674,10 @@ public sealed partial class FakeS3
 
     private static string Child(XElement element, string name) => element.Elements().Single(child => child.Name.LocalName == name).Value;
 
-    // Presigned platform URL (SigV4 in the query): the signature covers every query parameter but X-Amz-Signature, the payload
-    // is UNSIGNED-PAYLOAD, and the URL is valid from X-Amz-Date for 1 to 600 seconds on this fake's clock.
     private bool PresignedSignatureVerifies(HttpRequestMessage request)
     {
         var uri = request.RequestUri!;
-        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var query = HttpUtility.ParseQueryString(uri.Query);
         var credential = query["X-Amz-Credential"]?.Split('/');
         var shape = uri.AbsolutePath.Contains("/v1/shapes/", StringComparison.Ordinal);
         if (query["X-Amz-Algorithm"] != "AWS4-HMAC-SHA256" || credential is not [var accessKey, _, "test-region-1", "s3", "aws4_request"]
@@ -782,9 +697,6 @@ public sealed partial class FakeS3
         return signature == SigV4Signature(request, shape ? ShapeSecretKey : PlatformSecretKey, credential, date, "host", "UNSIGNED-PAYLOAD", CanonicalQuery(uri, "X-Amz-Signature"));
     }
 
-    // Partial SigV4: checks customer credentials, payload hash and region, but not required SignedHeaders or
-    // scope-date freshness. Path/query canonicalization covers current AWS-URL-safe ULID/digit keys only;
-    // extend before testing keys or query values requiring percent encoding.
     private static bool S3SignatureVerifies(HttpRequestMessage request, byte[] body, string accessKey = CustomerAccessKey, string secretKey = CustomerSecretKey)
     {
         if (Header(request, "authorization") is not { } authorization || !authorization.StartsWith("AWS4-HMAC-SHA256 ", StringComparison.Ordinal))
@@ -810,16 +722,14 @@ public sealed partial class FakeS3
         return signature == SigV4Signature(request, secretKey, credential, date, signedHeaders, payloadHash, CanonicalQuery(request.RequestUri!, null));
     }
 
-    // The query in SigV4 canonical form: percent-encoded names and values, sorted, without the excluded parameter name.
     private static string CanonicalQuery(Uri uri, string? excluded) => string.Join('&', uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
         .Select(part => part.Split('=', 2))
-        .Select(parts => (Key: Uri.EscapeDataString(System.Web.HttpUtility.UrlDecode(parts[0])),
-            Value: Uri.EscapeDataString(System.Web.HttpUtility.UrlDecode(parts.Length == 2 ? parts[1] : ""))))
+        .Select(parts => (Key: Uri.EscapeDataString(HttpUtility.UrlDecode(parts[0])),
+            Value: Uri.EscapeDataString(HttpUtility.UrlDecode(parts.Length == 2 ? parts[1] : ""))))
         .Where(part => part.Key != excluded)
         .OrderBy(part => part.Key, StringComparer.Ordinal).ThenBy(part => part.Value, StringComparer.Ordinal)
         .Select(part => part.Key + "=" + part.Value));
 
-    // The SigV4 signature for a request, from the secret and the credential scope [access key, date, region, service, terminator].
     private static string SigV4Signature(HttpRequestMessage request, string secret, string[] credential, string date, string signedHeaders, string payloadHash, string canonicalQuery)
     {
         var uri = request.RequestUri!;
@@ -839,7 +749,6 @@ public sealed partial class FakeS3
         return Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(signed)));
     }
 
-    // The user metadata, Cache-Control and content headers an upload stores; HEAD and GET return them with the object.
     private static KeyValuePair<string, string>[] UploadHeaders(HttpRequestMessage request) => [.. request.Headers
         .Concat(request.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>())
         .Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Cache-Control", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Content-Disposition", StringComparison.OrdinalIgnoreCase))
@@ -850,16 +759,13 @@ public sealed partial class FakeS3
             ? string.Join(", ", values!)
             : null;
 
-    // Like some S3-compatible stores, a UUID: not an MD5, so the SDK does not check downloads against it.
     private static string ETag(byte[] content) => $"\"{new Guid(SHA256.HashData(content).AsSpan(0, 16))}\"";
 
     private static HttpResponseMessage S3Error(HttpStatusCode status, string code) =>
         Xml(status, new XElement("Error", new XElement("Code", code), new XElement("Message", code)));
 
-    // Tigris versions are numbers; these only need to be unique.
     private string NextSnapshotVersion() => Interlocked.Increment(ref _snapshotVersion).ToString(CultureInfo.InvariantCulture);
 
-    // Tigris bucket snapshots: ListBuckets, CreateBucket and DeleteBucket with the X-Tigris-Snapshot headers.
     private HttpResponseMessage SnapshotResponse(HttpRequestMessage request)
     {
         var snapshot = Header(request, "X-Tigris-Snapshot");
@@ -873,7 +779,6 @@ public sealed partial class FakeS3
                 return head;
             }
 
-            // Like Tigris on a bucket without snapshots.
             if (!SnapshotsEnabled && snapshot is not null)
             {
                 return S3Error(HttpStatusCode.BadRequest, request.Method == HttpMethod.Get ? "InvalidArgument" : "InvalidRequest");
@@ -922,7 +827,6 @@ public sealed partial class FakeS3
     private static HttpResponseMessage Xml(HttpStatusCode status, XElement body) =>
         new(status) { Content = new StringContent(new XDocument(new XDeclaration("1.0", "UTF-8", null), body).ToString(), Encoding.UTF8, "application/xml") };
 
-    /// <summary>Thread-safe request totals for one observed persisted key; no key material is exposed.</summary>
     public sealed class KeyRequests
     {
         private int _gets;
@@ -942,7 +846,6 @@ public sealed partial class FakeS3
         internal void RecordUnwrap() => Interlocked.Increment(ref _unwraps);
     }
 
-    // The real master key; generations and unwraps are counted like the requests of a remote key service.
     private sealed class CountingMasterKey(MasterKey inner, FakeS3 s3) : IMasterKey
     {
         public Task<(byte[] Key, string Wrapped)> GenerateDataKeyAsync(CancellationToken cancellationToken)

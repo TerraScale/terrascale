@@ -13,7 +13,7 @@ using TerraScale.TerraBase.Contracts.Platform;
 using TerraScale.TerraBase.Contracts.Regions;
 using TerraScale.TerraBase.Contracts.Usage;
 
-namespace TerraBase.Fast.Rpc;
+namespace TerraBase.Slow.Rpc;
 
 public sealed class ManagementRpcTests
 {

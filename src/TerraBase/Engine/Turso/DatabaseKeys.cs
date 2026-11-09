@@ -138,7 +138,6 @@ internal sealed class DatabaseKeys(IMasterKey master)
         Pooling = false,
         DefaultTimeout = 30,
         EncryptionCipher = "aegis256",
-        // The native provider takes a hex string; never include a connection string in diagnostics.
         EncryptionKey = Convert.ToHexString(key),
     }.ToString();
 }

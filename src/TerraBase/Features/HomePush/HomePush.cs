@@ -41,9 +41,6 @@ internal interface ILocalTransaction : IAsyncDisposable
 
     ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
-    // Publishes the transaction to the durable push stream, holds it on a discovered regional partner and commits it.
-    // A discovered one-node region acknowledges on that node; a region with a partner requires both copies. With
-    // homeDurable, or when the required partner did not hold it, it answers after the home applied it.
     ValueTask<LocalCommit> CommitAsync(bool homeDurable, CancellationToken cancellationToken);
 }
 
@@ -53,7 +50,7 @@ internal sealed class LocalOutcomeUnknownException(string message, Exception inn
 
 internal sealed class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
-    IInRegionAck partner, IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger)
+    IInRegionAck partner, RegionalOwners owners, IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger)
     : BackgroundService, ILocalWrites, ILocalCommitPath
 {
     internal const int MaxPayloadBytes = 8 << 20;
@@ -101,7 +98,7 @@ internal sealed class HomePush(
 
     public bool TwoNodeAck => LocalAckAvailable && partner.PartnerHealthy;
 
-    private bool RegionWriter => services.GetService<RegionalOwners>()?.Writer ?? true;
+    private bool RegionWriter => owners.Writer;
 
     public bool LocalAckAvailable => RegionWriter && _ready && _js is not null && _nats?.ConnectionState == NatsConnectionState.Open
         && partner.QuorumHealthy && services.GetService<ILocalWriteClock>() is { Allowed: true };
@@ -110,7 +107,6 @@ internal sealed class HomePush(
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Every node rebuilds its overlay; only the fenced regional writer consumes and commits.
         if (options is { NatsUrl: { } natsUrl, NatsToken: { } natsToken })
         {
             if (!Crypto.Seals)
@@ -376,7 +372,7 @@ internal sealed class HomePush(
                     var result = await apply.ApplyAsync(database, transaction, cancellationToken).ConfigureAwait(false)
                         ?? throw new StorageBusyException();
                     await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
-                        JsonSerializer.SerializeToUtf8Bytes(result, TerraBaseJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
+                        JsonSerializer.SerializeToUtf8Bytes(result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
                     _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
                     if (message.Metadata is { } metadata)
                     {
@@ -479,7 +475,7 @@ internal sealed class HomePush(
                     HomeApplyResult? result;
                     try
                     {
-                        result = JsonSerializer.Deserialize(data, TerraBaseJsonContext.Default.HomeApplyResult);
+                        result = JsonSerializer.Deserialize(data, HomeApplyJsonContext.Default.HomeApplyResult);
                     }
                     catch (JsonException)
                     {
@@ -514,7 +510,7 @@ internal sealed class HomePush(
         _forwarded.TryRemove(Key(database), out _);
         if (_js is not { } js)
         {
-            return; // Regional hold partners own no JetStream origin stream.
+            return;
         }
         _ = await js.PurgeStreamAsync(PushNames.Stream(options.Region), new StreamPurgeRequest
         {
@@ -544,7 +540,7 @@ internal sealed class HomePush(
     private async Task ConsumeAsync(NatsJSContext js, NatsConnection nats, string origin, CancellationToken cancellationToken)
     {
         var reset = true;
-        var backoff = TimeSpan.FromMilliseconds(200);
+        var backoff = new Backoff(TimeSpan.FromMilliseconds(200), MaxBackoff);
         while (!cancellationToken.IsCancellationRequested)
         {
             if (!RegionWriter)
@@ -566,13 +562,11 @@ internal sealed class HomePush(
                 }, cancellationToken).ConfigureAwait(false);
                 if (reset)
                 {
-                    // A region may have become home while it was offline. Revisit retained
-                    // messages even if this consumer previously skipped them as a non-home.
                     await consumer.ResetAsync(1, cancellationToken).ConfigureAwait(false);
                     reset = false;
                 }
 
-                backoff = TimeSpan.FromMilliseconds(200);
+                backoff.Reset();
                 await foreach (var message in consumer.ConsumeAsync<byte[]>(opts: new NatsJSConsumeOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken)
                     .ConfigureAwait(false))
                 {
@@ -588,8 +582,7 @@ internal sealed class HomePush(
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger.ZLogInformation($"The push from {origin} is not consumed yet: {error.GetType().Name:@Error}");
-                await Task.Delay(backoff, time, cancellationToken).ConfigureAwait(false);
-                backoff = TimeSpan.FromTicks(Math.Min(MaxBackoff.Ticks, backoff.Ticks * 2));
+                await Task.Delay(backoff.Next(), time, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -655,8 +648,6 @@ internal sealed class HomePush(
             && await catalog.FindAsync(addressed, cancellationToken).ConfigureAwait(false) is var record
             && (record is NotFound || record is TenantDatabaseRecord { Placement: var placed } && placed.Home != options.Region))
         {
-            // Acknowledging consumption here never confirms the transaction to its origin.
-            // Retention is controlled by a home-confirmed replica pull, not consumer acks.
             await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -674,7 +665,7 @@ internal sealed class HomePush(
             return;
         }
 
-        var backoff = TimeSpan.FromMilliseconds(100);
+        var backoff = new Backoff(TimeSpan.FromMilliseconds(100), MaxBackoff);
         HomeApplyResult result;
         while (true)
         {
@@ -684,8 +675,6 @@ internal sealed class HomePush(
                 return;
             }
 
-            // Subjects contain the home observed when the remote transaction began. The
-            // lease/catalog decides where it applies now, including late old-epoch pushes.
             if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var placement }
                 && placement.Home != options.Region)
             {
@@ -718,14 +707,14 @@ internal sealed class HomePush(
 
             _applies?.Add(1, new KeyValuePair<string, object?>("state", "unavailable"));
             _applyRetries?.Add(1, new KeyValuePair<string, object?>("reason", reason));
-            logger.ZLogWarning($"A home push apply retries after {backoff.TotalMilliseconds} ms: {reason}");
+            var delay = backoff.Next();
+            logger.ZLogWarning($"A home push apply retries after {delay.TotalMilliseconds} ms: {reason}");
             await message.AckProgressAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-            await Task.Delay(backoff, time, cancellationToken).ConfigureAwait(false);
-            backoff = TimeSpan.FromTicks(Math.Min(MaxBackoff.Ticks, backoff.Ticks * 2));
+            await Task.Delay(delay, time, cancellationToken).ConfigureAwait(false);
         }
 
         await nats.PublishAsync(PushNames.Applied(transaction.Region!, database),
-            JsonSerializer.SerializeToUtf8Bytes(result, TerraBaseJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
+            JsonSerializer.SerializeToUtf8Bytes(result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
         await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         if (message.Metadata is { } metadata)
         {
@@ -754,7 +743,7 @@ internal sealed class HomePush(
 
     private async Task RetryAsync(Func<CancellationToken, Task> step, string failure, CancellationToken cancellationToken)
     {
-        var backoff = TimeSpan.FromMilliseconds(200);
+        var backoff = new Backoff(TimeSpan.FromMilliseconds(200), MaxBackoff);
         while (true)
         {
             try
@@ -765,8 +754,7 @@ internal sealed class HomePush(
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger.ZLogWarning($"{failure}: {error.GetType().Name:@Error}");
-                await Task.Delay(backoff, time, cancellationToken).ConfigureAwait(false);
-                backoff = TimeSpan.FromTicks(Math.Min(MaxBackoff.Ticks, backoff.Ticks * 2));
+                await Task.Delay(backoff.Next(), time, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -782,7 +770,7 @@ internal sealed class HomePush(
 
     internal static byte[] Encode(RegionTransaction transaction)
     {
-        var json = JsonSerializer.SerializeToUtf8Bytes(transaction, TerraBaseJsonContext.Default.RegionTransaction);
+        var json = JsonSerializer.SerializeToUtf8Bytes(transaction, HomeApplyJsonContext.Default.RegionTransaction);
         var packed = new byte[4 + LZ4.Block.GetMaxCompressedLength(json.Length)];
         BinaryPrimitives.WriteInt32BigEndian(packed, json.Length);
         var size = LZ4.Block.Compress(json, packed.AsSpan(4));
@@ -802,7 +790,7 @@ internal sealed class HomePush(
         {
             var json = new byte[length];
             if (LZ4.Block.Decompress(data.AsSpan(4), json, null) != length
-                || JsonSerializer.Deserialize(json, TerraBaseJsonContext.Default.RegionTransaction) is not { Id: not null, Region: not null, Hlc: not null, Changes: not null } decoded)
+                || JsonSerializer.Deserialize(json, HomeApplyJsonContext.Default.RegionTransaction) is not { Id: not null, Region: not null, Hlc: not null, Changes: not null } decoded)
             {
                 return false;
             }

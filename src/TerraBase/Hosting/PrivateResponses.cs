@@ -17,7 +17,6 @@ internal static class PrivateResponses
                     && metadata.GetMetadata<IAllowAnonymous>() is null
                     && current.Response.Headers.CacheControl.Count == 0)
                 {
-                    // Keep explicit policies (including shape private/no-store and SSE) intact.
                     current.Response.Headers.CacheControl = "no-store";
                 }
 

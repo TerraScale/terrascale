@@ -120,7 +120,7 @@ public sealed class ClockSafetyTests
         var store = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
         await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         var record = await transaction.GetAsync("node_clocks", node, CancellationToken.None);
-        return JsonSerializer.Deserialize(record!.Json.Span, TerraBaseJsonContext.Default.HlcState)!.Timestamp;
+        return JsonSerializer.Deserialize(record!.Json.Span, ClockJsonContext.Default.HlcState)!.Timestamp;
     }
 
     private static Task ReadyAsync(NodeClock.NodeClockClient clock) => WaitForAsync(clock, sample => sample.LocalWritesAllowed);

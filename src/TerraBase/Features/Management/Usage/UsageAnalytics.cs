@@ -153,7 +153,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             throw new QueryCapacityException("analytics exceeds its result bucket limit") { Deterministic = true };
         }
 
-        return (memory.TryReserve(MemoryLane.Foreground, 16L * 1024 * 1024 + points * 2048L)
+        return (memory.TryReserve(16L * 1024 * 1024 + points * 2048L)
             ?? throw new QueryCapacityException("analytics memory admission exhausted") { Deterministic = true }, points);
     }
 
@@ -202,7 +202,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }, Reserve);
 
         private IMemoryReservation Reserve(long bytes) =>
-            memory.TryReserve(MemoryLane.Foreground, bytes) ?? throw new QueryCapacityException("analytics memory admission exhausted") { Deterministic = true };
+            memory.TryReserve(bytes) ?? throw new QueryCapacityException("analytics memory admission exhausted") { Deterministic = true };
 
         public void Dispose()
         {

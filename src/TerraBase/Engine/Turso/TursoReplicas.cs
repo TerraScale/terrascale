@@ -21,12 +21,16 @@ using Turso.Raw.Public.Handles;
 using Turso.Raw.Public.Value;
 using ZLogger;
 
+using TerraBase.Features.Sql;
+
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoReplicas(
-    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, IMemoryBudget memory, ILogger<TursoReplicas> logger)
+    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, IMemoryBudget memory, ILogger<TursoReplicas> logger, TimeProvider? time = null)
     : IDatabaseReplicas, IAsyncDisposable
 {
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
+
     internal const string DirectoryName = ".replicas";
     internal const string KeyHeader = "TERRABASE-REPLICA-KEY-1\n";
     private const int MaxIdleConnections = 4;
@@ -71,7 +75,7 @@ internal sealed partial class TursoReplicas(
     public bool Offer(TenantContext database, DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, long? cdcPosition = null)
     {
         if (!_replicas.TryGetValue(Key(database), out var opening) || !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully
-            || memory.TryReserve(MemoryLane.Bulk, answer.Length, database) is not { } reservation)
+            || memory.TryReserve(answer.Length, database) is not { } reservation)
         {
             return false;
         }
@@ -261,7 +265,7 @@ internal sealed partial class TursoReplicas(
         {
             try
             {
-                return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, pulled: true);
+                return new Replica(this, Tenant(key), await TursoSyncDatabase.OpenAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: true);
             }
             catch (TursoException error)
             {
@@ -271,7 +275,7 @@ internal sealed partial class TursoReplicas(
 
         _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
-        var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, pulled: false);
+        var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: false);
         try
         {
             _ = await replica.PullAsync(fromHome: true, CancellationToken.None).ConfigureAwait(false);
@@ -450,7 +454,7 @@ internal sealed partial class TursoReplicas(
 
         public async Task<Prefetched?> PrefetchAsync(DatabaseRevision held, IMemoryBudget memory, TenantContext tenant, CancellationToken cancellationToken)
         {
-            using var reservation = memory.TryReserve(MemoryLane.Bulk, MaxPrefetchBytes, tenant);
+            using var reservation = memory.TryReserve(MaxPrefetchBytes, tenant);
             if (reservation is null)
             {
                 return null;
@@ -490,12 +494,11 @@ internal sealed partial class TursoReplicas(
                 }
             }
 
-            if (memory.TryReserve(MemoryLane.Bulk, length, tenant) is not { } kept)
+            if (memory.TryReserve(length, tenant) is not { } kept)
             {
                 return null;
             }
 
-            // Retain only the bytes accounted for by the kept reservation, not the entire 1 MiB scratch buffer.
             return new Prefetched(to, new PushedAnswer(held, to, buffer.AsSpan(0, length).ToArray(), kept, position));
         }
 
@@ -620,7 +623,7 @@ internal sealed partial class TursoReplicas(
         }
     }
 
-    private sealed partial class Replica(TursoReplicas owner, TenantContext database, TursoSyncDatabase sync, string path, RevisionObserver observer, HttpClient observed, ILogger logger, bool pulled) : IAsyncDisposable
+    private sealed partial class Replica(TursoReplicas owner, TenantContext database, TursoSyncDatabase sync, string path, RevisionObserver observer, HttpClient observed, ILogger logger, TimeProvider time, bool pulled) : IAsyncDisposable
     {
         private readonly SemaphoreSlim _pulls = new(1, 1);
         private readonly SemaphoreSlim _prefetches = new(1, 1);
@@ -647,10 +650,9 @@ internal sealed partial class TursoReplicas(
             try
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                // Local writes not yet in the pulled revision make the replica differ from the home on purpose.
                 if (Held != revision || Local)
                 {
-                    return new ReplicaComparison(ReplicaVerdict.Moved, Held, null);
+                    return new ReplicaComparison(new Moved(), Held, null);
                 }
 
                 await using var reader = await BeginReadAsync(cancellationToken).ConfigureAwait(false);
@@ -668,11 +670,11 @@ internal sealed partial class TursoReplicas(
 
                     if (local != range)
                     {
-                        return new ReplicaComparison(ReplicaVerdict.Diverged, revision, RangeChecksums.Mismatch(range, local));
+                        return new ReplicaComparison(new Diverged(), revision, RangeChecksums.Mismatch(range, local));
                     }
                 }
 
-                return new ReplicaComparison(ReplicaVerdict.Equal, revision, null);
+                return new ReplicaComparison(new Equal(), revision, null);
             }
             finally
             {
@@ -722,8 +724,6 @@ internal sealed partial class TursoReplicas(
                 _pulls.Release();
             }
 
-            // Bound home requests independently of native apply. Writers and pushed answers may proceed while the
-            // home is across the WAN; only a completed page answer needs the native writer/reader gates.
             await _prefetches.WaitAsync(token).ConfigureAwait(false);
             try
             {
@@ -762,8 +762,6 @@ internal sealed partial class TursoReplicas(
                     try
                     {
                         token.ThrowIfCancellationRequested();
-                        // A pushed answer may have overtaken this request. Certify only the revision returned by this
-                        // home request, with its original start position, and never apply older pages over newer ones.
                         if (fetched is not null && Held is { } held && held.Incarnation == fetched.Revision.Incarnation
                             && DatabaseRevision.Compare(held, fetched.Revision) >= 0)
                         {
@@ -829,8 +827,6 @@ internal sealed partial class TursoReplicas(
             {
                 try
                 {
-                    // A checkpoint mutates the same pager as page apply. Drain readers before starting it,
-                    // rather than letting a pooled reader begin against its changing WAL generation.
                     using (await _gate.ExclusiveAsync(cancellationToken).ConfigureAwait(false))
                     {
                         await sync.CheckpointAsync(cancellationToken).ConfigureAwait(false);
@@ -872,7 +868,6 @@ internal sealed partial class TursoReplicas(
             catch (Exception error)
             {
                 lease.Dispose();
-                // Opening runs only our fixed PRAGMA/BEGIN statements, never caller SQL or bound values.
                 logger.ZLogInformation($"A replica reader could not open: {error.GetType().Name:@Error} ({error.Message:@Detail})");
                 throw;
             }
@@ -898,8 +893,6 @@ internal sealed partial class TursoReplicas(
                 _ = Interlocked.Decrement(ref _idleCount);
             }
 
-            // A reader's BEGIN is refused as locked while the replica's writer commits or checkpoints (a local write, an
-            // overlay re-apply). Like the primary store's sessions, wait it out in 50 ms steps for up to five seconds.
             var started = Stopwatch.GetTimestamp();
             while (true)
             {
@@ -912,7 +905,7 @@ internal sealed partial class TursoReplicas(
                 {
                     try
                     {
-                        await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                        await Task.Delay(TimeSpan.FromMilliseconds(50), time, cancellationToken).ConfigureAwait(false);
                     }
                     catch
                     {
@@ -937,8 +930,6 @@ internal sealed partial class TursoReplicas(
                 return;
             }
 
-            // Cancel and drain the independent WAN request before closing its observer, then drain native writers.
-            // A cancelled prefetch never reacquires the native writer, so this lock order cannot trap it at shutdown.
             await _closing.CancelAsync().ConfigureAwait(false);
             await _prefetches.WaitAsync().ConfigureAwait(false);
             await _pulls.WaitAsync().ConfigureAwait(false);
@@ -956,8 +947,6 @@ internal sealed partial class TursoReplicas(
             sync.Dispose();
             observed.Dispose();
             observer.Clear();
-            // Waiters already admitted before _disposed was set must still acquire, check it, and release safely.
-            // These semaphores have no wait handles; let the replica own their managed lifetime.
             _pulls.Release();
             _prefetches.Release();
             _closing.Dispose();
@@ -996,7 +985,7 @@ internal sealed partial class TursoReplicas(
         }
 
         private static readonly TimeSpan LockedWait = TimeSpan.FromSeconds(5);
-        private static bool Locked(TursoException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
+        private static bool Locked(TursoException error) => SqlErrors.IsLocked(error.Message);
 
         private static void Run(TursoDatabaseHandle native, string sql)
         {
@@ -1066,7 +1055,7 @@ internal sealed partial class TursoReplicas(
                 catch (TursoException error)
                 {
                     var (failure, message) = TursoStorageTransaction.Classify(native, error);
-                    _healthy = failure is not SqlFailure.Error;
+                    _healthy = failure is not Error;
                     throw new SqlStatementException(failure, message, transactionEnded: false, error);
                 }
             }
@@ -1097,7 +1086,7 @@ internal sealed partial class TursoReplicas(
                 catch (TursoException error)
                 {
                     var (failure, message) = TursoStorageTransaction.Classify(native, error);
-                    _healthy = failure is not SqlFailure.Error;
+                    _healthy = failure is not Error;
                     throw new SqlStatementException(failure, message, transactionEnded: false, error);
                 }
             }

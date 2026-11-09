@@ -23,12 +23,12 @@ internal sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         BackupDestinationRoute.IsDatabaseScoped ? ErrorResponse.From(new NotFound())
-        : await destinations.DeleteAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), cancellationToken) switch
+        : await destinations.DeleteAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), HttpContext.RouteValue("project"), cancellationToken) switch
         {
             Done => TypedResults.NoContent(),
             NotFound error => ErrorResponse.From(error),

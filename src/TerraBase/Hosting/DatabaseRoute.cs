@@ -24,8 +24,8 @@ internal static class DatabaseRoute
     public const string JsonMediaType = "application/json";
     public static readonly NotFound UnknownDatabase = new("the database does not exist", "unknown_database");
 
-    public static string Project(HttpContext context) => (string)context.Request.RouteValues["project"]!;
-    public static string Database(HttpContext context) => (string)context.Request.RouteValues["database"]!;
+    public static string Project(HttpContext context) => context.RouteValue("project");
+    public static string Database(HttpContext context) => context.RouteValue("database");
     public static Valid<DatabaseName> CheckDatabase(HttpContext context) =>
         DatabaseName.TryParse(context.Request.RouteValues["database"] as string, out var name)
             ? name
@@ -40,6 +40,16 @@ internal static class DatabaseRoute
 
         return await ResolveAsync(context, tenants, name, cancellationToken).ConfigureAwait(false);
     }
+
+    public static async ValueTask<IResult> TenantAsync(HttpContext context, ITenantDirectory tenants,
+        Func<TenantContext, CancellationToken, ValueTask<IResult>> serve, CancellationToken cancellationToken) =>
+        await CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantContext database => await serve(database, cancellationToken).ConfigureAwait(false),
+            Validation error => ErrorResponse.From(error),
+            NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
 
     private static async ValueTask<TenantResult> ResolveAsync(HttpContext context, ITenantDirectory tenants, string name, CancellationToken cancellationToken)
     {

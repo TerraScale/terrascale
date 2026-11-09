@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -268,7 +269,7 @@ internal sealed class ShapeService(
         NotFound missing => missing,
         Unavailable unavailable => unavailable,
         QuotaExceeded busy => busy,
-        ShapeBody => throw new System.Diagnostics.UnreachableException(),
+        ShapeBody => throw new UnreachableException(),
     };
 
     public async ValueTask<ShapeRead> PageAsync(ShapeScope scope, ShapeLineage lineage, long snapshot, int page, CancellationToken cancellationToken)
@@ -579,7 +580,7 @@ internal sealed class ShapeService(
             return;
         }
 
-        var admission = memory.TryReserve(MemoryLane.Bulk, 64 * 1024, scope.Database);
+        var admission = memory.TryReserve(64 * 1024, scope.Database);
         if (admission is null)
         {
             Volatile.Write(ref _maintaining, 0);
@@ -681,7 +682,7 @@ internal sealed class ClosedChunks(IMemoryBudget memory)
 
     public void Add(string handle, long offset, ShapeBody body)
     {
-        if (body.Json.Length > MaxBytes / 8 || memory.TryReserve(MemoryLane.Bulk, body.Json.Length, null) is not { } admission)
+        if (body.Json.Length > MaxBytes / 8 || memory.TryReserve(body.Json.Length, null) is not { } admission)
         {
             return;
         }

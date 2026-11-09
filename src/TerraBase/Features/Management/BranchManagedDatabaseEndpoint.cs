@@ -26,11 +26,11 @@ internal sealed class BranchManagedDatabaseEndpoint(IManagementService managemen
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
     public override ValueTask<IResult> HandleAsync(ForkRequest request, CancellationToken cancellationToken) =>
-        BranchAsync(HttpContext, request, management, options, ManagementRoute.Value(HttpContext, "database"), cancellationToken);
+        BranchAsync(HttpContext, request, management, options, HttpContext.RouteValue("database"), cancellationToken);
 
     internal static async ValueTask<IResult> BranchAsync(
         HttpContext context, ForkRequest request, IManagementService management, TerraBaseOptions options, string sourceId, CancellationToken cancellationToken)
@@ -56,7 +56,7 @@ internal sealed class BranchManagedDatabaseEndpoint(IManagementService managemen
         return ManagementRoute.CheckDatabaseName(new NameRequest(request.Name)) switch
         {
             Validation error => ErrorResponse.From(error),
-            string name => await management.BranchDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), ManagementRoute.Value(context, "project"), sourceId, name, cancellationToken,
+            string name => await management.BranchDatabaseAsync(ManagementRoute.UserId(context), ManagementRoute.OrganizationId(context), context.RouteValue("project"), sourceId, name, cancellationToken,
                 request.TtlSeconds) switch
             {
                 ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(context, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(context))),

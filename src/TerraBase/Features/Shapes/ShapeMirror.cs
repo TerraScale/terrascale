@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -51,7 +52,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     private const int CacheItems = 4096;
     private const int ScanItems = 1024;
     private static readonly TimeSpan RemoteDeadline = TimeSpan.FromSeconds(2);
-    // A CI runner saw one bucket HEAD answer 408 RequestTimeout, and the chunk never reached the bucket (#838).
     internal const int MirrorAttempts = 3;
     internal static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
@@ -109,7 +109,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             lock (_gate)
             {
                 if (!_trimming.Contains(handle) && _trimming.Count < TrimItems
-                    && _memory.TryReserve(MemoryLane.Bulk, TrimBytes, tenant) is { } admission)
+                    && _memory.TryReserve(TrimBytes, tenant) is { } admission)
                 {
                     if (_trims.Writer.TryWrite(new(tenant, handle, floor, admission)))
                     {
@@ -175,7 +175,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 return false;
             }
 
-            admission = _memory.TryReserve(MemoryLane.Bulk, sealedBody.Length + 2048L + (offset.Length + nextOffset.Length) * 2L, database);
+            admission = _memory.TryReserve(sealedBody.Length + 2048L + (offset.Length + nextOffset.Length) * 2L, database);
             if (admission is null)
             {
                 return false;
@@ -345,7 +345,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
         var deleted = 0;
         var owner = ShapeObjectStore.Owner(database);
-        using var admission = _memory.TryReserve(MemoryLane.Bulk, 512 * 1024, database);
+        using var admission = _memory.TryReserve(512 * 1024, database);
         if (admission is null)
         {
             return 0;
@@ -395,7 +395,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                     previous.Admission.Dispose();
                 }
 
-                if (more && _trimCursors.Count < CacheItems && _memory.TryReserve(MemoryLane.Bulk, 1024, database) is { } cursorAdmission)
+                if (more && _trimCursors.Count < CacheItems && _memory.TryReserve(1024, database) is { } cursorAdmission)
                 {
                     _trimCursors[handle] = new(after!, cursorAdmission);
                 }
@@ -418,7 +418,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             return false;
         }
 
-        using var admission = _memory.TryReserve(MemoryLane.Bulk, 512 * 1024, database);
+        using var admission = _memory.TryReserve(512 * 1024, database);
         if (admission is null)
         {
             return false;
@@ -520,9 +520,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         {
             try
             {
-                // A sealed body is queued once: a bucket that timed out or failed itself is tried again after a pause, or
-                // the object stays origin-only for good. Each attempt starts with HEAD and writes If-None-Match, so a
-                // write that landed unacknowledged is adopted, never stored twice.
                 for (var attempt = 1; ; attempt++)
                 {
                     try
@@ -587,7 +584,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         using var timer = new PeriodicTimer(TimeSpan.FromHours(1), _time);
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
-            using var admission = _memory.TryReserve(MemoryLane.Bulk, 512 * 1024, null);
+            using var admission = _memory.TryReserve(512 * 1024, null);
             if (admission is null)
             {
                 continue;
@@ -774,7 +771,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 Remove(_cache.Keys.First());
             }
 
-            var admission = _memory.TryReserve(MemoryLane.Bulk, 2048L + pending.NextOffset.Length * 2L, pending.Database);
+            var admission = _memory.TryReserve(2048L + pending.NextOffset.Length * 2L, pending.Database);
             if (admission is not null)
             {
                 Remove(key);
@@ -831,7 +828,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 first.Value.Admission.Dispose();
             }
 
-            if (_memory.TryReserve(MemoryLane.Bulk, 2048, database) is { } admission)
+            if (_memory.TryReserve(2048, database) is { } admission)
             {
                 _proofs[key] = new(head, admission);
             }
@@ -854,7 +851,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 first.Value.Admission.Dispose();
             }
 
-            if (_memory.TryReserve(MemoryLane.Bulk, 1024, database) is { } admission)
+            if (_memory.TryReserve(1024, database) is { } admission)
             {
                 _missing[key] = new(_time.GetUtcNow() + TimeSpan.FromSeconds(30), admission);
             }
@@ -898,8 +895,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         admission.Dispose();
     }
 
-    // What a later attempt can outlast: a bucket that timed out, throttled or failed itself, a broken connection, or the
-    // attempt's own deadline. Refusals (403, an object that cannot be adopted) and invalid metadata are final.
     private static bool Transient(Exception error) => error is IOException or HttpRequestException or OperationCanceledException or StorageBusyException
         or AmazonServiceException { StatusCode: HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError };
 
@@ -1028,7 +1023,7 @@ internal sealed class ShapeObjectStore : IDisposable
     public async Task<ShapeObjectHead> PutAsync(string key, ShapeObjectHead head, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
         await IndexAsync(key, head.Owner, cancellationToken).ConfigureAwait(false);
-        if (!System.Runtime.InteropServices.MemoryMarshal.TryGetArray(bytes, out var segment))
+        if (!MemoryMarshal.TryGetArray(bytes, out var segment))
         {
             throw new ArgumentException("shape ciphertext must be array-backed", nameof(bytes));
         }

@@ -4,14 +4,8 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.Backup;
 
-// Customer endpoints are untrusted: check DNS at connect time, disable proxies and redirects, and connect only to
-// the addresses just checked, so a DNS rebind cannot reach node services or instance metadata.
 internal static class CustomerBackupNetwork
 {
-    // IANA IPv4/IPv6 Special-Purpose Address Registries, reviewed 2026-10-09:
-    // https://www.iana.org/assignments/iana-ipv4-special-registry/
-    // https://www.iana.org/assignments/iana-ipv6-special-registry/
-    // Block non-global/deprecated assignments, preserving their explicitly globally reachable subprefixes.
     private static readonly IPNetwork[] DeniedNetworks =
     [
         IPNetwork.Parse("0.0.0.0/8"), IPNetwork.Parse("10.0.0.0/8"), IPNetwork.Parse("100.64.0.0/10"),
@@ -65,7 +59,6 @@ internal static class CustomerBackupNetwork
             address = address.MapToIPv4();
         }
 
-        // Keep IPv6 restricted to global unicast: NAT64 and other transition addresses can carry internal IPv4.
         if (address.AddressFamily != AddressFamily.InterNetwork
             && (address.AddressFamily != AddressFamily.InterNetworkV6 || !GlobalUnicastV6.Contains(address)))
         {

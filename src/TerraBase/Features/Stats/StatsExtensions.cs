@@ -9,7 +9,6 @@ public static class StatsExtensions
         services.AddSingleton<StatsMetrics>();
         services.AddHostedService(provider =>
         {
-            // The metrics observe the last closed window from the start.
             _ = provider.GetRequiredService<StatsMetrics>();
             return new StatsService(provider.GetRequiredService<DatabaseStats>(), provider.GetRequiredService<TimeProvider>());
         });

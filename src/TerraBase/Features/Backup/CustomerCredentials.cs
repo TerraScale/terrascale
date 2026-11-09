@@ -1,10 +1,10 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Backup;
 
-// Ciphertext is base64(nonce | ciphertext | tag) of the key pair, sealed with the data key wrapped by WrappedKey.
 public sealed record SealedCredentials(string WrappedKey, string Ciphertext);
 
 internal sealed record CustomerKeyPair(string AccessKeyId, string SecretKey);
@@ -17,7 +17,7 @@ internal static class CustomerCredentials
     public static async Task<SealedCredentials> SealAsync(IMasterKey master, string accessKeyId, string secretKey, CancellationToken cancellationToken)
     {
         var (key, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
-        var plain = JsonSerializer.SerializeToUtf8Bytes(new CustomerKeyPair(accessKeyId, secretKey), TerraBaseJsonContext.Default.CustomerKeyPair);
+        var plain = JsonSerializer.SerializeToUtf8Bytes(new CustomerKeyPair(accessKeyId, secretKey), BackupJsonContext.Default.CustomerKeyPair);
         try
         {
             var nonce = RandomNumberGenerator.GetBytes(NonceBytes);
@@ -57,7 +57,7 @@ internal static class CustomerCredentials
                 throw new InvalidDataException("customer credentials are not authentic under their data key");
             }
 
-            var pair = JsonSerializer.Deserialize(plain, TerraBaseJsonContext.Default.CustomerKeyPair)
+            var pair = JsonSerializer.Deserialize(plain, BackupJsonContext.Default.CustomerKeyPair)
                 ?? throw new InvalidDataException("customer credentials are empty");
             return (pair.AccessKeyId, pair.SecretKey);
         }

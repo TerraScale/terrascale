@@ -20,11 +20,7 @@ public sealed record TerraBaseOptions
 
     public const int DefaultShutdownGraceSeconds = 10;
 
-    private const int MaxShutdownGraceSeconds = 3600;
-
     public const int DefaultReadinessCacheSeconds = 1;
-
-    private const int MaxReadinessCacheSeconds = 60;
 
     public const int DefaultQueryBudgetSeconds = 5;
 
@@ -39,7 +35,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", "nats-token", .. BackupSettings.Keys, .. FileStorageSettings.Keys, .. ShapeStorageSettings.Keys]);
+        ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "query-budget-seconds", "storage-threads", "nats-token", .. BackupSettings.Keys, .. FileStorageSettings.Keys, .. ShapeStorageSettings.Keys]);
 
     public static IReadOnlySet<string> SettingNames => Keys;
 
@@ -78,9 +74,9 @@ public sealed record TerraBaseOptions
 
     public IReadOnlyList<string> AuthAudiences { get; init; } = [];
 
-    public TimeSpan ShutdownGrace { get; init; } = TimeSpan.FromSeconds(DefaultShutdownGraceSeconds);
+    public TimeSpan ShutdownGrace { get; } = TimeSpan.FromSeconds(DefaultShutdownGraceSeconds);
 
-    public TimeSpan ReadinessCacheTtl { get; init; } = TimeSpan.FromSeconds(DefaultReadinessCacheSeconds);
+    public TimeSpan ReadinessCacheTtl { get; } = TimeSpan.FromSeconds(DefaultReadinessCacheSeconds);
 
     public TimeSpan QueryBudget
     {
@@ -102,11 +98,7 @@ public sealed record TerraBaseOptions
         init => field = (int)ValidateInteger(value, "storage-threads", 1, 1024);
     }
 
-    public required int StorageQueue
-    {
-        get;
-        init => field = (int)ValidateInteger(value, "storage-queue", 1, 1_000_000);
-    }
+    public int StorageQueue { get; init; } = DefaultStorageQueue;
 
     public BackupSettings? Backup { get; init; }
 
@@ -254,11 +246,8 @@ public sealed record TerraBaseOptions
             PeersFile = peersFile,
             MemoryBudget = ParseInteger(values, "memory-budget", MinMemoryBudget, long.MaxValue) ?? DefaultMemoryBudget(),
             StorageThreads = (int)(ParseInteger(values, "storage-threads", 1, 1024) ?? Math.Clamp(Environment.ProcessorCount, 1, 1024)),
-            StorageQueue = (int)(ParseInteger(values, "storage-queue", 1, 1_000_000) ?? DefaultStorageQueue),
             AuthIssuer = authIssuer,
             AuthAudiences = authAudiences,
-            ShutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values)),
-            ReadinessCacheTtl = TimeSpan.FromSeconds(ParseReadinessCacheSeconds(values)),
             QueryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds),
             Backup = BackupSettings.Parse(values),
             FileStorage = FileStorageSettings.Parse(values),
@@ -304,30 +293,6 @@ public sealed record TerraBaseOptions
         }
 
         return port;
-    }
-
-    private static int ParseShutdownGraceSeconds(IReadOnlyDictionary<string, string> values)
-    {
-        if (!values.TryGetValue("shutdown-grace-seconds", out var raw))
-        {
-            return DefaultShutdownGraceSeconds;
-        }
-
-        return int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) && seconds <= MaxShutdownGraceSeconds
-            ? seconds
-            : throw new TerraBaseConfigurationException($"shutdown-grace-seconds must be an integer between 0 and {MaxShutdownGraceSeconds}");
-    }
-
-    private static int ParseReadinessCacheSeconds(IReadOnlyDictionary<string, string> values)
-    {
-        if (!values.TryGetValue("readiness-cache-seconds", out var raw))
-        {
-            return DefaultReadinessCacheSeconds;
-        }
-
-        return int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) && seconds is >= 1 and <= MaxReadinessCacheSeconds
-            ? seconds
-            : throw new TerraBaseConfigurationException($"readiness-cache-seconds must be an integer between 1 and {MaxReadinessCacheSeconds}");
     }
 
     private static (string? Issuer, string[] Audiences) ParseAuth(IReadOnlyDictionary<string, string> values)

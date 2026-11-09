@@ -167,7 +167,6 @@ internal sealed class RealAuthFixture : IAsyncDisposable
             GitHub.Route(builder.Services);
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0, listen => listen.UseHttps(_certificate)));
         });
-        // ts-auth never creates the issuer's first signing key; an operator does (docs/auth/signing-keys.md).
         await tsauth::TerraScale.Authentication.Features.SigningKeys.SigningKeyProvisioning.ProvisionAsync(_auth.Services, token);
         await _auth.StartAsync(token);
         var addresses = _auth.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Select(address => new Uri(address)).ToArray();

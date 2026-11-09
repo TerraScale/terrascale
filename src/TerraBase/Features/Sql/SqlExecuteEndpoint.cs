@@ -1,6 +1,6 @@
-using System.Globalization;
-using Microsoft.AspNetCore.Authorization;
 using JsonResult = Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<TerraBase.Features.Sql.SqlErrorBody>;
+using Microsoft.AspNetCore.Authorization;
+using System.Globalization;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -12,6 +12,7 @@ using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Features.Shapes;
 using TerraBase.Features.Sql.Routing;
+using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -46,31 +47,27 @@ internal sealed class SqlExecuteEndpoint(
         Metadata(ListenerMetadata.Client, new DatabaseRegions.ReplicaReads());
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        DatabaseRoute.TenantAsync(HttpContext, tenants, ServeAsync, cancellationToken);
+
+    private async ValueTask<IResult> ServeAsync(TenantContext database, CancellationToken cancellationToken) =>
+        DatabaseRoute.CheckParameters(HttpContext) switch
         {
             Validation error => ErrorResponse.From(error),
-            NotFound error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
-            TenantContext database => DatabaseRoute.CheckParameters(HttpContext) switch
+            _ => await DatabaseRoute.CheckBodyAsync(HttpContext, SqlBatch.MaxBytes, "invalid_request", cancellationToken, DatabaseRoute.JsonMediaType) switch
             {
                 Validation error => ErrorResponse.From(error),
-                _ => await DatabaseRoute.CheckBodyAsync(HttpContext, SqlBatch.MaxBytes, "invalid_request", cancellationToken, DatabaseRoute.JsonMediaType) switch
+                PayloadTooLarge error => ErrorResponse.From(error),
+                UnsupportedMediaType error => ErrorResponse.From(error),
+                byte[] body => RequestJson.Read<SqlExecuteRequest>(body, "invalid_request") switch
                 {
                     Validation error => ErrorResponse.From(error),
-                    PayloadTooLarge error => ErrorResponse.From(error),
-                    UnsupportedMediaType error => ErrorResponse.From(error),
-                    byte[] body => RequestJson.Read<SqlExecuteRequest>(body, "invalid_request") switch
-                    {
-                        Validation error => ErrorResponse.From(error),
-                        SqlExecuteRequest { Durability: not (null or "local" or "all") } => ErrorResponse.From(new Validation("durability is local or all", "invalid_request")),
-                        SqlExecuteRequest request => await ExecuteAsync(database, request.Statements ?? [], body, request.Durability == "all", cancellationToken),
-                    },
+                    SqlExecuteRequest { Durability: not (null or "local" or "all") } => ErrorResponse.From(new Validation("durability is local or all", "invalid_request")),
+                    SqlExecuteRequest request => await ExecuteAsync(database, request.Statements ?? [], body, request.Durability == "all", cancellationToken),
                 },
             },
         };
 
-    internal const string WriteHeader = "TerraScale-Write";
     internal const string RouteHeader = "TerraScale-Write-Route";
     internal const string DurabilityHeader = "TerraScale-Durability";
 
@@ -81,23 +78,16 @@ internal sealed class SqlExecuteEndpoint(
         _ => null,
     };
 
-    internal static WriteOverride? Preference(string? value) => value?.Trim().ToLowerInvariant() switch
-    {
-        null or "" or "auto" => WriteOverride.Auto,
-        "home" => WriteOverride.Home,
-        "local" => WriteOverride.Local,
-        _ => null,
-    };
 
     private async ValueTask<IResult> ExecuteAsync(TenantContext database, IReadOnlyList<SqlExecuteStatement> statements, byte[] body, bool all,
         CancellationToken cancellationToken)
         => SqlBatch.Commands(statements) switch
         {
             SqlBatchFailure invalid => Error(invalid),
-            List<SqlCommand> commands => await RunAsync(database, commands, body, all, cancellationToken),
+            List<SqlPlannedCommand> commands => await RunAsync(database, commands, body, all, cancellationToken),
         };
 
-    private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
+    private async ValueTask<IResult> RunAsync(TenantContext database, List<SqlPlannedCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
         SqlRequestTiming.Mark(HttpContext, "tenant");
         if (await placements.FindAsync(database, cancellationToken) is TenantDatabaseRecord { Placement: var placement } && placement.Home != options.Region)
@@ -136,17 +126,16 @@ internal sealed class SqlExecuteEndpoint(
 
             return outcome switch
             {
-                SqlExecuteBody answered => TypedResults.Json(answered, TerraBaseJsonContext.Default.SqlExecuteBody),
+                SqlExecuteBody answered => TypedResults.Json(answered, SqlJsonContext.Default.SqlExecuteBody),
                 SqlBatchFailure failure => Error(failure),
             };
         }
     }
 
-    // A replica region answers reads from its replica (docs/terrabase/region-replicas.md).
     private async ValueTask<IResult> ReplicaAsync(
-        TenantContext database, DatabasePlacement placement, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
+        TenantContext database, DatabasePlacement placement, List<SqlPlannedCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
-        if (Preference(HttpContext.Request.Headers[WriteHeader]) is not { } preference)
+        if (WritePreference.Parse(HttpContext.Request.Headers[WritePreference.Header]) is not { } preference)
         {
             return Error(new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, "TerraScale-Write is home, local or auto"), 0));
         }
@@ -156,46 +145,18 @@ internal sealed class SqlExecuteEndpoint(
             return Error(new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, "TerraScale-Durability is home or local"), 0));
         }
 
-        var statements = new List<(SqlStatementPlan, SqlCommand)>(commands.Count);
-        var every = new List<(SqlStatementPlan, SqlCommand)>(commands.Count);
-        var writes = false;
-        for (var i = 0; i < commands.Count; i++)
-        {
-            switch (SqlScript.Classify(commands[i].Sql))
-            {
-                case SqlError error:
-                    return Error(new SqlBatchFailure(error, i));
-                case SqlStatementPlan { Kind: SqlStatementKind.Read } plan:
-                    statements.Add((plan, commands[i]));
-                    every.Add((plan, commands[i]));
-                    break;
-                case SqlStatementPlan { Kind: SqlStatementKind.Write } plan:
-                    writes = true;
-                    every.Add((plan, commands[i]));
-                    break;
-                case SqlStatementPlan { IsControl: true }:
-                    return Error(new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, "transaction statements are not accepted: every request runs as one transaction"), i));
-                case SqlStatementPlan:
-                    break;
-            }
-        }
+        List<SqlPlannedCommand> statements = [.. commands.Where(command => command.Plan.Kind is SqlStatementKind.Read)];
+        List<SqlPlannedCommand> every = [.. commands.Where(command => command.Plan.Kind is SqlStatementKind.Read or SqlStatementKind.Write)];
+        var writes = every.Count > statements.Count;
 
-        IReplicaReader? reader;
-        try
-        {
-            reader = writes && preference == WriteOverride.Home ? null : await replicas.BeginReadAsync(database, cancellationToken);
-        }
-        catch (Exception error) when (error is not OperationCanceledException)
-        {
-            reader = null;
-        }
+        var reader = await replicas.OpenAsync(database, writes, preference, cancellationToken);
         SqlRequestTiming.Mark(HttpContext, "replica_open");
-        if (reader is null || writes || preference == WriteOverride.Home)
+        if (reader.RunsAtHome(writes, preference))
         {
             WriteRoute? route = null;
             if (writes)
             {
-                route = await router.RouteAsync(database, reader, [.. commands.Select(command => command.Sql)], preference, homeDurable, cancellationToken);
+                route = await router.RouteAsync(database, reader, [.. commands.Select(command => command.Command.Sql)], preference, homeDurable, cancellationToken);
                 SqlRequestTiming.Mark(HttpContext, "route");
             }
 
@@ -226,7 +187,7 @@ internal sealed class SqlExecuteEndpoint(
             return await sql.ExecuteOnReplicaAsync(database, reader, statements, cancellationToken) switch
             {
                 IReadOnlyList<SqlResult> results => TypedResults.Json(new SqlExecuteBody([.. results.Select(SqlStatementBody.Of)]),
-                    TerraBaseJsonContext.Default.SqlExecuteBody),
+                    SqlJsonContext.Default.SqlExecuteBody),
                 ReplicaSqlFailure failed => Error(new SqlBatchFailure(failed.Error, failed.Statement)),
             };
         }
@@ -251,7 +212,7 @@ internal sealed class SqlExecuteEndpoint(
     }
 
     private async ValueTask<IResult?> LocalAsync(
-        TenantContext database, WriteRoute route, List<(SqlStatementPlan, SqlCommand)> statements, bool homeDurable, CancellationToken cancellationToken)
+        TenantContext database, WriteRoute route, List<SqlPlannedCommand> statements, bool homeDurable, CancellationToken cancellationToken)
     {
         ILocalTransaction? transaction;
         try
@@ -312,7 +273,7 @@ internal sealed class SqlExecuteEndpoint(
             }
 
             return TypedResults.Json(new SqlExecuteBody([.. results.Select(SqlStatementBody.Of)]),
-                TerraBaseJsonContext.Default.SqlExecuteBody);
+                SqlJsonContext.Default.SqlExecuteBody);
         }
     }
 
@@ -366,6 +327,6 @@ internal sealed class SqlExecuteEndpoint(
             Listeners.ReplayIn(HttpContext, home);
         }
 
-        return TypedResults.Json(SqlBatch.Body(failure, HttpContext.TraceIdentifier), TerraBaseJsonContext.Default.SqlErrorBody, statusCode: failure.Error.Status);
+        return TypedResults.Json(SqlBatch.Body(failure, HttpContext.TraceIdentifier), SqlJsonContext.Default.SqlErrorBody, statusCode: failure.Error.Status);
     }
 }

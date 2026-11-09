@@ -1,9 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -110,7 +111,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
                 {
                     try
                     {
-                        if (EntityPayload.Read(stored, TerraBaseJsonContext.Default.DatabasePurgeRecord) is { Database.DatabaseId: { } id } record && id == stored.Id)
+                        if (EntityPayload.Read(stored, ManagementJsonContext.Default.DatabasePurgeRecord) is { Database.DatabaseId: { } id } record && id == stored.Id)
                         {
                             items.Add(record);
                         }
@@ -126,14 +127,14 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
 
     public ValueTask<bool> AreActiveCopiesAbsentAsync(TenantContext database, CancellationToken cancellationToken) =>
         ReadAsync<bool>(async transaction =>
-            await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } record
+            await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } record
             && DatabasePurge.SameDatabase(record.Database, database)
             && await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken).ConfigureAwait(false), static _ => false, cancellationToken);
 
     public ValueTask<bool> MarkBackupVerifiedAsync(TenantContext database, DateTimeOffset verifiedAt, CancellationToken cancellationToken) =>
         WriteAsync<bool>(async transaction =>
         {
-            var record = await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            var record = await GetAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
             if (record is null || !DatabasePurge.SameDatabase(record.Database, database)
                 || !await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken).ConfigureAwait(false))
             {
@@ -143,7 +144,7 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
             if (record.BackupVerifiedAt is null)
             {
                 await PutAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, record with { BackupVerifiedAt = verifiedAt },
-                    TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+                    ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
             }
             return true;
         }, static _ => false, cancellationToken);

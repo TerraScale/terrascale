@@ -279,7 +279,7 @@ func (u *ManagementUser) call(ctx context.Context, method string, path []string,
 	req := request{
 		method:     method,
 		body:       body,
-		path:       append([]string{"v1", "management"}, path...),
+		path:       path,
 		query:      query,
 		header:     u.header,
 		token:      u.token,
@@ -289,16 +289,24 @@ func (u *ManagementUser) call(ctx context.Context, method string, path []string,
 	return err
 }
 
+func managementPath(parts ...string) []string {
+	return append([]string{"v1", "management"}, parts...)
+}
+
 func orgPath(org string, extra ...string) []string {
-	return append([]string{"organizations", org}, extra...)
+	return managementPath(append([]string{"organizations", org}, extra...)...)
 }
 
 func projectPath(org, project string, extra ...string) []string {
 	return orgPath(org, append([]string{"projects", project}, extra...)...)
 }
 
-func databasePath(org, project, databaseID string, extra ...string) []string {
-	return projectPath(org, project, append([]string{"databases", databaseID}, extra...)...)
+func projectAPIPath(project string, extra ...string) []string {
+	return append([]string{"v1", "projects", project}, extra...)
+}
+
+func databasePath(project, databaseID string, extra ...string) []string {
+	return projectAPIPath(project, append([]string{"databases", databaseID}, extra...)...)
 }
 
 func get[T any](ctx context.Context, u *ManagementUser, path []string, query url.Values) (*T, error) {
@@ -324,12 +332,12 @@ type nameBody struct {
 // CreateOrganization creates an organization with the user as its owner.
 // A name the user already used fails with ErrConflict.
 func (u *ManagementUser) CreateOrganization(ctx context.Context, name string) (*Organization, error) {
-	return send[Organization](ctx, u, http.MethodPost, []string{"organizations"}, nameBody{name})
+	return send[Organization](ctx, u, http.MethodPost, managementPath("organizations"), nameBody{name})
 }
 
 // Organizations lists the user's organizations.
 func (u *ManagementUser) Organizations(ctx context.Context, opts PageOptions) (*Page[Organization], error) {
-	return get[Page[Organization]](ctx, u, []string{"organizations"}, opts.query())
+	return get[Page[Organization]](ctx, u, managementPath("organizations"), opts.query())
 }
 
 // Organization reads an organization.
@@ -355,12 +363,12 @@ func (u *ManagementUser) DeleteOrganization(ctx context.Context, org string) err
 
 // CurrentOrganization reads the organization the user last switched to.
 func (u *ManagementUser) CurrentOrganization(ctx context.Context) (*Organization, error) {
-	return get[Organization](ctx, u, []string{"current-organization"}, nil)
+	return get[Organization](ctx, u, managementPath("current-organization"), nil)
 }
 
 // SetCurrentOrganization switches the user to one of their organizations.
 func (u *ManagementUser) SetCurrentOrganization(ctx context.Context, org string) (*Organization, error) {
-	return send[Organization](ctx, u, http.MethodPut, []string{"current-organization"}, map[string]string{"organizationId": org})
+	return send[Organization](ctx, u, http.MethodPut, managementPath("current-organization"), map[string]string{"organizationId": org})
 }
 
 // CreateProject creates a project in an organization.
@@ -404,7 +412,7 @@ func (r *ProjectRegistration) Commit(ctx context.Context) error {
 	if r.body == nil {
 		return nil
 	}
-	return r.user.call(ctx, http.MethodPost, []string{"commits"}, nil, r.body, nil)
+	return r.user.call(ctx, http.MethodPost, managementPath("commits"), nil, r.body, nil)
 }
 
 // PrepareProjectRegistration captures the missing organization/project creation
@@ -462,33 +470,33 @@ func (u *ManagementUser) CreateDatabaseIn(ctx context.Context, org, project, nam
 		Name       string `json:"name"`
 		HomeRegion string `json:"homeRegion,omitempty"`
 	}{name, region}
-	return send[ManagedDatabase](ctx, u, http.MethodPost, projectPath(org, project, "databases"), body)
+	return send[ManagedDatabase](ctx, u, http.MethodPost, projectAPIPath(project, "databases"), body)
 }
 
 // Databases lists a project's databases.
 func (u *ManagementUser) Databases(ctx context.Context, org, project string, opts PageOptions) (*Page[ManagedDatabase], error) {
-	return get[Page[ManagedDatabase]](ctx, u, projectPath(org, project, "databases"), opts.query())
+	return get[Page[ManagedDatabase]](ctx, u, projectAPIPath(project, "databases"), opts.query())
 }
 
 // Database reads a database by id.
 func (u *ManagementUser) Database(ctx context.Context, org, project, databaseID string) (*ManagedDatabase, error) {
-	return get[ManagedDatabase](ctx, u, databasePath(org, project, databaseID), nil)
+	return get[ManagedDatabase](ctx, u, databasePath(project, databaseID), nil)
 }
 
 // DeleteDatabase deletes a database, by id, and its data; its branches stay.
 func (u *ManagementUser) DeleteDatabase(ctx context.Context, org, project, databaseID string) error {
-	return u.call(ctx, http.MethodDelete, databasePath(org, project, databaseID), nil, nil, nil)
+	return u.call(ctx, http.MethodDelete, databasePath(project, databaseID), nil, nil, nil)
 }
 
 // DatabaseUsage reads a database's storage, reads and writes.
 func (u *ManagementUser) DatabaseUsage(ctx context.Context, org, project, databaseID string) (*DatabaseUsage, error) {
-	return get[DatabaseUsage](ctx, u, databasePath(org, project, databaseID, "usage"), nil)
+	return get[DatabaseUsage](ctx, u, databasePath(project, databaseID, "usage"), nil)
 }
 
 // BranchDatabase creates the database name in the same project, holding a
 // consistent snapshot copy of the database databaseID.
 func (u *ManagementUser) BranchDatabase(ctx context.Context, org, project, databaseID, name string) (*ManagedDatabase, error) {
-	return send[ManagedDatabase](ctx, u, http.MethodPost, databasePath(org, project, databaseID, "branches"), nameBody{name})
+	return send[ManagedDatabase](ctx, u, http.MethodPost, databasePath(project, databaseID, "branches"), nameBody{name})
 }
 
 // CreateProjectAPIKey issues a data API key of a project, a Config.Token for
@@ -560,7 +568,7 @@ func (u *ManagementUser) RevokeInvitation(ctx context.Context, org, invitation s
 // WithToken user whose access token carries a verified email matching the
 // invitation's.
 func (u *ManagementUser) AcceptInvitation(ctx context.Context, token string) (*Member, error) {
-	return send[Member](ctx, u, http.MethodPost, []string{"invitations", "accept"}, map[string]string{"token": token})
+	return send[Member](ctx, u, http.MethodPost, managementPath("invitations", "accept"), map[string]string{"token": token})
 }
 
 // OwnershipTransfer reads the pending ownership transfer.

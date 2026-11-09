@@ -2,11 +2,12 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.HomePush;
-using static TerraBase.Features.HomePush.HomePush;
+using TerraBase.Features.LocalAck;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using static TerraBase.Features.HomePush.HomePush;
 
 namespace TerraBase.Features.LocalAck;
 
@@ -36,7 +37,7 @@ internal sealed class HoldEndpoint(HoldStore holds, IMemoryBudget memory) : Endp
             return ErrorResponse.From(new Validation("the body is one held transaction of at most 16 MiB"));
         }
 
-        using var reservation = memory.TryReserve(MemoryLane.Foreground, checked(HttpContext.Request.ContentLength.Value * 4), tenant: null);
+        using var reservation = memory.TryReserve(checked(HttpContext.Request.ContentLength.Value * 4), tenant: null);
         if (reservation is null)
         {
             return ErrorResponse.From(new Unavailable("the node's memory budget is exhausted; retry"));
@@ -45,7 +46,7 @@ internal sealed class HoldEndpoint(HoldStore holds, IMemoryBudget memory) : Endp
         HeldTransaction? held;
         try
         {
-            held = await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.HeldTransaction, cancellationToken).ConfigureAwait(false);
+            held = await HttpContext.Request.ReadFromJsonAsync(LocalAckJsonContext.Default.HeldTransaction, cancellationToken).ConfigureAwait(false);
         }
         catch (JsonException)
         {

@@ -19,7 +19,6 @@ internal static class RangeChecksums
     public const int MaxRanges = 64;
     public const long RoundBytes = 16L * 1024 * 1024;
 
-    // The sync client's tables, the CDC logs and a replica's local-write capture table are each node's own, not the home's data.
     private const string HomeObjects = "instr(name, 'turso_sync') = 0 AND instr(tbl_name, 'turso_sync') = 0 AND instr(name, 'turso_cdc') = 0 AND name <> '_ts_local_cdc'";
 
     public const string SchemaSql = "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE " + HomeObjects + " ORDER BY type, name";

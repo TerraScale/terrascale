@@ -1,4 +1,5 @@
 using Bogus;
+using System.Globalization;
 using static TerraBase.Testing.SqlNativeDatabase;
 
 namespace TerraBase.Fast.Sql;
@@ -18,7 +19,7 @@ public sealed class SqlNativePostgresTests
         await PostgresSql.ExecuteAsync(connection, "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, profile TEXT)");
         var inserted = await PostgresSql.ExecuteAsync(connection, "INSERT INTO people (name, profile) VALUES ($1, $2)", name, $$"""{"city":"{{city}}","age":{{age}}}""");
         var read = await ReadAsync(connection, "SELECT id, name, json_extract(profile, '$.city'), profile ->> '$.age' FROM people WHERE name = $1", name);
-        var id = Convert.ToInt64(read[0][0], System.Globalization.CultureInfo.InvariantCulture);
+        var id = Convert.ToInt64(read[0][0], CultureInfo.InvariantCulture);
         var updated = await PostgresSql.ExecuteAsync(connection, "UPDATE people SET name = $1 WHERE id = $2", renamed, id);
         var after = await ReadAsync(connection, "SELECT name FROM people WHERE json_extract(profile, '$.city') = $1", city);
         var deleted = await PostgresSql.ExecuteAsync(connection, "DELETE FROM people WHERE id = $1", id);
@@ -26,7 +27,7 @@ public sealed class SqlNativePostgresTests
         await Assert.That(inserted).IsEqualTo(1);
         await Assert.That(read[0][1]).IsEqualTo(name);
         await Assert.That(read[0][2]).IsEqualTo(city);
-        await Assert.That(Convert.ToInt64(read[0][3], System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(age);
+        await Assert.That(Convert.ToInt64(read[0][3], CultureInfo.InvariantCulture)).IsEqualTo(age);
         await Assert.That(updated).IsEqualTo(1);
         await Assert.That(after[0][0]).IsEqualTo(renamed);
         await Assert.That(deleted).IsEqualTo(1);

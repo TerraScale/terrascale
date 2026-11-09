@@ -47,7 +47,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             }
 
             var bytes = EntryBytes(database, key.Shape, definition.Handle);
-            if (budget.TryReserve(MemoryLane.Foreground, bytes, database) is not { } reservation)
+            if (budget.TryReserve(bytes, database) is not { } reservation)
             {
                 return new QuotaExceeded("the memory budget cannot hold another shape; retry later", "shape_busy");
             }
@@ -137,7 +137,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             return new Done();
         }
 
-        using var enumeration = budget.TryReserve(MemoryLane.Bulk, MaxShapesPerDatabase * 16L + 512, tenant);
+        using var enumeration = budget.TryReserve(MaxShapesPerDatabase * 16L + 512, tenant);
         if (enumeration is null)
         {
             return new Done();

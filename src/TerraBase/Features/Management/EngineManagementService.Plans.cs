@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
@@ -27,4 +28,28 @@ internal sealed partial class EngineManagementService
 
         return new Unavailable("the organization's plan has not been published in this region; retry shortly", "plan_unknown");
     }
+
+    public async ValueTask<SetPlanResult> SetPlanAsync(
+        string userId, string organizationId, PlanTier plan, CancellationToken cancellationToken) =>
+        await WriteAsync<SetPlanResult>(async transaction =>
+        {
+            var access = await AuthorizeAsync(transaction, userId, organizationId, allowProject: false, cancellationToken).ConfigureAwait(false);
+            if (access is not Organization)
+            {
+                return access switch
+                {
+                    NotFound error => error,
+                    Forbidden error => error,
+                    Organization => throw new UnreachableException(),
+                };
+            }
+
+            var organization = await GetOrganizationAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("an organization index names a missing organization");
+            organization = organization with { Plan = plan };
+            _ = await CatalogTables.PutOrganizationAsync(transaction, organization, cancellationToken).ConfigureAwait(false);
+
+            return organization;
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+
 }

@@ -1,11 +1,12 @@
-using System.Text.Json;
 using Amazon.S3;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Catalog;
+using TerraBase.Features.FileStorage;
 using TerraBase.Features.Management;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -32,11 +33,11 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     private static string Key(string bucket, string file) => FileStorageUsage.Key(Access.OrganizationId, Access.ProjectId, bucket, file);
     private static bool Admin => !Access.IsEndUser && Access.DatabaseName is null;
     private static ValueTask<FileBucket?> BucketAsync(IStorageTransaction transaction, string bucket, CancellationToken token) =>
-        SystemCatalog.GetAsync(transaction, Buckets, bucket, TerraBaseJsonContext.Default.FileBucket, token);
+        SystemCatalog.GetAsync(transaction, Buckets, bucket, FileStorageJsonContext.Default.FileBucket, token);
     private static ValueTask<FileObject?> FileAsync(IStorageTransaction transaction, string bucket, string file, CancellationToken token) =>
-        SystemCatalog.GetAsync(transaction, Files(bucket), file, TerraBaseJsonContext.Default.FileObject, token);
+        SystemCatalog.GetAsync(transaction, Files(bucket), file, FileStorageJsonContext.Default.FileObject, token);
     private static ValueTask SaveAsync(IStorageTransaction transaction, string bucket, FileObject file, CancellationToken token) =>
-        SystemCatalog.PutAsync(transaction, Files(bucket), file.Id, file, TerraBaseJsonContext.Default.FileObject, token);
+        SystemCatalog.PutAsync(transaction, Files(bucket), file.Id, file, FileStorageJsonContext.Default.FileObject, token);
     private static bool Allowed(FileBucket bucket, FileObject file, bool write)
     {
         if (Access.DatabaseName is not null)
@@ -72,7 +73,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             {
                 return Missing;
             }
-            var page = await SystemCatalog.ListAsync(transaction, Buckets, null, 100, TerraBaseJsonContext.Default.FileBucket, b => b.Id, cancellationToken).ConfigureAwait(false);
+            var page = await SystemCatalog.ListAsync(transaction, Buckets, null, 100, FileStorageJsonContext.Default.FileBucket, b => b.Id, cancellationToken).ConfigureAwait(false);
             if (page.Items.Count >= 100)
             {
                 return new Conflict("a project may have at most 100 buckets");
@@ -82,7 +83,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
                 return new Conflict("a bucket with that name already exists");
             }
             var bucket = new FileBucket(EntityIds.New().ToString(), request.Name!, options.Region, request.Rules);
-            await SystemCatalog.PutAsync(transaction, Buckets, bucket.Id, bucket, TerraBaseJsonContext.Default.FileBucket, cancellationToken).ConfigureAwait(false);
+            await SystemCatalog.PutAsync(transaction, Buckets, bucket.Id, bucket, FileStorageJsonContext.Default.FileBucket, cancellationToken).ConfigureAwait(false);
             return bucket;
         }, static error => error, cancellationToken);
     }
@@ -90,7 +91,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     public ValueTask<FileStorageResult> ListBucketsAsync(string? after, CancellationToken cancellationToken) =>
         !Admin ? ValueTask.FromResult<FileStorageResult>(Denied) : catalog.ReadAsync<FileStorageResult>(async transaction =>
         {
-            var page = await SystemCatalog.ListAsync(transaction, Buckets, after, 50, TerraBaseJsonContext.Default.FileBucket, b => b.Id, cancellationToken).ConfigureAwait(false);
+            var page = await SystemCatalog.ListAsync(transaction, Buckets, after, 50, FileStorageJsonContext.Default.FileBucket, b => b.Id, cancellationToken).ConfigureAwait(false);
             return new FileBucketPage(page.Items, page.Next);
         }, static error => error, cancellationToken);
 
@@ -119,7 +120,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
                 return new Conflict("the owner pointer is immutable");
             }
             saved = saved with { Rules = request.Rules };
-            await SystemCatalog.PutAsync(transaction, Buckets, bucket, saved, TerraBaseJsonContext.Default.FileBucket, cancellationToken).ConfigureAwait(false);
+            await SystemCatalog.PutAsync(transaction, Buckets, bucket, saved, FileStorageJsonContext.Default.FileBucket, cancellationToken).ConfigureAwait(false);
             return saved;
         }, static error => error, cancellationToken);
     }
@@ -259,7 +260,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             {
                 return Denied;
             }
-            // Ready files the caller may read, in id order; a page reads at most MaxListScan files.
             List<FileObject> items = [];
             var cursor = after;
             for (var scanned = 0; scanned < MaxListScan;)
@@ -269,7 +269,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
                 {
                     scanned++;
                     cursor = stored.Id;
-                    if (EntityPayload.Read(stored, TerraBaseJsonContext.Default.FileObject) is { Status: "ready" } file && Allowed(definition, file, write: false))
+                    if (EntityPayload.Read(stored, FileStorageJsonContext.Default.FileObject) is { Status: "ready" } file && Allowed(definition, file, write: false))
                     {
                         items.Add(file);
                         if (items.Count == ListPage)
@@ -362,8 +362,6 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
                 continue;
             }
             try { await SweepAsync(stoppingToken).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (OperationCanceledException) { /* One bounded cleanup pass expired; retry on the next tick. */ }
             catch (Exception error) when (StoreFailure(error) || error is QueryCapacityException)
             {
                 CleanupIncomplete(logger, null);
@@ -375,7 +373,18 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(20));
-        var token = budget.Token;
+        try
+        {
+            await SweepPageAsync(budget.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+    }
+
+    private async ValueTask SweepPageAsync(CancellationToken token)
+    {
         if (_sweepKind is null)
         {
             var database = await engine.OpenSystemDatabaseAsync(token).ConfigureAwait(false);
@@ -394,13 +403,13 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         var parts = kind.Split('/');
         if (parts.Length != 4) { _sweepKind = null; return; }
         var pageFiles = await catalog.ReadAsync<ManagementPage<FileObject>?>(
-            async tx => await SystemCatalog.ListAsync(tx, kind, _fileAfter, 50, TerraBaseJsonContext.Default.FileObject, f => f.Id, token).ConfigureAwait(false), static _ => null, token).ConfigureAwait(false);
+            async tx => await SystemCatalog.ListAsync(tx, kind, _fileAfter, 50, FileStorageJsonContext.Default.FileObject, f => f.Id, token).ConfigureAwait(false), static _ => null, token).ConfigureAwait(false);
         if (pageFiles is null)
         {
             return;
         }
         var definition = await catalog.ReadAsync<FileBucket?>(
-            tx => SystemCatalog.GetAsync(tx, FileStorageUsage.Buckets(parts[2]), parts[3], TerraBaseJsonContext.Default.FileBucket, token), static _ => null, token).ConfigureAwait(false);
+            tx => SystemCatalog.GetAsync(tx, FileStorageUsage.Buckets(parts[2]), parts[3], FileStorageJsonContext.Default.FileBucket, token), static _ => null, token).ConfigureAwait(false);
         if (definition is null)
         {
             _sweepKind = null;
@@ -417,7 +426,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             await objects.DeleteAsync(definition.Region, FileStorageUsage.Key(parts[1], parts[2], parts[3], file.Id), token).ConfigureAwait(false);
             await catalog.WriteAsync<bool>(async tx =>
             {
-                var current = await SystemCatalog.GetAsync(tx, kind, file.Id, TerraBaseJsonContext.Default.FileObject, token).ConfigureAwait(false);
+                var current = await SystemCatalog.GetAsync(tx, kind, file.Id, FileStorageJsonContext.Default.FileObject, token).ConfigureAwait(false);
                 if (current is not null && current.Status == file.Status)
                 {
                     await tx.DeleteAsync(kind, file.Id, token).ConfigureAwait(false);

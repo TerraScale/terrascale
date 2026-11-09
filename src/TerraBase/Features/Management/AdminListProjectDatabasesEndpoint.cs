@@ -26,7 +26,7 @@ internal sealed class AdminListProjectDatabasesEndpoint(IManagementService manag
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var project = ManagementRoute.Value(HttpContext, "project");
+        var project = HttpContext.RouteValue("project");
         if (!EntityIds.IsValid(project))
         {
             return ErrorResponse.From(new Validation("project must be a canonical uppercase ULID"));
@@ -36,7 +36,6 @@ internal sealed class AdminListProjectDatabasesEndpoint(IManagementService manag
         {
             Validation error => ErrorResponse.From(error),
             PageQuery page => await PageAsync(project, page, cancellationToken).ConfigureAwait(false),
-            _ => throw new UnreachableException(),
         };
     }
 
@@ -46,7 +45,6 @@ internal sealed class AdminListProjectDatabasesEndpoint(IManagementService manag
             ManagementPage<ManagedDatabase> local => TypedResults.Ok(new ManagementPage<ManagedDatabaseBody>(
                 [.. local.Items.Select(item => ManagedDatabaseBody.From(item, Listeners.RegionOf(HttpContext)))], local.Next)),
             Unavailable unavailable => ErrorResponse.From(unavailable),
-            _ => throw new InvalidOperationException(),
         };
 
     private const int MaxDatabases = 100;

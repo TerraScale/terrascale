@@ -9,7 +9,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Slow.Backup;
 
-// Deleting a database or erasing an account destroys its backup data keys (docs/terrabase/crypto-shredding.md).
 public sealed class CryptoShreddingTests
 {
     [Test]
@@ -38,7 +37,7 @@ public sealed class CryptoShreddingTests
         await Assert.That(KeysOf(s3, scope)).IsNotEmpty();
         foreach (var (key, bytes) in sealedObjects)
         {
-            await DecryptAsync(keys, scope, key, bytes, cancellationToken); // Readable while the database exists.
+            await DecryptAsync(keys, scope, key, bytes, cancellationToken);
         }
 
         using var deleted = await api.ProjectClient(database.Project).DeleteAsync(ManagementApi.Uri(database.Path), cancellationToken);
@@ -82,7 +81,6 @@ public sealed class CryptoShreddingTests
             await Assert.That(KeysOf(s3, scope)).IsNotEmpty();
         }
 
-        // ts-auth's account deletion hands each owned project to TerraBase as a version 2 closure.
         var closure = EntityIds.New().ToString();
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {

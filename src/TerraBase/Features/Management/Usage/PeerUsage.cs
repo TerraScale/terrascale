@@ -1,8 +1,9 @@
 using System.Globalization;
 using System.Net;
-using System.Text;
-using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.Json;
+using System.Text;
+using TerraBase.Features.Management;
 using TerraBase.Features.Regions;
 using TerraBase.Hosting;
 
@@ -36,7 +37,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
             var request = Request(peer, path);
             HomeForwarding.Sign(context, request, peer.Region);
             return request;
-        }, HttpStatusCode.NotFound, TerraBaseJsonContext.Default.ProjectUsage, cancellationToken).ConfigureAwait(false);
+        }, HttpStatusCode.NotFound, ManagementJsonContext.Default.ProjectUsage, cancellationToken).ConfigureAwait(false);
         return answers?.Where(answer => answer is not null).Select(answer => answer!).ToList();
     }
 
@@ -57,7 +58,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
             }
 
             var path = query.ToString();
-            var answers = await AskAsync(peer => Signed(Request(peer, path)), status: null, TerraBaseJsonContext.Default.NodeUsageMonths, cancellationToken)
+            var answers = await AskAsync(peer => Signed(Request(peer, path)), status: null, ManagementJsonContext.Default.NodeUsageMonths, cancellationToken)
                 .ConfigureAwait(false);
             if (answers is null)
             {
@@ -93,7 +94,7 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
         }
 
         var path = query.ToString().TrimEnd('&', '?');
-        var answers = await AskAsync(peer => Signed(Request(peer, path)), status: null, TerraBaseJsonContext.Default.AllowanceUsagePage, cancellationToken)
+        var answers = await AskAsync(peer => Signed(Request(peer, path)), status: null, ManagementJsonContext.Default.AllowanceUsagePage, cancellationToken)
             .ConfigureAwait(false);
         return answers?.Select(answer => answer!).ToList();
     }

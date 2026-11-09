@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using Microsoft.Net.Http.Headers;
 using Microsoft.OpenApi;
@@ -94,7 +95,7 @@ internal sealed class GetShapeEndpoint(
             }
 
             HttpContext.Response.RegisterForDispose(connection);
-            HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
+            HttpContext.ReleaseRequestLease();
         }
 
         return request.Offset switch
@@ -110,7 +111,7 @@ internal sealed class GetShapeEndpoint(
             SnapshotOffset page => Answer(scope, request, lineage, await snapshots.PageAsync(scope, lineage, page.Snapshot, page.Page, cancellationToken)),
             DecimalOffset at when request.Live => Answer(scope, request, lineage, await live.WaitAsync(scope, lineage, at.Value, request.Local, cancellationToken)),
             DecimalOffset at => Answer(scope, request, lineage, await chunks.ReadAsync(scope, lineage, at.Value, cancellationToken)),
-            _ => throw new System.Diagnostics.UnreachableException(),
+            _ => throw new UnreachableException(),
         };
     }
 

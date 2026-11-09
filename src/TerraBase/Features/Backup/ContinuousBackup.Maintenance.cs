@@ -1,8 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Errors;
-using TerraBase.Features.Management;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -24,13 +25,11 @@ internal sealed partial class ContinuousBackup
     private static readonly TimeSpan BucketSnapshotRetention = TimeSpan.FromDays(14);
     private static readonly TimeSpan BaselineSlack = TimeSpan.FromDays(1);
 
-    // Kept past the window, so a restore that picked a snapshot just inside it finishes before retention deletes it.
     private static readonly TimeSpan RetentionGrace = TimeSpan.FromHours(1);
 
     internal static (string Kind, string Id) RecordKey(TenantContext? database) =>
         database is null ? ("backup_status", "_system") : ($"databases/{database.DatabaseId}/backup_status", "current");
 
-    // Keep a restore baseline before the window, but never beyond the plan plus one day.
     private async Task RetainAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var retained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -66,7 +65,7 @@ internal sealed partial class ContinuousBackup
             {
                 _ = plan switch
                 {
-                    Unavailable => new Done(), // Do not expire data or advance the retention retry timestamp.
+                    Unavailable => new Done(),
                     PlanTier => throw new UnreachableException(),
                 };
                 return;
@@ -77,7 +76,6 @@ internal sealed partial class ContinuousBackup
 
         file.RetainedAt = now;
         var cutoff = now - TimeSpan.FromDays(file.RetentionDays) - RetentionGrace;
-        // Expire one pass early, including equality, so hourly scheduling fits inside the age cap.
         var expires = now - TimeSpan.FromDays(file.RetentionDays) - BaselineSlack + RetentionInterval;
         var leased = await LeasedGenerationsAsync(file, now, cancellationToken).ConfigureAwait(false);
         if (leased is null)
@@ -120,7 +118,6 @@ internal sealed partial class ContinuousBackup
 
         if (measure)
         {
-            // At start and daily, like the size: the platform bucket's multipart uploads under this file left by failed aborts.
             await _bucket.AbortStaleUploadsAsync(file.Prefix + "/", cancellationToken).ConfigureAwait(false);
         }
 
@@ -132,12 +129,10 @@ internal sealed partial class ContinuousBackup
         await RecordAsync(file, cancellationToken).ConfigureAwait(false);
     }
 
-    // Tigris has no retention of its own. Expiry runs before creation, including for the last snapshot.
     private async Task SnapshotBucketAsync(CancellationToken cancellationToken)
     {
         try
         {
-            // Checked once per process: a bucket without snapshots (a PR preview's) skips the job quietly.
             if (_bucketSnapshotsEnabled is null)
             {
                 _bucketSnapshotsEnabled = await _bucket.SnapshotsEnabledAsync(cancellationToken).ConfigureAwait(false);
@@ -201,13 +196,9 @@ internal sealed partial class ContinuousBackup
             static _ => (HashSet<Ulid>?)null, cancellationToken).ConfigureAwait(false);
     }
 
-    // Inventories and deletions belong to one destination: partial uploads or a failed delete in the other destination
-    // must remain discoverable on later passes. Bound deletion candidates, scanning the entire inventory to protect
-    // snapshots beyond the batch. Hard-expired objects drain in batches of sixteen in the same pass.
     private static async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, HashSet<Ulid> leased, CancellationToken cancellationToken)
     {
         var complete = true;
-        // Include orphan generations and the newest segment: a failing snapshot must not retain WAL forever.
         var expiredKeys = new List<string>(16);
         await foreach (var item in store.ListAsync(file.Prefix + "/wal/", null, cancellationToken).ConfigureAwait(false))
         {
@@ -273,8 +264,6 @@ internal sealed partial class ContinuousBackup
             snapshots.RemoveAt(snapshots.Count - 1);
         }
 
-        // At most maxSnapshots + 1 generations: only deletion candidates and the floor need segment cleanup.
-        // An unselected snapshot (even an expired one awaiting a later batch) protects its generation from its position.
         var kept = snapshots.Select(snapshot => snapshot.Generation).Distinct().ToDictionary(generation => generation, _ => (long?)null);
         kept[oldest.Generation] = oldest.Position;
         var lastCandidate = snapshots.Count > 0 ? snapshots[^1].Key : null;
@@ -329,8 +318,6 @@ internal sealed partial class ContinuousBackup
         return complete;
     }
 
-    // Ordinary shipping never waits for a drill. Only actual expiry ends one: cancel and join before deleting
-    // its possible inputs, then let the next snapshot perform the daily check against retained history.
     private static async Task<bool> DeleteRetainedAsync(ShippedFile file, IObjectStore store, List<string> keys, CancellationToken cancellationToken)
     {
         if (keys.Count > 0)
@@ -350,7 +337,6 @@ internal sealed partial class ContinuousBackup
         return await DeleteAsync(store, keys, cancellationToken).ConfigureAwait(false);
     }
 
-    // Failed keys remain retryable without starving later batches or committing a partial size measurement.
     private static async Task<bool> DeleteAsync(IObjectStore store, List<string> keys, CancellationToken cancellationToken)
     {
         var complete = true;
@@ -375,9 +361,6 @@ internal sealed partial class ContinuousBackup
         return complete;
     }
 
-    // Rebuilds the file from the bucket up to the snapshot just stored, from the generation's previous snapshot when it has
-    // one, and compares it with `live`, the checksum of that snapshot's local copy: the live file at the same log position.
-    // Runs beside the file's shipping, one drill at a time on a node (StartSide).
     private async Task DrillAsync(ShippedFile file, SnapshotKey stored, byte[] live, CancellationToken cancellationToken)
     {
         var started = _time.GetTimestamp();
@@ -393,7 +376,7 @@ internal sealed partial class ContinuousBackup
                 }
             }
 
-            var restored = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, cancellationToken)
+            var restored = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, next: null, cancellationToken)
                 .ConfigureAwait(false);
             try
             {
@@ -421,7 +404,6 @@ internal sealed partial class ContinuousBackup
         }
 
         var drill = new BackupDrill(_time.GetUtcNow(), error is null, _time.GetElapsedTime(started).TotalSeconds, error);
-        // DrilledAt belongs to the file's job, which set it when it asked for this drill.
         file.LastDrill = drill;
         _drills.Add(1, new KeyValuePair<string, object?>("result", drill.Passed ? "passed" : "failed"));
         if (!drill.Passed)
@@ -432,7 +414,6 @@ internal sealed partial class ContinuousBackup
         await RecordAsync(file, cancellationToken).ConfigureAwait(false);
     }
 
-    // Writes the file's backup record into the system catalog; a member that cannot write the catalog skips it.
     private async Task RecordAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var record = new BackupStatusRecord(file.Prefix, _node, file.Generation?.ToString(), file.LastShipped, Lag(file, _time.GetUtcNow()),
@@ -444,7 +425,7 @@ internal sealed partial class ContinuousBackup
             var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
-                await transaction.PutAsync(kind, id, JsonSerializer.SerializeToUtf8Bytes(record, TerraBaseJsonContext.Default.BackupStatusRecord), cancellationToken)
+                await transaction.PutAsync(kind, id, JsonSerializer.SerializeToUtf8Bytes(record, BackupJsonContext.Default.BackupStatusRecord), cancellationToken)
                     .ConfigureAwait(false);
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }

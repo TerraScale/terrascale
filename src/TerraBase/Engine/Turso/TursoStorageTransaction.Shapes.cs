@@ -157,7 +157,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
             throw new InvalidDataException("a sealed shape chunk exceeds its body bound");
         }
 
-        var admission = memory.TryReserve(MemoryLane.Foreground, checked(bytes + 4096), store.Tenant) ?? throw new QosMemoryException();
+        var admission = memory.TryReserve(checked(bytes + 4096), store.Tenant) ?? throw new QosMemoryException();
         try
         {
             var command = Command("SELECT end_offset, body, sealed_at FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");

@@ -10,28 +10,7 @@ namespace TerraBase.Features.Management.Usage;
 
 internal sealed partial class UsageMeter
 {
-    internal void ObserveMemory(Action observe)
-    {
-        lock (_measurements)
-        {
-            observe();
-        }
-    }
-
-    internal long ReservedMeasurementBytes
-    {
-        get
-        {
-            lock (_measurements)
-            {
-                return _measurementMemory.Values.Sum(reservations => reservations.Sum(reservation => reservation.Bytes));
-            }
-        }
-    }
-
     internal const int MaxDimensions = 256;
-    internal const int MaxEntryMeasurementBytes = 256 * 1024;
-    internal const int MaxBatchMeasurementBytes = 1024 * 1024;
     private const int MaxMeasurementKeys = 256;
     private const long MeasurementBytes = 2048;
     private const long MeasurementKeyBytes = 4096;
@@ -40,16 +19,6 @@ internal sealed partial class UsageMeter
     private readonly ConcurrentDictionary<object, Action> _active = new();
     private readonly Dictionary<UsageKey, List<IMemoryReservation>> _measurementMemory = [];
 
-    internal long MeasurementBytesHeld
-    {
-        get
-        {
-            lock (_measurements)
-            {
-                return _measurementMemory.Values.Sum(reservations => reservations.Sum(reservation => reservation.Bytes));
-            }
-        }
-    }
     private readonly Counter<long> _measurementDrops = meters.Create(Telemetry.MeterName).CreateCounter<long>(
         "terrabase.usage.observations.dropped", "{observation}", "Usage observations dropped by bounded memory admission.");
     public void RecordOperation(TenantContext database, string kind, int count)
@@ -185,7 +154,7 @@ internal sealed partial class UsageMeter
 
             if (needed > 0)
             {
-                if (memory.TryReserve(MemoryLane.Foreground, needed, tenant: null) is not { } reservation)
+                if (memory.TryReserve(needed, tenant: null) is not { } reservation)
                 {
                     _measurementDrops.Add(1);
                     AddCore(key, counts with { Meters = null });

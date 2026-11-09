@@ -23,7 +23,7 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
+        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
@@ -43,7 +43,7 @@ internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage pee
             ? Task.FromResult<IReadOnlyDictionary<string, UsageTotals>?>(new Dictionary<string, UsageTotals>(StringComparer.Ordinal) { [organization] = new UsageTotals(0, 0) })
             : peers.MonthsAsync([organization], month, cancellationToken);
         var local = await usage.GetProjectUsageAsync(
-            ManagementRoute.UserId(HttpContext), organization, ManagementRoute.Value(HttpContext, "project"), window, cancellationToken);
+            ManagementRoute.UserId(HttpContext), organization, HttpContext.RouteValue("project"), window, cancellationToken);
         if (local is not ProjectUsage project)
         {
             return local switch

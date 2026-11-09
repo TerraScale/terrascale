@@ -38,13 +38,13 @@ internal sealed class DeleteManagedDatabaseIfIdEndpoint(IManagementService manag
 
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        var expected = ManagementRoute.Value(HttpContext, "expectedId");
+        var expected = HttpContext.RouteValue("expectedId");
         if (!EntityIds.IsValid(expected))
         {
             return ValueTask.FromResult(ErrorResponse.From(new Validation("expectedId must be a canonical uppercase ULID")));
         }
 
-        if (!string.Equals(expected, ManagementRoute.Value(HttpContext, "database"), StringComparison.Ordinal))
+        if (!string.Equals(expected, HttpContext.RouteValue("database"), StringComparison.Ordinal))
         {
             return ValueTask.FromResult(ErrorResponse.From(new Conflict("the database identity does not match expectedId", "database_identity_mismatch")));
         }

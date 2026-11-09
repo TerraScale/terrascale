@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
-using System.Net;
 using System.Net.Http.Headers;
-using System.Text.Json;
+using System.Net;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Errors;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.UserAuth;
@@ -22,7 +23,6 @@ public sealed record KeyRefused(string Code);
 
 public readonly union KeyAuthorityResult(KeyActive, KeyRefused, Unavailable);
 
-// Key revocation across transports is specified in docs/terrabase/key-revocation.md.
 public interface IKeyAuthority
 {
     ValueTask<KeyAuthorityResult> CheckAsync(KeyToken key, CancellationToken cancellationToken);
@@ -36,7 +36,6 @@ public sealed class KeyWatch : IDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly PeriodicTimer _timer;
 
-    // Whichever of Dispose and the watch loop ends second disposes _stop.
     private int _ended;
     private volatile bool _disposed;
 
@@ -64,7 +63,6 @@ public sealed class KeyWatch : IDisposable
     public void Dispose()
     {
         _disposed = true;
-        // Disposing a pending timer wait completes it with false, without a cancellation exception on every short request.
         _timer.Dispose();
         if (Interlocked.Exchange(ref _ended, 1) == 0)
         {
@@ -74,7 +72,6 @@ public sealed class KeyWatch : IDisposable
             }
             catch (ObjectDisposedException)
             {
-                // The loop ended meanwhile and disposed it: there is nothing left to stop.
             }
         }
         else
@@ -90,7 +87,6 @@ public sealed class KeyWatch : IDisposable
         {
             while (await _timer.WaitForNextTickAsync().ConfigureAwait(false))
             {
-                // The question must be answered before the last yes runs out; waiting does not extend it.
                 using var deadline = until is { } end ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time) : new CancellationTokenSource();
                 using var asking = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, deadline.Token);
                 var answer = await current(asking.Token).ConfigureAwait(false) is { } key
@@ -111,7 +107,6 @@ public sealed class KeyWatch : IDisposable
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
-            // The last yes ran out first, or the check failed: either way the key is not verified, so the work ends.
         }
         finally
         {
@@ -131,7 +126,6 @@ public sealed class KeyWatch : IDisposable
         }
         catch (ObjectDisposedException)
         {
-            // The target ended first.
         }
     }
 }
@@ -161,11 +155,8 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
 
     private static readonly TimeSpan RefreshAfter = Fresh / 2;
 
-    // A request admitted on a 1.8-second answer was reset 200 ms in, its write's outcome unknown to the client (#853):
-    // new work starts only on a yes with at least this much left, and its watch renews it from half that.
     public static readonly TimeSpan Admission = Fresh - RefreshAfter;
 
-    // New work asks again from here, before Admission would make it wait: a busy key's requests keep not waiting.
     private static readonly TimeSpan AdmissionRefresh = RefreshAfter / 2;
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
     private const int Capacity = 16 * 1024;
@@ -190,8 +181,6 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
             return known;
         }
 
-        // A region's first question about a key can pay a cold connection to ts-auth, or join one sent before this work arrived:
-        // one fresh question more, never a stale yes, before new work is refused. Revocation keeps its Fresh bound.
         for (var attempt = 0; ; attempt++)
         {
             var answer = await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -215,7 +204,6 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
             : (await Ask(id, key).WaitAsync(cancellationToken).ConfigureAwait(false)).Result;
     }
 
-    // An answer still valid for `fresh` (a refusal always holds), refreshed in the background once it ages past `refreshAt`.
     private bool TryAnswer(string id, KeyToken key, TimeSpan fresh, TimeSpan refreshAt, out KeyAuthorityResult answer)
     {
         answer = default;
@@ -277,9 +265,6 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
                 active = [.. _warm];
             }
 
-            // At most MaxInFlight tokens, retained only to their signed expiry. A client's thinking time must not let
-            // its two-second authority lapse between warmup and its first write. The foreground still refuses an
-            // expired/unavailable answer, and every refresh shares the same per-key flight and revocation deadline.
             await Task.WhenAll(active.Where(pair => !_answers.TryGetValue(pair.Key, out var answer)
                     || now - answer.AskedAt >= AdmissionRefresh)
                 .Select(pair => Ask(pair.Key, pair.Value))).ConfigureAwait(false);
@@ -295,7 +280,6 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
         try
         {
             answer = answer with { Result = await RequestAsync(key, answer.AskedAt + Fresh).ConfigureAwait(false) };
-            // invalid_token concerns this token alone (another of the same key may still act); Unavailable never replaces a yes.
             if (answer.Result.Value is KeyActive or KeyRefused { Code: not "invalid_token" })
             {
                 if (_answers.Count >= Capacity)
@@ -329,7 +313,6 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
                 return new Unavailable("too many ts-auth key status checks in flight");
             }
 
-            // Only the configured ts-auth origin receives the token. No redirects; bounded responses and time.
             var issuer = new Uri(configured);
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(issuer.GetLeftPart(UriPartial.Authority)
                 + "/v1" + issuer.AbsolutePath.TrimEnd('/') + "/api-keys/self"));
@@ -341,14 +324,12 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
             using var response = await client.SendAsync(request, cancellation.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.OK)
             {
-                // Only an answer about this very key counts as a yes.
-                var status = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthKeyStatus, cancellation.Token).ConfigureAwait(false);
+                var status = await response.Content.ReadFromJsonAsync(UserAuthJsonContext.Default.TsAuthKeyStatus, cancellation.Token).ConfigureAwait(false);
                 return status?.KeyId == key.KeyId ? new KeyActive(until) : new Unavailable("ts-auth answered about another key");
             }
 
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                // A ts-auth that predates key status (deploy order must not matter): the token's own checks stand, as before.
                 return new KeyActive(until);
             }
 
@@ -357,7 +338,7 @@ internal sealed class TsAuthKeyAuthority(TerraBaseOptions options, IHttpClientFa
                 return new Unavailable("ts-auth key status is unavailable");
             }
 
-            var body = await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthErrorBody, cancellation.Token).ConfigureAwait(false);
+            var body = await response.Content.ReadFromJsonAsync(UserAuthJsonContext.Default.TsAuthErrorBody, cancellation.Token).ConfigureAwait(false);
             return new KeyRefused(body?.Error?.Code is "key_revoked" or "key_expired" ? body.Error.Code : "invalid_token");
         }
         catch (Exception error) when (error is JsonException or InvalidOperationException or NotSupportedException)

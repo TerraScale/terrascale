@@ -25,7 +25,6 @@ internal static class IsolatedTestChild
         }
 
         start.ArgumentList.Add("--treenode-filter");
-        // The tree root is the assembly name, which is no longer the namespace root (TerraBase.Fast).
         var assembly = typeof(IsolatedTestChild).Assembly.GetName().Name;
         start.ArgumentList.Add($"/{assembly}/{namespaceName}/{className}/{testName}");
         start.ArgumentList.Add("--minimum-expected-tests");
@@ -57,7 +56,6 @@ internal static class IsolatedTestChild
             var stderr = new StringBuilder();
             var readingOutput = ReadChildOutputAsync(child.StandardOutput, stdout, outputCancellation.Token);
             var readingError = ReadChildOutputAsync(child.StandardError, stderr, outputCancellation.Token);
-            // Retain actual exit even when the test's wait or its output readers are cancelled.
             var exited = child.WaitForExitAsync(CancellationToken.None);
             var completed = Task.WhenAll(exited, readingOutput, readingError);
             try
@@ -69,7 +67,6 @@ internal static class IsolatedTestChild
                 }
 
                 var reportPath = Path.Combine(results.FullName, "isolated.trx");
-                // A successful exit with a missing filter or skipped test is not proof the regression ran.
                 await Assert.That(new FileInfo(reportPath).Length).IsLessThanOrEqualTo(1024 * 1024);
                 await using var reportStream = File.OpenRead(reportPath);
                 var report = await XDocument.LoadAsync(reportStream, LoadOptions.None, deadline.Token);
@@ -94,7 +91,6 @@ internal static class IsolatedTestChild
                 {
                     var output = CapturedOutput();
                     error.Data["ChildOutput"] = output;
-                    // The runner's timeout report omits exception Data and may already have flushed test output.
                     try
                     {
                         using var standardError = Console.OpenStandardError();
@@ -166,7 +162,6 @@ internal static class IsolatedTestChild
 
         try
         {
-            // Exit and both pipes share the deadline; a descendant can keep a pipe open after exit.
             await completed.WaitAsync(deadline.Token);
         }
         catch (OperationCanceledException) when (completed.IsCanceled)
@@ -203,7 +198,6 @@ internal static class IsolatedTestChild
                 }
             }
 
-            // Observe late cancellation/disposal faults without reopening the bounded cleanup wait.
             _ = completed.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
@@ -225,7 +219,6 @@ internal static class IsolatedTestChild
         int read;
         while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) != 0)
         {
-            // Keep draining after the capture fills so verbose failures cannot block the child.
             lock (output)
             {
                 output.Append(buffer, 0, Math.Min(read, MaxCharacters - output.Length));

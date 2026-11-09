@@ -22,7 +22,7 @@ internal sealed class GetProjectEndpoint(IManagementService management) : Endpoi
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await management.GetProjectAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), cancellationToken) switch
+        await management.GetProjectAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), HttpContext.RouteValue("project"), cancellationToken) switch
         {
             Project value => TypedResults.Ok(value),
             NotFound error => ErrorResponse.From(error),

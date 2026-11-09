@@ -24,7 +24,6 @@ internal sealed class OperatorHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        // A bearer credential is supplemental live authority only on the explicit recovery route, with an acting user.
         if (Listeners.ArrivedOn(Context) != TerraBaseListener.Internal
             || Request.Headers.Authorization.Count > 0
                 && (Context.GetEndpoint()?.Metadata.GetMetadata<OperatorAuthorityProof>() is null
@@ -44,16 +43,13 @@ internal sealed class OperatorHandler(
             return AuthenticateResult.Fail(UserHeader + " must be one canonical uppercase ULID");
         }
 
-        // The audit trail of the operator: who it acted as and what it did.
         Logger.ZLogInformation($"The platform operator acted as user {user:@UserId}: {Request.Method:@Method} {Request.Path.Value:@Path}");
         var principal = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, user)], SchemeName));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
-    // A project's data route: the operator reaches the project's organization with every scope.
     private async Task<AuthenticateResult> DataAsync()
     {
-        // Data routes only: on the Management API the operator always names the user it acts as.
         if (Context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>() is not { } served || ReferenceEquals(served, ListenerMetadata.Management)
             || !served.Listeners.Contains(TerraBaseListener.Client)
             || !Request.RouteValues.TryGetValue("project", out var value) || value is not string project || !EntityIds.IsValid(project)

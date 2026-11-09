@@ -2,6 +2,7 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
@@ -42,7 +43,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         }
 
         var length = HttpContext.Request.ContentLength.Value;
-        using var reservation = memory.TryReserve(MemoryLane.Foreground, checked(length * 4), tenant: null);
+        using var reservation = memory.TryReserve(checked(length * 4), tenant: null);
         if (reservation is null)
         {
             return ErrorResponse.From(new Unavailable("the node's memory budget is exhausted; retry"));
@@ -51,7 +52,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         RegionTransaction? transaction;
         try
         {
-            transaction = await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.RegionTransaction, cancellationToken).ConfigureAwait(false);
+            transaction = await HttpContext.Request.ReadFromJsonAsync(HomeApplyJsonContext.Default.RegionTransaction, cancellationToken).ConfigureAwait(false);
         }
         catch (JsonException)
         {
@@ -63,7 +64,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
             return ErrorResponse.From(new Validation(invalid));
         }
 
-        var found = await tenants.FindDatabaseAsync(Value("organization"), Value("project"), Value("database"), cancellationToken).ConfigureAwait(false);
+        var found = await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false);
         if (found is not TenantContext database)
         {
             return found is Unavailable unavailable ? ErrorResponse.From(unavailable) : ErrorResponse.From(new NotFound("the database does not exist"));
@@ -85,7 +86,7 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
             using (QosContext.Enter(database, memory))
             {
                 return await apply.ApplyAsync(database, transaction!, cancellationToken).ConfigureAwait(false) is { } result
-                    ? TypedResults.Json(result, TerraBaseJsonContext.Default.HomeApplyResult)
+                    ? TypedResults.Json(result, HomeApplyJsonContext.Default.HomeApplyResult)
                     : ErrorResponse.From(new NotFound("the database is not stored on this node"));
             }
         }
@@ -138,5 +139,4 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         return null;
     }
 
-    private string Value(string name) => HttpContext.Request.RouteValues[name] as string ?? string.Empty;
 }

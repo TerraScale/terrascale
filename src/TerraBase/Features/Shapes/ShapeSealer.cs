@@ -215,7 +215,7 @@ internal sealed class ShapeSealer(
                 throw new QosMemoryException();
             }
         }
-        var admission = memory.TryReserve(MemoryLane.Bulk, bytes, store.Tenant) ?? throw new QosMemoryException();
+        var admission = memory.TryReserve(bytes, store.Tenant) ?? throw new QosMemoryException();
         try
         {
             var frontier = new Dictionary<(string Handle, long Offset), long>(requests.Count);

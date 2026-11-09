@@ -36,7 +36,6 @@ internal static class ShredRecords
                 record = null;
             }
         }, cancellationToken).ConfigureAwait(false);
-        // A damaged record still means shredded: its presence, not its content, refuses keys.
         return found ? record ?? new ShredRecord("", DateTimeOffset.MinValue) : null;
     }
 

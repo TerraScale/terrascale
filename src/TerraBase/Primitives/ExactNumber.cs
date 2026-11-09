@@ -8,7 +8,6 @@ internal readonly record struct ExactNumber(BigInteger Mantissa, int Exponent)
 {
     private const int MaxSignificantDigits = 128;
 
-    // Decimal exponent of the leading digit: inside the normal double range, so the SQL engine never reads an infinity.
     private const int MinMagnitude = -307;
     private const int MaxMagnitude = 307;
 
@@ -18,7 +17,6 @@ internal readonly record struct ExactNumber(BigInteger Mantissa, int Exponent)
         var e = text.IndexOfAny((byte)'e', (byte)'E');
         var mantissa = e < 0 ? text : text[..e];
         long exponent = 0;
-        // A bounded exponent keeps the arithmetic below free of overflow; the magnitude check decides the rest.
         if (e >= 0 && (!long.TryParse(text[(e + 1)..], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out exponent)
             || exponent is < -1_000_000 or > 1_000_000))
         {
@@ -71,7 +69,6 @@ internal readonly record struct ExactNumber(BigInteger Mantissa, int Exponent)
             return a.Mantissa.IsZero ? b : a;
         }
 
-        // Valid operands keep exponents within about 750 of each other, so the alignment stays small.
         var low = Math.Min(a.Exponent, b.Exponent);
         return Normalize((a.Mantissa * BigInteger.Pow(10, a.Exponent - low)) + (b.Mantissa * BigInteger.Pow(10, b.Exponent - low)), low);
     }

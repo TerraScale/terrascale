@@ -11,12 +11,12 @@ internal static class BackupDestinationHistory
     internal static string Kind(string projectId) => $"backup_destination_history/{projectId}";
 
     internal static ValueTask SaveAsync(IStorageTransaction transaction, string projectId, ProjectBackupDestinationRecord record, CancellationToken token) =>
-        PutAsync(transaction, Kind(projectId), record.Revision, record, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, token);
+        PutAsync(transaction, Kind(projectId), record.Revision, record, BackupJsonContext.Default.ProjectBackupDestinationRecord, token);
 
     internal static async ValueTask CaptureAsync(IStorageTransaction transaction, TenantContext database, CancellationToken token)
     {
         if (await GetAsync(transaction, ProjectBackupDestinations.Kind(database.ProjectId!), "current",
-            TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, token).ConfigureAwait(false) is { } current)
+            BackupJsonContext.Default.ProjectBackupDestinationRecord, token).ConfigureAwait(false) is { } current)
         {
             await SaveAsync(transaction, database.ProjectId!, current, token).ConfigureAwait(false);
         }

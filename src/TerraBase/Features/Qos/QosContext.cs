@@ -88,14 +88,12 @@ public static class QosContext
                     throw new QosMemoryException();
                 }
 
-                // An owner retains every read until it ends (a catalog import reads each state it holds in one transaction),
-                // so reads of one tenant grow one lease: the byte limits still bound them, the reservation tables do not.
                 if (_growing is not null && Equals(_growingTenant, tenant) && budget.TryGrow(_growing, bytes))
                 {
                     return;
                 }
 
-                if (_leases.Count == MaxResults || budget.TryReserve(MemoryLane.Foreground, bytes, tenant) is not { } lease)
+                if (_leases.Count == MaxResults || budget.TryReserve(bytes, tenant) is not { } lease)
                 {
                     throw new QosMemoryException();
                 }

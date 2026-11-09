@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -34,7 +35,7 @@ public sealed class ShapeDeletionTests
         _ = await objects.PutAsync(key, head, new byte[] { 1, 2, 3 }, token);
         for (var index = 0; index < 1100; index++)
         {
-            s3.SeedObject(false, "v1/shapes/h1-0000000000000000/" + index.ToString("x64", System.Globalization.CultureInfo.InvariantCulture), [9]);
+            s3.SeedObject(false, "v1/shapes/h1-0000000000000000/" + index.ToString("x64", CultureInfo.InvariantCulture), [9]);
         }
         s3.ObservedListPrefix = "v1/shapes/";
         using var response = await api.ProjectClient(database.Project).DeleteAsync(ManagementApi.Uri(database.Path), token);

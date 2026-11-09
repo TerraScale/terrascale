@@ -8,11 +8,6 @@ public readonly record struct WalSnapshot(WalRead Read, DateTimeOffset At, Ulid 
 
 public readonly record struct LogCut(long Bytes, bool Reached, long? Last, string? Unproven);
 
-/// <summary>
-/// The committed changes of one open storage file, in commit order, for continuous backup (TS-633): a log that
-/// <see cref="IWalBackup.RollForwardAsync"/> replays on a snapshot. Calls must not overlap. Positions in a backup
-/// generation count bytes of this log.
-/// </summary>
 public interface IWalTap : IAsyncDisposable
 {
     ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken);
@@ -22,7 +17,6 @@ public interface IWalTap : IAsyncDisposable
     bool Ended => false;
 }
 
-/// <summary>Continuous physical backup of this node's storage files (TS-633): one file per database, plus the system database.</summary>
 public interface IWalBackup
 {
     ValueTask<IWalTap?> OpenTapAsync(TenantContext? database, CancellationToken cancellationToken);

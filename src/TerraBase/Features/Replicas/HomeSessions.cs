@@ -1,12 +1,16 @@
-using System.Buffers;
 using System.Buffers.Binary;
+using System.Buffers;
 using System.IO.Pipelines;
 using System.Net;
-using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.Json;
 using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replicas;
+using TerraBase.Features.Sql.Routing;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -24,11 +28,8 @@ internal sealed record HomeSessionResult(IReadOnlyList<SqlColumn> Columns, IRead
 internal sealed record HomeSessionAnswer(
     bool Autocommit, SqlError? Error = null, HomeSessionResult? Result = null, SqlDescription? Description = null, IReadOnlyList<HomeSessionResult>? Batch = null, int Statement = 0);
 
-// Frames are a 4-byte big-endian length, then that many bytes of UTF-8 JSON, reserved against the memory budget
-// before they are read (docs/terrabase/region-replicas.md#writes-and-transactions).
 internal static class HomeSessionFrames
 {
-    // A result holds at most 8 MiB of values (SqlSession.MaxBytes); JSON and base64 at most triple it.
     internal const int MaxBytes = 24 * 1024 * 1024;
 
     public static async ValueTask<T?> ReadAsync<T>(PipeReader input, JsonTypeInfo<T> type, IMemoryBudget memory, TenantContext? tenant, CancellationToken cancellationToken)
@@ -48,7 +49,7 @@ internal static class HomeSessionFrames
             throw new InvalidDataException("a home session frame holds 2 bytes to 24 MiB");
         }
 
-        using var reservation = memory.TryReserve(MemoryLane.Foreground, length, tenant) ?? throw new QosMemoryException();
+        using var reservation = memory.TryReserve(length, tenant) ?? throw new QosMemoryException();
         var body = await input.ReadAtLeastAsync(length, cancellationToken).ConfigureAwait(false);
         if (body.Buffer.Length < length)
         {
@@ -123,7 +124,7 @@ internal sealed class HomeSessions(
         {
             await HomeSessionFrames.WriteAsync(upstream.Writer,
                 new HomeSessionOpen(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, canWrite, local.LastPushed(database), epoch),
-                TerraBaseJsonContext.Default.HomeSessionOpen, cancellationToken).ConfigureAwait(false);
+                ReplicasJsonContext.Default.HomeSessionOpen, cancellationToken).ConfigureAwait(false);
             var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stop.Token).WaitAsync(cancellationToken).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
             {
@@ -163,7 +164,6 @@ internal sealed class HomeSessions(
     private static HttpClient CreateClient(InternalCredential credential)
     {
         var client = PeerHttp.Create(credential);
-        // A session lives as long as its client's connection; only connecting is bounded.
         client.Timeout = Timeout.InfiniteTimeSpan;
         return client;
     }
@@ -202,8 +202,6 @@ internal sealed class HomeSessions(
 
 internal readonly union HomeSessionOutcome(HomeSqlSession, SqlError);
 
-// Calls are answered in order; a broken stream ends the session, and every later call answers SqlErrors.Unavailable
-// naming the home.
 internal sealed class HomeSqlSession(
     HttpRequestMessage request, HttpResponseMessage response, PipeWriter upstream, PipeReader downstream, CancellationTokenSource stop,
     IMemoryBudget memory, TenantContext database, SqlError unreachable, HomePush.ILocalWrites local) : ISqlSession
@@ -222,9 +220,13 @@ internal sealed class HomeSqlSession(
     {
     }
 
-    public ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken) => ExecuteAsync(command, admit: null, cancellationToken);
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlPlannedCommand planned, CancellationToken cancellationToken) =>
+        ExecuteAsync(planned.Plan, planned.Command, admit: null, cancellationToken);
 
-    public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
+    public ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken) =>
+        ExecuteAsync(plan, command, admit: null, cancellationToken);
+
+    public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         return await CallAsync(new HomeSessionCall("execute", command.Sql, command.Args, command.Named), cancellationToken).ConfigureAwait(false) switch
@@ -252,13 +254,26 @@ internal sealed class HomeSqlSession(
         };
     }
 
+    public ValueTask<SqlBatchOutcome?> TryBatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<SqlBatchOutcome?>(null);
+
+    public void Prefer(WriteOverride preference) => _ = preference;
+
+    public WriteRoute? LastRoute => null;
+
+    public void KeepCommitted()
+    {
+    }
+
+    public IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => [];
+
     public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken) =>
         ValueTask.FromResult<SqlOutcome>(SqlErrors.Error("scripts are not run over a home session"));
 
     public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken) =>
         ExecuteScriptAsync(sql, cancellationToken);
 
-    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
+    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         return await CallAsync(new HomeSessionCall("describe", command.Sql, [], NoNamed), cancellationToken).ConfigureAwait(false) switch
@@ -273,7 +288,7 @@ internal sealed class HomeSqlSession(
 
     internal async ValueTask<HomeSessionAnswer?> ReceiveAsync(CancellationToken cancellationToken)
     {
-        var answer = await HomeSessionFrames.ReadAsync(downstream, TerraBaseJsonContext.Default.HomeSessionAnswer, memory, database, cancellationToken).ConfigureAwait(false);
+        var answer = await HomeSessionFrames.ReadAsync(downstream, ReplicasJsonContext.Default.HomeSessionAnswer, memory, database, cancellationToken).ConfigureAwait(false);
         if (answer is not null)
         {
             _autocommit = answer.Autocommit;
@@ -289,7 +304,6 @@ internal sealed class HomeSqlSession(
             return;
         }
 
-        // Ending the request body ends the home's session, which rolls back an open transaction.
         await upstream.CompleteAsync().ConfigureAwait(false);
         await stop.CancelAsync().ConfigureAwait(false);
         await downstream.CompleteAsync().ConfigureAwait(false);
@@ -313,7 +327,7 @@ internal sealed class HomeSqlSession(
             {
                 using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 bounded.CancelAfter(SqlLimits.ForwardedRequestTime);
-                await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database) }, TerraBaseJsonContext.Default.HomeSessionCall,
+                await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database) }, ReplicasJsonContext.Default.HomeSessionCall,
                     bounded.Token).ConfigureAwait(false);
                 var answer = await ReceiveAsync(bounded.Token).ConfigureAwait(false) ?? Break();
                 local.Forwarded(database);
@@ -321,7 +335,6 @@ internal sealed class HomeSqlSession(
             }
             catch (Exception error) when (error is IOException or InvalidDataException or HttpRequestException or OperationCanceledException or ObjectDisposedException)
             {
-                // A call cut off mid-answer leaves the stream unusable: the home rolls its session back when the stream ends.
                 Break();
                 if (error is OperationCanceledException && cancellationToken.IsCancellationRequested)
                 {

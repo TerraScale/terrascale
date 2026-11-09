@@ -3,8 +3,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-// The internal listener authenticates the existing peer credential. A peer still cannot invalidate
-// a live database: the permanent unsnapshotted tombstone is required before touching its caches.
 internal sealed class KeyRevocationService(KeyRevocationLocal local) : KeyRevocation.KeyRevocationBase
 {
     public override async Task<KeyRevocationReply> Revoke(KeyRevocationRequest request, ServerCallContext context)

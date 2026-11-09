@@ -68,9 +68,8 @@ holds the new database itself.
 The signed `project_id` must match `{project}`. Missing or invalid project credentials return 401;
 missing scope returns 403; another project or a database outside the token's narrowing returns 404.
 GET, PUT and DELETE of the project-wide destination also return 404 for a database-narrowed token.
-Published organization routes remain hidden aliases under
-`/v1/management/organizations/{organization}/projects/{project}`. They retain user membership and role checks,
-and their `{database}` remains a catalog database ID. A project token cannot use those aliases.
+User sign-in tokens reach these routes with their organization resolved from the project and
+membership checked per operation; a project token cannot use another project's routes.
 
 `mode=both` ships the project's encrypted snapshots and WAL segments to both buckets. Wrapped keys remain in the
 unsnapshotted R2 custody prefix described by [F11](crypto-shredding-f11.md).
@@ -81,7 +80,7 @@ platform bucket. Customer backup uses the same master key (`TERRABASE_MASTER_KEY
 `DELETE` detaches the customer destination by dropping its record, sealed credentials included, and resumes platform
 shipping. It keeps every object in the customer bucket. Reattaching the same bucket and credentials makes its older backups accessible again. Every save replaces the
 credentials and starts a new generation with a snapshot, so a newly attached bucket never receives WAL without a base.
-On the hidden organization aliases, a viewer cannot save or detach destinations; other existing writable-project
+A viewer cannot save or detach destinations; other existing writable-project
 roles can. Outsiders receive 404.
 Deleting an unset destination is idempotent and returns 204. Saves admit at most four organizations concurrently,
 with one save per organization, so one organization cannot occupy every slot. Each file's shipper refreshes
@@ -152,7 +151,7 @@ host-wide admission pools of eight for platform and customer work, so customer p
 Cold platform key reads wait with request cancellation when their pool is occupied.
 
 SDK/dashboard integration must consume these `/v1` project contracts through typed `ts-go` methods, with a ts-auth
-project access token granting the scope above. User sign-in tokens belong to the hidden organization aliases.
+project access token granting the scope above. User sign-in tokens reach these routes with their organization resolved from the project.
 This TerraBase change supplies the server contract; it does not ship `ts-go` methods or a `ts-dashboard` bucket UI.
 Those remain dependent integration work. Native dashboard sign-in is unchanged. No live dashboard
 rollout is performed by this repository change.
@@ -542,7 +541,7 @@ restore can answer `409` `restore_point_unproven` where the plan succeeds. `wind
 `GET …/point-in-time` reports it; `pointInTime` may lie after it, up to the newest backed-up data.
 
 The request needs a ts-auth project token granting `databases:read`; `{database}` is its name.
-The hidden legacy management alias retains membership checks, including organization viewers. Access is checked
+Organization viewers keep their restricted role. Access is checked
 before time validation: another tenant's database returns `404`. A missing time, or a time after now or before the
 plan's retention window, returns `400`; any other time outside the restore window returns `409`
 `backup_history_incomplete`, exactly as the restore answers it;
@@ -555,8 +554,7 @@ exhaustion returns `503` without a partial plan (`pitr_plan_limit` or
 
 This is an advisory preview. It does not reserve objects against retention, validate
 their encrypted contents, or prove that segment lengths are contiguous. Restore still performs the download,
-authentication, continuity and integrity checks. The public project route and its hidden
-legacy alias follow [the HTTP API table](api.md).
+authentication, continuity and integrity checks. The project route follows [the HTTP API table](api.md).
 
 ## Retention
 

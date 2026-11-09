@@ -2,8 +2,6 @@ using TerraBase.Features.Memory;
 
 namespace TerraBase.Features.Qos;
 
-// The middleware's 16 KiB reservation covers one 4 KiB read scratch buffer and its copies.
-// Charge retained bytes before returning them to the decoder, including fragmented network reads.
 internal sealed class QosBodyStream(Stream inner, IMemoryBudget budget) : Stream
 {
     private readonly List<IMemoryReservation> _reservations = [];
@@ -42,7 +40,7 @@ internal sealed class QosBodyStream(Stream inner, IMemoryBudget budget) : Stream
             return 0;
         }
 
-        if (_reservations.Count == MaxChunks || budget.TryReserve(MemoryLane.Foreground, read * 3L) is not { } reservation)
+        if (_reservations.Count == MaxChunks || budget.TryReserve(read * 3L) is not { } reservation)
         {
             throw new QosMemoryException();
         }
@@ -72,7 +70,6 @@ internal sealed class QosBodyStream(Stream inner, IMemoryBudget budget) : Stream
             _reservations.Clear();
         }
 
-        // Kestrel owns the underlying request stream.
         base.Dispose(disposing);
     }
 

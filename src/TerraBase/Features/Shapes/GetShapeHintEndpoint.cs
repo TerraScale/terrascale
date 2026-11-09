@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
@@ -21,8 +23,6 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
     public override void Configure()
     {
         Get(ShapeRoute.Shape + "/ws");
-        // CONNECT is the extended CONNECT of a WebSocket relayed from another region (RFC 8441): the same upgrade,
-        // served the same way.
         Verbs(HttpMethods.Get, "CONNECT");
         Name("connectShapeHints");
         Summary("Waits for shape changes over a WebSocket");
@@ -50,19 +50,15 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                 return ErrorResponse.From(new Unauthorized("the credential is missing, unknown or expired", "invalid_key"));
             }
 
-            var tenant = await DatabaseRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken).ConfigureAwait(false);
-            if (tenant is not TenantContext)
-            {
-                return tenant switch
-                {
-                    Validation error => ErrorResponse.From(error),
-                    NotFound error => ErrorResponse.From(error),
-                    Unavailable error => ErrorResponse.From(error),
-                    TenantContext => throw new System.Diagnostics.UnreachableException(),
-                };
-            }
+            return await DatabaseRoute.TenantAsync(HttpContext, tenants, (_, ct) => ServeAsync(ct), cancellationToken)
+                .ConfigureAwait(false);
         }
 
+        return await ServeAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<IResult> ServeAsync(CancellationToken cancellationToken)
+    {
         if (!HttpContext.WebSockets.IsWebSocketRequest)
         {
             return ErrorResponse.From(new Validation("connect with a WebSocket upgrade", "websocket_required"));
@@ -79,9 +75,9 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
             return ErrorResponse.From(new Validation("handle and a decimal offset are required"));
         }
 
-        HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
+        HttpContext.ReleaseRequestLease();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.ApplicationStopping);
-        using var preauth = memory.TryReserve(MemoryLane.Foreground, 16 * 1024, null);
+        using var preauth = memory.TryReserve(16 * 1024, null);
         if (preauth is null)
         {
             return ErrorResponse.From(new QuotaExceeded("shape connections are at capacity; retry later", "shape_busy"));
@@ -185,7 +181,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                             break;
                         }
 
-                        var at = offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        var at = offset.ToString(CultureInfo.InvariantCulture);
                         if (body.Local is { } local && local != announced && body.NextOffset == at)
                         {
                             await SendAsync(socket, new ShapeHintFrame("provisional", shape.Lineage.Handle, at, at, Local: local), disconnected.Token).ConfigureAwait(false);
@@ -255,7 +251,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
         }
 
         HttpContext.User = auth.Principal;
-        if (await UserAuthExtensions.AdmitShapeSocketAsync(HttpContext, stop, watch =>
+        if (await SocketAdmission.AdmitShapeSocketAsync(HttpContext, stop, watch =>
             {
                 if (watches is null)
                 {
@@ -280,7 +276,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
 
     private async Task SendAsync(WebSocket socket, ShapeHintFrame frame, CancellationToken cancellationToken)
     {
-        using var admission = memory.TryReserve(MemoryLane.Foreground, 64 * 1024) ?? throw new QosMemoryException();
+        using var admission = memory.TryReserve(64 * 1024) ?? throw new QosMemoryException();
         var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, ShapeHintJsonContext.Default.ShapeHintFrame);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(5));

@@ -1,6 +1,7 @@
 using System.Globalization;
-using TerraBase.Engine;
 using TerraBase.Engine.Revisions;
+using TerraBase.Engine;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -23,37 +24,35 @@ internal sealed class ReplicaVerifier(IDatabaseReplicas replicas, HttpClient htt
             }
 
             var round = await ObserveAsync(database, source, cursor, cancellationToken).ConfigureAwait(false);
-            if (round.Verdict != ReplicaVerdict.Moved)
+            if (round.Verdict is not Moved)
             {
                 return round;
             }
         }
 
-        return new VerificationRound(ReplicaVerdict.Moved, cursor, null);
+        return new VerificationRound(new Moved(), cursor, null);
     }
 
-    // Observe one revision without fetching newer pages. Followers run this beside notice consumption:
-    // a moving home is retried later, rather than making new pushed pages wait for checksum round trips.
     internal async Task<VerificationRound> ObserveAsync(TenantContext database, Uri source, ChecksumCursor? cursor, CancellationToken cancellationToken)
     {
         if (replicas.HeldRevision(database) is not { } held)
         {
-            return new VerificationRound(ReplicaVerdict.Moved, cursor, null);
+            return new VerificationRound(new Moved(), cursor, null);
         }
 
-        var page = await http.GetFromJsonAsync(Address(source, held, cursor), TerraBaseJsonContext.Default.ReplicaChecksumPage, cancellationToken).ConfigureAwait(false)
+        var page = await http.GetFromJsonAsync(Address(source, held, cursor), ReplicasJsonContext.Default.ReplicaChecksumPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("the home answered no checksums");
         if (page.Moved)
         {
-            return new VerificationRound(ReplicaVerdict.Moved, cursor, null);
+            return new VerificationRound(new Moved(), cursor, null);
         }
 
         var comparison = await replicas.CompareAsync(database, held, page.Ranges, cancellationToken).ConfigureAwait(false);
         return comparison switch
         {
-            { Verdict: ReplicaVerdict.Equal } => new VerificationRound(ReplicaVerdict.Equal, page.Next, null),
-            { Verdict: ReplicaVerdict.Diverged, Where: var where } => new VerificationRound(ReplicaVerdict.Diverged, null, where),
-            _ => new VerificationRound(ReplicaVerdict.Moved, cursor, null),
+            { Verdict: Equal } => new VerificationRound(new Equal(), page.Next, null),
+            { Verdict: Diverged, Where: var where } => new VerificationRound(new Diverged(), null, where),
+            null or { Verdict: Moved } => new VerificationRound(new Moved(), cursor, null),
         };
     }
 

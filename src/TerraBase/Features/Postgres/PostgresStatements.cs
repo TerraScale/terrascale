@@ -33,27 +33,39 @@ internal static partial class PostgresStatements
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly PostgreSqlDialect Dialect = new();
-    private static readonly string[] Settable = ["client_encoding", "DateStyle", "TimeZone", "extra_float_digits", "application_name", "search_path", "terrascale.write"];
+    private static readonly (string Name, string Value, bool Settable, bool Reported)[] Gucs =
+    [
+        ("server_version", ServerVersion, false, true),
+        ("server_encoding", "UTF8", false, true),
+        ("client_encoding", "UTF8", true, true),
+        ("DateStyle", "ISO, MDY", true, true),
+        ("integer_datetimes", "on", false, true),
+        ("standard_conforming_strings", "on", false, true),
+        ("TimeZone", "UTC", true, true),
+        ("extra_float_digits", "1", true, false),
+        ("application_name", "", true, true),
+        ("search_path", "public", true, false),
+        ("terrascale.write", "auto", true, false),
+    ];
 
-    public static readonly string[] Reported =
-        ["server_version", "server_encoding", "client_encoding", "DateStyle", "integer_datetimes", "standard_conforming_strings", "TimeZone", "application_name"];
+    private static readonly string[] Settable = [.. Gucs.Where(guc => guc.Settable).Select(guc => guc.Name)];
 
-    public static Dictionary<string, string> Settings(string applicationName) => new(StringComparer.OrdinalIgnoreCase)
+    public static readonly string[] Reported = [.. Gucs.Where(guc => guc.Reported).Select(guc => guc.Name)];
+
+    public static Dictionary<string, string> Settings(string applicationName)
     {
-        ["server_version"] = ServerVersion,
-        ["server_encoding"] = "UTF8",
-        ["client_encoding"] = "UTF8",
-        ["DateStyle"] = "ISO, MDY",
-        ["integer_datetimes"] = "on",
-        ["standard_conforming_strings"] = "on",
-        ["TimeZone"] = "UTC",
-        ["application_name"] = applicationName,
-        ["extra_float_digits"] = "1",
-        ["search_path"] = "public",
-        ["terrascale.write"] = "auto",
-        ["transaction_isolation"] = "serializable",
-        ["default_transaction_isolation"] = "serializable",
-    };
+        var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["transaction_isolation"] = "serializable",
+            ["default_transaction_isolation"] = "serializable",
+        };
+        foreach (var (name, value, _, _) in Gucs)
+        {
+            settings[name] = name == "application_name" ? applicationName : value;
+        }
+
+        return settings;
+    }
 
     public static string Version => $"PostgreSQL {ServerVersion} (TerraBase)";
 
@@ -147,7 +159,6 @@ internal static partial class PostgresStatements
                     output[at[s]] = "?" + number.ToString(Invariant);
                     break;
                 case Word { QuoteStyle: null } word when Is(word, "ILIKE"):
-                    // SQLite's LIKE is already case-insensitive for ASCII.
                     output[at[s]] = "LIKE";
                     break;
                 case Word { QuoteStyle: null } word when create && (Is(word, "SERIAL") || Is(word, "BIGSERIAL") || Is(word, "SMALLSERIAL")):
@@ -290,7 +301,7 @@ internal static partial class PostgresStatements
         {
             return token is Word word
                 && named.SelectMany(table => table.Columns).Where(column => column.Name.Equals(word.Value, StringComparison.OrdinalIgnoreCase))
-                    .Select(column => Oid(column.DeclType) switch { PgOid.Numeric => PgOid.Float8, 1082 or 1114 or 1184 => PgOid.Text, var oid => oid }).Distinct().ToList() is [var only]
+                    .Select(column => PgOid.Of(column.DeclType) switch { PgOid.Numeric => PgOid.Float8, 1082 or 1114 or 1184 => PgOid.Text, var oid => oid }).Distinct().ToList() is [var only]
                 ? only
                 : 0;
         }
@@ -403,7 +414,7 @@ internal static partial class PostgresStatements
     public static PgResult Result(PgStatement statement, SqlResult result)
     {
         PgColumn[]? columns = result.Columns.Count == 0 ? null : [.. result.Columns.Select((column, i) => new PgColumn(column.Name,
-            Oid(column.DeclType) is > 0 and var oid ? oid
+            PgOid.Of(column.DeclType) is > 0 and var oid ? oid
             : result.Rows.Select(row => row[i].Kind).FirstOrDefault(value => value != SqlValueKind.Null) switch
             {
                 SqlValueKind.Integer => PgOid.Int8,
@@ -423,29 +434,9 @@ internal static partial class PostgresStatements
         return new PgResult(columns, result.Rows, tag);
     }
 
-    public static int Oid(string? declared) => (declared?.Split('(')[0].Trim().ToUpperInvariant() ?? "") switch
-    {
-        "BIGINT" or "INT8" => PgOid.Int8,
-        "SMALLINT" or "INT2" => PgOid.Int2,
-        "INTEGER" or "INT" or "INT4" => PgOid.Int4,
-        "REAL" or "FLOAT" or "FLOAT4" or "FLOAT8" or "DOUBLE" or "DOUBLE PRECISION" => PgOid.Float8,
-        "NUMERIC" or "DECIMAL" => PgOid.Numeric,
-        "TEXT" => PgOid.Text,
-        "VARCHAR" or "CHAR" or "CHARACTER" or "CHARACTER VARYING" => PgOid.Varchar,
-        "BOOLEAN" or "BOOL" => PgOid.Bool,
-        "JSON" => PgOid.Json,
-        "JSONB" => PgOid.Jsonb,
-        "BLOB" or "BYTEA" => PgOid.Bytea,
-        "UUID" => PgOid.Uuid,
-        "DATE" => PgOid.Date,
-        "TIMESTAMP" or "TIMESTAMP WITHOUT TIME ZONE" => PgOid.Timestamp,
-        "TIMESTAMPTZ" or "TIMESTAMP WITH TIME ZONE" => PgOid.Timestamptz,
-        _ => 0,
-    };
-
-    public static int DescribedOid(SqlColumn column) => Oid(column.DeclType) is > 0 and var declared ? declared
+    public static int DescribedOid(SqlColumn column) => PgOid.Of(column.DeclType) is > 0 and var declared ? declared
         : ExpressionPattern().Match(column.Name) is { Success: true } match
-            ? match.Groups[1].Success ? 20 : match.Groups[2].Success ? 701 : Oid(match.Groups[3].Value) is > 0 and var cast ? cast : PgOid.Text
+            ? match.Groups[1].Success ? 20 : match.Groups[2].Success ? 701 : PgOid.Of(match.Groups[3].Value) is > 0 and var cast ? cast : PgOid.Text
             : PgOid.Text;
 
     [GeneratedRegex(@"\A(?:((?:count|length|instr|unicode|row_number|rank|dense_rank|ntile)\()|((?:avg|total)\()|CAST\(.+\bAS\s+(\w+)\)\z)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
@@ -454,9 +445,6 @@ internal static partial class PostgresStatements
     public static bool RollsBackTo(string text) => text.StartsWith("ROLLBACK", StringComparison.OrdinalIgnoreCase);
 
     public static PgError Error(SqlError error) => new(error.Sqlstate, error.Message);
-
-    public static bool Binary(int oid) => oid is PgOid.Bool or PgOid.Bytea or PgOid.Int8 or PgOid.Int2 or PgOid.Int4 or PgOid.Text or PgOid.Json or PgOid.Float8
-        or PgOid.Varchar or PgOid.Date or PgOid.Timestamp or PgOid.Timestamptz or PgOid.Uuid or PgOid.Jsonb or PgOid.Numeric;
 
     public static bool TryEncode(SqlValue value, int oid, bool binary, out byte[]? bytes)
     {
@@ -644,8 +632,6 @@ internal static partial class PostgresStatements
                         : long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var whole) ? SqlValue.Of(whole)
                         : decimal.TryParse(text, NumberStyles.Float, Invariant, out var exact) && (decimal)(double)exact == exact ? SqlValue.Of((double)exact)
                         : Text(text),
-                    // Untyped (psql \bind, node-postgres): PostgreSQL types them from context; a canonical number binds as one,
-                    // because the CTE columns of a SQL read carry no affinity to convert '2' for an integer column.
                     (0 or PgOid.Unknown, var text) when long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var untyped) && untyped.ToString(Invariant) == text => SqlValue.Of(untyped),
                     (0 or PgOid.Unknown, var text) when text.Contains('.', StringComparison.Ordinal) && double.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, Invariant, out var untypedReal)
                         && untypedReal.ToString("R", Invariant) == text => SqlValue.Of(untypedReal),
@@ -722,15 +708,12 @@ internal static partial class PostgresStatements
     [GeneratedRegex(@"\ADEALLOCATE\s+(?:PREPARE\s+)?(\w+|""[^""]+"")\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DeallocatePattern();
 
-    // PostgreSQL commands with no SQLite equivalent; without this they would reach the SQLite parser as syntax errors.
     [GeneratedRegex(@"\A(?:((?:LISTEN|NOTIFY|UNLISTEN)\b)|(?:CREATE|ALTER|DROP)\s+EXTENSION\b)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex RefusedPattern();
 
     [GeneratedRegex(@"\A(?:SAVEPOINT|RELEASE|ROLLBACK\s+(?:WORK\s+|TRANSACTION\s+)?TO)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SavepointPattern();
 
-    // Isolation modes are accepted and ignored: SQL transactions are serializable (native-sql.md). The access mode is
-    // enforced by the SQL session (SQLSTATE 25006); BeginReadOnly names it for the BEGIN the session runs.
     [GeneratedRegex(@"\A(?:BEGIN|START\s+TRANSACTION)(?:\s+(?:WORK|TRANSACTION))?(?:\s*,?\s*(?:ISOLATION\s+LEVEL\s+)?(?:NOT\s+DEFERRED|DEFERRED|IMMEDIATE|EXCLUSIVE|SERIALIZABLE|REPEATABLE\s+READ|READ\s+COMMITTED|READ\s+UNCOMMITTED|READ\s+WRITE|READ\s+ONLY|READONLY))*\z",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BeginPattern();

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 
@@ -27,7 +28,7 @@ internal static class DatabaseTtl
         seconds is { } value ? now.AddSeconds(value) : null;
 
     public static async ValueTask<DateTimeOffset?> ReadAsync(IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken) =>
-        (await SystemCatalog.GetAsync(transaction, Kind, databaseId, TerraBaseJsonContext.Default.DatabaseExpiry, cancellationToken).ConfigureAwait(false))?.ExpiresAt;
+        (await SystemCatalog.GetAsync(transaction, Kind, databaseId, ManagementJsonContext.Default.DatabaseExpiry, cancellationToken).ConfigureAwait(false))?.ExpiresAt;
 
     public static async ValueTask WriteAsync(IStorageTransaction transaction, string databaseId, DateTimeOffset? expiresAt, CancellationToken cancellationToken)
     {
@@ -42,7 +43,7 @@ internal static class DatabaseTtl
         }
 
         _ = await transaction.PutAsync(Kind, databaseId,
-            EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(new DatabaseExpiry(value), TerraBaseJsonContext.Default.DatabaseExpiry), databaseId, nested: true),
+            EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(new DatabaseExpiry(value), ManagementJsonContext.Default.DatabaseExpiry), databaseId, nested: true),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -57,7 +58,7 @@ internal static class DatabaseTtl
             var page = await transaction.ListAsync(Kind, after, 256, 1024 * 1024, cancellationToken).ConfigureAwait(false);
             foreach (var stored in page.Records)
             {
-                if (due.Count < limit && EntityPayload.Read(stored, TerraBaseJsonContext.Default.DatabaseExpiry) is { } expiry && expiry.ExpiresAt <= now
+                if (due.Count < limit && EntityPayload.Read(stored, ManagementJsonContext.Default.DatabaseExpiry) is { } expiry && expiry.ExpiresAt <= now
                     && await resolve(stored.Id).ConfigureAwait(false) is { } resolved)
                 {
                     due.Add(resolved);

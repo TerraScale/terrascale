@@ -10,20 +10,16 @@ using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 
-namespace TerraBase.Fast.Tenancy;
+namespace TerraBase.Slow.Tenancy;
 
-/// <summary>The organization is the tenant: nothing of one organization is reachable from another.</summary>
 public sealed class TenantIsolationTests
 {
-    // Client routes that address no organization, project or database: they act only for the caller.
     private static readonly string[] ReadScope = ["sql:read"];
 
-    // The id route parameters are filled with.
     private const string Id = "01K6G00000E008000000000001";
 
     private static readonly string[] CallerOnlyRoutes =
     [
-        // Health probes, the region catalog and the API reference: no tenant data at all.
         "GET /",
         "GET /backupz",
         "GET /health/replication",
@@ -33,7 +29,6 @@ public sealed class TenantIsolationTests
         "GET /v1/regions",
         "GET /v1/management/organizations",
         "POST /v1/management/organizations",
-        // Platform admins only, over TerraScale's own databases, never a tenant's.
         "GET /v1/platform/databases",
     ];
 
@@ -41,7 +36,6 @@ public sealed class TenantIsolationTests
     public async Task A_tenant_reaches_nothing_of_another_tenant_through_any_client_route()
     {
         await using var api = await ManagementApi.StartSharedAsync();
-        // Every client scope, so each route answers past its scope check.
         using var a = await api.CreateTenantAsync("sql:read", "sql:write");
         using var b = await api.CreateTenantAsync("sql:read", "sql:write");
         using var aDashboard = api.As(a.User);
@@ -59,7 +53,6 @@ public sealed class TenantIsolationTests
         using var bProject = ProjectClient(b);
         var aSecret = await SeedAsync(api, a, aDashboard);
         var bSecret = await SeedAsync(api, b, bDashboard);
-        // Canonical management addresses database names: this name exists only in B's project.
         var bForeign = await CreateDatabaseAsync(api, b, bDashboard, "foreign");
         var aTooling = await SeedToolingAsync(api, a, aSecret);
         var bTooling = await SeedToolingAsync(api, b, bSecret);
@@ -68,7 +61,6 @@ public sealed class TenantIsolationTests
         var bBefore = await SnapshotAsync(api, b, bDashboard, bSecret);
 
         var routes = ClientRoutes(api.Server);
-        // Scalar's page and its embedded assets are static: no tenant data at all.
         foreach (var (method, pattern, _) in routes.Where(route => !Addresses(route.Pattern) && !route.Pattern.StartsWith("/scalar", StringComparison.Ordinal)))
         {
             await Assert.That(CallerOnlyRoutes).Contains($"{method} {pattern}");
@@ -82,20 +74,16 @@ public sealed class TenantIsolationTests
         List<(string Request, HttpStatusCode Status)> answers =
         [
             .. await SendAsync(addressing, aDashboard, a.Data, aProject, b.OrganizationId, b.ProjectId, bSecret, b.User, bTooling),
-            // A's organization, where A is an owner, with B's project.
             .. await SendAsync(management.Where(route => route.Pattern.Contains("{project}", StringComparison.Ordinal)),
                 aDashboard, a.Data, aProject, a.OrganizationId, b.ProjectId, bSecret, b.User, bTooling),
             .. await SendAsync(withProject, aDashboard, b.Data, bProject, b.OrganizationId, a.ProjectId, aSecret, b.User, aTooling),
-            // A's organization and project with B's database.
             .. await SendAsync(foreignDatabases,
                 aDashboard, a.Data, aProject, a.OrganizationId, a.ProjectId, bForeign, b.User, bTooling, databaseName: "foreign"),
         ];
 
-        // Routes that address no tenant show A only its own organization.
         using var listed = JsonDocument.Parse(await aDashboard.GetStringAsync(new Uri("/v1/management/organizations", UriKind.Relative)));
 
         await Assert.That(addressing.Count).IsGreaterThanOrEqualTo(20);
-        // Per request: every one answers 404, so another tenant's resources look exactly like ones that do not exist.
         await Assert.That(string.Join("\n", answers.Select(answer => $"{answer.Request} -> {(int)answer.Status}")))
             .IsEqualTo(string.Join("\n", answers.Select(answer => $"{answer.Request} -> 404")));
         await Assert.That(listed.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!))
@@ -134,16 +122,13 @@ public sealed class TenantIsolationTests
         using var firstDatabases = JsonDocument.Parse(await api.ProjectClient(tenant.ProjectId).GetStringAsync(
             new Uri($"/v1/projects/{tenant.ProjectId}/databases", UriKind.Relative)));
 
-        // Per request: each status is checked against the request that produced it.
         await Assert.That(string.Join("\n", checks.Select(check => $"{check.Request} -> {check.Actual}")))
             .IsEqualTo(string.Join("\n", checks.Select(check => $"{check.Request} -> {check.Expected}")));
-        // Refused writes created nothing.
         await Assert.That(secondDatabases.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()!))
             .IsEquivalentTo(["app"]);
         await Assert.That(firstDatabases.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()!))
             .IsEquivalentTo(["app", "other"]);
 
-        // Issuing: the organization is required, and a project and database must belong to it and nest.
         var issued = new List<HttpStatusCode>();
         foreach (var request in new object[]
         {
@@ -179,7 +164,6 @@ public sealed class TenantIsolationTests
         pattern.StartsWith("/v1/management/", StringComparison.Ordinal) ||
         pattern.StartsWith("/management/", StringComparison.Ordinal);
 
-    // Project management takes a project JWT, hidden identity routes a dashboard token, and legacy data an API key.
     private static async Task<List<(string Request, HttpStatusCode Status)>> SendAsync(
         IEnumerable<(string Method, string Pattern, bool ProjectManagement)> routes, HttpClient dashboard, HttpClient data, HttpClient projectToken,
         string organization, string project, string database, string user, Tooling tooling, string databaseName = "secret")
@@ -191,7 +175,6 @@ public sealed class TenantIsolationTests
                 .Replace("{organization}", organization, StringComparison.Ordinal)
                 .Replace("{project}", project, StringComparison.Ordinal)
                 .Replace("{expectedId}", database, StringComparison.Ordinal)
-                // Legacy management routes name a database by id; canonical management and data use its name.
                 .Replace("{database}", IsManagement(pattern) ? database : databaseName, StringComparison.Ordinal)
                 .Replace("{table}", "people", StringComparison.Ordinal)
                 .Replace("{id}", Id, StringComparison.Ordinal)
@@ -202,12 +185,10 @@ public sealed class TenantIsolationTests
                 .Replace("{file}", Id, StringComparison.Ordinal)
                 .Replace("{version}", "v3", StringComparison.Ordinal)
                 .Replace("{operation}", Id, StringComparison.Ordinal);
-            // A new route parameter needs a value here.
             await Assert.That(path).DoesNotContain("{");
             using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(path, UriKind.Relative));
             if (method is "POST" or "PUT" or "PATCH")
             {
-                // Valid for every route, so only tenancy can refuse it.
                 request.Content = JsonContent.Create(new
                 {
                     organization,
@@ -278,7 +259,6 @@ public sealed class TenantIsolationTests
         return id;
     }
 
-    // The Management API's tooling of a database: a backup.
     private static async Task<Tooling> SeedToolingAsync(ManagementApi api, Tenant tenant, string database)
     {
         using var response = await api.ProjectClient(tenant.ProjectId).PostAsJsonAsync(
@@ -289,7 +269,6 @@ public sealed class TenantIsolationTests
 
     private static string DataPath(string project, string name) => $"/v1/projects/{project}/databases/{name}";
 
-    // A database with the tables the tests write to, "people" and "c"; returns its id.
     private static async Task<string> CreateDatabaseAsync(ManagementApi api, Tenant tenant, HttpClient dashboard, string name)
     {
         var id = await api.CreateDatabaseAsync(tenant.OrganizationId, tenant.ProjectId, name, dashboard);
@@ -307,7 +286,6 @@ public sealed class TenantIsolationTests
         return response.StatusCode;
     }
 
-    // Every method and route pattern the client listener serves.
     private static List<(string Method, string Pattern, bool ProjectManagement)> ClientRoutes(TerraBaseTestServer server) =>
     [
         .. server.Services.GetRequiredService<EndpointDataSource>().Endpoints
@@ -342,6 +320,5 @@ public sealed class TenantIsolationTests
         return snapshot;
     }
 
-    /// <summary>The ids of a tenant's Management API tooling that routes name.</summary>
     private sealed record Tooling(string Backup);
 }

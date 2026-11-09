@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace TerraBase.Engine;
 
-internal sealed class HomeLeaseGate
+internal sealed class HomeLeaseGate(TimeProvider time)
 {
     private readonly ConcurrentDictionary<string, bool> _leased = new(StringComparer.Ordinal);
     private long _until;
@@ -19,7 +19,7 @@ internal sealed class HomeLeaseGate
 
     public bool Holds(string database) =>
         (RegionalWriter?.Invoke() ?? true)
-        && (!_leased.TryGetValue(database, out var held) || (held && TimeProvider.System.GetTimestamp() < Volatile.Read(ref _until)));
+        && (!_leased.TryGetValue(database, out var held) || (held && time.GetTimestamp() < Volatile.Read(ref _until)));
 
     public void ThrowIfUnleased(string database)
     {

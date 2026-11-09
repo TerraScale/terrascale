@@ -9,7 +9,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Slow.Management;
 
-// A deleted database disappears from every region's listing and the dashboard within seconds (TS-1421).
 public sealed class DeletedDatabaseVanishesTests
 {
     private const string Scopes = "databases:read databases:write";

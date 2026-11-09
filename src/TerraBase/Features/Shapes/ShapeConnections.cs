@@ -16,7 +16,7 @@ internal sealed class ShapeConnections(IMemoryBudget memory)
         lock (_gate)
         {
             var active = _tenants.GetValueOrDefault(tenant.OrganizationId);
-            if (_active >= Capacity || active >= PerTenant || memory.TryReserve(MemoryLane.Foreground, 4096, tenant) is not { } reservation)
+            if (_active >= Capacity || active >= PerTenant || memory.TryReserve(4096, tenant) is not { } reservation)
             {
                 return null;
             }

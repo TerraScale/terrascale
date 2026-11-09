@@ -6,26 +6,22 @@ using System.Data.Common;
 using Turso.Data.Sqlite;
 using Turso.Raw.Public.Handles;
 
+using TerraBase.Features.Sql;
+
 namespace TerraBase.Engine.Turso;
 
-internal sealed class TursoSession(SqliteConnection connection) : IDisposable
+internal sealed class TursoSession(SqliteConnection connection, TimeProvider time) : IDisposable
 {
-    // Keyed by statement text; the statements are constants, so this holds a handful of entries.
     private readonly Dictionary<string, SqliteCommand> _commands = [with(StringComparer.Ordinal)];
 
-    // Statements naming one table, one per table and statement: bounded by TrimTableCommands.
     private readonly Dictionary<string, SqliteCommand> _tableCommands = [with(StringComparer.Ordinal)];
 
-    // The most table statements an idle session keeps; past it, the next trim drops them all.
     private const int MaxTableCommands = 256;
 
-    // The schema version every kept statement last ran against; -1 when unknown, which drops them at the next transaction.
     private long _schema = -1;
 
-    // The transaction CheckSchema last ran in; cleared between transactions.
     private SqliteTransaction? _checked;
 
-    // The settings this connection runs with (Settings); null until set.
     private bool? _queryOnly;
     private bool? _full;
 
@@ -53,11 +49,8 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         _rowCharge = row;
     }
 
-    // Registered once, when the connection opens and before any statement is prepared: a prepared statement keeps the
-    // function it was prepared with, and Turso prepares every statement again after a registration.
     private void RegisterFunctions()
     {
-        // octet_length reads the stored byte size without decoding or copying the JSON body.
         connection.CreateFunction<long, long>("tb_qos_scan", size =>
         {
             if (_scanCharge?.Invoke(size) == true)
@@ -93,7 +86,7 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     public static bool Stopped(SqliteException error) => error.SqliteErrorCode == 9
         || error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
-    public static bool Busy(SqliteException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
+    public static bool Busy(SqliteException error) => SqlErrors.IsLocked(error.Message);
 
     public static byte[] Bytes(SqliteDataReader reader, int ordinal) => reader.GetValue(ordinal) switch
     {
@@ -102,19 +95,10 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         var other => throw new InvalidCastException($"column {ordinal} holds {other.GetType().Name}, not TEXT or BLOB"),
     };
 
-    /// <summary>
-    /// Per-connection settings, applied once when a connection opens (pooled sessions and the connection that
-    /// creates a database). Everything else is Turso's default (WAL, 4 KiB pages, its own checkpoints, no busy timeout);
-    /// the two exceptions and their reasons are in <c>docs/terrabase/sqlite-query-plans.md</c>.
-    /// </summary>
     public static string Pragmas(long memoryBudget, int threads)
     {
-        // A quarter of the budget for page caches, split across the connections that run at once: Turso has no
-        // process-wide heap limit, so these caches are the memory bound (docs/terrabase/memory.md).
         var pageCacheBytes = memoryBudget / 4;
         var cacheKib = Math.Max(2048, pageCacheBytes / threads / 1024);
-        // NORMAL until the first transaction. Every write transaction runs with FULL, so its log is synced before it is
-        // answered (0003 as amended, 0012); the writer keeps FULL after it, also for its work outside transactions (backup tap).
         return string.Create(CultureInfo.InvariantCulture, $"""
             PRAGMA synchronous = NORMAL;
             PRAGMA cache_size = -{cacheKib};
@@ -122,13 +106,13 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             """);
     }
 
-    public static async Task<TursoSession> OpenAsync(TursoRunner io, string connectionString, string pragmas, CancellationToken cancellationToken, TursoDatabaseStore? store = null)
+    public static async Task<TursoSession> OpenAsync(TursoRunner io, string connectionString, string pragmas, TimeProvider time, CancellationToken cancellationToken, TursoDatabaseStore? store = null)
     {
         var connection = new SqliteConnection(connectionString)
         {
             CloseRefusal = store is null ? null : () => store.CloseRefusal,
         };
-        var session = new TursoSession(connection);
+        var session = new TursoSession(connection, time);
         var opening = false;
         try
         {
@@ -163,7 +147,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             }
             else
             {
-                // Cancelled while queued: never opened, so closing it does no I/O and must not wait for a worker.
                 session.Dispose();
             }
 
@@ -188,11 +171,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    // The provider has no true async I/O, so each attempt runs on a pool worker. An attempt fails at once on lock
-    // contention (Turso's default busy timeout is 0, and one writer per file makes contention rare); between attempts the
-    // worker is free and cancellation is checked,
-    // within the original overall timeout. Turso cannot interrupt a running statement, so cancellation is checked only
-    // between attempts. Retried operations must be reads or atomic work that rolls back before propagating a busy error.
     public async Task<T> ExecuteAsync<T>(TursoRunner io, Func<T> execute, CancellationToken cancellationToken)
     {
         var timeout = connection.DefaultTimeout;
@@ -209,18 +187,13 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             }
             catch (SqliteException error) when (Busy(error) && (timeout == 0 || Stopwatch.GetElapsedTime(started).TotalSeconds < timeout))
             {
-                await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromMilliseconds(50), time, cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
     public SqliteCommand Command(string sql, SqliteTransaction transaction) => Kept(_commands, sql, transaction);
 
-    /// <summary>
-    /// Outside any transaction, sets what the next transaction needs: read-only (<c>query_only</c>, so BEGIN DEFERRED cannot
-    /// upgrade to a write) and whether its commit syncs the log (<c>synchronous = FULL</c>, decision 0010). Only a change
-    /// runs: Turso makes every prepared statement prepare again after any such setting, so a change also drops the kept ones.
-    /// </summary>
     public void Settings(bool queryOnly, bool full)
     {
         if (_queryOnly == queryOnly && _full == full)
@@ -257,11 +230,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    // Before a transaction's first kept statement, which is where its deferred snapshot would start anyway: drops the kept
-    // statements when the schema changed since they last ran. Turso 0.8.2 cannot run a statement prepared against another
-    // schema inside an explicit transaction once another connection's DDL has committed ("Database schema changed", the
-    // transaction unusable), so a kept statement must never be older than the snapshot. A fresh statement is compiled
-    // against the connection's own schema.
     private void CheckSchema(SqliteTransaction transaction)
     {
         _checked = transaction;
@@ -289,8 +257,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         commands.Clear();
     }
 
-    // Each command keeps its prepared statement across executions and transactions (the driver's ReuseStatement): preparing
-    // was the largest CPU cost of a point read. CheckSchema and Settings drop them whenever Turso would prepare them again.
     private SqliteCommand Kept(Dictionary<string, SqliteCommand> commands, string sql, SqliteTransaction transaction)
     {
         if (!ReferenceEquals(_checked, transaction))
@@ -311,7 +277,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         return command;
     }
 
-    // Turso's provider keeps its native connection handle private; Dispose closes it even when the provider's close throws.
     private static readonly FieldInfo? NativeHandle =
         typeof(SqliteConnection).GetField("_database", BindingFlags.NonPublic | BindingFlags.Instance);
 
@@ -320,7 +285,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         var handle = NativeHandle?.GetValue(connection) as TursoDatabaseHandle;
         try
         {
-            // Idle eviction must not mutate storage after its operation's durable intent has retired.
             handle?.Deinitialize();
             foreach (var command in _commands.Values.Concat(_tableCommands.Values))
             {
@@ -335,7 +299,6 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
             }
             finally
             {
-                // A no-op when the provider already closed it.
                 handle?.Dispose();
             }
         }

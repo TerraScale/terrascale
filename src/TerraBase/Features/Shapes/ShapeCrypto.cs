@@ -30,7 +30,6 @@ internal interface IShapeKeyRetention
     ValueTask<bool> HasObjectAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken);
 }
 
-// Encrypt-then-cache for T1 shape objects (docs/terrabase/shape-reads.md sections 12 and 13).
 internal interface IShapeCrypto
 {
     long CurrentEpoch { get; }
@@ -119,7 +118,7 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
         var key = await CurrentKeyAsync(database, handle, cancellationToken).ConfigureAwait(false);
         try
         {
-            var reservation = memory.TryReserve(MemoryLane.Bulk, SealedLength(plain.Length), database) ?? throw new QosMemoryException();
+            var reservation = memory.TryReserve(SealedLength(plain.Length), database) ?? throw new QosMemoryException();
             try
             {
                 var bytes = Seal(plain.Span, handle, requestOffset, key.Epoch, key.KeyId, key.Key, RandomNumberGenerator.GetBytes(SaltBytes), cancellationToken);

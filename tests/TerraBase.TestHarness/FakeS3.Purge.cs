@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Net;
+using System.Web;
 using System.Xml.Linq;
 
 namespace TerraBase.Testing;
@@ -19,7 +20,6 @@ public sealed partial class FakeS3
         _oldVersions[(customer, bucket, key, version)] = content;
     }
 
-    /// <summary>A bucket lifecycle rule expiring one noncurrent version.</summary>
     public bool ExpireVersion(bool customer, string key, string version, string? bucket = null) =>
         _oldVersions.TryRemove((customer, bucket ?? (customer ? CustomerBucket : Bucket), key, version), out _);
 
@@ -55,7 +55,7 @@ public sealed partial class FakeS3
         var versionMarker = query["version-id-marker"];
         if (versionMarker == "null")
         {
-            return S3Error(HttpStatusCode.BadRequest, "InvalidArgument"); // Tigris: "Version ID is invalid."
+            return S3Error(HttpStatusCode.BadRequest, "InvalidArgument");
         }
 
         PurgeVersionListed?.Invoke(customer, keyMarker, versionMarker);
@@ -71,7 +71,6 @@ public sealed partial class FakeS3
             new XElement(S3 + "Name", bucket), new XElement(S3 + "Prefix", prefix), new XElement(S3 + "MaxKeys", max),
             new XElement(S3 + "IsTruncated", entries.Length > max ? "true" : "false"),
             entries.Length > max ? new XElement(S3 + "NextKeyMarker", entries[max - 1].Key) : null,
-            // Like Tigris, a page ending on an unversioned object ("null") names no version marker: the next resumes after its key.
             entries.Length > max && entries[max - 1].Version != "null" ? new XElement(S3 + "NextVersionIdMarker", entries[max - 1].Version) : null,
             entries.Take(max).Select(item => new XElement(S3 + "Version", new XElement(S3 + "Key", item.Key),
                 new XElement(S3 + "VersionId", item.Version), new XElement(S3 + "IsLatest", item.Version == "null" ? "true" : "false"),
@@ -82,7 +81,7 @@ public sealed partial class FakeS3
 
     private async ValueTask<HttpResponseMessage?> DeletePurgeVersionAsync(HttpRequestMessage request, bool customer, string key, CancellationToken token)
     {
-        var version = System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query)["versionId"];
+        var version = HttpUtility.ParseQueryString(request.RequestUri!.Query)["versionId"];
         if (request.Method != HttpMethod.Delete || version is null or "null")
         {
             return null;

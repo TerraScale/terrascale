@@ -23,24 +23,37 @@ internal sealed record CapturedImages(long RowId, byte[]? Before, byte[]? After,
 
 internal sealed record SqlStatementShape(IReadOnlyList<string?> Parameters, IReadOnlyList<SqlStatementColumn> Columns);
 
-internal enum SqlFailure
-{
-    Error,
-    Syntax,
-    NoSuchTable,
-    NoSuchColumn,
-    AlreadyExists,
-    PrimaryKey,
-    Unique,
-    NotNull,
-    Check,
-    ForeignKey,
-    Constraint,
-    Busy,
-    TooBig,
-    Interrupted,
-    ReadOnly,
-}
+internal closed record class SqlFailure;
+
+internal sealed record class Error : SqlFailure;
+
+internal sealed record class Syntax : SqlFailure;
+
+internal sealed record class NoSuchTable : SqlFailure;
+
+internal sealed record class NoSuchColumn : SqlFailure;
+
+internal sealed record class AlreadyExists : SqlFailure;
+
+internal sealed record class PrimaryKey : SqlFailure;
+
+internal sealed record class Unique : SqlFailure;
+
+internal sealed record class NotNull : SqlFailure;
+
+internal sealed record class Check : SqlFailure;
+
+internal sealed record class ForeignKeyFailure : SqlFailure;
+
+internal sealed record class Constraint : SqlFailure;
+
+internal sealed record class Busy : SqlFailure;
+
+internal sealed record class TooBig : SqlFailure;
+
+internal sealed record class Interrupted : SqlFailure;
+
+internal sealed record class ReadOnly : SqlFailure;
 
 internal sealed class SqlStatementException(SqlFailure failure, string message, bool transactionEnded, Exception? innerException = null)
     : Exception(message, innerException)

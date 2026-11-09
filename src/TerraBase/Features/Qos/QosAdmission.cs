@@ -24,7 +24,6 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
             {
                 if (_lanes.Count == MaxTenants)
                 {
-                    // Keep depleted buckets until fully replenished: eviction must not reset a noisy tenant's burst.
                     foreach (var pair in _lanes.ToArray())
                     {
                         var existing = pair.Value;
@@ -52,7 +51,6 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
             lane.Engine = Engine(lane, policy, now);
             if (lane.Plan != tenant.Plan)
             {
-                // An unlimited plan has no token balance. Starting a finite bucket must not lock out its first request.
                 var upgraded = lane.Plan < tenant.Plan || lane.Plan == PlanTier.Enterprise;
                 lane.Tokens = upgraded ? policy.Burst : Math.Min(lane.Tokens, policy.Burst);
                 lane.Engine = upgraded ? policy.EngineBurst : Math.Min(lane.Engine, policy.EngineBurst);
@@ -116,7 +114,6 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
     private double Engine(Lane lane, QosPolicy policy, long now) =>
         Math.Min(policy.EngineBurst, lane.Engine + Math.Max(0, time.GetElapsedTime(lane.LastSeen, now).TotalSeconds) * policy.EngineSeconds);
 
-    // 64 stable buckets, deliberately shared on collisions; raw organization IDs never become labels.
     private static int Bucket(TenantContext tenant)
     {
         var hash = 2166136261u;
@@ -129,10 +126,10 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
     }
 
     private void Reject(TenantContext tenant, string reason) => _rejected.Add(1,
-        new("plan", tenant.Plan.ToString().ToLowerInvariant()), new("tenant_bucket", Bucket(tenant)), new("reason", reason));
+        new("plan", tenant.Plan.JsonName), new("tenant_bucket", Bucket(tenant)), new("reason", reason));
 
     private void Record(TenantContext tenant, long started) => _duration.Record(Math.Max(0, time.GetElapsedTime(started).TotalSeconds),
-        new("plan", tenant.Plan.ToString().ToLowerInvariant()), new("tenant_bucket", Bucket(tenant)));
+        new("plan", tenant.Plan.JsonName), new("tenant_bucket", Bucket(tenant)));
 
     private sealed class Lane
     {

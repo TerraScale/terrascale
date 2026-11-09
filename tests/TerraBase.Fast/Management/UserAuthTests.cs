@@ -6,7 +6,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Fast.Management;
 
-// ts-auth access tokens authenticate Management API users (TS-519).
 public sealed class UserAuthTests
 {
     private const string Organizations = "/v1/management/organizations";

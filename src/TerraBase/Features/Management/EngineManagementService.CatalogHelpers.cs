@@ -26,7 +26,7 @@ internal sealed partial class EngineManagementService
 
     internal static string State(string organizationId) => $"organizations/{organizationId}/state";
 
-    private static string PlanName(PlanTier plan) => plan.ToString().ToLowerInvariant();
+    private static string PlanName(PlanTier plan) => plan.JsonName;
 
     private static async ValueTask<AuthorizedOrganization> AuthorizeAsync(
         IStorageTransaction transaction, string userId, string organizationId, bool allowProject, CancellationToken cancellationToken)

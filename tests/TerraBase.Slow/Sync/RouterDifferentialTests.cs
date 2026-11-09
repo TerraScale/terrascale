@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
@@ -14,12 +15,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Slow.Sync;
 
-/// <summary>
-/// PIVOT R13: one client runs the same random transactions, in order, against two databases homed in gru. Database
-/// <c>local</c> takes them in sjc over SQL REST with <c>TerraScale-Durability: home</c>, so the router (R4) commits the
-/// writes it routes local in sjc and pushes them to gru (R7, applied by R6) and forwards the rest (R5); database
-/// <c>home</c> takes them at gru. Both must end in the same rows, or every differing row is in <c>terrascale.conflicts</c>.
-/// </summary>
 public sealed class RouterDifferentialTests
 {
     private const int Transactions = 10_000;
@@ -85,7 +80,6 @@ public sealed class RouterDifferentialTests
 
     private sealed record Conflict(string Kind, string? Table, string? Key, string? Loser)
     {
-        // A difference is visible when a record names its row, or when a reverted transaction's changes carry its key.
         public bool Names(string row)
         {
             var (table, key) = (row[..row.IndexOf(':', StringComparison.Ordinal)], row[(row.IndexOf(':', StringComparison.Ordinal) + 1)..]);
@@ -103,7 +97,7 @@ public sealed class RouterDifferentialTests
         public static Workload Generate(int seed, int count)
         {
             var random = new Randomizer(seed);
-            string Key(string prefix) => prefix + random.Number(Keys - 1).ToString("D2", System.Globalization.CultureInfo.InvariantCulture);
+            string Key(string prefix) => prefix + random.Number(Keys - 1).ToString("D2", CultureInfo.InvariantCulture);
             string Word() => random.AlphaNumeric(random.Number(1, 8));
             string Local() => random.Number(10) switch
             {

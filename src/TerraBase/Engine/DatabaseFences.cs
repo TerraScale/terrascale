@@ -15,10 +15,12 @@ internal sealed class DatabaseFences
 
     private readonly ConcurrentDictionary<string, Fence> _fences = new(StringComparer.Ordinal);
     private readonly string _directory;
+    private readonly TimeProvider _time;
 
-    public DatabaseFences(string directory)
+    public DatabaseFences(string directory, TimeProvider time)
     {
         _directory = directory;
+        _time = time;
         if (Directory.Exists(directory))
         {
             foreach (var file in Directory.EnumerateFiles(directory))
@@ -78,7 +80,7 @@ internal sealed class DatabaseFences
                 throw new DatabaseMovedException(fence.Home);
             }
 
-            var started = TimeProvider.System.GetTimestamp();
+            var started = _time.GetTimestamp();
             try
             {
                 await fence.Changed.Task.WaitAsync(MaxPause - waited, cancellationToken).ConfigureAwait(false);
@@ -88,7 +90,7 @@ internal sealed class DatabaseFences
                 throw new DatabaseMovedException(null);
             }
 
-            waited += TimeProvider.System.GetElapsedTime(started);
+            waited += _time.GetElapsedTime(started);
         }
     }
 

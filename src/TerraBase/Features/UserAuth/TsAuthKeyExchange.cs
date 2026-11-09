@@ -1,15 +1,16 @@
-using System.Buffers;
-using System.Collections.Concurrent;
-using System.Net;
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
+using System.Buffers;
+using System.Collections.Concurrent;
+using System.Net.Http.Headers;
+using System.Net;
+using System.Text.Json.Serialization;
+using System.Text.Json;
+using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 
@@ -28,11 +29,8 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
     private const int MaxKeyLength = 256;
     private const int MaxGrants = 4096;
 
-    // Distinct keys exchanging at once, validation included (it may wait for ts-auth's signing keys): past it, unavailable.
     private const int MaxExchanging = 64;
 
-    // Exchanged again this long before the token expires, so a statement never runs on a token about to lapse. ts-auth
-    // issues 60-second project tokens: a key exchanges about every 50 seconds.
     private static readonly TimeSpan RenewBefore = TimeSpan.FromSeconds(10);
     private static readonly JsonWebTokenHandler Tokens = new();
 
@@ -40,8 +38,6 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         new("the API key, project or database was not found, or the key may not use it; check the key, the project id and the database name");
     private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
 
-    // Keyed by the SHA-256 of the key, never the key itself. One exchange per key at a time: the sessions and watches
-    // of one key renew together and share it, instead of exhausting MaxInFlight.
     private readonly ConcurrentDictionary<string, TsAuthKeyGrant> _grants = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Lazy<Task<TsAuthKeyResult>>> _exchanging = new(StringComparer.Ordinal);
     private int _inFlight;
@@ -72,7 +68,6 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             .Value.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    // Shared by every caller of one key, so no caller's cancellation ends it; the client's timeout bounds it.
     private async Task<TsAuthKeyResult> ExchangeOnceAsync(string cacheKey, string issuer, string secret, string? project)
     {
         try
@@ -115,7 +110,6 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
 
     private async ValueTask<TsAuthKeyResult> RequestAsync(string issuer, string secret, string? project, CancellationToken cancellationToken)
     {
-        // RFC 6749 §2.3.1: the client id and secret are form-encoded before they are joined; both are URL-safe already.
         var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes(secret[..26] + ":" + secret));
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(issuer.TrimEnd('/') + "/oauth/token"))
         {
@@ -132,7 +126,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
                 return Unavailable();
             }
 
-            using var reservation = budget.TryReserve(MemoryLane.Foreground, 4L * MaxResponseBytes);
+            using var reservation = budget.TryReserve(4L * MaxResponseBytes);
             if (reservation is null)
             {
                 return Unavailable();
@@ -151,7 +145,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
                 return Refused;
             }
 
-            token = (await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.TsAuthTokenResponse, cancellationToken).ConfigureAwait(false))?.AccessToken;
+            token = (await response.Content.ReadFromJsonAsync(UserAuthJsonContext.Default.TsAuthTokenResponse, cancellationToken).ConfigureAwait(false))?.AccessToken;
         }
         catch (JsonException)
         {
@@ -195,8 +189,6 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             return Refused;
         }
 
-        // key_id and key_gen come together from a ts-auth that serves key status; neither from an older one. Like the
-        // bearer handler, a non-string value is refused rather than read as absent.
         if (jwt.TryGetPayloadValue<object>("key_id", out var rawId) && rawId is not string
             || jwt.TryGetPayloadValue<object>("key_gen", out var rawGeneration) && rawGeneration is not string)
         {

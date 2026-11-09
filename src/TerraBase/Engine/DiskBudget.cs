@@ -14,7 +14,6 @@ public interface IDiskBudget
 internal sealed class DiskBudget : IDiskBudget
 {
     internal const long Headroom = 1L << 30;
-    // Copies overlap their input, WAL, indexes, encrypted bundle and native sorter spill.
     internal static long WorkspaceBytes(long sourceBytes) => checked(8 * sourceBytes + (64L << 20));
     internal static long FileBytes(string path) => new[] { path, path + "-wal" }.Sum(file => File.Exists(file) ? new FileInfo(file).Length : 0);
     private readonly Lock _gate = new();

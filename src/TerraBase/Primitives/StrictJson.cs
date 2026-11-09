@@ -16,7 +16,6 @@ internal static class StrictJson
 
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
-    // Read compatibility for retained/restored bodies, separate from the strict write admission contract.
     public static void ValidateStored(ReadOnlySpan<byte> json)
     {
         try

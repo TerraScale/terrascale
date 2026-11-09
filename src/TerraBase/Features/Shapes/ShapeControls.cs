@@ -40,7 +40,7 @@ internal sealed class ShapeControls(IMemoryBudget memory, IHostApplicationLifeti
 
                 var bytes = 4096L + 2L * (table.Length + (query.Where?.Length ?? 0) + (query.Columns?.Length ?? 0)
                     + (query.Grant?.Where?.Length ?? 0) + (query.Grant?.Columns?.Length ?? 0));
-                if (memory.TryReserve(MemoryLane.Foreground, bytes, database) is not { } reservation)
+                if (memory.TryReserve(bytes, database) is not { } reservation)
                 {
                     return new QuotaExceeded("shape control reads are at capacity; retry later", "shape_busy");
                 }

@@ -81,27 +81,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
             {
                 current = await UsageAsync(store, token).ConfigureAwait(false);
                 var used = checked(current.Bytes + await FileBytesAsync(database.OrganizationId, token).ConfigureAwait(false));
-                await foreach (var candidate in _engine.ListDatabasesAsync(token).ConfigureAwait(false))
-                {
-                    if (candidate.OrganizationId != database.OrganizationId
-                        || candidate.ProjectId == database.ProjectId && candidate.DatabaseId == database.DatabaseId)
-                    {
-                        continue;
-                    }
-
-                    var walked = await RegisteredBytesAsync(candidate, token).ConfigureAwait(false);
-                    if (walked is Unavailable error)
-                    {
-                        return error;
-                    }
-
-                    if (walked is long bytes)
-                    {
-                        used = checked(used + bytes);
-                    }
-                }
-
-                return used;
+                return await SumRegisteredBytesAsync(database.OrganizationId, used, database, token).ConfigureAwait(false);
             }, delta =>
             {
                 var committedSequence = store.CommitSequence;
@@ -194,12 +174,15 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
     private ValueTask<long> FileBytesAsync(string organizationId, CancellationToken cancellationToken) =>
         new FileStorageUsage(_engine).BytesAsync(organizationId, null, cancellationToken);
 
-    private async ValueTask<StorageQuotaBytesResult> OrganizationUsageAsync(string organizationId, CancellationToken cancellationToken)
+    private async ValueTask<StorageQuotaBytesResult> OrganizationUsageAsync(string organizationId, CancellationToken cancellationToken) =>
+        await SumRegisteredBytesAsync(organizationId, await FileBytesAsync(organizationId, cancellationToken).ConfigureAwait(false), null, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask<StorageQuotaBytesResult> SumRegisteredBytesAsync(string organizationId, long used, TenantContext? exclude, CancellationToken cancellationToken)
     {
-        var used = await FileBytesAsync(organizationId, cancellationToken).ConfigureAwait(false);
         await foreach (var candidate in _engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (candidate.OrganizationId != organizationId)
+            if (candidate.OrganizationId != organizationId
+                || exclude is not null && candidate.ProjectId == exclude.ProjectId && candidate.DatabaseId == exclude.DatabaseId)
             {
                 continue;
             }

@@ -1,6 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -27,7 +28,7 @@ internal sealed class HeldRevisionEndpoint(TerraBaseOptions options, IDatabaseRe
         HttpContext.Response.Headers.CacheControl = "no-store";
         return ValueTask.FromResult(ReplicaRoutes.Database(HttpContext) is { } database
             && replicas.HeldRevision(database) is { } held
-            ? TypedResults.Json(new HeldRevisionAnswer(options.Region, held.ToString()), TerraBaseJsonContext.Default.HeldRevisionAnswer)
+            ? TypedResults.Json(new HeldRevisionAnswer(options.Region, held.ToString()), ReplicasJsonContext.Default.HeldRevisionAnswer)
             : ErrorResponse.From(new NotFound("this node holds no replica of the database")));
     }
 }

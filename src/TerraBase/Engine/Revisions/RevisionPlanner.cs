@@ -101,14 +101,14 @@ internal static class RevisionPlanner
         int start;
         ulong floor;
         ulong expected;
-        var exact = manifest.Sealed.FindIndex(entry => entry.Generation == revision.Generation);
+        var exact = IndexOf(manifest.Sealed, entry => entry.Generation == revision.Generation);
         if (exact >= 0)
         {
             (start, floor, expected) = (exact, revision.Frame, revision.Generation);
         }
         else
         {
-            var first = manifest.Horizon.FindIndex(bucket =>
+            var first = IndexOf(manifest.Horizon, bucket =>
                 bucket.FirstGeneration <= revision.Generation && revision.Generation <= bucket.LastGeneration);
             if (first < 0)
             {
@@ -166,5 +166,18 @@ internal static class RevisionPlanner
         }
 
         return expected == manifest.Generation ? null : FullReason.Expired;
+    }
+
+    private static int IndexOf<T>(IReadOnlyList<T> items, Func<T, bool> matches)
+    {
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (matches(items[index]))
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 }

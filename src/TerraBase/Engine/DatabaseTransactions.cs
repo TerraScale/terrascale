@@ -9,8 +9,6 @@ internal static class DatabaseTransactions
         internal async ValueTask<IStorageTransaction?> BeginTransactionAsync(
             TenantContext database, bool write, CancellationToken cancellationToken)
         {
-            // A closed store throws ObjectDisposedException; opening again finds the database deleted, or a newer store of a
-            // database with the same id. A stopped engine throws from the open instead, so it is not retried.
             for (var attempt = 0; ; attempt++)
             {
                 if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)

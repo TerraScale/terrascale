@@ -21,23 +21,21 @@ public sealed partial class RegionalWriterCrashTests
             await drill.Target.KillAsync();
             var current = await store.GetEntryAsync<byte[]>("gru", cancellationToken: token);
             var legacy = new RegionalOwner("gru", "gru-1", 7);
-            _ = await store.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(legacy, TerraBaseJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
+            _ = await store.UpdateAsync("gru", JsonSerializer.SerializeToUtf8Bytes(legacy, ReplicasJsonContext.Default.RegionalOwner), current.Revision, cancellationToken: token);
             await store.DeleteAsync("protocol.gru", cancellationToken: token);
             await store.DeleteAsync("prepared.gru.gru-1", cancellationToken: token);
             var stoppedAt = drill.SourceNats.Drop((subject, payload) => cut == "owner-first"
                 ? subject == "$KV." + RegionalHandoff.Bucket + ".protocol.gru"
                 : subject == "$KV." + RegionalHandoff.Bucket + ".gru"
-                    && JsonSerializer.Deserialize(payload.Span, TerraBaseJsonContext.Default.RegionalOwner) is { Activated: true, Version: 2 });
+                    && JsonSerializer.Deserialize(payload.Span, ReplicasJsonContext.Default.RegionalOwner) is { Activated: true, Version: 2 });
             await drill.Source.StartAsync(token);
             await stoppedAt.WaitAsync(TimeSpan.FromSeconds(15), token);
             if (cut == "legacy-marker-first")
             {
-                // Reconstruct the exact old crash state: durable self-certificate
-                // and protocol marker, but Version:0/Previous:null owner unchanged.
                 _ = await store.PutAsync("protocol.gru", "2"u8.ToArray(), cancellationToken: token);
                 await Assert.That(await drill.OwnerAsync(token)).IsEqualTo(legacy);
                 var certificate = await store.GetEntryAsync<byte[]>("prepared.gru.gru-1", cancellationToken: token);
-                await Assert.That(JsonSerializer.Deserialize(certificate.Value!, TerraBaseJsonContext.Default.RegionalPrepared))
+                await Assert.That(JsonSerializer.Deserialize(certificate.Value!, ReplicasJsonContext.Default.RegionalPrepared))
                     .IsEqualTo(new RegionalPrepared("gru-1", "gru-1", 6, null));
             }
             else

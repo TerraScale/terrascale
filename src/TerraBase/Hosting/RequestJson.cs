@@ -27,7 +27,7 @@ public static class RequestJson
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         AllowDuplicateProperties = false,
         MaxDepth = 64,
-        TypeInfoResolver = TerraBaseJsonContext.Default.WithAddedModifier(RejectNullElements),
+        TypeInfoResolver = TerraBaseJson.Resolver.WithAddedModifier(RejectNullElements),
     };
 
     public const string TextRule = "strings must be valid UTF-8 without lone UTF-16 surrogate escapes";
@@ -67,7 +67,6 @@ public static class RequestJson
         }
         catch (JsonException)
         {
-            // Reported, with the route's own message, by the parser that reads this body.
         }
         catch (Exception error) when (error is InvalidOperationException or DecoderFallbackException)
         {
@@ -77,8 +76,6 @@ public static class RequestJson
         return true;
     }
 
-    // System.Text.Json stores null for a null list element even when the element type is non-nullable, so every
-    // request type rejects null elements here instead of in each consumer.
     private static void RejectNullElements(JsonTypeInfo type)
     {
         if (type.Kind != JsonTypeInfoKind.Object)

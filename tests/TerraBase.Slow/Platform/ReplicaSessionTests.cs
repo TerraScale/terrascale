@@ -11,7 +11,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Slow.Platform;
 
-/// <summary>Postgres and WebSocket sessions in a replica region: local reads, writes at the home, read-your-writes.</summary>
 public sealed class ReplicaSessionTests
 {
     private static readonly Faker Faker = new();
@@ -56,7 +55,6 @@ public sealed class ReplicaSessionTests
         await using var socket = await SqlSocketClient.ConnectAsync(sjc, database.Data, bearer);
         await Assert.That(await PostgresSql.ScalarAsync(connection, "SELECT body FROM notes WHERE id = 1")).IsEqualTo(first);
 
-        // Each write runs at the home; the next read of the same session sees it, from the replica or the home.
         for (var round = 0; round < 3; round++)
         {
             var written = Faker.Lorem.Sentence();
@@ -80,7 +78,6 @@ public sealed class ReplicaSessionTests
             new { statements = new object[] { new { sql = "SELECT count(*) FROM notes" } } }, token);
         await Assert.That((await atHome.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("results")[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(5);
 
-        // With the home gone, the replica region still answers reads on both surfaces, and refuses writes naming the home.
         await replication.PullAllAsync(token);
         await gru.DisposeAsync();
         await Assert.That(await PostgresSql.ScalarAsync(connection, "SELECT count(*) FROM notes")).IsEqualTo("5");

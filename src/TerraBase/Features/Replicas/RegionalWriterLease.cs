@@ -1,16 +1,15 @@
-using System.Globalization;
-using System.Text.Json;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
+using System.Globalization;
+using System.Text.Json;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replicas;
 
 internal sealed record RegionalWriter(string Node, long Epoch, string Session);
 
-// A separate, exclusive admission lease survives an owner CAS: a new owner cannot commit while the former owner's
-// admission might still be valid. All calls are serialized by RegionalHandoff's change gate.
 internal sealed class RegionalWriterLease(NatsJSContext js, INatsKVStore kv, string region, string node, string session)
 {
     internal const string Bucket = "terrabase-region-writers";
@@ -29,7 +28,7 @@ internal sealed class RegionalWriterLease(NatsJSContext js, INatsKVStore kv, str
             _mine = writer;
         }
 
-        var value = JsonSerializer.SerializeToUtf8Bytes(writer, TerraBaseJsonContext.Default.RegionalWriter);
+        var value = JsonSerializer.SerializeToUtf8Bytes(writer, ReplicasJsonContext.Default.RegionalWriter);
         try
         {
             if (_revision is { } revision)
@@ -42,8 +41,6 @@ internal sealed class RegionalWriterLease(NatsJSContext js, INatsKVStore kv, str
             }
             else
             {
-                // Create must fail while any previous writer still holds the key,
-                // including the same node's previous process or previous epoch.
                 _revision = await kv.CreateAsync(region, value, Ttl, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
         }
@@ -54,8 +51,6 @@ internal sealed class RegionalWriterLease(NatsJSContext js, INatsKVStore kv, str
             return null;
         }
 
-        // Measure from send, not reply: a delayed response never extends local
-        // admission beyond the server's TTL. This uses a monotonic clock.
         var until = sent + (long)((Ttl - Margin).TotalSeconds * TimeProvider.System.TimestampFrequency);
         return TimeProvider.System.GetTimestamp() < until ? until : null;
     }
@@ -72,8 +67,6 @@ internal sealed class RegionalWriterLease(NatsJSContext js, INatsKVStore kv, str
         }
         catch (Exception error) when (error is NatsKVKeyNotFoundException or NatsKVKeyDeletedException or NatsKVWrongLastRevisionException)
         {
-            // Expiry or another CAS already fenced this exact lease. Never
-            // delete a successor's lease, even if a release response was lost.
         }
         finally
         {

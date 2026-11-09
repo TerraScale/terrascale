@@ -1,18 +1,19 @@
 using System.Diagnostics.Metrics;
-using System.Text.Json;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Threading.Channels;
 using TerraBase.Configuration;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.HomePush;
-using static TerraBase.Features.HomePush.HomePush;
+using TerraBase.Features.LocalAck;
 using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
+using static TerraBase.Features.HomePush.HomePush;
 
 namespace TerraBase.Features.LocalAck;
 
-// The discovered regional quorum for local writes (docs/terrabase/in-region-ack.md).
 internal interface IInRegionAck
 {
     bool PartnerHealthy { get; }
@@ -85,7 +86,7 @@ internal sealed class InRegionAck(
         {
             using var body = Json(JsonSerializer.SerializeToUtf8Bytes(
                 new HeldTransaction(1, options.MachineId, home, database.OrganizationId, database.ProjectId, database.DatabaseId, sequence, payload),
-                TerraBaseJsonContext.Default.HeldTransaction));
+                LocalAckJsonContext.Default.HeldTransaction));
             using var response = await Http.PostAsync(new Uri(partner.Internal, "v1/sync/holds"), body, timeout.Token).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
@@ -188,9 +189,9 @@ internal sealed class InRegionAck(
             var plain = await crypto.OpenAsync(database, held.Payload!, cancellationToken).ConfigureAwait(false);
             if (plain is null || !TryDecode(plain, out var transaction))
             {
-                return true; // Shredded or unauthentic: it must never be replayed.
+                return true;
             }
-            using var body = Json(JsonSerializer.SerializeToUtf8Bytes(transaction, TerraBaseJsonContext.Default.RegionTransaction));
+            using var body = Json(JsonSerializer.SerializeToUtf8Bytes(transaction, HomeApplyJsonContext.Default.RegionTransaction));
             using var response = await Http.PostAsync(new Uri(home.Internal, ReplicaRoutes.DatabasePath(database, "apply")[1..]), body, cancellationToken)
                 .ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
@@ -219,7 +220,7 @@ internal sealed class InRegionAck(
 
             try
             {
-                using var body = Json(JsonSerializer.SerializeToUtf8Bytes(release, TerraBaseJsonContext.Default.HoldRelease));
+                using var body = Json(JsonSerializer.SerializeToUtf8Bytes(release, LocalAckJsonContext.Default.HoldRelease));
                 using var response = await Http.PostAsync(new Uri(partner.Internal, "v1/sync/holds/release"), body, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)

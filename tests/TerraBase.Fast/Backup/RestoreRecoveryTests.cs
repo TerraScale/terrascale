@@ -32,7 +32,7 @@ public sealed class RestoreRecoveryTests
         await using (var write = await store.BeginTransactionAsync(write: true, cancellationToken))
         {
             await CatalogTables.PutDatabaseAsync(write, target, cancellationToken);
-            await PutAsync(write, RestoreCatalog.Kind, operation.Id, operation, TerraBaseJsonContext.Default.RestoreOperationRecord, cancellationToken);
+            await PutAsync(write, RestoreCatalog.Kind, operation.Id, operation, ManagementJsonContext.Default.RestoreOperationRecord, cancellationToken);
             await write.CommitAsync(cancellationToken);
         }
 

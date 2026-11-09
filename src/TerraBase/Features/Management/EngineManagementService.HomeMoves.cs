@@ -1,6 +1,7 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -42,7 +43,7 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
 
     internal static async ValueTask<bool> HomeMovePendingAsync(
         IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken) =>
-        await GetAsync(transaction, HomeMoves, databaseId, TerraBaseJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is not null;
+        await GetAsync(transaction, HomeMoves, databaseId, ManagementJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is not null;
 
     public ValueTask<BeginHomeMoveResult> BeginHomeMoveAsync(TenantContext database, string target, CancellationToken cancellationToken)
     {
@@ -77,13 +78,13 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
                     : $"homeRegion must be one of the database's replica regions: {string.Join(", ", record.Replicas)}");
             }
 
-            if (await GetAsync(transaction, HomeMoves, database.DatabaseId, TerraBaseJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is not null)
+            if (await GetAsync(transaction, HomeMoves, database.DatabaseId, ManagementJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return MoveInProgress;
             }
 
             var marker = new HomeMoveMarker(EntityIds.New(time).ToString(), database.OrganizationId, database.ProjectId, database.DatabaseId, target, record.PlacementVersion + 1);
-            await PutAsync(transaction, HomeMoves, database.DatabaseId, marker, TerraBaseJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, HomeMoves, database.DatabaseId, marker, ManagementJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false);
             return new HomeMoveStart(marker, record);
         }, static error => error, cancellationToken);
     }
@@ -117,7 +118,7 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
         ArgumentNullException.ThrowIfNull(marker);
         _ = await WriteAsync<Done>(async transaction =>
         {
-            if (await GetAsync(transaction, HomeMoves, marker.DatabaseId, TerraBaseJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is { } current
+            if (await GetAsync(transaction, HomeMoves, marker.DatabaseId, ManagementJsonContext.Default.HomeMoveMarker, cancellationToken).ConfigureAwait(false) is { } current
                 && current.MoveId == marker.MoveId)
             {
                 _ = await transaction.DeleteAsync(HomeMoves, marker.DatabaseId, cancellationToken).ConfigureAwait(false);
@@ -191,7 +192,7 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
                 var page = await transaction.ListAsync(HomeMoves, after, CatalogPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
                 foreach (var record in page.Records)
                 {
-                    if (EntityPayload.Read(record, TerraBaseJsonContext.Default.HomeMoveMarker) is { } marker)
+                    if (EntityPayload.Read(record, ManagementJsonContext.Default.HomeMoveMarker) is { } marker)
                     {
                         markers.Add(marker);
                     }

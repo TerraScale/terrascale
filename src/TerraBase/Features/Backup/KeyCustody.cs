@@ -3,8 +3,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
 
-// R2 has neither object versions nor bucket snapshots. Keep key custody out of every backup destination.
-// The existing shape identity can access this prefix; the public shape WAF rejects it before cache lookup.
 internal sealed class KeyCustody(ShapeStorageSettings settings, IHttpClientFactory http, TimeProvider time) : IDisposable
 {
     internal KeyCacheRevocations Revocations { get; } = new();
@@ -32,7 +30,6 @@ internal sealed class KeyCustody(ShapeStorageSettings settings, IHttpClientFacto
             if (item.Key.Length > 0 && item.Key != marker)
             {
                 complete &= await Store.DeleteAsync(item.Key, cancellationToken).ConfigureAwait(false);
-                // DELETE acknowledgement alone is not erasure proof. R2 must return 404 for the deleted key.
                 complete &= !await Store.ReadAsync(item.Key, static (_, _) => Task.CompletedTask, cancellationToken).ConfigureAwait(false);
             }
         }

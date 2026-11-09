@@ -9,7 +9,6 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Slow.Platform;
 
-/// <summary>Session WebSockets in a region that does not serve their database relay the whole socket to the home.</summary>
 public sealed class HomeSocketRelayTests
 {
     private static readonly Faker Faker = new();
@@ -31,8 +30,6 @@ public sealed class HomeSocketRelayTests
             descriptor.Claims["scope"] = "databases:read sql:read sql:write";
         });
 
-        // fra keeps the home-only database's record without a placement here, as project enrollment leaves it;
-        // sjc holds no record and locates the home by asking the mesh.
         var recorded = await fra.Server.Services.GetRequiredService<IReplicaCatalog>().RecordAsync(
             new ReplicaCatalogEntry(database.Organization, database.Project, database.Id, database.Name, "gru", [], 1), CancellationToken.None);
         await Assert.That(recorded).IsTrue();
@@ -49,15 +46,12 @@ public sealed class HomeSocketRelayTests
             await Assert.That(read.GetProperty("results")[0].GetProperty("rows")[0][0].GetString()).IsEqualTo(note).Because(region + ": " + read);
         }
 
-        // A browser-style socket authenticates with a first frame instead of a header: the region resolves the home from
-        // the route alone and relays, and the home runs the frame's checks itself.
         await using var frame = await SqlSocketClient.ConnectAsync(sjc, database.Data, apiKey: null);
         var admitted = await frame.AuthAsync(token);
         await Assert.That(admitted.GetProperty("type").GetString()).IsEqualTo("result").Because(admitted.ToString());
         var framed = await frame.ExecuteAsync(new { sql = "INSERT INTO notes VALUES (3, ?)", args = new object[] { note } });
         await Assert.That(framed.GetProperty("type").GetString()).IsEqualTo("result").Because(framed.ToString());
 
-        // The sessions ran at gru: the home serves the rows, not the relaying regions.
         using var viaGru = gru.WithToken(token);
         using var atHome = await viaGru.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql/execute"),
             new { statements = new object[] { new { sql = "SELECT count(*) FROM notes WHERE body = ?", args = new[] { note } } } });
