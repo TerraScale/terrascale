@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -20,6 +21,7 @@ var commandSyntax = map[string]string{
 	"db branch list":   "db branch list", "db branch delete": "db branch delete <name>",
 	"db branch url": "db branch url <name>",
 	"db branch":     "db branch <source> <new-database>", "db info": "db info <database>",
+	"db export": "db export <database> [-o <file>] [-force]", "db url": "db url <database>",
 	"db import":    "db import <database> <file|-> [-from <n>]",
 	"db placement": "db placement <database> (-replica-regions <a,b> | -all-regions)", "db move-home": "db move-home <database> <region>",
 	"db regions":       "db regions <database>",
@@ -50,6 +52,37 @@ var helpFlags = map[string]string{
 	"--json":             "typed JSON output; streams use NDJSON record/complete/error events",
 	"-project <name|id>": "select a project (before the command)",
 	"-org <name|id>":     "select an organization (before the command)",
+}
+
+func closestCommand(input string) string {
+	best, bestDistance := "", len(input)+len("schema apply")+1
+	for _, name := range slices.Sorted(maps.Keys(commands)) {
+		d := editDistance(input, name)
+		if d < bestDistance && 3*d <= len(input)+len(name) {
+			best, bestDistance = name, d
+		}
+	}
+	return best
+}
+
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
 }
 
 func helpSyntax(name string) string {
@@ -175,6 +208,8 @@ func helpOptions(name string) map[string]string {
 		options["--expected-id <ULID>"] = "server-enforced source identity"
 	case name == "db branch url":
 		options["--expected-id <ULID>"] = "require this branch identity before issuing a scoped key"
+		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
+	case name == "db url":
 		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
 	case strings.HasPrefix(name, "schema "):
 		options["--database <name|id>"] = "target database; defaults to the saved context database"

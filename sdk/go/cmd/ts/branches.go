@@ -117,6 +117,13 @@ func runBranch(ctx context.Context, s *session, command string, args []string, f
 			return deleteExpectedDatabase(ctx, db, info.ID, out)
 		}
 		return branchConnectionURL(ctx, s, info, out)
+	case "db url":
+		db := s.tb.Database(s.project, args[0])
+		info, err := db.Info(ctx)
+		if err != nil {
+			return err
+		}
+		return connectionURL(ctx, s, info, previewTTL, out)
 	}
 	return errUsage
 }
@@ -129,6 +136,10 @@ func branchConnectionURL(ctx context.Context, s *session, info *v1.ManagedDataba
 	if ttl < 60 {
 		return errors.New("branch expires in less than 60 seconds; create a new branch")
 	}
+	return connectionURL(ctx, s, info, ttl, out)
+}
+
+func connectionURL(ctx context.Context, s *session, info *v1.ManagedDatabase, ttl int64, out io.Writer) error {
 	key, err := s.tb.CreateScopedKey(ctx, v1.ScopedKeyRequest{
 		Project: s.project, Database: info.ID, Access: v1.ScopedKeyReadWrite, TTLSeconds: &ttl,
 	})
@@ -136,7 +147,7 @@ func branchConnectionURL(ctx context.Context, s *session, info *v1.ManagedDataba
 		return err
 	}
 	if key.Database != info.ID || key.ProjectID != s.project || key.Access != v1.ScopedKeyReadWrite {
-		return errors.New("scoped key identity did not match the branch")
+		return errors.New("scoped key identity did not match the database")
 	}
 	connection := url.URL{Scheme: "postgresql", User: url.UserPassword("any", key.Key), Host: "pg.terrascale.tech:5432", Path: "/" + s.project + "/" + info.ID,
 		RawQuery: "sslmode=verify-full&sslrootcert=system"}

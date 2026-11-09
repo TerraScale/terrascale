@@ -177,12 +177,15 @@ ts db branch list
 ts db branch delete preview
 ```
 
-`db branch url <name>` is the easiest way to get a Postgres connection URL: it
-issues a scoped secret URL for that one database, valid for at most 7 days.
-It requires an API key, so run it with `TERRASCALE_API_KEY` set:
+`db branch url <name>` is the easiest way to get a connection URL for the
+Postgres wire endpoint, which serves SQLite-dialect SQL: it issues a scoped
+secret URL for that one database, valid for at most 7 days. It requires an API
+key, so run it with `TERRASCALE_API_KEY` set. `db url <db>` does the same for
+a regular database:
 
 ```sh
 TERRASCALE_API_KEY=... ts db branch url preview
+TERRASCALE_API_KEY=... ts db url example
 ```
 
 ### Placement
