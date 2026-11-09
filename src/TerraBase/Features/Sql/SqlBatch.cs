@@ -124,6 +124,6 @@ internal static class SqlBatch
     public static SqlErrorBody Body(SqlBatchFailure failure, string? requestId = null)
     {
         ArgumentNullException.ThrowIfNull(failure);
-        return new SqlErrorBody(new SqlErrorDetail(failure.Error.Code, failure.Error.Message, failure.Statement, failure.Error.Sqlstate, requestId));
+        return new SqlErrorBody(new SqlErrorDetail(failure.Error.Code, failure.Error.Message, failure.Statement, failure.Error.Sqlstate, requestId, ErrorDocs.Url(failure.Error.Code)));
     }
 }
