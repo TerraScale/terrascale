@@ -70,7 +70,6 @@ internal sealed class SqlExecuteEndpoint(
             },
         };
 
-    internal const string WriteHeader = "TerraScale-Write";
     internal const string RouteHeader = "TerraScale-Write-Route";
     internal const string DurabilityHeader = "TerraScale-Durability";
 
@@ -81,13 +80,6 @@ internal sealed class SqlExecuteEndpoint(
         _ => null,
     };
 
-    internal static WriteOverride? Preference(string? value) => value?.Trim().ToLowerInvariant() switch
-    {
-        null or "" or "auto" => WriteOverride.Auto,
-        "home" => WriteOverride.Home,
-        "local" => WriteOverride.Local,
-        _ => null,
-    };
 
     private async ValueTask<IResult> ExecuteAsync(TenantContext database, IReadOnlyList<SqlExecuteStatement> statements, byte[] body, bool all,
         CancellationToken cancellationToken)
@@ -145,7 +137,7 @@ internal sealed class SqlExecuteEndpoint(
     private async ValueTask<IResult> ReplicaAsync(
         TenantContext database, DatabasePlacement placement, List<SqlCommand> commands, byte[] body, bool all, CancellationToken cancellationToken)
     {
-        if (Preference(HttpContext.Request.Headers[WriteHeader]) is not { } preference)
+        if (WritePreference.Parse(HttpContext.Request.Headers[WritePreference.Header]) is not { } preference)
         {
             return Error(new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, "TerraScale-Write is home, local or auto"), 0));
         }

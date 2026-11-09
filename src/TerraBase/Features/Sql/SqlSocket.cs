@@ -72,7 +72,7 @@ internal sealed class SqlSocket(
         }
 
         _session = sql.Open(Database, _canWrite);
-        _session.Prefer(SqlExecuteEndpoint.Preference(context.Request.Headers[SqlExecuteEndpoint.WriteHeader]) ?? WriteOverride.Auto);
+        _session.Prefer(WritePreference.Parse(context.Request.Headers[WritePreference.Header]) ?? WriteOverride.Auto);
         await using (_session.ConfigureAwait(false))
         {
             await ServeAsync(cancellationToken).ConfigureAwait(false);
