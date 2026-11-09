@@ -6,7 +6,7 @@
     <WebRoot>web/static</WebRoot>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="../../landing-site/static/pricing.json" LogicalName="TerraScale.Dashboard.Common.Accounts.pricing.json" Link="Common/Accounts/pricing.json" />
+    <EmbeddedResource Include="Common/Accounts/pricing.json" />
     <PackageReference Include="Cronos" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
