@@ -12,7 +12,7 @@ internal static class ErrorResponse
         PreconditionFailed e => new Response(StatusCodes.Status412PreconditionFailed, e.Code, e.Message, op),
         Unauthorized e => new Response(StatusCodes.Status401Unauthorized, e.Code, e.Message, op),
         Forbidden e => new Response(StatusCodes.Status403Forbidden, e.Code, e.Message, op),
-        QuotaExceeded e => new Response(StatusCodes.Status429TooManyRequests, e.Code, e.Message, op, retryAfter: true),
+        QuotaExceeded e => new Response(StatusCodes.Status429TooManyRequests, e.Code, e.Message, op),
         Unavailable e => new Response(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message, op, retryAfter: true),
         PayloadTooLarge e => new Response(StatusCodes.Status413PayloadTooLarge, e.Code, e.Message, op),
         UnsupportedMediaType e => new Response(StatusCodes.Status415UnsupportedMediaType, e.Code, e.Message, op),
