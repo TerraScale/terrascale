@@ -92,13 +92,10 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The response's CSP nonce, set by <see cref="Render"/>.</summary>
     public string Nonce { get; init; } = string.Empty;
 
-    /// <summary>The page's language, resolved from the request's Accept-Language header by <see cref="Render"/>.</summary>
     public string Locale { get; init; } = AuthEmails.English;
 
-    /// <summary>The page copy of <see cref="Locale"/>.</summary>
     public HostedPageCopy Copy => HostedCopies.For(this.Locale);
 
-    /// <summary>Fills a copy format's <c>{email}</c> with the HTML-encoded address.</summary>
     public string Sub(string format) => format.Replace("{email}", System.Net.WebUtility.HtmlEncode(this.Email ?? string.Empty));
 
     /// <summary>The correlation ID shared with the response's X-Request-ID header.</summary>

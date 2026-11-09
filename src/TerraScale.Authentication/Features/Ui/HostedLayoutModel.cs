@@ -58,10 +58,8 @@ public sealed partial record HostedLayoutModel
     /// <summary>Per-response CSP nonce for inline styles and scripts.</summary>
     public string Nonce { get; }
 
-    /// <summary>The page's BCP 47 language, from the request's Accept-Language header.</summary>
     public string Locale { get; }
 
-    /// <summary>The page copy of <see cref="Locale"/>.</summary>
     public HostedPageCopy Copy => HostedCopies.For(this.Locale);
 
     /// <summary>Validated accent colour override, or <see langword="null"/> for the default.</summary>
