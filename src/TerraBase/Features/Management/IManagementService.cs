@@ -49,6 +49,9 @@ public readonly union DeleteProjectResult(Done, NotFound, Forbidden, Conflict, U
 
 public readonly union CreateDatabaseResult(ManagedDatabase, NotFound, Forbidden, Conflict, Unavailable);
 
+/// <summary>The live databases this region homes for an organization, or why the catalog could not be read.</summary>
+public readonly union HomeDatabaseCountResult(long, Unavailable);
+
 public readonly union SetDatabaseRegionsResult(ManagedDatabase, NotFound, Forbidden, Conflict, Unavailable);
 
 public readonly union FindDatabaseRecordResult(ManagedDatabase, NotFound, Unavailable);
@@ -84,6 +87,8 @@ internal interface IManagementService
     /// </summary>
     ValueTask<RestorePrecheckResult> PrecheckRestoreAsync(
         string userId, string organizationId, string projectId, string? name, CancellationToken cancellationToken);
+
+    ValueTask<HomeDatabaseCountResult> CountOrganizationDatabasesHomedAsync(string organizationId, CancellationToken cancellationToken);
 
     ValueTask<WritableDatabaseTenantResult> GetRecoveryDatabaseTenantAsync(
         string userId, string organizationId, string projectId, string databaseId, string? authorityToken, CancellationToken cancellationToken);

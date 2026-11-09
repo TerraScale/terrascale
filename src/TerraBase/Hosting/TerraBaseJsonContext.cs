@@ -140,6 +140,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TsAuthErrorBody))]
 [JsonSerializable(typeof(TsAuthKeyStatus))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaCatalogPage))]
+[JsonSerializable(typeof(HomeCountBody))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaCatalogEntry))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.ReplicaRevisionNotice))]
 [JsonSerializable(typeof(TerraBase.Features.Replicas.HomeSessionOpen))]

@@ -27,15 +27,19 @@ allowance answers `409` with code `database_limit` and a message naming the plan
   route aliases), the legacy `PUT /v1/projects/{project}/databases/{database}`, branches
   (`POST …/databases/{database}/branches`), copies, backup and point-in-time restores, and
   `create_database` in management commits. Nothing is created when it is refused.
-- The check runs in the catalog transaction that registers the database and is strict across
-  regions: each region spends units of the allowance it holds and asks other regions for one when
-  it has none ([SQL catalog](sql-catalog.md), which lists
-  the cases it does not cover). Concurrent creates in different regions do not pass it together.
-  A region that holds no unit and cannot reach every region that may hold one answers
-  `409 database_limit` with "the rest of the organization's database allowance is held in regions
-  this region cannot reach now; retry shortly".
+- The check runs in the catalog transaction that registers the database and counts each database
+  at its home region: the region creating the database adds every peer region's authoritative
+  count of the organization's live databases homed there (`GET
+  /v1/sync/organizations/{organization}/databases/count` on the internal listener) and excludes
+  those regions' rows from its own catalog count. A peer that cannot be reached keeps its locally
+  recorded rows counted, so an unreachable region can refuse a create but never lets the
+  organization exceed its allowance. Concurrent creates in different regions serialize at each
+  database's home region.
 - A database counts once, however many regions hold it: a region that adopts a replica of a
-  database created elsewhere does not count it again. Deleted databases do not count.
+  database created elsewhere does not count it again. Deleted databases do not count: a delete
+  its home acknowledged with `204` releases the allowance at once in every region, because each
+  region's count of that home region is the home's authoritative answer, not its own replica
+  record.
 - Replaying a create for a name that exists still finds it (`200` on the legacy `PUT`,
   `409 name_taken` on `POST`), even at the allowance.
 - Organizations already above their allowance (after a downgrade) keep their databases; only new

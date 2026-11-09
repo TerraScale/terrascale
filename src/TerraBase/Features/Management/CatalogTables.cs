@@ -182,9 +182,28 @@ internal static class CatalogTables
     public static async ValueTask<bool> HasDatabasesAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
         (await RowsAsync(transaction, Sql($"SELECT 1 FROM catalog_databases d WHERE project_id = ? AND {Live} LIMIT 1", projectId), cancellationToken).ConfigureAwait(false)).Count > 0;
 
-    public static async ValueTask<long> CountOrganizationDatabasesAsync(IStorageTransaction transaction, string organizationId, CancellationToken cancellationToken) =>
+    public static async ValueTask<long> CountOrganizationDatabasesAsync(
+        IStorageTransaction transaction, string organizationId, CancellationToken cancellationToken, string? defaultRegion = null, IReadOnlyList<string>? homedElsewhere = null)
+    {
+        List<object?> args = [organizationId];
+        var excluded = string.Empty;
+        if (homedElsewhere is { Count: > 0 })
+        {
+            args.Add(defaultRegion);
+            excluded = $" AND coalesce(d.home_region, ?) NOT IN ({string.Join(", ", homedElsewhere.Select(_ => "?"))})";
+            args.AddRange(homedElsewhere);
+        }
+
+        return (long)(await RowsAsync(transaction, Sql(
+            $"SELECT count(*) FROM catalog_databases d JOIN catalog_projects p ON p.id = d.project_id WHERE p.organization_id = ? AND {Live}{excluded}", [.. args]), cancellationToken)
+            .ConfigureAwait(false))[0][0]!;
+    }
+
+    public static async ValueTask<long> CountOrganizationDatabasesHomedAsync(
+        IStorageTransaction transaction, string organizationId, string region, CancellationToken cancellationToken) =>
         (long)(await RowsAsync(transaction, Sql(
-            $"SELECT count(*) FROM catalog_databases d JOIN catalog_projects p ON p.id = d.project_id WHERE p.organization_id = ? AND {Live}", organizationId), cancellationToken)
+            $"SELECT count(*) FROM catalog_databases d JOIN catalog_projects p ON p.id = d.project_id WHERE p.organization_id = ? AND coalesce(d.home_region, ?) = ? AND {Live}",
+            organizationId, region, region), cancellationToken)
             .ConfigureAwait(false))[0][0]!;
 
     public static async ValueTask<IReadOnlyList<TenantContext>> DatabasesHomedAsync(

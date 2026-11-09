@@ -244,9 +244,15 @@ internal sealed partial class EngineManagementService
         return new Done();
     }
 
+    public async ValueTask<HomeDatabaseCountResult> CountOrganizationDatabasesHomedAsync(string organizationId, CancellationToken cancellationToken) =>
+        await ReadAsync<HomeDatabaseCountResult>(
+            async transaction => await CatalogTables.CountOrganizationDatabasesHomedAsync(transaction, organizationId, options.Region, cancellationToken).ConfigureAwait(false),
+            static error => error, cancellationToken).ConfigureAwait(false);
+
     public async ValueTask<ProvisionDatabaseResult> CreateDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         return await AddDatabaseAsync(
+            organizationId,
             async transaction => await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is { } tenant
                 ? tenant
                 : ManagementErrors.NotFound,
@@ -339,7 +345,7 @@ internal sealed partial class EngineManagementService
         // Only the home holds a database file; a replica region records it and pulls its pages (docs/terrabase/region-replicas.md).
         if (placement.Home == options.Region)
         {
-            return await AddDatabaseAsync(project, name, sourceId: null, branchedFrom: null, cancellationToken, id: database.DatabaseId, placement: placement)
+            return await AddDatabaseAsync(database.OrganizationId, project, name, sourceId: null, branchedFrom: null, cancellationToken, id: database.DatabaseId, placement: placement)
                 .ConfigureAwait(false) switch
             {
                 AddedDatabase => new Done(),

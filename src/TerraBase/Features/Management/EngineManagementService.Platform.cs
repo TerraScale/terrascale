@@ -51,6 +51,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         foreach (var (name, database) in PlatformDatabases.Databases)
         {
             var added = await AddDatabaseAsync(
+                PlatformDatabases.OrganizationId,
                 async transaction => await OrganizationProjectAsync(transaction, PlatformDatabases.OrganizationId, database.ProjectId, cancellationToken)
                     .ConfigureAwait(false) is { } tenant ? tenant : ManagementErrors.NotFound,
                 name, sourceId: null, branchedFrom: null, cancellationToken, id: database.Id, placement: placement, createdAt: DateTimeOffset.UnixEpoch).ConfigureAwait(false);

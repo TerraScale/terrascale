@@ -53,6 +53,37 @@ internal sealed class RemoteDatabases(IHttpClientFactory http, InternalCredentia
     }
 
     /// <summary>
+    /// The live databases <paramref name="peer"/> homes for <paramref name="organization"/>: the authoritative count an
+    /// allowance check adds for that region. An unreachable or unreadable peer answers null, and its replica rows keep
+    /// their local count, so the allowance is never exceeded by an omission.
+    /// </summary>
+    public async Task<long?> HomeCountAsync(Uri peer, string organization, CancellationToken cancellationToken)
+    {
+        var secret = credential.CorrelationKey
+            ?? throw new InvalidOperationException("the cluster peer credential is required to count peer region databases");
+        var address = new Uri(peer, $"v1/sync/organizations/{Uri.EscapeDataString(organization)}/databases/count");
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(PeerTimeout);
+            using var client = http.CreateClient(HttpClientName);
+            using var request = new HttpRequestMessage(HttpMethod.Get, address);
+            request.Version = HttpVersion.Version20;
+            request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+            request.Headers.Add(InternalCredential.HeaderName, secret);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+            return response.StatusCode == HttpStatusCode.OK
+                ? (await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.HomeCountBody, timeout.Token).ConfigureAwait(false))?.Databases
+                : null;
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException
+            || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Tells <paramref name="peer"/> its record of a database this region deleted at its home. Best effort before the
     /// delete answers: a peer that cannot be reached keeps its record until its own sweep forgets it, and the merged
     /// listing still drops the database because its home no longer lists it. Never throws.

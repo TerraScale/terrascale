@@ -223,7 +223,7 @@ internal sealed partial class EngineManagementService(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null,
         bool allRegions = false, long? ttlSeconds = null) =>
         await AddDatabaseAsync(
-            transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId: null, branchedFrom: null, cancellationToken,
+            organizationId, transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId: null, branchedFrom: null, cancellationToken,
             ttlSeconds: ttlSeconds,
             placement: allRegions ? new DatabasePlacement(options.Region, replicaRegions ?? [], 1, AllRegions: true)
                 : replicaRegions is null ? null : new DatabasePlacement(options.Region, replicaRegions, 1))
@@ -623,7 +623,7 @@ internal sealed partial class EngineManagementService(
         }
 
         return await AddDatabaseAsync(
-            transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, source.Id, source.Id, cancellationToken,
+            organizationId, transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, source.Id, source.Id, cancellationToken,
             ttlSeconds: ttlSeconds,
             placement: source.Placement(options.Region) with { Version = 1 })
             .ConfigureAwait(false) switch
@@ -663,7 +663,7 @@ internal sealed partial class EngineManagementService(
         }
 
         return await AddDatabaseAsync(
-            transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId, branchedFrom, cancellationToken, placement: placement, ttlSeconds: ttlSeconds)
+            organizationId, transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId, branchedFrom, cancellationToken, placement: placement, ttlSeconds: ttlSeconds)
             .ConfigureAwait(false) switch
         {
             AddedDatabase added => added.Database,
@@ -684,7 +684,7 @@ internal sealed partial class EngineManagementService(
         // checked there. The registration re-checks both when it commits.
         var precheck = await PrecheckAsync(
             transaction => AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken),
-            name, new AllowanceCheck(databaseAllowance.Limit), cancellationToken).ConfigureAwait(false);
+            name, await AllowanceAsync(organizationId, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
         return precheck switch
         {
             TenantContext => new Done(),
@@ -696,11 +696,11 @@ internal sealed partial class EngineManagementService(
     }
 
     private async ValueTask<AddDatabaseResult> AddDatabaseAsync(
-        Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
+        string organizationId, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
         string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null, long? ttlSeconds = null)
     {
         var allowance = sourceId is not null || (placement?.Home ?? options.Region) == options.Region
-            ? new AllowanceCheck(databaseAllowance.Limit)
+            ? await AllowanceAsync(organizationId, cancellationToken).ConfigureAwait(false)
             : null;
 
         var precheck = await PrecheckAsync(project, name, allowance, cancellationToken).ConfigureAwait(false);
@@ -890,7 +890,7 @@ internal sealed partial class EngineManagementService(
         return true;
     }
 
-    private static async ValueTask<AddDatabaseCheck> RegisterDatabaseAsync(
+    private async ValueTask<AddDatabaseCheck> RegisterDatabaseAsync(
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, ManagedDatabase database,
         AllowanceCheck? allowance, CancellationToken cancellationToken)
     {
@@ -932,7 +932,7 @@ internal sealed partial class EngineManagementService(
         }
     }
 
-    private static async ValueTask<AddDatabaseCheck> CanAddDatabaseAsync(
+    private async ValueTask<AddDatabaseCheck> CanAddDatabaseAsync(
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string? name, CancellationToken cancellationToken,
         AllowanceCheck? allowance = null)
     {
@@ -969,7 +969,7 @@ internal sealed partial class EngineManagementService(
             : tenant;
     }
 
-    private static async ValueTask<Conflict?> DatabaseLimitAsync(IStorageTransaction transaction, TenantContext tenant, AllowanceCheck allowance, CancellationToken cancellationToken)
+    private async ValueTask<Conflict?> DatabaseLimitAsync(IStorageTransaction transaction, TenantContext tenant, AllowanceCheck allowance, CancellationToken cancellationToken)
     {
         var allowed = allowance.Limit(tenant.Plan);
         if (allowed == long.MaxValue || PlatformDatabases.IsPlatform(tenant.OrganizationId))
@@ -977,9 +977,32 @@ internal sealed partial class EngineManagementService(
             return null;
         }
 
-        return await CatalogTables.CountOrganizationDatabasesAsync(transaction, tenant.OrganizationId, cancellationToken).ConfigureAwait(false) >= allowed
+        var homed = allowance.HomeCounts.Keys.ToList();
+        var local = await CatalogTables.CountOrganizationDatabasesAsync(
+            transaction, tenant.OrganizationId, cancellationToken, options.Region, homed).ConfigureAwait(false);
+        var live = local + allowance.HomeCounts.Values.Sum();
+        return live >= allowed
             ? ManagementErrors.DatabaseLimit(PlanName(tenant.Plan), allowed)
             : null;
+    }
+
+    private async ValueTask<AllowanceCheck> AllowanceAsync(string organizationId, CancellationToken cancellationToken)
+    {
+        var peers = await regionPeers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        Dictionary<string, long> homed = new(StringComparer.Ordinal);
+        if (peers.Count > 0)
+        {
+            var counts = await Task.WhenAll(peers.Select(peer => remote.HomeCountAsync(peer.Address, organizationId, cancellationToken))).ConfigureAwait(false);
+            for (var index = 0; index < peers.Count; index++)
+            {
+                if (counts[index] is { } count)
+                {
+                    homed[peers[index].Region] = count;
+                }
+            }
+        }
+
+        return new AllowanceCheck(databaseAllowance.Limit, homed);
     }
 
     private static async ValueTask<TenantContext?> ProjectTenantAsync(
@@ -1185,7 +1208,7 @@ internal sealed partial class EngineManagementService(
 
     private static string Key(string name) => CatalogTables.Key(name);
 
-    private sealed record AllowanceCheck(Func<PlanTier, long> Limit);
+    private sealed record AllowanceCheck(Func<PlanTier, long> Limit, IReadOnlyDictionary<string, long> HomeCounts);
 
     private sealed record AddedDatabase(ManagedDatabase Database, TenantContext Tenant, bool Existing = false);
 
