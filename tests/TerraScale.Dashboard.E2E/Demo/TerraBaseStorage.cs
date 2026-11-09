@@ -20,9 +20,7 @@ public sealed class TerraBaseStorage : IAsyncDisposable
 {
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(60);
     private static readonly Lock SharedGate = new();
-    private const int PoolSize = 4;
-    private static Task<TerraBaseStorage>[]? shared;
-    private static int next;
+    private static Task<TerraBaseStorage>? shared;
     private readonly string directory = Directory.CreateTempSubdirectory("ts-dashboard-terrabase-").FullName;
     private readonly ConcurrentQueue<string> output = new();
     private readonly TerraScaleIdGenerator ids = new();
@@ -42,26 +40,22 @@ public sealed class TerraBaseStorage : IAsyncDisposable
     {
         lock (SharedGate)
         {
-            shared ??= [.. Enumerable.Range(0, PoolSize).Select(_ => StartAsync())];
-            return shared[next++ % PoolSize];
+            return shared ??= StartAsync();
         }
     }
 
     public static async Task DisposeSharedAsync()
     {
-        Task<TerraBaseStorage>[]? running;
+        Task<TerraBaseStorage>? running;
         lock (SharedGate)
         {
             running = shared;
             shared = null;
         }
 
-        foreach (var server in running ?? [])
+        if (running is { IsCompletedSuccessfully: true })
         {
-            if (server.IsCompletedSuccessfully)
-            {
-                await (await server).DisposeAsync();
-            }
+            await (await running).DisposeAsync();
         }
     }
 

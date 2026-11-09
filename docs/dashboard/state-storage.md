@@ -91,9 +91,8 @@ CREATE TABLE IF NOT EXISTS <table> (id TEXT PRIMARY KEY NOT NULL, version TEXT N
 ## Tests
 
 The E2E suite (`tests/TerraScale.Dashboard.E2E`) runs the relational tables on a real TerraBase built from the same
-commit by `scripts/dashboard/TerraScale.Dashboard.slnx` (`Demo/TerraBaseStorage.cs`). Each test process starts four
-TerraBase processes with the test peer secret and one project on each. Each `DemoEnvironment` gets its own database on
-one of them, with the script `dotnet ef` generates from the committed migrations applied in one request (history rows
+commit by `scripts/dashboard/TerraScale.Dashboard.slnx` (`Demo/TerraBaseStorage.cs`). Each test process starts one
+TerraBase with the test peer secret and one project. Each `DemoEnvironment` gets its own database there, with the script `dotnet ef` generates from the committed migrations applied in one request (history rows
 included), and its hosts replace only the `TerraBaseSqlDatabase` registration; their startup `MigrateAsync` finds
 nothing pending. Journeys read rows through `DemoEnvironment.StorageAsync()`. The production-process journey
 (`Platform/OciProductionJourneyTests.cs`) starts the built program against a fresh `ts-dashboard` platform database
