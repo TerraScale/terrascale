@@ -1,6 +1,7 @@
 //! Credential-isolated ts-auth client transport.
 
 use crate::auth_idp::AuthIdpClient;
+use crate::auth_projects::ProjectsClient;
 use crate::config::ClientConfig;
 use crate::error::{Error, ErrorKind, Result};
 use crate::transport::{
@@ -245,5 +246,10 @@ impl TerraScaleClient {
     }
     pub fn auth_idp(&self, slug: &str) -> Result<AuthIdpClient> {
         AuthIdpClient::new(self.shared.clone(), slug)
+    }
+    /// The project tenant administration client for `/v1/{project}` routes;
+    /// every call takes the operator's TerraScale sign-in token.
+    pub fn projects(&self) -> Result<ProjectsClient> {
+        ProjectsClient::new(self.shared.clone())
     }
 }
