@@ -5,3 +5,4 @@ scripts/vendor/verify-turso-native.sh src/vendor/Turso.Data.Sqlite/native
 make -o restore fmt-check SOLUTION=auth.slnf CONFIGURATION=Release
 dotnet build scripts/auth/fast.slnx --configuration Release --no-restore --nologo -m
 make -o restore -o auth-build -o auth-restore auth-check CONFIGURATION=Release
+scripts/ci/release-only.sh
