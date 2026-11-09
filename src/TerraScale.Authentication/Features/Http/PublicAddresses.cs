@@ -1,27 +1,22 @@
 using System.Net;
 using System.Net.Sockets;
 
-namespace TerraScale.Authentication.Features.Sso;
+namespace TerraScale.Authentication.Features.Http;
 
-/// <summary>
-/// The transport of <see cref="SsoConnections.HttpClientName"/>: organizations name the identity provider URLs it
-/// fetches, so it connects only to public unicast addresses (never loopback, private, link-local, shared or the mesh)
-/// and follows no redirects. The address it checks is the one it connects to, so DNS rebinding gains nothing.
-/// </summary>
 public static class PublicAddresses
 {
-    /// <summary>How long an outbound connection is reused before DNS is resolved again; handlers themselves never rotate.</summary>
     public static readonly TimeSpan ConnectionLifetime = TimeSpan.FromMinutes(2);
 
-    /// <summary>A handler that refuses every host without a public address.</summary>
     public static SocketsHttpHandler Handler() => new()
     {
         AllowAutoRedirect = false,
+        ConnectTimeout = TimeSpan.FromSeconds(10),
         PooledConnectionLifetime = ConnectionLifetime,
+        UseProxy = false,
         ConnectCallback = async (context, cancellationToken) =>
         {
             var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken).ConfigureAwait(false);
-            var address = addresses.Length > 0 && addresses.All(IsPublic) ? addresses[0] : throw new HttpRequestException("The identity provider has no public address.");
+            var address = addresses.Length > 0 && addresses.All(IsPublic) ? addresses[0] : throw new HttpRequestException("The host has no public address.");
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             try
             {
@@ -36,7 +31,6 @@ public static class PublicAddresses
         },
     };
 
-    /// <summary>Whether <paramref name="address"/> is a public unicast address.</summary>
     public static bool IsPublic(IPAddress address)
     {
         ArgumentNullException.ThrowIfNull(address);
@@ -60,7 +54,6 @@ public static class PublicAddresses
         }
 
         var bytes = address.GetAddressBytes();
-        // Only global unicast (2000::/3), and not documentation (2001:db8::/32) or NAT64 (64:ff9b::/96, outside 2000::/3).
         return address.AddressFamily == AddressFamily.InterNetworkV6 && (bytes[0] & 0xE0) == 0x20
             && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8);
     }

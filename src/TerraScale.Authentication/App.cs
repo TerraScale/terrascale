@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
+using TerraScale.Authentication.Features.Http;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
