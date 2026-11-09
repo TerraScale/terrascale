@@ -19,16 +19,16 @@ npm install @terrascale/sdk
 
 ## Quickstart: SQL
 
+Export `TERRASCALE_PROJECT_ID`, exchange `TERRASCALE_API_KEY` for a short-lived access token as shown in the [JavaScript getting-started guide](https://docs.terrascale.tech/getting-started/javascript), and export it as `TERRASCALE_ACCESS_TOKEN`.
+
 ```js
 import { createTerraBaseClient } from "@terrascale/sdk";
 
 const db = createTerraBaseClient({
   baseUrl: "https://api.terrascale.tech",
   project: process.env.TERRASCALE_PROJECT_ID,
-  token: process.env.TERRASCALE_API_KEY,
+  token: process.env.TERRASCALE_ACCESS_TOKEN,
 }).database("app");
-
-The API key must first be exchanged for a short-lived access token; the [JavaScript getting-started guide](https://docs.terrascale.tech/getting-started/javascript) shows the exchange.
 
 await db.batch([
   "CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)",
