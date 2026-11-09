@@ -20,9 +20,9 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Errors and safe retries](/zh-cn/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/zh-cn/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
 - [Functions](/zh-cn/guides/functions) (being updated for SQL).
-- [Metrics, log drains and alerts](/zh-cn/guides/monitoring) (being updated for SQL).
+- [Monitoring](/zh-cn/guides/monitoring): usage counters, request analytics, Prometheus metrics, request logs and the status page.
 - [Backups and restore](/zh-cn/guides/backups-and-restore) (being updated for SQL).
-- [Rename a database](/zh-cn/guides/rename-database) (being updated for SQL).
+- [Rename a database](/zh-cn/guides/rename-database): change a database's name from the dashboard, API, CLI or SDKs.
 - [File storage](/zh-cn/guides/file-storage): project files in buckets with owner, role and public read and write rules.
 - [Schema migrations](/zh-cn/guides/migrations): versioned SQL table migrations with `ts migrate`.
 - [Branches](/zh-cn/guides/branches) (being updated for SQL).
