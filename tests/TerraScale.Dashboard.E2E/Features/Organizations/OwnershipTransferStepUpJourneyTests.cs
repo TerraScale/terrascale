@@ -4,8 +4,6 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations;
 
-// Ownership transfer start goes through hosted step-up: without a fresh confirmation the form only
-// starts verification, and the approved resume performs the mutation.
 public sealed class OwnershipTransferStepUpJourneyTests
 {
     private const string UserId = "test-user";

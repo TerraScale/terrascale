@@ -5,7 +5,6 @@ using static TerraScale.Authentication.Tests.PlatformCalls;
 
 namespace TerraScale.Authentication.Fast.Management;
 
-/// <summary>Organization deletion and ownership-transfer start refuse without a fresh purpose-bound proof.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class StepUpOrganizationTests(TerraBaseFixture fixture)
 {
