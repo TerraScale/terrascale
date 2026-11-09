@@ -50,6 +50,21 @@ public sealed class TerraBaseDbConnection(TerraBaseSqlDatabase database) : DbCon
         state = ConnectionState.Closed;
     }
 
+    /// <summary>
+    /// Detaches an open transaction without rolling it back here — the server ends it at its timeout; the session is
+    /// async-only and is not blocked on. Never throws, so a sync dispose cannot mask the caller's own exception.
+    /// </summary>
+    protected override void Dispose(bool disposing)
+    {
+        if (CurrentTransaction is { } open)
+        {
+            CurrentTransaction = null;
+            open.Abandon();
+        }
+
+        base.Dispose(disposing);
+    }
+
     /// <summary>Closes the connection asynchronously, rolling back an open transaction first.</summary>
     public override async Task CloseAsync()
     {

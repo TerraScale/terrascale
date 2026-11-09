@@ -89,7 +89,7 @@ await using (var tx = await connection.BeginTransactionAsync())
 }
 ```
 
-Dispose without a commit rolls the transaction back, and so does closing or disposing the connection. A server-side transaction lives at most 5 seconds (see [SQL](/ru/concepts/sql)); hold it only for the statements that must commit together. Only `Serializable` isolation exists, matching the strongest isolation the database provides.
+Dispose without a commit rolls the transaction back, and so does closing or disposing the connection asynchronously; a sync `Dispose` detaches the transaction instead, and the server rolls it back at the limit below. A server-side transaction lives at most 5 seconds (see [SQL](/ru/concepts/sql)); hold it only for the statements that must commit together. Only `Serializable` isolation exists, matching the strongest isolation the database provides.
 
 While a transaction is open, every command on that connection must enlist in it: set `command.Transaction` (Dapper does this from its `transaction:` argument) or the command throws.
 

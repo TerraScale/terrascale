@@ -50,6 +50,8 @@ public sealed class TerraBaseDbTransaction : DbTransaction
     /// <summary>The SDK is async-only; use <see cref="RollbackAsync(CancellationToken)"/>.</summary>
     public override void Rollback() => throw NotSync();
 
+    internal void Abandon() => finished = true;
+
     private async Task FinishAsync(Func<CancellationToken, Task> finish, CancellationToken cancellationToken)
     {
         if (finished) throw new InvalidOperationException("The transaction already committed or rolled back.");
