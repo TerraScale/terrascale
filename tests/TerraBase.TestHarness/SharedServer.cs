@@ -27,8 +27,6 @@ public static class SharedServer
         return await Server.Value.WaitAsync(linked.Token);
     }
 
-    public static async Task InitializeAsync() => _ = await Server.Value;
-
     private static Task<ManagementApi> StartAsync()
     {
         using var flow = ExecutionContext.SuppressFlow();
