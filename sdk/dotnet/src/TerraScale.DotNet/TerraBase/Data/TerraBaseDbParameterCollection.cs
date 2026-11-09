@@ -12,7 +12,7 @@ public sealed class TerraBaseDbParameterCollection : DbParameterCollection
     /// <summary>The number of parameters.</summary>
     public override int Count => parameters.Count;
 
-    /// <summary>An object shared by nothing; the collection is not synchronized.</summary>
+    /// <summary>An object shared by nothing; the parameters are not synchronized.</summary>
     public override object SyncRoot { get; } = new();
 
     /// <summary>Adds one parameter.</summary>

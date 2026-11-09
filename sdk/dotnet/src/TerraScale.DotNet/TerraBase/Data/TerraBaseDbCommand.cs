@@ -4,7 +4,7 @@ using System.Data.Common;
 
 namespace TerraScale.DotNet.TerraBase;
 
-/// <summary>One ADO.NET command: autocommit statement execution over SQL REST. Transactions arrive in the next SDK release.</summary>
+/// <summary>One ADO.NET command: autocommit statement execution over SQL REST.</summary>
 public sealed class TerraBaseDbCommand : DbCommand
 {
     private readonly TerraBaseDbParameterCollection parameters = [];

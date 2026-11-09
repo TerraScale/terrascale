@@ -138,8 +138,9 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
     /// <summary>The column value as a float.</summary>
     public override float GetFloat(int ordinal) => (float)GetDouble(ordinal);
 
-    /// <summary>The column value as a decimal.</summary>
-    public override decimal GetDecimal(int ordinal) => (decimal)GetDouble(ordinal);
+    /// <summary>The column value as a decimal parsed from the exact JSON number text.</summary>
+    public override decimal GetDecimal(int ordinal) =>
+        decimal.Parse(Row()[ordinal].GetRawText(), CultureInfo.InvariantCulture);
 
     /// <summary>The column value as a GUID parsed from text.</summary>
     public override Guid GetGuid(int ordinal) => Guid.Parse(GetString(ordinal));
@@ -154,8 +155,8 @@ public sealed class TerraBaseDbDataReader(TerraBaseSqlStatementResult result, bo
         return count;
     }
 
-    /// <summary>Enumerates the rows.</summary>
-    public override IEnumerator GetEnumerator() => rows.GetEnumerator();
+    /// <summary>Enumerates the rows with change notification.</summary>
+    public override IEnumerator GetEnumerator() => new DbEnumerator(this);
 
     /// <summary>Closes the reader.</summary>
     public override void Close() => closed = true;
