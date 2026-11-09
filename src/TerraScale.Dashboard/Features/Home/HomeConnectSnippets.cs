@@ -12,14 +12,14 @@ namespace TerraScale.Dashboard.Features.Home
         public const string TokenExchange = """
         set +x
         set -o pipefail
-        read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY &&  # paste the key, then press Enter
-        TERRASCALE_ACCESS_TOKEN="$(
+        read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter
+        ts_token() {
           printf 'user = "%s:%s"\n' "${TERRASCALE_API_KEY%%_*}" "$TERRASCALE_API_KEY" |
             curl -sS --fail-with-body --config - -d grant_type=client_credentials \
               https://auth.terrascale.tech/terrascale/oauth/token |
             jq -er '.access_token | select(type == "string" and length > 0)'
-        )" &&
-        export TERRASCALE_ACCESS_TOKEN
+        }
+        export TERRASCALE_ACCESS_TOKEN="$(ts_token)"
         """;
 
         // The Postgres wire protocol takes the dashboard API key as the password (ts-docs guides/postgres-clients).
@@ -37,7 +37,7 @@ namespace TerraScale.Dashboard.Features.Home
         curl -sS --fail-with-body --header @/dev/fd/3 \
           -H 'Content-Type: application/json' -d '{"statements":[{"sql":"CREATE TABLE {{Table}} (id INTEGER PRIMARY KEY, title TEXT)"}]}' \
           "{{ApiUrl}}/v1/projects/{{projectId}}/databases/{{database}}/sql/execute" \
-          3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
+          3< <(printf 'Authorization: Bearer %s\n' "$(ts_token)")
         """;
         }
 

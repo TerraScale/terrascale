@@ -25,15 +25,16 @@ Use Bash, `curl` and `jq`, with shell tracing off. Every request to the API at `
 set +x
 set -o pipefail
 read -rs TERRASCALE_API_KEY &&  # paste the key, then press Enter
-TERRASCALE_ACCESS_TOKEN="$(
+ts_token() {
   printf 'user = "%s:%s"\n' "${TERRASCALE_API_KEY%%_*}" "$TERRASCALE_API_KEY" |
     curl -sS --fail-with-body --config - -d grant_type=client_credentials \
       https://auth.terrascale.tech/terrascale/oauth/token |
     jq -er '.access_token | select(type == "string" and length > 0)'
-)" && export TERRASCALE_ACCESS_TOKEN
+}
+export TERRASCALE_ACCESS_TOKEN="$(ts_token)"
 ```
 
-The token lasts 60 seconds (`expires_in: 60`) and carries the key's scopes. Run the exchange again when requests start answering `401`. [Authentication](/guides/authentication) explains the contract.
+Each token lasts 60 seconds (`expires_in: 60`) and carries the key's scopes; call `ts_token` again for a fresh one, as in `Authorization: Bearer $(ts_token)`. [Authentication](/guides/authentication) explains the contract.
 
 ## Query from your application
 
