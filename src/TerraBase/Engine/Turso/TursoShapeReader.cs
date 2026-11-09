@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraBase.Errors;
@@ -152,7 +153,7 @@ internal sealed partial class TursoShapeReader(
             return null;
         }
 
-        var body = System.Text.Encoding.UTF8.GetString(TursoSession.Bytes(reader, 0));
+        var body = Encoding.UTF8.GetString(TursoSession.Bytes(reader, 0));
         var split = body.IndexOf('\n', StringComparison.Ordinal);
         return split == 26 && EntityIds.IsValid(body[..split])
             ? (body[(split + 1)..], body[..split], reader.GetInt64(1), reader.GetInt64(2))
@@ -592,7 +593,7 @@ internal sealed partial class TursoShapeReader(
         }
 
         changes.Write("{\"offset\":\""u8);
-        changes.Write(System.Text.Encoding.ASCII.GetBytes(ShapeNumber(offset)));
+        changes.Write(Encoding.ASCII.GetBytes(ShapeNumber(offset)));
         changes.Write("\",\"ops\":["u8);
         changes.Write(commit.WrittenSpan);
         changes.Write("]"u8);
