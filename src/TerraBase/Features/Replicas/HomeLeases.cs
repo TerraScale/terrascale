@@ -32,7 +32,7 @@ internal interface IHomeWriteLease
 internal sealed class HomeLeases(
     TerraBaseOptions options, IReplicaCatalog catalog, IReplicaPeers peers, IDatabaseReplicas replicas, DatabaseFences fences, HomeLeaseGate leaseGate,
     RegionReplication replication, IStorageEngine engine, IHomeMoveCatalog moves, InternalCredential credential, IMeterFactory meters, ILogger<HomeLeases> logger,
-    RegionalOwners? owners = null) : BackgroundService, IHomeWriteLease
+    RegionalOwners owners) : BackgroundService, IHomeWriteLease
 {
     internal const string Bucket = "terrabase-homes";
     internal static readonly TimeSpan Ttl = TimeSpan.FromSeconds(10);
@@ -469,7 +469,7 @@ internal sealed class HomeLeases(
 
     private async Task ConfirmAllAsync(INatsKVStore kv, CancellationToken cancellationToken)
     {
-        if (owners is { Writer: false })
+        if (!owners.Writer)
         {
             return;
         }
@@ -514,7 +514,7 @@ internal sealed class HomeLeases(
 
     private async Task ConfirmAsync(INatsKVStore kv, TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
     {
-        if (owners is { Writer: false })
+        if (!owners.Writer)
         {
             return;
         }

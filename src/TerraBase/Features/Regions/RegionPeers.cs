@@ -14,7 +14,7 @@ public interface IRegionPeers
     ValueTask<IReadOnlyList<RegionPeer>> OtherRegionsAsync(CancellationToken cancellationToken);
 }
 
-internal sealed class PeersFileRegionPeers(TerraBaseOptions options, Replicas.RegionalOwners? owners = null) : IRegionPeers
+internal sealed class PeersFileRegionPeers(TerraBaseOptions options, RegionalOwners owners) : IRegionPeers
 {
     public async ValueTask<IReadOnlyList<RegionPeer>> OtherRegionsAsync(CancellationToken cancellationToken)
     {
@@ -23,8 +23,7 @@ internal sealed class PeersFileRegionPeers(TerraBaseOptions options, Replicas.Re
             return [];
         }
 
-        var nodes = owners is null ? await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)
-            : await owners.NodesAsync(cancellationToken).ConfigureAwait(false);
+        var nodes = await owners.NodesAsync(cancellationToken).ConfigureAwait(false);
         return [.. nodes.Where(node => node.Region != options.Region).DistinctBy(node => node.Region)
             .Select(node => new RegionPeer(node.Region, node.InternalListener(options.InternalPort)))];
     }

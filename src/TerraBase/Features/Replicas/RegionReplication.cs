@@ -26,7 +26,7 @@ namespace TerraBase.Features.Replicas;
 internal sealed class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
-    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners? owners = null) : BackgroundService
+    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners) : BackgroundService
 {
     /// <summary>How often every replica pulls and every home's catalog is read again without a notice.</summary>
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
@@ -157,7 +157,7 @@ internal sealed class RegionReplication(
             logger.ZLogWarning($"The peers file could not be read; replicas keep the regions they know: {error.GetType().Name:@Error}");
         }
 
-        if (owners is { Writer: true })
+        if (owners.Writer)
         {
             foreach (var (key, follower) in _followers.Where(entry => entry.Value.Home.Region == options.Region).ToArray())
             {
@@ -240,7 +240,7 @@ internal sealed class RegionReplication(
                 try
                 {
                     if (await catalog.FindAsync(revised.Database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-                        || placement.Home != options.Region || !(owners?.Writer ?? true))
+                        || placement.Home != options.Region || !owners.Writer)
                     {
                         _ = _published.TryRemove(key, out _);
                         continue;
@@ -351,7 +351,7 @@ internal sealed class RegionReplication(
 
     private void Notice(string subject, byte[]? data)
     {
-        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _] || replica != options.Region || (home == options.Region && (owners?.Writer ?? true)) || data is null
+        if (subject.Split('.') is not ["terrabase", "revision", var replica, var home, _] || replica != options.Region || (home == options.Region && owners.Writer) || data is null
             || !RevisionPush.TryRead(data, out var notice, out var answer) || notice is null)
         {
             return;
