@@ -62,7 +62,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 if (value.ValueKind == JsonValueKind.String)
                     return long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer)
                         ? integer : throw new McpProtocolException(name + " must be an integer.", McpErrorCode.InvalidParams);
-                return value.TryGetInt64(out var whole) ? whole : throw new McpProtocolException(name + " must be an integer.", McpErrorCode.InvalidParams);
+                return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var whole) ? whole : throw new McpProtocolException(name + " must be an integer.", McpErrorCode.InvalidParams);
             }
             decimal? Hours()
             {
@@ -70,7 +70,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 if (value.ValueKind == JsonValueKind.String)
                     return decimal.TryParse(value.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var hours)
                         ? hours : throw new McpProtocolException("ttlHours must be a number.", McpErrorCode.InvalidParams);
-                return value.TryGetDecimal(out var ttl) ? ttl : throw new McpProtocolException("ttlHours must be a number.", McpErrorCode.InvalidParams);
+                return value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var ttl) ? ttl : throw new McpProtocolException("ttlHours must be a number.", McpErrorCode.InvalidParams);
             }
             var scope = credential.Scope;
             if (!Tools.Contains(tool)) throw new AccountAccessException("This tool requires a dashboard sign-in. API keys reach database tools only.");
