@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     // Immutable authorization and opaque owned references survive ACK indefinitely.
     // Retain cleanup authority so delayed regional writes can be removed again.
-    public sealed class DeletionCleanupJournal(IDashboardState state)
+    public sealed class DeletionCleanupJournal(IDashboardState state, OrganizationStore organizations)
     {
         public const string Table = "dashboard_deletion_cleanup";
         public sealed record Entry(TsAuthDeletionProof Proof, string[] ProjectIds, string[] CustomerIds);
@@ -23,14 +23,9 @@ namespace TerraScale.Dashboard.Features.Profile
             HashSet<string> customers = [];
             if (proof.Scope == "organization")
             {
-                if (await state.GetAsync(AccountService.OrganizationsTable, proof.SubjectId, cancellationToken) is { } org && !AccountService.IsDeletionFence(org))
+                if (await organizations.FindAsync(proof.SubjectId, cancellationToken) is { Erased: false } org)
                 {
-                    var value = AccountService.Read<OrganizationRecord>(org);
-                    if (org.Id != proof.SubjectId || value.Id != proof.SubjectId)
-                    {
-                        throw new IOException("Cleanup journal organization changed.");
-                    }
-
+                    var value = org.Organization;
                     projects.UnionWith(value.Projects.Keys);
                     projects.UnionWith(value.DeletedProjectIds);
                 }

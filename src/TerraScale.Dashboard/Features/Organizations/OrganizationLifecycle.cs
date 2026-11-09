@@ -5,7 +5,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
-    public sealed class OrganizationLifecycleService(IDashboardState state, AccountService accounts, ITsAuthPlatform platform, StripeBilling billing, TimeProvider time)
+    public sealed class OrganizationLifecycleService(OrganizationStore organizations, AccountService accounts, ITsAuthPlatform platform, StripeBilling billing, TimeProvider time)
     {
         public async Task LeaveAsync(AccountContext context, CancellationToken cancellationToken)
         {
@@ -98,9 +98,9 @@ namespace TerraScale.Dashboard.Features.Organizations
 
             var project = context.Organization!.Projects.GetValueOrDefault(projectId);
             var removed = project is null;
-            if (removed && await state.GetAsync(AccountService.OrganizationsTable, context.Organization.Id, cancellationToken) is { } saved)
+            if (removed && await organizations.FindAsync(context.Organization.Id, cancellationToken) is { } saved)
             {
-                var pendingName = AccountService.Read<OrganizationRecord>(saved).PendingProjectDeletions.GetValueOrDefault(projectId);
+                var pendingName = (saved.Erased ? throw new IOException("Dashboard record was erased.") : saved.Organization).PendingProjectDeletions.GetValueOrDefault(projectId);
                 if (!string.IsNullOrEmpty(pendingName) && pendingName == confirmation.Trim())
                 {
                     project = new() { Id = projectId, Name = pendingName, OrganizationId = context.Organization.Id };
@@ -208,17 +208,13 @@ namespace TerraScale.Dashboard.Features.Organizations
         {
             for (var attempt = 0; ; attempt++)
             {
-                var row = await state.GetAsync(AccountService.OrganizationsTable, context.Organization!.Id, cancellationToken);
-                if (row is null)
+                var stored = await organizations.FindAsync(context.Organization!.Id, cancellationToken);
+                if (stored is null)
                 {
                     return;
                 }
 
-                var org = AccountService.Read<OrganizationRecord>(row);
-                if (org.Id != context.Organization.Id)
-                {
-                    throw new IOException("Organization projection identity changed.");
-                }
+                var org = stored.Erased ? throw new IOException("Dashboard record was erased.") : stored.Organization;
 
                 if (deleted) { org.Archived = true; org.Status = "deleted"; org.DeletionRequested = true; }
                 else
@@ -229,7 +225,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, deleted ? "organization.deleted" : "member.left", deleted ? org.Name : context.UserId, "organization", time.GetUtcNow(), Ip: accounts.ClientIp));
                 try
                 {
-                    await state.PutAsync(AccountService.OrganizationsTable, org.Id, JsonSerializer.SerializeToElement(org), StatePrecondition.Matches(row.Version), cancellationToken);
+                    await organizations.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
                 catch (StateConflictException) when (attempt < 3) { }

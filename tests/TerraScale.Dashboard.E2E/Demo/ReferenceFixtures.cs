@@ -27,6 +27,8 @@ namespace TerraScale.Dashboard.E2E
         public static async Task<ReferencePersonas> InitializeAsync(string root, TestState state, Func<Task<DashboardDbContext>> storage, TestWorkspace workspace,
             Action<ReferencePrincipal> registerPrincipal, Action<ManagedDatabase> registerDatabase, Func<DatabaseScope, string, string, Task> runSql)
         {
+            var accounts = new AccountStore(new TestStorageFactory(storage), TimeProvider.System);
+            var organizations = new OrganizationStore(new TestStorageFactory(storage));
             using var manifest = await ReadManifestAsync(root);
             var routes = ReadPersona(manifest.RootElement.GetProperty("routes"));
             var seeded = ReadPersona(manifest.RootElement.GetProperty("seeded"));
@@ -44,19 +46,19 @@ namespace TerraScale.Dashboard.E2E
             var personal = routes.Personal;
             ApplyCapturedMembers(personal, routes.Members[personal.Id]);
             ApplyCapturedInvitations(personal, routes.Invitations[personal.Id]);
-            await PersistOrganizationAsync(state, workspace, personal);
-            await PersistAccountAsync(state, personas.Routes, routes.OrganizationIds, routes.ActiveOrganizationId, routes.ActiveProjectId);
+            await PersistOrganizationAsync(organizations, workspace, personal);
+            await PersistAccountAsync(accounts, personas.Routes, routes.OrganizationIds, routes.ActiveOrganizationId, routes.ActiveProjectId);
 
             var marioPersonal = seeded.Personal;
             ApplyCapturedMembers(marioPersonal, seeded.Members[marioPersonal.Id]);
             ApplyCapturedInvitations(marioPersonal, seeded.Invitations[marioPersonal.Id]);
-            await PersistOrganizationAsync(state, workspace, marioPersonal);
+            await PersistOrganizationAsync(organizations, workspace, marioPersonal);
             var labs = Labs();
             ApplyOrganizationMetadata(labs, seeded.Organizations.Single(item => item.GetProperty("id").GetString() == LabsId));
             ApplyCapturedMembers(labs, seeded.Members[labs.Id]);
             ApplyCapturedInvitations(labs, seeded.Invitations[labs.Id]);
-            await PersistOrganizationAsync(state, workspace, labs);
-            await PersistAccountAsync(state, personas.Seeded, seeded.OrganizationIds, seeded.ActiveOrganizationId, seeded.ActiveProjectId, Notifications());
+            await PersistOrganizationAsync(organizations, workspace, labs);
+            await PersistAccountAsync(accounts, personas.Seeded, seeded.OrganizationIds, seeded.ActiveOrganizationId, seeded.ActiveProjectId, Notifications());
             await state.PutAsync(StripeBilling.Table, LabsId, JsonSerializer.SerializeToElement(new BillingBinding
             {
                 OrganizationId = LabsId,
@@ -390,12 +392,9 @@ namespace TerraScale.Dashboard.E2E
             organization.Members = members;
         }
 
-        private static async Task PersistAccountAsync(TestState state, ReferencePrincipal principal, List<string> organizations,
+        private static async Task PersistAccountAsync(AccountStore accounts, ReferencePrincipal principal, List<string> organizations,
             string activeOrganization, string activeProject, List<NotificationRecord>? notifications = null)
         {
-            // Import the public source ID while preserving the private subject
-            // digest and its canonical, create-only ownership index.
-            var storageKey = AccountService.AccountStorageKey(principal.Subject);
             var account = new AccountRecord
             {
                 Id = principal.SourceAccountId,
@@ -411,11 +410,10 @@ namespace TerraScale.Dashboard.E2E
                 ActiveProjectId = activeProject,
                 Notifications = notifications ?? []
             };
-            await state.PutAsync(AccountService.IdentitiesTable, storageKey, JsonSerializer.SerializeToElement(new AccountIdentityBinding(principal.Subject, account.Id)), StatePrecondition.Absent, default);
-            await state.PutAsync(AccountService.AccountsTable, storageKey, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
+            await accounts.CreateAsync(account, default);
         }
 
-        private static async Task PersistOrganizationAsync(TestState state, TestWorkspace workspace, OrganizationRecord organization)
+        private static async Task PersistOrganizationAsync(OrganizationStore organizations, TestWorkspace workspace, OrganizationRecord organization)
         {
             lock (workspace.Gate)
             {
@@ -427,7 +425,7 @@ namespace TerraScale.Dashboard.E2E
                 workspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
                 workspace.SeedInvitationMetadata(organization);
             }
-            await state.PutAsync(AccountService.OrganizationsTable, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Absent, default);
+            await organizations.CreateAsync(organization, default);
         }
 
         private static OrganizationRecord Personal(ReferencePrincipal principal, JsonElement detail)

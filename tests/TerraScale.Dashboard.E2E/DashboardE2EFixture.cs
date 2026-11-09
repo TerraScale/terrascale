@@ -56,13 +56,11 @@ namespace TerraScale.Dashboard.E2E
 
         public async Task PlanAsync(string organizationId, string planId)
         {
-            var state = first!.Services.GetRequiredService<IDashboardState>();
-            var current = await state.GetAsync(AccountService.OrganizationsTable, organizationId, default)
+            var organizations = first!.Services.GetRequiredService<OrganizationStore>();
+            var current = await organizations.FindAsync(organizationId, default)
                 ?? throw new InvalidOperationException("The fixture plan targets an existing organization");
-            var organization = current.Body.Deserialize<OrganizationRecord>()!;
-            organization.PlanId = planId;
-            await state.PutAsync(AccountService.OrganizationsTable, organizationId, JsonSerializer.SerializeToElement(organization),
-                StatePrecondition.Matches(current.Version), default);
+            current.Organization.PlanId = planId;
+            await organizations.ReplaceAsync(current, default);
         }
 
         public async ValueTask DisposeAsync()

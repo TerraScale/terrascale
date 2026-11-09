@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     // Every entitlement is derived from a bound checkout and Stripe's current
     // subscription. Browser return parameters and webhook snapshots grant nothing.
-    public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboardState state, AccountService accounts,
+    public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboardState state, OrganizationStore organizations, AccountService accounts,
         IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger)
     {
         public const string Table = "dashboard_billing";
@@ -431,13 +431,9 @@ namespace TerraScale.Dashboard.Features.Billing
                 var client = await ClientAsync(cancellationToken);
                 // Capture both versions before Stripe reads. A conflict in either
                 // projection requires fresh canonical facts, never a stale replay.
-                var organizationRow = await state.GetAsync(AccountService.OrganizationsTable, orgId, cancellationToken)
+                var organizationRow = await organizations.FindAsync(orgId, cancellationToken)
                     ?? throw new IOException("Billing organization is unavailable.");
-                var org = AccountService.Read<OrganizationRecord>(organizationRow);
-                if (org.Id != orgId)
-                {
-                    throw new IOException("Billing organization changed.");
-                }
+                var org = organizationRow.Erased ? throw new IOException("Dashboard record was erased.") : organizationRow.Organization;
 
                 var previousPlanId = org.PlanId;
                 Stripe.Checkout.Session? checkout = null;
@@ -559,7 +555,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 try
                 {
                     await state.PutAsync(Table, orgId, JsonSerializer.SerializeToElement(binding), StatePrecondition.Matches(billingRow.Version), cancellationToken);
-                    await state.PutAsync(AccountService.OrganizationsTable, orgId, JsonSerializer.SerializeToElement(org), StatePrecondition.Matches(organizationRow.Version), cancellationToken);
+                    await organizations.ReplaceAsync(organizationRow, cancellationToken);
                     // The two records have separate CAS versions. If another
                     // reconciliation advanced billing while we projected it,
                     // reconcile again before reporting success.

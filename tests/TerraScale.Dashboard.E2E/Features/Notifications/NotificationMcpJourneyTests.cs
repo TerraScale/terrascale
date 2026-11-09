@@ -101,13 +101,12 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
 
         private async Task<string[]> SeedAsync(string organizationId, string projectId)
         {
-            var state = fixture.Service<IDashboardState>();
-            var key = AccountService.AccountStorageKey("test-user");
+            var accounts = fixture.Service<AccountStore>();
             for (var attempt = 0; ; attempt++)
             {
-                var row = await state.GetAsync(AccountService.AccountsTable, key, CancellationToken.None)
+                var row = await accounts.FindAsync("test-user", CancellationToken.None)
                     ?? throw new InvalidOperationException("The seeded test account is unavailable.");
-                var account = AccountService.Read<AccountRecord>(row);
+                var account = row.Account;
                 string[] ids = [AccountService.NewId(), AccountService.NewId()];
                 account.Notifications.AddRange([
                     new NotificationRecord
@@ -124,8 +123,7 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
                     }]);
                 try
                 {
-                    await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account),
-                        StatePrecondition.Matches(row.Version), CancellationToken.None);
+                    await accounts.ReplaceAsync(row, CancellationToken.None);
                     return ids;
                 }
                 catch (StateConflictException) when (attempt < 7) { }
@@ -136,21 +134,19 @@ namespace TerraScale.Dashboard.E2E.Features.Notifications
         {
             try
             {
-                var state = fixture.Service<IDashboardState>();
-                var key = AccountService.AccountStorageKey("test-user");
+                var accounts = fixture.Service<AccountStore>();
                 for (var attempt = 0; attempt < 8; attempt++)
                 {
-                    if (await state.GetAsync(AccountService.AccountsTable, key, CancellationToken.None) is not { } row)
+                    if (await accounts.FindAsync("test-user", CancellationToken.None) is not { } row)
                     {
                         return;
                     }
 
-                    var account = AccountService.Read<AccountRecord>(row);
+                    var account = row.Account;
                     account.Notifications.RemoveAll(item => seed.Contains(item.Id));
                     try
                     {
-                        await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account),
-                            StatePrecondition.Matches(row.Version), CancellationToken.None);
+                        await accounts.ReplaceAsync(row, CancellationToken.None);
                         return;
                     }
                     catch (StateConflictException) { }

@@ -10,12 +10,12 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     // Local fences guard CAS writers; immutable authorization and enrollment references
     // replay after ACK to repair delayed regional writes.
-    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDashboardState state, IDbContextFactory<DashboardDbContext> storage, DashboardSessions sessions,
+    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDashboardState state, IDbContextFactory<DashboardDbContext> storage, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
         AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ILogger<DeletionReconciler> logger) : BackgroundService
     {
-        private readonly DeletionCleanupJournal journal = new(state);
+        private readonly DeletionCleanupJournal journal = new(state, organizations);
         private readonly DeletionProjectRecords projectRecords = new(storage);
-        private readonly DeletionRelatedRecords related = new(state, storage);
+        private readonly DeletionRelatedRecords related = new(state, storage, accounts);
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -78,17 +78,17 @@ namespace TerraScale.Dashboard.Features.Profile
             switch (proof.Scope)
             {
                 case "account":
-                    await AccountService.FenceDeletionAsync(state, proof.SubjectId, proof.Id, cancellationToken);
+                    await accounts.FenceAsync(proof.SubjectId, proof.Id, cancellationToken);
                     await tokens.ForgetAllAsync(proof.SubjectId, cancellationToken);
                     await sessions.RevokeUserAsync(proof.SubjectId, cancellationToken);
                     await sessions.ForgetUserAsync(proof.SubjectId, cancellationToken);
                     await related.CleanAccountAsync(proof.SubjectId, cancellationToken);
                     await AccountDeletion.CleanOperationsAsync(state, identity, proof.SubjectId, clock, cancellationToken);
-                    var key = AccountService.AccountStorageKey(proof.SubjectId);
-                    foreach (var table in new[] { AccountService.AccountsTable, AccountService.IdentitiesTable })
+                    if (await accounts.FindAsync(proof.SubjectId, cancellationToken) is not { Erased: true })
                     {
-                        await VerifyFenceAsync(table, key, cancellationToken);
+                        throw new IOException("Erasure fence is unavailable.");
                     }
+
                     break;
                 case "organization":
                     var ended = await billing.EndSubscriptionAsync(proof.SubjectId, cancellationToken, completedDeletion: true);
@@ -100,14 +100,9 @@ namespace TerraScale.Dashboard.Features.Profile
                     }
 
                     var projects = new HashSet<string>(entry.ProjectIds, StringComparer.Ordinal);
-                    if (await state.GetAsync(AccountService.OrganizationsTable, proof.SubjectId, cancellationToken) is { } existing && !AccountService.IsDeletionFence(existing))
+                    if (await organizations.FindAsync(proof.SubjectId, cancellationToken) is { Erased: false } existing)
                     {
-                        var org = AccountService.Read<OrganizationRecord>(existing);
-                        if (existing.Id != proof.SubjectId || org.Id != proof.SubjectId)
-                        {
-                            throw new IOException("Deletion organization identity changed.");
-                        }
-
+                        var org = existing.Organization;
                         projects.UnionWith(org.Projects.Keys);
                         projects.UnionWith(org.DeletedProjectIds);
                     }
@@ -141,9 +136,12 @@ namespace TerraScale.Dashboard.Features.Profile
                             current.CheckoutId == ended.CheckoutId && current.SubscriptionId == ended.SubscriptionId &&
                             (current.Kind != "stripe" || current.State == "deleting" && current.Status == "canceled" && !current.PaymentValidated);
                     }, cancellationToken);
-                    await AccountService.FenceOrganizationDeletionAsync(state, proof.SubjectId, proof.Id, cancellationToken);
+                    await organizations.FenceAsync(proof.SubjectId, proof.Id, cancellationToken);
                     await VerifyFenceAsync(StripeBilling.Table, proof.SubjectId, cancellationToken);
-                    await VerifyFenceAsync(AccountService.OrganizationsTable, proof.SubjectId, cancellationToken);
+                    if (!await organizations.IsErasedAsync(proof.SubjectId, cancellationToken))
+                    {
+                        throw new IOException("Erasure fence is unavailable.");
+                    }
                     break;
                 case "project":
                     await CleanProjectAsync(proof, cancellationToken);
@@ -175,72 +173,33 @@ namespace TerraScale.Dashboard.Features.Profile
         private async Task DropProjectAsync(TsAuthDeletionProof proof, CancellationToken cancellationToken)
         {
             var organizationId = proof.OrganizationId ?? throw new IOException("Deletion organization identity is missing.");
-            var row = await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken);
-            if (row is not null && AccountService.IsDeletionFence(row))
+            for (var attempt = 0; ; attempt++)
             {
-                if (row.Id != organizationId)
+                var stored = await organizations.FindAsync(organizationId, cancellationToken);
+                if (stored is { Erased: true })
                 {
-                    throw new IOException("Deletion organization identity does not match.");
-                }
-
-                return;
-            }
-            // Preserve a terminal project ID even before this organization has a dashboard projection.
-            var org = row is null ? new OrganizationRecord { Id = organizationId, Kind = "business", BillingStatus = "billing_required" } : AccountService.Read<OrganizationRecord>(row);
-            if (org.PendingProjectDeletions is null)
-            {
-                throw new JsonException("Deletion project markers are invalid.");
-            }
-
-            if (row is not null && row.Id != organizationId || org.Id != organizationId)
-            {
-                throw new IOException("Deletion organization identity does not match.");
-            }
-
-            if (org.Projects.TryGetValue(proof.SubjectId, out var project) && project.Id != proof.SubjectId)
-            {
-                throw new IOException("Deletion project identity does not match.");
-            }
-
-            var removed = org.Projects.Remove(proof.SubjectId);
-            removed |= org.PendingProjectDeletions.Remove(proof.SubjectId);
-            removed |= org.DeletedProjectIds.Add(proof.SubjectId);
-            foreach (var id in org.InvitationReservations.Where(pair => pair.Value.ProjectId == proof.SubjectId).Select(pair => pair.Key).ToArray())
-            {
-                removed |= org.InvitationReservations.Remove(id);
-            }
-
-            if (removed)
-            {
-                await state.PutAsync(AccountService.OrganizationsTable, organizationId, JsonSerializer.SerializeToElement(org),
-                row is null ? StatePrecondition.Absent : StatePrecondition.Matches(row.Version), cancellationToken);
-            }
-
-            if (await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken) is { } latest)
-            {
-                if (AccountService.IsDeletionFence(latest))
-                {
-                    if (latest.Id != organizationId)
-                    {
-                        throw new IOException("Deletion organization identity does not match.");
-                    }
-
                     return;
                 }
-                var current = AccountService.Read<OrganizationRecord>(latest);
-                if (current.PendingProjectDeletions is null)
+                var org = stored?.Organization ?? new OrganizationRecord { Id = organizationId, Kind = "business", BillingStatus = "billing_required" };
+                var removed = org.Projects.Remove(proof.SubjectId);
+                removed |= org.PendingProjectDeletions.Remove(proof.SubjectId);
+                removed |= org.DeletedProjectIds.Add(proof.SubjectId);
+                foreach (var id in org.InvitationReservations.Where(pair => pair.Value.ProjectId == proof.SubjectId).Select(pair => pair.Key).ToArray())
                 {
-                    throw new JsonException("Deletion project markers are invalid.");
+                    removed |= org.InvitationReservations.Remove(id);
                 }
 
-                if (latest.Id != organizationId || current.Id != organizationId || current.Projects.ContainsKey(proof.SubjectId) || current.PendingProjectDeletions.ContainsKey(proof.SubjectId) || !current.DeletedProjectIds.Contains(proof.SubjectId))
+                if (!removed)
                 {
-                    throw new IOException("Deletion project cleanup is incomplete.");
+                    return;
                 }
-            }
-            else
-            {
-                throw new IOException("Deletion project fence is unavailable.");
+
+                try
+                {
+                    await (stored is null ? organizations.CreateAsync(org, cancellationToken) : organizations.ReplaceAsync(stored, cancellationToken));
+                    return;
+                }
+                catch (StateConflictException) when (attempt < 3) { }
             }
         }
 

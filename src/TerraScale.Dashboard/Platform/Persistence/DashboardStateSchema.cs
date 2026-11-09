@@ -9,9 +9,6 @@ namespace TerraScale.Dashboard.Platform.Persistence
         [
             "account_deletions",
             "dashboard_deletion_cleanup",
-            "dashboard_accounts",
-            "dashboard_account_identities",
-            "dashboard_organizations",
             "dashboard_billing",
             "dashboard_internal_billing",
             "dashboard_stripe_customers",

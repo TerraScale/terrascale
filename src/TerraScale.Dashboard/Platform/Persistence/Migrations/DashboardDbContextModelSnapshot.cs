@@ -17,6 +17,565 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
 
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.AccountRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActiveOrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("active_organization_id");
+
+                    b.Property<string>("ActiveProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("active_project_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("email");
+
+                    b.Property<string>("ErasureId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("erasure_id");
+
+                    b.Property<string>("Locale")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("locale");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<bool>("OnboardingCompleted")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("onboarding_completed");
+
+                    b.Property<string>("OnboardingStep")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("onboarding_step");
+
+                    b.Property<string>("OrganizationIds")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_ids");
+
+                    b.Property<DateTime?>("PersonalClaimUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("personal_claim_until");
+
+                    b.Property<string>("PersonalOrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("personal_organization_id");
+
+                    b.Property<string>("Phone")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("phone");
+
+                    b.Property<string>("SubjectHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("subject_hash");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SubjectHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("accounts", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_accounts_erasure", "(erasure_id IS NULL AND length(user_id) BETWEEN 1 AND 256) OR (length(erasure_id) = 26 AND user_id IS NULL AND name = '' AND email = '' AND phone = '' AND organization_ids = '[]' AND personal_organization_id = '' AND active_organization_id = '' AND active_project_id = '')");
+
+                            t.HasCheckConstraint("ck_accounts_id", "length(id) = 26");
+
+                            t.HasCheckConstraint("ck_accounts_organization_ids", "json_type(organization_ids) = 'array'");
+
+                            t.HasCheckConstraint("ck_accounts_personal_organization_id", "length(personal_organization_id) IN (0, 26)");
+
+                            t.HasCheckConstraint("ck_accounts_subject_hash", "length(subject_hash) = 64");
+
+                            t.HasCheckConstraint("ck_accounts_version", "length(version) = 26");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.AuditEventRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("action");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("actor");
+
+                    b.Property<string>("Ip")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ip");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("Risk")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("risk");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("source");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target");
+
+                    b.Property<string>("TargetType")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("target_type");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "OccurredAt");
+
+                    b.ToTable("audit_events", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_audit_events_action", "length(action) > 0");
+
+                            t.HasCheckConstraint("ck_audit_events_id", "length(id) = 26");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.InvitationReservationRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("email");
+
+                    b.Property<string>("InvitationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("invitation_id");
+
+                    b.Property<string>("Known")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("known");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<DateTime>("ReservedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reserved_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "InvitationId")
+                        .IsUnique()
+                        .HasFilter("invitation_id <> ''");
+
+                    b.ToTable("invitation_reservations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_invitation_reservations_email", "length(email) > 0");
+
+                            t.HasCheckConstraint("ck_invitation_reservations_id", "length(id) = 26");
+
+                            t.HasCheckConstraint("ck_invitation_reservations_known", "json_type(known) = 'array'");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.NotificationRow", b =>
+                {
+                    b.Property<string>("AccountId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("account_id");
+
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BillingMonth")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("billing_month");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("body");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("severity");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("title");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("type");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("url");
+
+                    b.HasKey("AccountId", "Id");
+
+                    b.HasIndex("OrganizationId", "ProjectId");
+
+                    b.ToTable("notifications", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_notifications_id", "length(id) BETWEEN 1 AND 128");
+
+                            t.HasCheckConstraint("ck_notifications_status", "lower(status) IN ('unread', 'read')");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.OrganizationProjectRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BackupRegion")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("backup_region");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("is_default");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<long>("ReadLimit")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("read_limit");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("region");
+
+                    b.Property<string>("Regions")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("regions");
+
+                    b.Property<long>("ReplicationLimit")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("replication_limit");
+
+                    b.Property<long>("SpendCapCents")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("spend_cap_cents");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<long>("WriteLimit")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("write_limit");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("organization_projects", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_organization_projects_id", "length(id) = 26");
+
+                            t.HasCheckConstraint("ck_organization_projects_limits", "read_limit >= 0 AND write_limit >= 0 AND replication_limit >= 0");
+
+                            t.HasCheckConstraint("ck_organization_projects_regions", "json_type(regions) = 'array'");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.OrganizationRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("Archived")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("archived");
+
+                    b.Property<int?>("AuditRetentionDays")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("audit_retention_days");
+
+                    b.Property<string>("BillingStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("billing_status");
+
+                    b.Property<string>("DeletedProjectIds")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("deleted_project_ids");
+
+                    b.Property<bool>("DeletionRequested")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("deletion_requested");
+
+                    b.Property<string>("ErasureId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("erasure_id");
+
+                    b.Property<string>("InternalBilling")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("internal_billing");
+
+                    b.Property<string>("InternalBillingAlerts")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("internal_billing_alerts");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kind");
+
+                    b.Property<bool>("PaidExcess")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("paid_excess");
+
+                    b.Property<bool>("PaymentMethodValidated")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("payment_method_validated");
+
+                    b.Property<string>("PendingProjectDeletions")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("pending_project_deletions");
+
+                    b.Property<string>("PlanId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("plan_id");
+
+                    b.Property<long>("SpendCapCents")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("spend_cap_cents");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("organizations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_organizations_audit_retention", "audit_retention_days IS NULL OR audit_retention_days BETWEEN 1 AND 90");
+
+                            t.HasCheckConstraint("ck_organizations_erasure", "erasure_id IS NULL OR (length(erasure_id) = 26 AND internal_billing IS NULL AND internal_billing_alerts = '{}' AND pending_project_deletions = '{}')");
+
+                            t.HasCheckConstraint("ck_organizations_id", "length(id) = 26");
+
+                            t.HasCheckConstraint("ck_organizations_kind", "kind IN ('personal', 'business')");
+
+                            t.HasCheckConstraint("ck_organizations_project_markers", "json_type(pending_project_deletions) = 'object' AND json_type(deleted_project_ids) = 'array' AND json_type(internal_billing_alerts) = 'object'");
+
+                            t.HasCheckConstraint("ck_organizations_version", "length(version) = 26");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.ProjectDatabaseRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AllRegions")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("all_regions");
+
+                    b.Property<int>("BackupRetentionDays")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("backup_retention_days");
+
+                    b.Property<string>("BranchedFrom")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("branched_from");
+
+                    b.Property<string>("ConflictOf")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("conflict_of");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("endpoint");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("organization_id");
+
+                    b.Property<long>("PlacementRevision")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("placement_revision");
+
+                    b.Property<string>("PreviousName")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("previous_name");
+
+                    b.Property<string>("ProjectId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<long>("ReadLimit")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("read_limit");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("region");
+
+                    b.Property<string>("Regions")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("regions");
+
+                    b.Property<long>("ReplicationLimit")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("replication_limit");
+
+                    b.Property<long>("SpendCapCents")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("spend_cap_cents");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<long>("WriteLimit")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("write_limit");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("ProjectId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("project_databases", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_project_databases_id", "length(id) = 26");
+
+                            t.HasCheckConstraint("ck_project_databases_limits", "read_limit >= 0 AND write_limit >= 0 AND replication_limit >= 0 AND backup_retention_days >= 0");
+
+                            t.HasCheckConstraint("ck_project_databases_name", "length(name) > 0");
+
+                            t.HasCheckConstraint("ck_project_databases_placement_revision", "placement_revision >= 0");
+
+                            t.HasCheckConstraint("ck_project_databases_regions", "json_type(regions) = 'array'");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Dashboard.Features.Auth.AccessTokenRow", b =>
                 {
                     b.Property<string>("Id")
@@ -847,6 +1406,57 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_mcp_codes_token_expiry", "token_expires_at > expires_at");
                         });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.AuditEventRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Common.Accounts.OrganizationRow", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.InvitationReservationRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Common.Accounts.OrganizationRow", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.NotificationRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Common.Accounts.AccountRow", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.OrganizationProjectRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Common.Accounts.OrganizationRow", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Common.Accounts.ProjectDatabaseRow", b =>
+                {
+                    b.HasOne("TerraScale.Dashboard.Common.Accounts.OrganizationRow", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Dashboard.Common.Accounts.OrganizationProjectRow", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("TerraScale.Dashboard.Features.Auth.AccessTokenRow", b =>

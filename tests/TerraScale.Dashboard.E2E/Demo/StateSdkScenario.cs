@@ -194,15 +194,13 @@ namespace TerraScale.Dashboard.E2E
         // Gives the only stored organization an active paid plan, as a reconciled checkout does, and returns its id.
         public async Task<string> UpgradeOnlyOrganizationAsync(string planId)
         {
-            var state = first!.Services.GetRequiredService<IDashboardState>();
-            var row = (await state.ListAsync(AccountService.OrganizationsTable, default)).Single();
-            var organization = AccountService.Read<OrganizationRecord>(row);
-            var stored = await state.GetAsync(AccountService.OrganizationsTable, organization.Id, default) ?? throw new IOException("The organization is unavailable.");
-            organization.PlanId = planId;
-            organization.BillingStatus = "active";
-            await state.PutAsync(AccountService.OrganizationsTable, organization.Id, JsonSerializer.SerializeToElement(organization),
-                StatePrecondition.Matches(stored.Version), default);
-            return organization.Id;
+            var organizations = first!.Services.GetRequiredService<OrganizationStore>();
+            var id = (await organizations.ListAsync(default)).Single().Id;
+            var stored = await organizations.FindAsync(id, default) ?? throw new IOException("The organization is unavailable.");
+            stored.Organization.PlanId = planId;
+            stored.Organization.BillingStatus = "active";
+            await organizations.ReplaceAsync(stored, default);
+            return id;
         }
 
         // One pass of the production reconciler (test hosts run it on demand, never on its timer).
@@ -330,9 +328,7 @@ namespace TerraScale.Dashboard.E2E
             private int planPublishes;
             private TaskCompletionSource? tableGate;
             private TaskCompletionSource? planGate;
-            private TaskCompletionSource? rowGate;
             private int pausedCreates;
-            private int pausedWrites;
             private int schemaReads;
             private int schemaWrites;
             private int rowWrites;
@@ -341,7 +337,7 @@ namespace TerraScale.Dashboard.E2E
             private int redirectTargetRequests;
             private string mode = "";
             public string Mode { get { lock (gate) { return mode; } } }
-            public void Release() { planGate?.TrySetResult(); tableGate?.TrySetResult(); rowGate?.TrySetResult(); engine.Dispose(); }
+            public void Release() { planGate?.TrySetResult(); tableGate?.TrySetResult(); engine.Dispose(); }
             public void Dispose() { Release(); }
 
             public async Task<IResult> DispatchAsync(HttpContext http)
@@ -454,8 +450,6 @@ namespace TerraScale.Dashboard.E2E
                     }
                 }
 
-                if (writes.Any(statement => Writes(statement, "dashboard_accounts")) && rowGate is { } accounts)
-                { Interlocked.Increment(ref pausedWrites); await accounts.Task.WaitAsync(http.RequestAborted); }
                 if (Mode == "sql-delete-unavailable" && writes.Any(statement => statement.Sql.StartsWith("DELETE FROM dashboard_sql_workspaces", StringComparison.Ordinal)))
                 {
                     return Error(503, "unavailable");
@@ -485,11 +479,6 @@ namespace TerraScale.Dashboard.E2E
                 }
             }
 
-            private static bool Writes(TestSqlStatement statement, string table)
-            {
-                return statement.Sql.StartsWith("INSERT INTO " + table + " ", StringComparison.Ordinal) || statement.Sql.StartsWith("UPDATE " + table + " ", StringComparison.Ordinal);
-            }
-
             private static IResult SqlError(int status, string code, string sqlstate, int statement)
             {
                 return Results.Json(new { error = new { code, message = "Test-only state producer refusal.", statement, sqlstate } }, statusCode: status);
@@ -513,8 +502,6 @@ namespace TerraScale.Dashboard.E2E
                         case "mode": mode = body.GetProperty("value").GetString()!; break;
                         case "pause-schema": tableGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                         case "release-schema": tableGate?.TrySetResult(); tableGate = null; break;
-                        case "pause-account-writes": pausedWrites = 0; rowGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
-                        case "release-account-writes": rowGate?.TrySetResult(); rowGate = null; break;
                         case "wipe-plans": organizationPlans.Clear(); break;
                         case "pause-plans": planGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                         case "release-plans": planGate?.TrySetResult(); planGate = null; break;
@@ -537,7 +524,6 @@ namespace TerraScale.Dashboard.E2E
                         rowWrites,
                         conflicts,
                         pausedCreates,
-                        pausedWrites,
                         privateRequests,
                         redirectTargetRequests,
                         statements = statementLog.ToArray(),

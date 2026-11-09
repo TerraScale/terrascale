@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.E2E
         private string root = "";
         private bool liveProjects;
 
-        private AuthProviderScenario() => provider = new(clock, state, environment.Workspace, cliRequests);
+        private AuthProviderScenario() => provider = new(clock, state, environment.Workspace, environment.StorageAsync, cliRequests);
 
         public Uri Origin { get; private set; } = null!;
         public Uri ReplicaOrigin { get; private set; } = null!;
@@ -209,7 +209,6 @@ namespace TerraScale.Dashboard.E2E
         {
             provider.ReleaseRefresh();
             provider.ReleaseUserInfo();
-            provider.ReleaseAccountReservations();
             provider.Billing.Release();
             if (second is not null) { await second.StopAsync(); await second.DisposeAsync(); second = null; }
             if (first is not null) { await first.StopAsync(); await first.DisposeAsync(); first = null; }
@@ -308,7 +307,7 @@ namespace TerraScale.Dashboard.E2E
             }
         }
 
-        private sealed class ScenarioProvider(ScenarioClock clock, TestState state, TestWorkspace workspace, ConcurrentQueue<string> cliRequests) : IDisposable
+        private sealed class ScenarioProvider(ScenarioClock clock, TestState state, TestWorkspace workspace, Func<Task<DashboardDbContext>> storage, ConcurrentQueue<string> cliRequests) : IDisposable
         {
             private static readonly string[] ResponseTypes = ["code"];
             private static readonly string[] GrantTypes = ["authorization_code", "refresh_token"];
@@ -332,7 +331,7 @@ namespace TerraScale.Dashboard.E2E
             private TestStepUpGateway? stepUp;
             public TestStepUpGateway StepUp => stepUp ??= new(clock, ResolveActiveBearer);
             public TestAuthApiKeys ApiKeys => apiKeys ??= new(ResolveActiveBearer, workspace.ProjectRole);
-            public InternalBillingProducer Billing => billing ??= new(state, workspace, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
+            public InternalBillingProducer Billing => billing ??= new(state, workspace, storage, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
             public OwnershipSdkProtocol? Ownership { get; private set; }
             public Func<HttpContext, Task<IResult?>>? ReportingExtension { get; set; }
             public Func<HttpContext, Task<IResult?>>? ProjectExtension { get; set; }
@@ -377,10 +376,6 @@ namespace TerraScale.Dashboard.E2E
             private bool dropRefresh;
             private bool unavailableRefresh;
             private bool revoked;
-            private bool storedClaimSpoof;
-            private TaskCompletionSource? accountReservations;
-            private int identityAttempts;
-            private int projectionWrites;
 
             public async Task<IResult> DispatchAsync(HttpContext http)
             {
@@ -392,7 +387,7 @@ namespace TerraScale.Dashboard.E2E
 
                 if (path == "/__test/observations")
                 {
-                    return Observations();
+                    return await ObservationsAsync();
                 }
 
                 if (path == "/__test/ownership-sdk/probe" && Ownership is not null)
@@ -1095,7 +1090,6 @@ namespace TerraScale.Dashboard.E2E
 
                         platformRole = value.Length == 0 ? null : value;
                         break;
-                    case "seed-account": return await SeedAccountAsync(body.GetProperty("accountId").GetString()!);
                     case "workspace-role":
                         var role = body.GetProperty("role").GetString()!;
                         if (role is not ("owner" or "admin" or "member" or "viewer" or "readonly" or ""))
@@ -1114,119 +1108,19 @@ namespace TerraScale.Dashboard.E2E
                         }
 
                         break;
-                    case "account-corruption": CorruptAccount(body.GetProperty("value").GetString()!); break;
-                    case "pause-account-reservations":
-                        var reservations = accountReservations = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                        state.BeforeWriteAsync = async (table, _) =>
-                        {
-                            if (table != AccountService.IdentitiesTable)
-                            {
-                                return;
-                            }
-
-                            Interlocked.Increment(ref identityAttempts);
-                            await reservations.Task;
-                        };
-                        break;
-                    case "release-account-reservations": accountReservations?.TrySetResult(); break;
-                    case "fail-account-projection-once":
-                        state.WriteFailure = (table, id) => table == AccountService.AccountsTable &&
-                            !state.Items.ContainsKey(table + "/" + id) &&
-                            Interlocked.Increment(ref projectionWrites) == 1 ? new IOException("Injected test-only interrupted account projection.") : null;
-                        break;
-                    case "spoof-stored-admin":
-                        foreach (var entry in state.Items.Where(entry => entry.Key.StartsWith("dashboard_accounts/", StringComparison.Ordinal)))
-                        {
-                            var row = JsonSerializer.Deserialize<Dictionary<string, object>>(entry.Value.Body.GetRawText())!;
-                            row["PlatformAdmin"] = true;
-                            row["platform_admin"] = true;
-                            state.Items[entry.Key] = entry.Value with { Body = JsonSerializer.SerializeToElement(row) };
-                        }
-                        storedClaimSpoof = true;
-                        break;
                     default: return Results.BadRequest();
                 }
                 return Results.Ok(new { configured = true });
             }
 
-            private async Task<IResult> SeedAccountAsync(string publicId)
-            {
-                var key = AccountService.AccountStorageKey(subject);
-                if (publicId == "legacy")
-                {
-                    publicId = key;
-                }
-                else
-                {
-                    TerraScaleIds.Validate(publicId);
-                }
-
-                var session = new SessionRecord(subject, "Protocol User", "user@example.com", "", null, clock.GetUtcNow().AddHours(1));
-                var organization = workspace.SeedPersonal(session);
-                var account = new AccountRecord
-                {
-                    Id = publicId,
-                    UserId = subject,
-                    Name = session.Name,
-                    Email = session.Email,
-                    CreatedAt = clock.GetUtcNow(),
-                    OnboardingCompleted = true,
-                    OnboardingStep = "complete",
-                    OrganizationIds = [organization.Id],
-                    PersonalOrganizationId = organization.Id,
-                    ActiveOrganizationId = organization.Id,
-                    ActiveProjectId = organization.Projects.Keys.Single()
-                };
-                await state.PutAsync(AccountService.OrganizationsTable, organization.Id, JsonSerializer.SerializeToElement(organization), StatePrecondition.Absent, default);
-                if (publicId != key)
-                {
-                    await state.PutAsync(AccountService.IdentitiesTable, key, JsonSerializer.SerializeToElement(new AccountIdentityBinding(subject, publicId)), StatePrecondition.Absent, default);
-                }
-
-                await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Absent, default);
-                return Results.Ok(new { subject, storageKey = key, accountId = publicId });
-            }
-
-            private void CorruptAccount(string kind)
-            {
-                var key = AccountService.AccountStorageKey(subject);
-                var accountKey = AccountService.AccountsTable + "/" + key;
-                var identityKey = AccountService.IdentitiesTable + "/" + key;
-                if (kind == "remove-identity") { state.Items.TryRemove(identityKey, out _); return; }
-                var target = kind.StartsWith("identity-", StringComparison.Ordinal) ? identityKey : accountKey;
-                var row = state.Items[target];
-                if (kind.EndsWith("row-id", StringComparison.Ordinal))
-                {
-                    state.Items[target] = row with { Id = "foreign-row-identity" };
-                }
-                else
-                {
-                    var value = JsonSerializer.Deserialize<Dictionary<string, object>>(row.Body.GetRawText())!;
-                    if (kind.EndsWith("user", StringComparison.Ordinal))
-                    {
-                        value["UserId"] = new TerraScaleIdGenerator().NewId();
-                    }
-                    else if (kind == "malformed-public-id")
-                    {
-                        value["Id"] = "invalid-public-id";
-                    }
-                    else
-                    {
-                        value[target == identityKey ? "AccountId" : "Id"] = new TerraScaleIdGenerator().NewId();
-                    }
-
-                    state.Items[target] = row with { Body = JsonSerializer.SerializeToElement(value) };
-                }
-            }
-
-            private IResult Observations()
+            private async Task<IResult> ObservationsAsync()
             {
                 var plaintext = state.Items.Values.Select(item => item.Body.GetRawText()).ToArray();
                 return Results.Json(new
                 {
                     refreshes,
                     refreshPauses,
-                    billing = Billing.Observations(),
+                    billing = await Billing.ObservationsAsync(),
                     codeExchanges,
                     projectExchanges,
                     projectScopeExchanges = projectScopeExchanges.ToArray(),
@@ -1244,9 +1138,6 @@ namespace TerraScale.Dashboard.E2E
                     publishedIssuer = CurrentIssuer,
                     unsupportedIntrospectionRequests,
                     forgedIdRoleTokens,
-                    storedClaimSpoof,
-                    identityAttempts,
-                    projectionWrites,
                     subject,
                     currentPlatformRole = platformRole,
                     registeredPrincipals = principals.Values.Select(principal => new { userId = principal.Subject, email = principal.Email, platformRole = principal.PlatformRole }).ToArray(),
@@ -1254,10 +1145,6 @@ namespace TerraScale.Dashboard.E2E
                     issuedAdminRoleGrants = access.Values.Count(grant => grant.PlatformRole == "admin"),
                     encryptedCredentialRecords = state.Items.Keys.Count(key => key.StartsWith("auth_credentials/", StringComparison.Ordinal)),
                     accessTokenHashRecords = state.Items.Keys.Count(key => key.StartsWith("dashboard_access_token_hashes/", StringComparison.Ordinal)),
-                    identities = state.Items.Where(entry => entry.Key.StartsWith(AccountService.IdentitiesTable + "/", StringComparison.Ordinal))
-                        .Select(entry => new { storageKey = entry.Value.Id, publicId = entry.Value.Body.GetProperty("AccountId").GetString() }).ToArray(),
-                    accounts = state.Items.Where(entry => entry.Key.StartsWith(AccountService.AccountsTable + "/", StringComparison.Ordinal))
-                        .Select(entry => new { storageKey = entry.Value.Id, publicId = entry.Value.Body.GetProperty("Id").GetString() }).ToArray(),
                     credentialsEncrypted = access.Keys.Concat(refresh.Keys).All(token => plaintext.All(body => !body.Contains(token, StringComparison.Ordinal)))
                 });
             }
@@ -1370,12 +1257,7 @@ namespace TerraScale.Dashboard.E2E
                 userInfoGate?.TrySetResult();
             }
 
-            public void ReleaseAccountReservations()
-            {
-                accountReservations?.TrySetResult();
-            }
-
-            public void Dispose() { userInfoGate?.TrySetResult(); accountReservations?.TrySetResult(); signingKey.Dispose(); wrongKey.Dispose(); }
+            public void Dispose() { userInfoGate?.TrySetResult(); signingKey.Dispose(); wrongKey.Dispose(); }
             private sealed record Authorization(string Nonce, string Challenge, string RedirectUri, string Email);
             private sealed record DeviceAuthorization(string UserCode, DateTimeOffset ExpiresAt, string? Email = null, bool Denied = false);
             private sealed record Principal(string Subject, string Email, string Name, string Password, long AuthEpoch, string? PlatformRole);

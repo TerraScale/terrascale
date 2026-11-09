@@ -24,10 +24,6 @@ namespace TerraScale.Dashboard.Common.Accounts
         public DateTimeOffset CreatedAt { get; set; }
     }
 
-    // Canonical, create-only subject ownership. The private row key is the
-    // subject digest; this public identity survives source-state migration.
-    public sealed record AccountIdentityBinding(string UserId, string AccountId);
-
     // No profile or identity data survives; the erasure marker prevents create-only
     // writers with an already-loaded session from resurrecting these private keys.
     public sealed record DeletionFence(string ErasureId);

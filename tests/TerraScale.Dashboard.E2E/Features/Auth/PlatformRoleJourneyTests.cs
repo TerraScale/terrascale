@@ -64,7 +64,6 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             await Control(producer, new { command = "fault", value = "forged-id-admin" });
             using var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
             Check(login.StatusCode == HttpStatusCode.SeeOther, "A valid identity token authenticates despite carrying an extra untrusted privilege field");
-            await Control(producer, new { command = "spoof-stored-admin" });
             await Control(producer, new { command = "workspace-role", role = "admin" });
             using (var context = await browser.GetAsync("/api/v1/auth/me"))
             {
@@ -77,7 +76,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             }
 
             var observed = await Observe(producer);
-            Check(observed.GetProperty("forgedIdRoleTokens").GetInt32() == 1 && observed.GetProperty("storedClaimSpoof").GetBoolean() &&
+            Check(observed.GetProperty("forgedIdRoleTokens").GetInt32() == 1 &&
                 observed.GetProperty("issuedAdminRoleGrants").GetInt32() == 0 && observed.GetProperty("refreshes").GetInt32() == 1,
                 "The spoofed inputs are present, but the actual fresh access token carries no platform authority");
             Protocol(observed);

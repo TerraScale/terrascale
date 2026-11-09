@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Logs;
@@ -34,6 +35,20 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
 
     public DbSet<LogDrainCursorRow> LogDrainCursors => Set<LogDrainCursorRow>();
 
+    public DbSet<AccountRow> Accounts => Set<AccountRow>();
+
+    public DbSet<NotificationRow> Notifications => Set<NotificationRow>();
+
+    public DbSet<OrganizationRow> Organizations => Set<OrganizationRow>();
+
+    public DbSet<OrganizationProjectRow> OrganizationProjects => Set<OrganizationProjectRow>();
+
+    public DbSet<ProjectDatabaseRow> ProjectDatabases => Set<ProjectDatabaseRow>();
+
+    public DbSet<AuditEventRow> AuditEvents => Set<AuditEventRow>();
+
+    public DbSet<InvitationReservationRow> InvitationReservations => Set<InvitationReservationRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfiguration(new AuthFlowRow.Configuration());
@@ -48,6 +63,13 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
         modelBuilder.ApplyConfiguration(new AlertEventRow.Configuration());
         modelBuilder.ApplyConfiguration(new LogDrainRow.Configuration());
         modelBuilder.ApplyConfiguration(new LogDrainCursorRow.Configuration());
+        modelBuilder.ApplyConfiguration(new AccountRow.Configuration());
+        modelBuilder.ApplyConfiguration(new NotificationRow.Configuration());
+        modelBuilder.ApplyConfiguration(new OrganizationRow.Configuration());
+        modelBuilder.ApplyConfiguration(new OrganizationProjectRow.Configuration());
+        modelBuilder.ApplyConfiguration(new ProjectDatabaseRow.Configuration());
+        modelBuilder.ApplyConfiguration(new AuditEventRow.Configuration());
+        modelBuilder.ApplyConfiguration(new InvitationReservationRow.Configuration());
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
             foreach (var property in entity.GetProperties())

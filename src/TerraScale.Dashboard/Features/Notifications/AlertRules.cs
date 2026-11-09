@@ -26,7 +26,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         Task<string> SendEmailAsync(AlertEmail email, CancellationToken cancellationToken);
     }
 
-    public sealed class AlertRules(IDbContextFactory<DashboardDbContext> storage, IDashboardState state, IAlertSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
+    public sealed class AlertRules(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAlertSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
         TimeProvider clock, ILogger<AlertRules> logger)
     {
         public const int RuleLimit = 20;
@@ -164,12 +164,12 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         private async Task ObserveAsync(string projectId, string organizationId, Func<Task<IReadOnlyDictionary<string, long>>> units, CancellationToken cancellationToken)
         {
-            if (await state.GetAsync(AccountService.OrganizationsTable, organizationId, cancellationToken) is not { } organizationRow)
+            if (await organizations.FindAsync(organizationId, cancellationToken) is not { } organizationRow)
             {
                 return;
             }
 
-            var organization = AccountService.Read<OrganizationRecord>(organizationRow);
+            var organization = organizationRow.Erased ? throw new IOException("Dashboard record was erased.") : organizationRow.Organization;
             if (organization.Id != organizationId || !organization.Projects.TryGetValue(projectId, out var project))
             {
                 return;

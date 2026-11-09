@@ -47,9 +47,9 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             }
 
             var before = await ObserveAsync(controls);
-            await Assert.That(Rows(before, "dashboard_accounts")).IsEqualTo(1);
             await using (var storage = await scenario.StorageAsync())
             {
+                await Assert.That(await storage.Accounts.CountAsync()).IsEqualTo(1);
                 await Assert.That(await storage.Sessions.CountAsync(row => row.Kind == SessionRow.Browser)).IsEqualTo(2);
             }
 
@@ -76,7 +76,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
                 await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
             }
 
-            using (var drop = await controls.PostAsJsonAsync("/__test/control", new { command = "drop-table", name = "dashboard_accounts" }))
+            using (var drop = await controls.PostAsJsonAsync("/__test/control", new { command = "drop-table", name = "account_deletions" }))
             {
                 drop.EnsureSuccessStatusCode();
             }
@@ -89,11 +89,6 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
         private static async Task<JsonElement> ObserveAsync(HttpClient controls)
         {
             return await controls.GetFromJsonAsync<JsonElement>("/__test/observations");
-        }
-
-        private static int Rows(JsonElement observation, string table)
-        {
-            return observation.GetProperty("tables").EnumerateArray().Single(row => row.GetProperty("name").GetString() == table).GetProperty("rows").GetInt32();
         }
     }
 }

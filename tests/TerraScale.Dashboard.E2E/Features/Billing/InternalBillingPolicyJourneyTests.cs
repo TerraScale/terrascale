@@ -108,45 +108,6 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await ActiveAsync(browser);
         }
 
-        [Test]
-        public async Task WrongProducerOrganizationRowKeyRejectsNativeContextSpendingAndCommandWrites()
-        {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
-            using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
-            var setup = await PrepareAsync(browser, producer);
-            await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
-            var csrf = await HttpJourney.CsrfAsync(browser, "/usage?tab=settings");
-            JsonElement before = default;
-            var rejected = await RunAsync(scenario, Configure(setup.Organization, "20000"), async () =>
-            {
-                before = await ObserveAsync(producer);
-                await ControlAsync(producer, new { command = "internal-misbind-organization-read", id = setup.Organization });
-            });
-            try
-            {
-                await CheckAsync(rejected.Exit == 1 && rejected.Error == "configure-internal-billing: Internal billing dependencies are unavailable.\n" &&
-                    !rejected.Output.Contains("configured report-only", StringComparison.Ordinal),
-                    "The full public command fails closed when the producer key differs from the requested organization despite a correct payload ID");
-                using var context = await browser.GetAsync("/api/v1/dashboard/context");
-                await CheckAsync(context.StatusCode == HttpStatusCode.ServiceUnavailable,
-                    "Native account context rejects a well-formed organization payload returned under a foreign producer json key");
-                using var spending = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/spending-cap", new()
-                { ["_csrf"] = csrf, ["spendCap"] = "200.00" });
-                await CheckAsync(spending.StatusCode == HttpStatusCode.ServiceUnavailable,
-                    "The actual spending form cannot authorize or write through a misbound organization read");
-                var after = await ObserveAsync(producer);
-                await CheckAsync(after.GetProperty("billing").GetProperty("misboundOrganizationReads").GetInt32() >= 3 &&
-                    after.GetProperty("billing").GetProperty("writes").GetArrayLength() == before.GetProperty("billing").GetProperty("writes").GetArrayLength() &&
-                    Organization(after, setup.Organization).GetProperty("Id").GetString() == setup.Organization &&
-                    Organization(after, setup.Organization).GetProperty("SpendCapCents").GetInt64() == 12000 &&
-                    Organization(after, setup.Organization).GetProperty("InternalBilling").GetRawText() == Organization(before, setup.Organization).GetProperty("InternalBilling").GetRawText(),
-                    "Only the external read envelope is corrupted; no canonical organization, account, policy or payment fence write is admitted");
-                await NoStripeAsync(after);
-            }
-            finally { await ControlAsync(producer, new { command = "internal-clear-faults" }); }
-            await ActiveAsync(browser);
-        }
-
         private static async Task<HttpResponseMessage> CheckoutAsync(HttpClient browser, string? csrf = null)
         {
             csrf ??= await HttpJourney.CsrfAsync(browser, "/profile");

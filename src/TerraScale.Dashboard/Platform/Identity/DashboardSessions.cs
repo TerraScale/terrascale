@@ -8,7 +8,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Platform.Identity;
 
-public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> storage, IDashboardState state, IDashboardIdentity identity, IAuthGateway auth,
+public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, IAuthGateway auth,
     IAuthRefreshGateway refresh, TimeProvider time, ILogger<DashboardSessions> logger)
 {
     internal const string Cookie = "ts-dashboard-session";
@@ -36,7 +36,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
             await db.SaveChangesAsync(context.RequestAborted);
         }
 
-        await AccountEnrollment.ThrowIfErasedAsync(state, record.UserId, context.RequestAborted);
+        await AccountEnrollment.ThrowIfErasedAsync(storage, record.UserId, context.RequestAborted);
         Csrf.Bind(context, token);
         context.Response.Cookies.Append(Cookie, token, new CookieOptions
         {
@@ -115,7 +115,7 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
             await db.SaveChangesAsync(cancellationToken);
         }
 
-        await AccountEnrollment.ThrowIfErasedAsync(state, record.UserId, cancellationToken);
+        await AccountEnrollment.ThrowIfErasedAsync(storage, record.UserId, cancellationToken);
         return row.Id;
     }
 

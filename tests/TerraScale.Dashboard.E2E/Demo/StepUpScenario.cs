@@ -98,9 +98,9 @@ namespace TerraScale.Dashboard.E2E
                 await Assert.That(await storage.McpCodes.CountAsync()).IsEqualTo(0);
             }
 
-            var accounts = await Environment.State.ListAsync(AccountService.AccountsTable, default);
-            await Assert.That(accounts.Count).IsGreaterThan(0);
-            await Assert.That(accounts.All(row => !AccountService.IsDeletionFence(row))).IsTrue();
+            await using var accounts = await Environment.StorageAsync();
+            await Assert.That(await accounts.Accounts.CountAsync()).IsGreaterThan(0);
+            await Assert.That(await accounts.Accounts.AnyAsync(row => row.ErasureId != null)).IsFalse();
         }
 
         public async Task SwitchAccountCookieAsync()

@@ -7,7 +7,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Auth;
 
-public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, IDashboardState state, DashboardSessions sessions, IAuthGateway auth, AccountService accounts,
+public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, DashboardSessions sessions, IAuthGateway auth, AccountService accounts,
     TimeProvider time, IAuthStepUpGateway stepUp) : IProfileTokens
 {
     private const int MaxLiveTokens = 25;
@@ -136,7 +136,7 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
             await db.SaveChangesAsync(cancellationToken);
         }
 
-        await AccountEnrollment.ThrowIfErasedAsync(state, userId, cancellationToken);
+        await AccountEnrollment.ThrowIfErasedAsync(storage, userId, cancellationToken);
         return new(Token(row), secret);
     }
 

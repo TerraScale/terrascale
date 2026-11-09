@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     // Converges TerraBase to every organization's entitled plan every 30 seconds, whatever was missed: a TerraBase wipe or
     // re-seed, an enrollment after the last billing change, a failed publish, or a paid checkout whose webhook never came.
-    public sealed class PlanReconciler(IDashboardState state, StripeBilling billing, TerraBasePlanSync plans, TimeProvider clock, ILogger<PlanReconciler> logger) : BackgroundService
+    public sealed class PlanReconciler(IDashboardState state, OrganizationStore organizations, StripeBilling billing, TerraBasePlanSync plans, TimeProvider clock, ILogger<PlanReconciler> logger) : BackgroundService
     {
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -39,11 +39,8 @@ namespace TerraScale.Dashboard.Features.Billing
                     logger.APendingCheckoutDidNotReconcile(error.GetType().Name);
                 }
             }
-            foreach (var row in await state.ListAsync(AccountService.OrganizationsTable, cancellationToken))
+            foreach (var organization in await organizations.ListAsync(cancellationToken))
             {
-                OrganizationRecord organization;
-                try { organization = AccountService.Read<OrganizationRecord>(row); }
-                catch (Exception error) when (error is IOException or JsonException) { continue; }
                 await plans.PublishAsync(organization, reconcile: true, cancellationToken);
             }
         }

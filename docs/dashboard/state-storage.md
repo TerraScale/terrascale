@@ -9,8 +9,8 @@ against the same database today:
 
 | Data | Store |
 |---|---|
-| OIDC and step-up flows, browser sessions, PAT and MCP credentials, access tokens, MCP OAuth clients and codes, saved queries, SQL workspaces, allowance alerts, alert rules and their events, log drains and their cursors | Relational tables (below) |
-| Accounts, identities, organizations, billing, Stripe customers, checkouts and plan changes, internal billing, account deletions and the deletion cleanup journal | JSON-body tables (`IDashboardState`, last section) |
+| OIDC and step-up flows, browser sessions, PAT and MCP credentials, access tokens, MCP OAuth clients and codes, saved queries, SQL workspaces, allowance alerts, alert rules and their events, log drains and their cursors, accounts and their notifications, organizations with their projects, project databases, audit events and invitation reservations | Relational tables (below) |
+| Billing, Stripe customers, checkouts and plan changes, internal billing, account deletions and the deletion cleanup journal | JSON-body tables (`IDashboardState`, last section) |
 
 ## Relational tables
 
@@ -45,14 +45,43 @@ calls named `state/sql/execute`.
 | `alert_events` | One firing or resolved transition still waiting for its email or webhook delivery | `id` ULID, the webhook `X-TerraScale-Delivery`; `rule_id` foreign key to `alert_rules` with cascade delete; index `(rule_id, id)`; a row exists only while the email or the webhook is `pending`; at most 3 webhook attempts |
 | `log_drains` | A project's OTLP/HTTP log drain | `id` ULID; unique `project_id`; index on `organization_id`; `https://` URL up to 2048 characters; header name and sealed value together or not at all; `revision` concurrency token |
 | `log_drain_cursors` | The drain's TerraBase request-log cursor for one database | `id` ULID; unique `(drain_id, database_id)`; `drain_id` foreign key to `log_drains` with cascade delete; cursor is a ULID |
+| `accounts` | A signed-in user's dashboard profile, onboarding step and selected organization and project | `id` ULID (the public account id); unique `subject_hash` (SHA-256 of the ts-auth subject) and `user_id`; `erasure_id` fence (below); `version` concurrency token |
+| `notifications` | An account's inbox item | key `(account_id, id)`, foreign key to `accounts` with cascade delete; status `unread` or `read` |
+| `organizations` | Dashboard state of a ts-auth organization: kind, status, plan and billing fields, internal billing policy and alerts, audit retention, pending and deleted project markers | `id` is the ts-auth ULID; kind `personal` or `business`; audit retention 1 to 90 days; `erasure_id` fence; `version` concurrency token |
+| `organization_projects` | Dashboard settings of a ts-auth project: regions, status, default flag, spend cap, operation limits | `id` is the ts-auth ULID; foreign key to `organizations` with cascade delete; non-negative limits |
+| `project_databases` | A project's database: name, placement, endpoint, status, limits, backup retention, branch source, expiry | `id` is the TerraBase ULID; foreign keys to `organizations` and `organization_projects`, both cascade; unique `(project_id, name)` |
+| `audit_events` | An organization's dashboard audit event | `id` ULID; foreign key to `organizations` with cascade delete; index on `(organization_id, occurred_at)` |
+| `invitation_reservations` | A plan member slot taken while ts-auth creates an invitation | `id` ULID (the operation id); foreign key to `organizations` with cascade delete; unique `(organization_id, invitation_id)` once ts-auth answered |
 
 Grants (access and refresh tokens) stay encrypted with `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` (AES-GCM) in
 `nonce`, `ciphertext` and `tag` columns; owner, kind, device and expiry are plain columns, so listing, revocation and
 expiry run in SQL. A refresh writes its lease with the row's `version` as concurrency token, so only one replica
 rotates a grant; a stale token makes the save write nothing and the caller rereads.
 
-A constraint violation (a duplicate saved query name, a second redemption of an MCP code) fails the one request and
-writes nothing; the dashboard answers it as the feature's conflict (`409`, `invalid_grant`).
+A constraint violation (a duplicate saved query name, a second redemption of an MCP code, a second database of one
+name in a project) fails the one request and writes nothing; the dashboard answers it as the feature's conflict
+(`409`, `invalid_grant`).
+
+### Accounts and organizations
+
+`AccountStore` and `OrganizationStore` load an account (with its notifications) or an organization (with its projects,
+databases, audit events and invitation reservations) as one `AccountRecord` or `OrganizationRecord`: the root row
+first, then its child tables, so every child row is at least as new as the root's `version`. A change saves only the
+rows that differ, inserts, updates and deletes, in one `SaveChangesAsync`, and writes a new `version` on the root row as
+its concurrency token. A concurrent change of the same account or organization makes the save write nothing; the
+caller rereads and applies its change again, at most four times, and then answers `412`. ts-auth stays the source of
+names, members, invitations and the project list: those fields are never stored.
+
+The account row is keyed by the subject's SHA-256 (`subject_hash`), so creating it twice for one subject fails on the
+unique index and the second sign-in rereads the first one's row.
+
+### Erasure fence
+
+An erased account or organization keeps its row with `erasure_id` set to the deletion proof's ULID. The fence clears
+every profile column (an account keeps no `user_id`, name, email, phone or organization list), deletes the child rows
+in the same save, and check constraints keep it that way. A session, PAT or MCP token of an erased subject fails with
+`401` on its next use (`AccountEnrollment`); a read or write of an erased organization answers `404`. Fencing an
+account or organization that has no row yet inserts the fenced row, so a create racing the deletion fails on the key.
 
 Alerts and log drains:
 

@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
-    public sealed class DeletionRelatedRecords(IDashboardState state, IDbContextFactory<DashboardDbContext> storage)
+    public sealed class DeletionRelatedRecords(IDashboardState state, IDbContextFactory<DashboardDbContext> storage, AccountStore accounts)
     {
         public async Task CleanAccountAsync(string subject, CancellationToken cancellationToken)
         {
@@ -33,57 +33,12 @@ namespace TerraScale.Dashboard.Features.Profile
                 await db.AllowanceAlerts.Where(row => row.OrganizationId == organizationId).ExecuteDeleteAsync(cancellationToken);
             }
 
-            await CleanNotificationsAsync(organizationId, null, cancellationToken);
+            await accounts.RemoveNotificationsAsync(organizationId, null, cancellationToken);
         }
 
-        public async Task CleanProjectAsync(string organizationId, string projectId, CancellationToken cancellationToken)
+        public Task CleanProjectAsync(string organizationId, string projectId, CancellationToken cancellationToken)
         {
-            await CleanNotificationsAsync(organizationId, projectId, cancellationToken);
-        }
-
-        private async Task CleanNotificationsAsync(string organizationId, string? projectId, CancellationToken cancellationToken)
-        {
-            foreach (var listed in await state.ListAsync(AccountService.AccountsTable, cancellationToken))
-            {
-                if (AccountService.IsDeletionFence(listed))
-                {
-                    continue;
-                }
-
-                var known = AccountService.Read<AccountRecord>(listed);
-                if (string.IsNullOrWhiteSpace(known.UserId))
-                {
-                    throw new IOException("Notification owner is invalid.");
-                }
-
-                var key = AccountService.AccountStorageKey(known.UserId);
-                for (var attempt = 0; ; attempt++)
-                {
-                    var row = await state.GetAsync(AccountService.AccountsTable, key, cancellationToken);
-                    if (row is null || AccountService.IsDeletionFence(row))
-                    {
-                        break;
-                    }
-
-                    var account = AccountService.Read<AccountRecord>(row);
-                    if (row.Id != key || account.UserId != known.UserId)
-                    {
-                        throw new IOException("Notification owner changed.");
-                    }
-
-                    if (account.Notifications.RemoveAll(note => note.OrganizationId == organizationId && (projectId is null || note.ProjectId == projectId)) == 0)
-                    {
-                        break;
-                    }
-
-                    try
-                    {
-                        await state.PutAsync(AccountService.AccountsTable, key, JsonSerializer.SerializeToElement(account), StatePrecondition.Matches(row.Version), cancellationToken);
-                        break;
-                    }
-                    catch (StateConflictException) when (attempt < 3) { }
-                }
-            }
+            return accounts.RemoveNotificationsAsync(organizationId, projectId, cancellationToken);
         }
 
         private async Task DropAsync<T>(string table, string key, Func<T, bool> owns, CancellationToken cancellationToken)

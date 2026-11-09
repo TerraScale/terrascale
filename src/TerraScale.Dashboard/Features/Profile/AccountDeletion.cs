@@ -208,9 +208,9 @@ namespace TerraScale.Dashboard.Features.Profile
                     catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested) { }
                 }
 
-                await AccountService.FenceOrganizationDeletionAsync(state, orgId, AccountService.NewId(), cancellationToken);
+                await http.RequestServices.GetRequiredService<OrganizationStore>().FenceAsync(orgId, AccountService.NewId(), cancellationToken);
             }
-            await AccountService.FenceDeletionAsync(state, operation.Session.UserId, AccountService.NewId(), cancellationToken);
+            await http.RequestServices.GetRequiredService<AccountStore>().FenceAsync(operation.Session.UserId, AccountService.NewId(), cancellationToken);
             await tokens.ForgetAllAsync(operation.Session.UserId, cancellationToken);
             await sessions.RevokeUserAsync(operation.Session.UserId, cancellationToken);
             await sessions.EndAsync(http);
