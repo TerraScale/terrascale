@@ -34,7 +34,7 @@ When a plan's write cap or SQL read fair use is reached, the statement answers `
 | Team | 1 |
 | Enterprise | 1 |
 
-Each database has one home region and encrypted read replicas in other serving regions; a replica region can accept a local SQL REST write, the home applies it, and the default TerraScale-Durability is local.
+Each database has one home region and replicas in other serving regions; a replica region can accept a local SQL REST write, the home applies it, and the default TerraScale-Durability is local.
 The catalog's regionsPerDatabase counts home regions. Replica storage is not billed separately; writes and stored
 bytes are metered at home. See [regions](/concepts/regions) and [replication](/concepts/replication).
 
