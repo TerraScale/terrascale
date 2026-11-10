@@ -95,6 +95,33 @@ state and dispose them after execution. They drive Chromium using pinned Playwri
 an installed headless browser. Reports and screenshots go under ignored
 `test-results/`; never commit screenshots.
 
+### Writing a Fast journey
+
+Each `DemoEnvironment` creates its own TerraBase database and replays every migration into it, which
+costs TerraBase about half a CPU-second. With one environment per test that was most of the suite's CPU
+on the 4 vCPU runner, so Fast journeys share hosts and isolate themselves by account instead:
+
+- Take a session-wide fixture with `[ClassDataSource<T>(Shared = SharedType.PerTestSession)]`:
+  `DashboardE2EFixture` (a dashboard host pair), `SharedDatabaseSdk` (the customer-SDK producer
+  and its host pair), `SharedAuthProvider` (the hosted sign-in stand-in for ts-auth and its host
+  pair) or `SharedDemoEnvironment` (the fakes and database, for a journey that starts its own
+  configured host). They live in `tests/TerraScale.Dashboard.E2E/Demo/SharedScenarios.cs`.
+- Sign up a fresh account in each journey (`DatabaseJourney.NativeWorkspaceAsync`, or
+  `HttpJourney.NewAccount` with `LoginAsync(..., signUp: true)`) and act only on its own
+  organizations, projects and databases. Never sign in as the seeded `user@example.com`
+  (`test-user`) on a shared fixture: concurrent sign-ins of one account race.
+- Producer behaviour for one journey goes through `DatabaseSdkScenario.Intercept(projectId, ...)`,
+  which sees only requests for that project. The Stripe, billing-plan and reporting fakes are already
+  keyed by customer, organization or user.
+- A journey that changes state every other journey would see (a producer `/__test/control` command
+  such as `role`, `catalog`, `fault`, `advance` or `platform-role`, a global counter or observation
+  list, account deletion, the clock) starts its own scenario with `StartAsync`. Keep those few.
+
+`scripts/dashboard/test-fast.sh` runs the suite through `scripts/ci/fast-budget.py dashboard`:
+the job fails when the suite takes 30 s or more or any test more than 10 s, prints the ten slowest
+tests and names every test over 10 s. An over-budget suite still runs to the end (it is stopped
+only after 120 s), so the failure lists what to fix.
+
 For a focused journey, use the TUnit tree-node filter:
 
 ```sh
