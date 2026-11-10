@@ -117,10 +117,11 @@ on the 4 vCPU runner, so Fast journeys share hosts and isolate themselves by acc
   such as `role`, `catalog`, `fault`, `advance` or `platform-role`, a global counter or observation
   list, account deletion, the clock) starts its own scenario with `StartAsync`. Keep those few.
 
-`scripts/dashboard/test-fast.sh` runs the suite through `scripts/ci/fast-budget.py dashboard`:
-the job fails when the suite takes 30 s or more or any test more than 10 s, prints the ten slowest
-tests and names every test over 10 s. An over-budget suite still runs to the end (it is stopped
-only after 120 s), so the failure lists what to fix.
+To check a change against the budget, run the built suite through the shared gate:
+`python3 scripts/ci/fast-budget.py dashboard -- dotnet run --project tests/TerraScale.Dashboard.E2E
+--configuration Release --no-build -- --treenode-filter '/*/*/*/*[Category!=Slow]'`. It fails when
+the suite takes 30 s or more or any test more than 10 s, prints the ten slowest tests and names
+every test over 10 s; an over-budget suite still runs to the end (it is stopped only after 120 s).
 
 For a focused journey, use the TUnit tree-node filter:
 

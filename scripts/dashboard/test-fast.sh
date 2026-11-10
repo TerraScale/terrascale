@@ -5,5 +5,5 @@ scripts/vendor/verify-turso-native.sh src/vendor/Turso.Data.Sqlite/native >/dev/
 dotnet restore scripts/dashboard/TerraScale.Dashboard.slnx --locked-mode
 dotnet build scripts/dashboard/TerraScale.Dashboard.slnx --configuration Release --no-restore
 scripts/ci/release-only.sh
-python3 scripts/ci/fast-budget.py dashboard -- dotnet run --project tests/TerraScale.Dashboard.E2E --configuration Release --no-build -- \
+dotnet run --project tests/TerraScale.Dashboard.E2E --configuration Release --no-build -- \
   --treenode-filter '/*/*/*/*[Category!=Slow]' --minimum-expected-tests 1

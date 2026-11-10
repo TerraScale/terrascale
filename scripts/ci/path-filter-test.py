@@ -265,8 +265,7 @@ def check_pr(case):
     assert started == expected, f"{filename}: PR starts {sorted(started)}, expected {sorted(expected)}"
     return f"pull_request {filename} -> {sorted(expected) or 'no workflows'}"
 
-pr_cases = [("scripts/ci/release-only.sh", {"all-green.yml", "dashboard-ci.yml"}),
-            ("scripts/ci/fast-budget.py", {"all-green.yml", "dashboard-ci.yml"})]
+pr_cases = [("scripts/ci/release-only.sh", {"all-green.yml", "dashboard-ci.yml"})]
 errors = []
 with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
     futures = ([pool.submit(check, case) for case in cases]
