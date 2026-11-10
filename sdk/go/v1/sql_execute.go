@@ -47,7 +47,7 @@ const (
 )
 
 type Statement struct {
-	SQL   string         `json:"sql"`
+	SQL   string         `json:"query"`
 	Args  []any          `json:"args,omitempty"`
 	Named map[string]any `json:"named,omitempty"`
 }
