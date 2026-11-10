@@ -41,7 +41,7 @@ import {
   type ProbePeriod,
   type Provider,
   type Region,
-  type Status,
+  type PageStatus,
   type TimelineState,
 } from "./domain/status";
 import { VANTAGES } from "./probe/vantages";
@@ -118,7 +118,7 @@ export interface PlatformDay extends Bucket {
 export interface Overview {
   generatedAt: number;
   range: RangeKey;
-  status: Status;
+  status: PageStatus;
   monitoring: Monitoring;
   groups: GroupOverview[];
   regions: RegionOverview[];

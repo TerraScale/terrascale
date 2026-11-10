@@ -2,7 +2,7 @@
    stylesheet as a cacheable asset. */
 
 import mark from "../assets/mark.svg?raw";
-import type { Status } from "../domain/status";
+import type { PageStatus } from "../domain/status";
 import { html, raw, type Html } from "../html";
 import stylesheet from "../styles/index.css?url";
 import chartScript from "../assets/chart-client.js?url";
@@ -43,7 +43,7 @@ export interface Page {
   /** Only the page itself, without the top bar and footer (the widget). */
   bare?: boolean;
   /** The overall status, for the footer's live status link. */
-  status?: Status;
+  status?: PageStatus;
 }
 
 /* The sticky, frosted top bar. Wide screens show the page links inline;

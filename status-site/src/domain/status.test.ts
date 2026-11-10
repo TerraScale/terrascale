@@ -62,8 +62,13 @@ const maintenance = (from: number, to: number, components: string[] = []): Incid
 
 describe("overallStatus", () => {
   it("reports operational when components and incidents are clear", () => {
-    expect(overallStatus(["operational", "none"], [], NOW)).toBe("operational");
+    expect(overallStatus(["operational"], [], NOW)).toBe("operational");
     expect(overallStatus([], [], NOW)).toBe("operational");
+  });
+
+  it("reports unknown when a component has no samples", () => {
+    expect(overallStatus(["none"], [], NOW)).toBe("unknown");
+    expect(overallStatus(["operational", "none"], [], NOW)).toBe("unknown");
   });
 
   it("treats one component down as a partial platform outage", () => {
