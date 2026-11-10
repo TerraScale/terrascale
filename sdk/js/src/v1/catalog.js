@@ -19,7 +19,6 @@ import { stringifyExactJson } from "./json.js";
  * @property {string} createdAt ISO date-time returned by the producer.
  * @property {string} region The region that answered.
  * @property {string} homeRegion The one region that stores and serves the database.
- * @property {readonly string[]} replicaRegions Sorted regions holding read replicas.
  * @property {boolean} allRegions Whether every serving region holds a replica.
  * @property {string | null | undefined} [expiresAt] RFC 3339 expiry, or null without a TTL.
  */
