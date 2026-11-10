@@ -43,21 +43,33 @@ internal sealed class InRegionAck(
     private volatile RegionPartner? _answeredPartner;
     private long _lastAnswerTicks;
     private Counter<long>? _finished;
+    private bool _durabilityLogged;
 
     public bool PartnerHealthy => _partners is [var partner, ..] && partner == _answeredPartner
         && time.GetUtcNow().UtcTicks - Interlocked.Read(ref _lastAnswerTicks) < HealthyWithin.Ticks;
 
-    public bool QuorumHealthy => _partners is [] || PartnerHealthy;
+    public bool QuorumHealthy => PartnerHealthy;
 
     private HttpClient Http => _http ??= PeerHttp.Create(credential);
 
-    public override Task StartAsync(CancellationToken cancellationToken)
+    public override async Task StartAsync(CancellationToken cancellationToken)
     {
         _finished = _meter.CreateCounter<long>("terrabase.localack.finished", "{transaction}",
             "Held transactions this node applied at the home after their origin node was lost.");
         _ = _meter.CreateObservableGauge("terrabase.localack.held", () => holds.Count, "{transaction}", "Transactions this node holds for its in-region partner.");
         _ = _meter.CreateObservableGauge("terrabase.localack.partner", () => PartnerHealthy ? 1 : 0, "{node}", "1 while the in-region partner answers.");
-        return base.StartAsync(cancellationToken);
+        try
+        {
+            var members = await partners.ListAsync(cancellationToken).ConfigureAwait(false);
+            _partners = members;
+            LogDurability(members);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            logger.ZLogInformation($"The in-region partner list is not ready; writes forward to the home until it is: {error.GetType().Name:@Error}");
+        }
+
+        await base.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public override void Dispose()
@@ -70,11 +82,6 @@ internal sealed class InRegionAck(
     public async ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, byte[] payload, CancellationToken cancellationToken)
     {
         var members = _partners;
-        if (members is [])
-        {
-            return true;
-        }
-
         if (members is not [var partner, ..] || !PartnerHealthy)
         {
             return false;
@@ -116,7 +123,9 @@ internal sealed class InRegionAck(
         {
             try
             {
-                _partners = await partners.ListAsync(cancellationToken).ConfigureAwait(false);
+                var members = await partners.ListAsync(cancellationToken).ConfigureAwait(false);
+                _partners = members;
+                LogDurability(members);
                 if (_partners is [var partner, ..])
                 {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -235,6 +244,24 @@ internal sealed class InRegionAck(
         var content = new ByteArrayContent(json);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         return content;
+    }
+
+    private void LogDurability(IReadOnlyList<RegionPartner> members)
+    {
+        if (_durabilityLogged)
+        {
+            return;
+        }
+
+        _durabilityLogged = true;
+        if (members is [])
+        {
+            logger.ZLogInformation($"This region has no partner; writes forward to the home");
+        }
+        else
+        {
+            logger.ZLogInformation($"This region can acknowledge writes locally");
+        }
     }
 
     private void Answered(RegionPartner partner)

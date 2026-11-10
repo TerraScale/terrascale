@@ -1,10 +1,9 @@
 # In-region acknowledgement of local writes (PIVOT R10, D16)
 
 A region with two discovered nodes acknowledges a local write only after it is durable on both nodes, in different
-fault domains. Losing one node then loses no acknowledged write. A region with one discovered node uses a one-node
-quorum, so local writes continue before N1 adds its holder. This is the user's 2026-11-05 availability decision,
-superseding D16's previous one-node forwarding rule. Single-node acknowledgements have no second-node failure protection;
-`durability=home` still waits for home acceptance. This note extends [local writes and the push](local-overlay.md).
+fault domains. Losing one node then loses no acknowledged write. A region with one discovered node has no partner
+and does not acknowledge a write locally; the router forwards it to the home (E3-01, D4). `durability=home` still
+waits for home acceptance. This note extends [local writes and the push](local-overlay.md).
 
 ## Why not the push stream alone
 
@@ -27,8 +26,9 @@ the same region comes before it. A holder stores no customer data:
 - it commits no local write;
 - it holds the data owner's local writes and finishes their push after a node loss.
 
-Client traffic reaches only the data owner. A region whose peers file lists one node has no holder and uses its durable
-push stream as a one-node quorum. A configured partner that is unhealthy is not treated as an absent partner.
+Client traffic reaches only the data owner. A region whose peers file lists one node has no holder. It does not
+acknowledge a write on that single disk; the write is forwarded to the home. A configured partner that is unhealthy
+is not treated as an absent partner: the write also goes home, after it is already in the push stream.
 
 ## Path of one local transaction
 
@@ -38,7 +38,7 @@ push stream as a one-node quorum. A configured partner that is unhealthy is not 
    `<origin>.<organization>.<project>.<database>.<sequence:D20>`) with a transaction synced to disk, then answers 204.
 3. The node commits the replica transaction and acknowledges the client.
 
-If discovery lists no partner, step 2 is unnecessary and the local acknowledgement does not wait for home. If a
+If discovery lists no partner, the router does not commit locally; it forwards the request to the home. If a
 configured partner does not answer 204 within 2 s, the write is not acknowledged on one node. It is already in the
 push stream, so it waits for the home's `applied` notice, as with `durability=home`, and answers with the home's result.
 
@@ -54,8 +54,8 @@ Every second a node sends `POST /v1/sync/holds/<origin>/contact` to its partner,
 is ready. The partner counts as healthy for 3 s after any answer.
 
 `ILocalCommitPath.LocalAckAvailable` is the fact the router (R4) reads. It is true while the discovered regional quorum
-is healthy, the push stream is ready and connected, and the clock is admitted. A discovered one-node region needs only
-its own durable push; a region with a configured partner needs that partner to answer. Before discovery succeeds, or
+is healthy, the push stream is ready and connected, and the clock is admitted. A region with no discovered partner
+cannot acknowledge locally. A region with a configured partner needs that partner to answer. Before discovery succeeds, or
 if discovery fails, local acknowledgements are unavailable. The router commits a write locally when its shape allows
 it, the clock is admitted (R12), and either `durability=home` was requested or `LocalAckAvailable` holds. Other writes
 go home. The admin metric `terrabase.localwrites.available` follows the same fact.

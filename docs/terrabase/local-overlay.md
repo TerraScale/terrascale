@@ -37,8 +37,8 @@ unconfirmed local write lives outside it, in the push stream.
    acknowledgement waits for that notice instead of step 3.
 
 The push stream is the outbox: it is durable before the acknowledgement and never held only in memory. When discovery
-lists a regional partner, that node also holds the transaction before the acknowledgement. A discovered one-node region
-uses a one-node quorum, per the user's 2026-11-05 availability decision ([in-region ack](in-region-ack.md)).
+lists a regional partner, that node also holds the transaction before the acknowledgement. A region with no
+partner does not acknowledge the write locally; the router forwards it to the home ([in-region ack](in-region-ack.md)).
 
 ## Push stream
 
@@ -126,7 +126,7 @@ pages do not hold yet, in stream order.
 ## `durability=home`
 
 A region commits a write locally when the request asks for the home's acknowledgement, or when its discovered regional
-quorum is available ([in-region ack](in-region-ack.md)): one node in a one-node region, two copies when a partner exists.
+quorum is available ([in-region ack](in-region-ack.md)): two copies when a healthy partner is present. A region with no partner forwards the write home.
 
 - SQL REST: send `TerraScale-Durability: home` with `/sql/execute`. When the router (R4) routes the request local, the
   region runs it on its replica, publishes it to its push stream and answers only after the `applied` notice: the
@@ -134,8 +134,8 @@ quorum is available ([in-region ack](in-region-ack.md)): one node in a one-node 
   …, or `transaction_rolled_back`) for `reverted`, in which case the transaction is applied nowhere. The answer carries
   `TerraScale-Write-Route: …; commit=local`.
 - A request without the header (or `TerraScale-Durability: local`) commits locally while the discovered regional quorum
-  is healthy. A one-node region acknowledges its own durable push; a region with a partner waits for that partner's
-  durable hold. An unavailable quorum, a request the router sends home, and every write over SQL WebSocket and the
+  is healthy. A region with a partner waits for that partner's
+  durable hold. A region with no partner, an unavailable quorum, a request the router sends home, and every write over SQL WebSocket and the
   Postgres wire are forwarded to the home whole.
 - A refused local transaction (a shape the capture cannot carry, a busy replica, a full push stream) is forwarded home
   instead; a commit whose outcome is unknown answers `503 unavailable`.
