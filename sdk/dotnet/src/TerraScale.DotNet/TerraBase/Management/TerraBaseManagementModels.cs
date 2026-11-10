@@ -112,7 +112,7 @@ public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, strin
     [JsonRequired]
     public string HomeRegion { get; init; } = null!;
 
-    /// <summary>Sorted regions holding read replicas; with <see cref="AllRegions"/>, every serving region other than the home.</summary>
+    /// <summary>Sorted replica regions; with <see cref="AllRegions"/>, every serving region other than the home.</summary>
     public IReadOnlyList<string> ReplicaRegions { get; init; } = [];
 
     /// <summary>Whether every serving region, including regions that join later, holds a replica.</summary>
