@@ -69,6 +69,7 @@ Each home region has one durable pull consumer `home-<home>` on every other regi
   order holds, and other databases continue.
 - On start, the consumer restarts from its ack floor. A redelivered message can never overtake a later one, and an
   applied one is answered from its recorded state.
+- An undecodable home push is parked on stream `TERRABASE_PUSH_PARK_<home>` and then acknowledged, not terminated.
 
 ## Resuming from an applied position
 
