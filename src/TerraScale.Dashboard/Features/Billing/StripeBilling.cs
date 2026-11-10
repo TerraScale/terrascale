@@ -100,7 +100,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     }
 
                     current.CustomerId = customer.Id;
-                }, cancellationToken);
+                }, cancellationToken, written: binding);
             }
             if (!await storage.InsertAsync(new StripeCustomerRow { Id = AccountService.NewId(), CustomerId = binding.CustomerId, OrganizationId = org.Id, CreatedAt = time.GetUtcNow().UtcDateTime }, cancellationToken))
             {
@@ -167,7 +167,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     }
 
                     current.CheckoutId = checkout.Id;
-                }, cancellationToken);
+                }, cancellationToken, written: binding);
             }
             catch
             {
@@ -632,10 +632,13 @@ namespace TerraScale.Dashboard.Features.Billing
             return row is null ? null : ReadBinding(row, orgId);
         }
 
-        private async Task<StripeCustomerRow?> CustomerAsync(string customerId, CancellationToken cancellationToken)
+        private Task<StripeCustomerRow?> CustomerAsync(string customerId, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            return await db.StripeCustomers.AsNoTracking().SingleOrDefaultAsync(row => row.CustomerId == customerId, cancellationToken);
+            return ServerTiming.ReadAsync((storage, nameof(StripeCustomerRow), customerId), async () =>
+            {
+                await using var db = await storage.CreateDbContextAsync(cancellationToken);
+                return await db.StripeCustomers.AsNoTracking().SingleOrDefaultAsync(row => row.CustomerId == customerId, cancellationToken);
+            });
         }
 
         internal static BillingBinding ReadBinding(BillingBinding value, string orgId)
@@ -675,11 +678,13 @@ namespace TerraScale.Dashboard.Features.Billing
             }
         }
 
-        private async Task<BillingBinding> UpdateAsync(string orgId, Action<BillingBinding> update, CancellationToken cancellationToken, bool allowDeletion = false)
+        private async Task<BillingBinding> UpdateAsync(string orgId, Action<BillingBinding> update, CancellationToken cancellationToken, bool allowDeletion = false,
+            BillingBinding? written = null)
         {
             for (var attempt = 0; attempt < 4; attempt++)
             {
-                var binding = ReadBinding(await storage.BindingRowAsync(orgId, cancellationToken) ?? throw new IOException("Billing state is unavailable."), orgId);
+                var binding = ReadBinding(attempt == 0 && written is not null ? written.Copy()
+                    : await storage.BindingRowAsync(orgId, cancellationToken) ?? throw new IOException("Billing state is unavailable."), orgId);
                 RequireStripe(binding);
                 if (binding.State == "deleting" && !allowDeletion)
                 {

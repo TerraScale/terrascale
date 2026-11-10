@@ -11,8 +11,12 @@ internal static class BillingStorage
     {
         public async Task<BillingBinding?> BindingRowAsync(string organizationId, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            return await db.Billing.AsNoTracking().SingleOrDefaultAsync(row => row.OrganizationId == organizationId, cancellationToken);
+            var row = await ServerTiming.ReadAsync((storage, nameof(BillingBinding), organizationId), async () =>
+            {
+                await using var db = await storage.CreateDbContextAsync(cancellationToken);
+                return await db.Billing.AsNoTracking().SingleOrDefaultAsync(row => row.OrganizationId == organizationId, cancellationToken);
+            });
+            return row?.Copy();
         }
 
         public async Task<BillingChangeReceipt?> ChangeRowAsync(string organizationId, CancellationToken cancellationToken)
