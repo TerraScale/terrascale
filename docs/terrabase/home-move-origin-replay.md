@@ -23,3 +23,5 @@ application because it includes messages consumed while this region was not home
 An all-regions lease placement may have an empty explicit replica list. SQL HTTP
 and WebSocket read admission and the local commit path honor `AllRegions`, so a
 placed region keeps serving local reads after its database's home moves.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
