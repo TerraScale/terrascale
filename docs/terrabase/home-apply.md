@@ -52,7 +52,7 @@ ValueTask<HomeApplyResult?> StateAsync(TenantContext database, string transactio
 home is unavailable (`StorageBusyException`, a busy `SqlStatementException`, cancellation, shutdown) and returns null
 when the database is not stored on this node; every data outcome is a result. Validate the transaction as
 `ApplyEndpoint.Invalid` does before calling it. Callers ack a
-JetStream message after `ApplyAsync` returns, whatever its state.
+JetStream message after `ApplyAsync` returns, whatever its state. A stuck apply backoff releases the parallel slot before the delay.
 
 ## Internal HTTP
 
