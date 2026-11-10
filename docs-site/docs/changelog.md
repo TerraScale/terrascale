@@ -4,4 +4,4 @@ title: Changelog
 
 # Changelog
 
-The SQL release history will be published with the SQL product.
+Product changes ship in [GitHub releases](https://github.com/TerraScale/terrascale/releases) for TerraScale/terrascale. This page does not list them yet.
