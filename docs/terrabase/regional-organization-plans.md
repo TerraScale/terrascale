@@ -11,3 +11,5 @@ For ts-auth storage organizations, publication records the plan explicitly, incl
 A clustered region with no organization plan, or only an enrollment-created Hobby default without a publication, returns `503 plan_unknown` at admission. It does not admit that organization under Hobby while billing publication is pending. Existing paid records retain their plan; owner-created organizations retain their explicitly created plan. A standalone region retains local admission defaults.
 
 The publication marker uses the existing system catalog record kind and key `organizations/{id}/state/plan`, with the plan name as its value. No router or replication contracts change. Read limits, write admission, storage and operation allowances consume the published local plan.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
