@@ -1,5 +1,6 @@
 [
   {"path": "^e2e/env/build\\.sh$", "repo": "terrascale", "terms": ["engine-brand"], "match": "\\bmake turso-native\\b", "reason": "The Makefile target that verifies or downloads the pinned native libraries before the journey builds the services; internal build wiring, as in ci.yml."},
   {"path": "^e2e/env/up\\.sh$", "repo": "terrascale", "terms": ["webhooks"], "match": "\\bSTRIPE_WEBHOOK_SECRET\\b", "reason": "The dashboard's required Stripe signature secret variable, set to a generated value in the throwaway environment; unrelated to retired database callbacks."},
-  {"path": "^e2e/pages/inventory\\.ts$", "repo": "terrascale", "terms": ["webhooks"], "match": "\\['webhooks', 'Webhooks'\\]", "reason": "The authentication console's end-user lifecycle webhooks page (T221), which the journey audits."}
+  {"path": "^e2e/pages/inventory\\.ts$", "repo": "terrascale", "terms": ["webhooks"], "match": "\\['webhooks', 'Webhooks'\\]", "reason": "The authentication console's end-user lifecycle webhooks page (T221), which the journey audits."},
+  {"path": "^e2e/sdk/rust/Cargo\\.lock$", "repo": "terrascale", "terms": ["collections"], "match": "\\bicu_collections\\b", "reason": "Third-party ICU crate name, as in sdk/rust/Cargo.lock."}
 ]
