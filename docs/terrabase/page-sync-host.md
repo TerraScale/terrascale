@@ -20,6 +20,8 @@ TerraBase serves native page pull for its own databases, inside the TerraBase pr
 
 An answer streams in bounded batches. The pull plans against one read snapshot, writes the header, then reads at most 256 KiB of pages on a storage thread and writes and flushes them to the HTTP/2 stream before it reads the next batch. HTTP/2 flow control pushes back on the reads, so a pull holds about one batch in memory, whatever the database size. The batch is reserved from the memory budget with the plan. The revision index returns reservation it no longer needs after checkpoints trim it, so a tenant whose index once peaked can still pull. The read snapshot, its pooled connection and its storage admission are held until the last page is sent, so a slow replica holds them longer. A failure after the header, including a copy fault noticed after the last page, resets the stream.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Status (work in progress, landed when the pivot halted)
 
 - **Client change log collision.** Native sync metadata must use a different capture table from TerraBase's replicated capture log. The pinned client isolates its local log so the next incremental pull cannot replay home changes as local writes.
