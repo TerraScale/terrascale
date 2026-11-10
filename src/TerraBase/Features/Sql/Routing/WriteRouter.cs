@@ -32,8 +32,7 @@ internal sealed record WriteRoute(WritePath Decided, string Reason, WritePath Co
 
 internal static class WriteReasons
 {
-    public const string UlidInsert = "ulid_insert";
-    public const string ForeignKeyChild = "fk_child_insert";
+    public const string ClientKey = "client_key";
     public const string UpdateByKey = "update_by_key";
     public const string DeleteByKey = "delete_by_key";
     public const string Read = "read";
@@ -233,7 +232,7 @@ internal sealed class WriteRouter(
                     return Home(WriteReasons.Complex);
                 }
 
-                return touched.Overlaps(table.ForeignKeyColumns) ? Local(WriteReasons.ForeignKeyChild) : Local(WriteReasons.UlidInsert);
+                return Home(WriteReasons.ClientKey);
             case "update":
                 if (!ByKey(facts, table))
                 {
