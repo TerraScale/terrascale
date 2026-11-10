@@ -40,3 +40,5 @@ The native `/metrics` exposes scalar
 the desired service generation, not a storage format or a membership revision.
 The comparison also checks full identities when membership changes within a
 service generation. No storage format changes are involved.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
