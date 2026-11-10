@@ -55,3 +55,5 @@ replayed already and is answered where it landed, without another replay, so a d
 loops. Requests on the internal listener never get `ts-replay`; the edge is not in front of it.
 
 The edge contract limits replay to bodies up to 1 MiB and excludes websocket upgrades.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
