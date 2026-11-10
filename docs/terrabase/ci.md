@@ -8,6 +8,6 @@ A pull request must pass these checks from `.github/workflows/ci.yml`:
 
 The Slow suite is not required on every pull request. `.github/workflows/slow.yml` runs it on `main` on a schedule when its inputs changed.
 
-The power-loss end-to-end tests run nightly on `main` from `.github/workflows/terrabase-power-loss.yml` and are not part of every pull request.
+The power-loss end-to-end tests run nightly on `main` from `.github/workflows/terrabase-power-loss.yml` and are not part of every pull request. The nightly power-loss job runs the local-only category through `make terrabase-e2e-local`.
 
 Local Fast validation is `make terrabase-test-fast`. Local Slow validation is `make terrabase-test-slow`.
