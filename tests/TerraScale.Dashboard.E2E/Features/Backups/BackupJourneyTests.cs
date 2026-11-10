@@ -190,7 +190,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
                 Check(page.StatusCode == HttpStatusCode.OK, "The actual native backup page renders across replicas");
                 var html = await page.Content.ReadAsStringAsync();
                 Check(html.Contains("Restore as new database", StringComparison.Ordinal) &&
-                    !html.Contains("name=\"replace\"", StringComparison.Ordinal) && html.Contains("name=\"incrementalBackupCron\" value=\"\"", StringComparison.Ordinal), "The native controls support genuine new-target restore and explicitly leave unsupported overwrite/incremental actions unavailable");
+                    !html.Contains("name=\"replace\"", StringComparison.Ordinal) && !html.Contains("incrementalBackupCron", StringComparison.Ordinal), "The native controls support genuine new-target restore and explicitly leave unsupported overwrite/incremental actions unavailable");
             }
             before = await ReadAsync(producer, "/__test/observations");
             using (var overwrite = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
