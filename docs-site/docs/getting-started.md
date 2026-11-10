@@ -17,3 +17,5 @@ curl -sS --fail-with-body \
   -d '{"statements":[{"sql":"SELECT 1"}]}' \
   "https://api.terrascale.tech/v1/projects/YOUR_PROJECT_ID/databases/YOUR_DATABASE/sql/execute"
 ```
+
+The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once.
