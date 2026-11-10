@@ -1,3 +1,0 @@
-{"phase": "before", "at": 1793918990.9847045, "region": "gru", "sql": "CREATE TABLE activation_probe(id TEXT PRIMARY KEY)", "status": 200, "result": {"results": [{"columns": [], "rows": [], "rows_affected": 0, "last_insert_rowid": null}]}}
-{"phase": "before", "at": 1793918991.085533, "region": "gru", "sql": "INSERT INTO activation_probe VALUES ('before_activation')", "status": 200, "result": {"results": [{"columns": [], "rows": [], "rows_affected": 1, "last_insert_rowid": 1}]}}
-{"phase": "before", "at": 1793918991.1823041, "region": "gru", "sql": "SELECT id FROM activation_probe ORDER BY id", "status": 200, "result": {"results": [{"columns": [{"name": "id", "decltype": "TEXT"}], "rows": [["before_activation"]], "rows_affected": 0, "last_insert_rowid": null}]}}
