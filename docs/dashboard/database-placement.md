@@ -1,7 +1,9 @@
 # Database placement
 
 Database creation accepts a home region and either replica regions or **All regions**. All-regions placement follows
-new serving regions automatically. The database's **Replication** tab owns the replica set and **Move home** action.
+new serving regions automatically. The dashboard's create dialog picks regions only on the map: the first region picked
+is the home and each later one a replica; **All regions** is set afterwards under **Placement** on the **Replication** tab.
+The database's **Replication** tab owns the replica set and **Move home** action.
 Only organization members with management access can change placement; platform databases keep their placement.
 
 The dashboard calls TerraBase's placement API through the management RPC contract using the current user's
