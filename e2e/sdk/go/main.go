@@ -152,6 +152,9 @@ func newClient(key string) (*v1.Client, error) {
 }
 
 func (r *runner) do(op operation) error {
+	if strings.HasPrefix(op.ID, "ws.") && op.ID != "ws.connect" && r.session == nil {
+		return errors.New("the session is not connected")
+	}
 	ctx := r.ctx
 	switch op.ID {
 	case "sql.execute.positional":
@@ -191,6 +194,9 @@ func (r *runner) do(op operation) error {
 		results, err := r.db.Batch(ctx, r.fillAll(op.Statements))
 		if err != nil {
 			return err
+		}
+		if len(results) != len(op.Statements) {
+			return fmt.Errorf("batch answered %d results for %d statements", len(results), len(op.Statements))
 		}
 		if err := same(cells(results[len(results)-1].Rows), grid(op.LastRows), "last rows"); err != nil {
 			return err
@@ -257,6 +263,9 @@ func (r *runner) do(op operation) error {
 		results, err := r.session.Batch(ctx, r.fillAll(op.Statements))
 		if err != nil {
 			return err
+		}
+		if len(results) != len(op.Statements) {
+			return fmt.Errorf("batch answered %d results for %d statements", len(results), len(op.Statements))
 		}
 		return same(cells(results[len(results)-1].Rows), grid(op.LastRows), "last rows")
 	case "ws.begin_commit", "ws.rollback":
