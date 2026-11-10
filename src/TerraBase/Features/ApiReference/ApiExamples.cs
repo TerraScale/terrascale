@@ -158,7 +158,7 @@ internal static class ApiExamples
         "409" when id == "deleteDatabaseIfId" => "database_identity_mismatch, wrong_region, move_in_progress",
         "409" when id == "branchDatabaseIfId" => "database_identity_changed, name_taken",
         "409" when id is "createDatabase" or "branchDatabase" or "restoreBackup" or "restorePointInTime" => "name_taken",
-        "409" when id == "executeSql" => "serialization_conflict",
+        "409" when id == "executeSql" => "serialization_conflict, row_conflict",
         "409" => "conflict",
         "412" => "precondition_failed",
         "413" when id == "executeSql" => "too_large, payload_too_large",
@@ -171,6 +171,7 @@ internal static class ApiExamples
         "503" when id == "planPointInTime" => "pitr_plan_limit, pitr_plan_timeout, pitr_plan_unavailable, storage_busy",
         "503" when id is "getRestoreWindow" or "restorePointInTime" or "rewindPointInTime" => "pitr_plan_limit, storage_busy, capacity, unavailable",
         "503" when id == "healthz" => "bucket_missing",
+        "503" when id == "executeSql" => "storage_busy, capacity, unavailable, write_outcome_unknown",
         "503" => "storage_busy, capacity, unavailable",
         _ => "internal_error",
     };
