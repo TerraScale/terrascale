@@ -1,4 +1,5 @@
 import { array, malformed, object, string } from "./decode.js";
+import { SqlError } from "./errors.js";
 import { requireDatabaseSelector } from "./ids.js";
 import { ExactDecimal, stringifyExactJson } from "./json.js";
 /**
@@ -34,6 +35,7 @@ import { ExactDecimal, stringifyExactJson } from "./json.js";
 
 const maximumStatements = 256;
 const maximumSqlLength = 16_384;
+const maximumSerializationResends = 2;
 
 /** @param {unknown} value @param {string} where */
 function requireArgument(value, where) {
@@ -132,10 +134,36 @@ export async function executeSql(transport, database, statements, options = {}) 
   if (options === null || typeof options !== "object" || Array.isArray(options)) throw new TypeError("SQL request options must be an object.");
   for (const member of Object.keys(options)) if (member !== "signal") throw new TypeError(`Unknown SQL request option ${member}.`);
   const body = stringifyExactJson({ statements: statements.map(encodeStatement) }, "SQL statements");
-  const response = await transport.call("executeSql", { database: requireDatabaseSelector(database) }, { body, signal: options.signal });
-  const results = array(object(response.value, "SQL execute response").results, "SQL results").map(decodeSqlResult);
-  if (results.length !== statements.length) malformed("SQL result count");
-  return Object.freeze(results);
+  const databaseSelector = requireDatabaseSelector(database);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await transport.call("executeSql", { database: databaseSelector }, { body, signal: options.signal });
+      const results = array(object(response.value, "SQL execute response").results, "SQL results").map(decodeSqlResult);
+      if (results.length !== statements.length) malformed("SQL result count");
+      return Object.freeze(results);
+    } catch (error) {
+      if (error instanceof SqlError && error.code === "serialization_conflict" && attempt < maximumSerializationResends) {
+        const span = Math.min(100 << Math.min(attempt, 5), 2_000);
+        const delay = span / 2 + Math.floor(Math.random() * (span / 2 + 1));
+        const signal = options.signal;
+        if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(finish, delay);
+          const abort = () => {
+            clearTimeout(timer);
+            reject(signal?.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+          };
+          function finish() {
+            signal?.removeEventListener("abort", abort);
+            resolve(undefined);
+          }
+          signal?.addEventListener("abort", abort, { once: true });
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 /**
