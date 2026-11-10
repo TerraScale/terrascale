@@ -165,6 +165,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
+          fetch-depth: 2
       # The scan is the longest check: it runs while the path-filter fixtures and self-checks do.
       - name: Start the legacy scan
         run: |
@@ -180,6 +181,9 @@ jobs:
           persist-credentials: false
       - name: Verify CI path filters
         run: python3 scripts/ci/path-filter-test.py .github/workflows/ci.yml path-filter-action/dist/index.js
+      - name: Merged EF Core migrations stay unchanged
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/ci/migrations-frozen.py HEAD^1
       # Production runs on OCI through ts-orch; only Tigris (its endpoint and `fly storage`) stays. The brackets keep
       # these lines from matching themselves.
       - name: Workflows name no retired hosting provider
@@ -193,6 +197,7 @@ jobs:
           python3 scripts/ci/cache-policy-test.py
           python3 scripts/ci/fast-budget-test.py
           bash scripts/ci/release-app-test.sh
+          python3 scripts/ci/migrations-frozen-test.py
           python3 scripts/vendor/turso-native-pipeline-test.py
           bash scripts/terrabase/storage-format-check-test.sh
           bash scripts/terrabase/e2e-summary-test.sh
