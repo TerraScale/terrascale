@@ -215,3 +215,5 @@ their aggregates outgrow the 10^12 operation-count bound; merging and every
 analytics total saturate at that range instead of wrapping negative or failing.
 There are no migrations or backfills; existing entity-ID generation is owned by
 TS-754, and this slice introduces no ID encoding or compatibility fallback.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
