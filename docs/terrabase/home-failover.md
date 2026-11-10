@@ -114,6 +114,7 @@ acknowledged one is in the new home and the counter shows each applied once.
 ## Known gaps
 
 - `durability` is accepted on SQL REST only; the WebSocket frame field and `SET terrascale.durability` follow.
+- A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Planned moves (R9)
 
