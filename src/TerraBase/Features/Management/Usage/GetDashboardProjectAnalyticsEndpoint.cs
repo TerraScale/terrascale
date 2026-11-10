@@ -22,6 +22,7 @@ internal sealed class GetDashboardProjectAnalyticsEndpoint(IProjectCatalog catal
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
+        Metadata(ListenerMetadata.Internal);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)

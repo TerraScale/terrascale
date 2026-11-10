@@ -20,6 +20,7 @@ internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
+        Metadata(ListenerMetadata.Internal);
     }
 
     public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken)

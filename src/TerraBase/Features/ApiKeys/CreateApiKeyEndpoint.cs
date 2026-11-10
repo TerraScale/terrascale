@@ -27,6 +27,7 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time) :
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
+        Metadata(ListenerMetadata.Internal);
     }
 
     public override async ValueTask<IResult> HandleAsync(CreateApiKeyRequest request, CancellationToken cancellationToken)

@@ -8,8 +8,8 @@ public sealed class ListenerExposureTests
     public async Task An_endpoint_without_exposure_metadata_stays_closed()
     {
         await using var api = await ManagementApi.StartSharedAsync();
-        using var unmarked = await api.Server.Client.GetAsync("/v1/admin/node/pressure");
-        using var marked = await api.Server.Client.GetAsync("/healthz");
+        using var unmarked = await api.Server.Client.GetAsync("/v1/admin/unmarked");
+        using var marked = await api.Server.Client.GetAsync("/v1/admin/node/pressure");
 
         await Assert.That(unmarked.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(marked.StatusCode).IsEqualTo(HttpStatusCode.OK);

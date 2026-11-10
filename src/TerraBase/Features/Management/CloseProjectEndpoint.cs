@@ -23,6 +23,7 @@ internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<P
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
+        Metadata(ListenerMetadata.Internal);
     }
 
     public override async ValueTask<IResult> HandleAsync(ProjectClosureRequest request, CancellationToken cancellationToken)

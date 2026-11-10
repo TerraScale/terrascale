@@ -20,6 +20,7 @@ internal sealed class ListUsageAllowancesEndpoint(IUsageService usage, PeerUsage
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
+        Metadata(ListenerMetadata.Internal);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
