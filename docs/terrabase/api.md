@@ -29,6 +29,8 @@ Discover regions through the published catalog rather than embedding regional ho
 
 Reads use a ready regional replica where supported. Writes follow [write routing](sql/write-routing.md); a request to another region can be forwarded to home. A routing decision is separate from its actual commit location. SQLSTATE `40001` requires retrying the whole transaction. [Home apply](home-apply.md) defines accepted and rejected transaction states.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Errors and observations
 
 HTTP SQL errors contain `error.code`, `message`, `statement` and `sqlstate`. Errors do not expose engine names, credential values or statement text. Every response carries `X-Request-ID`; see [request identity](request-identity.md). Authentication and authorization failures preserve their HTTP status and challenge headers.
