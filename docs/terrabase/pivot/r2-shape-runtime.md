@@ -72,3 +72,5 @@ Still open: the durable purge outbox and account-wide purge budget above; deleti
 its R2 objects or queue their prefix purge (the eight-day lifecycle removes them, and crypto-shredding makes cached
 copies unreadable first). Observed live: about ten minutes after sealing, `manifest?offset=7` listed nothing until an origin read of offset 7
 re-adopted the object; the snapshot page stayed listed.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
