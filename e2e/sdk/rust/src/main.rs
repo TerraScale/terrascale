@@ -136,8 +136,10 @@ impl Runner {
         self.db.as_ref().expect("group a has a database")
     }
 
-    fn session(&self) -> &SqlSession {
-        self.session.as_ref().expect("connected")
+    fn session(&self) -> Result<&SqlSession, String> {
+        self.session
+            .as_ref()
+            .ok_or_else(|| "the session is not connected".to_string())
     }
 
     async fn count(&self, op: &Value) -> Outcome {
@@ -311,7 +313,7 @@ impl Runner {
                 Ok(())
             }
             "ws.statements" => {
-                let session = self.session();
+                let session = self.session()?;
                 let result = session.execute(&fill("sql"), &[]).await.map_err(e)?;
                 same(json!(result.rows_affected), &json!(1), "rows affected")?;
                 let rows = session.query(&fill("query"), &[]).await.map_err(e)?;
@@ -323,7 +325,7 @@ impl Runner {
                 same(last(&results), &op["lastRows"], "last rows")
             }
             "ws.begin_commit" | "ws.rollback" => {
-                let session = self.session();
+                let session = self.session()?;
                 session.begin().await.map_err(e)?;
                 session.execute(&fill("sql"), &[]).await.map_err(e)?;
                 if id == "ws.rollback" {
@@ -335,7 +337,7 @@ impl Runner {
             }
             "ws.transaction.commit" => {
                 let sql = fill("sql");
-                self.session()
+                self.session()?
                     .transaction(
                         |session| async move { session.execute(&sql, &[]).await.map(|_| ()) },
                     )
@@ -347,7 +349,7 @@ impl Runner {
                 let sql = fill("sql");
                 let message = text(op, "message");
                 let result: Result<(), Error> = self
-                    .session()
+                    .session()?
                     .transaction(|session| async move {
                         session.execute(&sql, &[]).await?;
                         Err(Error::InvalidInput(message))
@@ -361,7 +363,7 @@ impl Runner {
                 }
             }
             "ws.in_transaction" => {
-                let session = self.session();
+                let session = self.session()?;
                 session.begin().await.map_err(e)?;
                 let inside = session.in_transaction();
                 session.commit().await.map_err(e)?;
@@ -372,7 +374,7 @@ impl Runner {
                 )
             }
             "ws.close" => {
-                let session = self.session();
+                let session = self.session()?;
                 session.close().await;
                 match session.execute(&text(op, "sql"), &[]).await {
                     Ok(_) => Err("the closed session answered".into()),
