@@ -28,3 +28,12 @@ test("a configured region is sent as X-TerraScale-Region-Pin", async () => {
   await client.health.liveness();
   expect(requests.at(-1)?.headers["x-terrascale-region-pin"]).toBe("gru");
 });
+
+test("an empty or whitespace region omits X-TerraScale-Region-Pin", async () => {
+  const { requests, baseUrl } = await fixture((_request, response) => json(response, probe));
+  for (const region of ["", "   "]) {
+    const client = createTerraBaseClient({ project, token, baseUrl, region });
+    await client.health.liveness();
+    expect(requests.at(-1)?.headers["x-terrascale-region-pin"]).toBeUndefined();
+  }
+});
