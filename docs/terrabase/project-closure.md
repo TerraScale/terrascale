@@ -52,3 +52,5 @@ after a lost response, a restart or a repeated request presents the same identit
 
 Limits: a machine that joins membership after the acceptance read, or a historical disk absent from membership, is
 not covered (same limit as database purge). An unreachable holder keeps the closure pending forever (fail closed).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
