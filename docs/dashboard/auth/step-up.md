@@ -12,7 +12,10 @@ The dashboard keeps the opaque purpose/audience proof inside encrypted TerraBase
 HttpOnly correlation cookie. The fixed return path is `/auth/step-up/callback`;
 query-bearing callbacks are refused. Pending intents are single use, expire with
 the proof, and bind the initiating account, browser session, selected workspace
-and original form. Switching accounts or sessions invalidates continuation.
+and original form. Switching accounts or sessions invalidates continuation. A
+browser whose callback cannot continue (a used, expired or foreign intent, or an
+unavailable service) gets the dashboard's error page with the reason; API
+callers get problem JSON.
 
 The dashboard consumes `create_pat/ts-dashboard` immediately before storing the
 independent credential. API-key and OAuth-client operations send their

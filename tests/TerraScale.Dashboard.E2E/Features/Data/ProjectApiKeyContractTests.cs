@@ -134,6 +134,15 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 await Assert.That(json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()).IsEqualTo(keyId);
             }
 
+            using (var reload = new HttpRequestMessage(HttpMethod.Get, "/auth/step-up/callback"))
+            {
+                reload.Headers.Accept.ParseAdd("text/html");
+                using var reloaded = await client.SendAsync(reload);
+                await Assert.That(reloaded.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+                await Assert.That(reloaded.Content.Headers.ContentType!.MediaType).IsEqualTo("text/html");
+                await Assert.That(await reloaded.Content.ReadAsStringAsync()).Contains("Start the action again");
+            }
+
             using (var listed = await client.GetAsync("/api/v1/dashboard/credentials"))
             {
                 await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -221,7 +230,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 var html = await page.Content.ReadAsStringAsync();
                 await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That(html).Contains("Create key");
-                await Assert.That(html).DoesNotContain("Save network access");
             }
 
             using (var revoked = await HttpJourney.PostFormAsync(member, "/api/v1/dashboard/credentials/" + keyId + "/revoke" + scope, new() { ["_csrf"] = csrf }))

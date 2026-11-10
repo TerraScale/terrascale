@@ -494,9 +494,9 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public bool HasMore => NextCursor is not null;
     }
 
-    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", IReadOnlyList<string>? ProjectCidrs = null, DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
+    public sealed record ApiKeysPage(TerraScale.Dashboard.Common.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "", string DraftAllowedCidrs = "", DateTimeOffset Now = default, string Cursor = "", bool HasMore = false)
     {
-        private static readonly string[] FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
+        public static readonly IReadOnlyList<string> FullAccessScopes = ["sql:read", "sql:write", "databases:read", "databases:write"];
         public string Warning { get; init; } = "";
         public bool ViewerOnly { get; init; }
         public string DraftKeyCidrs { get; init; } = "";
@@ -520,9 +520,14 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var query = string.Join('&', values.Where(value => !string.IsNullOrEmpty(value.Value)).Select(value => System.Net.WebUtility.UrlEncode(value.Key) + "=" + System.Net.WebUtility.UrlEncode(value.Value)));
             return query.Length == 0 ? path : path + "?" + query;
         }
+        public static bool FullAccess(IReadOnlyCollection<string> scopes)
+        {
+            return FullAccessScopes.All(scopes.Contains);
+        }
+
         public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
         {
-            if (FullAccessScopes.All(key.Scopes.Contains))
+            if (FullAccess(key.Scopes))
             {
                 return ("Full-access key", "rose", "ShieldAlert");
             }
