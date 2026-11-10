@@ -38,6 +38,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await Assert.That(await page.Locator("#displayName").InputValueAsync()).IsEqualTo("QA Test User");
                     await page.Locator("#displayName").FillAsync("Test User");
                     await SubmitAsync("form:is([action=\"/api/v1/dashboard/profile\"],[action^=\"/api/v1/dashboard/profile?\"])", "Save profile");
+                    await GotoAsync("/project");
 
                     await GotoAsync("/databases");
                     await ShotAsync("databases");
@@ -214,7 +215,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                         DataObject = rpc,
                     });
                 }
-                Console.WriteLine("PASS: desktop/mobile profile, database CRUD, SQL, keys/PATs, native/MCP state and revocation, paid organization checkout/project wizard and customer portal");
+                Console.WriteLine("PASS: desktop/mobile profile, project settings, database CRUD, SQL, keys/PATs, native/MCP state and revocation, paid organization checkout/project wizard and customer portal");
             }
             catch when (activePage is { IsClosed: false })
             {
