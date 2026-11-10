@@ -19,7 +19,7 @@ public sealed class HomePushStreamReplicaTests
         {
             Code = 503,
             ErrCode = 10023,
-            Description = "insufficient resources",
+            Description = "temporary replica placement failed for the cluster",
         });
 
         await Assert.That(HomePush.StreamReplicaCountExceedsCluster(exceeded)).IsTrue();

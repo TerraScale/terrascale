@@ -806,15 +806,7 @@ internal class HomePush(
             return false;
         }
 
-        if (api.ErrCode == StreamReplicasNotSupported)
-        {
-            return true;
-        }
-
-        var description = api.Description;
-        return description is not null
-            && description.Contains("replica", StringComparison.OrdinalIgnoreCase)
-            && description.Contains("cluster", StringComparison.OrdinalIgnoreCase);
+        return api.ErrCode == StreamReplicasNotSupported;
     }
 
     private void RecordPublished(TenantContext database, string transaction, string home, long epoch, ulong sequence) =>
