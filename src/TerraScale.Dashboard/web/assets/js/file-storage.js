@@ -1,3 +1,4 @@
+console.error('journey proof: console error on the file storage page');
 // File bytes go directly to the signed capability. Dashboard requests carry only bounded metadata.
 class UploadError extends Error {}
 const messages = {
