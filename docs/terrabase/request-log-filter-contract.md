@@ -26,3 +26,5 @@ the 24-hour retention. `recordingLimited` still reports requests this server
 could not record at all. Repeated or non-ULID `after` values return
 `400 invalid_cursor`. `status` filters a cursor page's items without changing
 `nextCursor`.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
