@@ -208,7 +208,7 @@ export class V1Transport {
     const webSocket = "WebSocket" in config ? config.WebSocket : undefined;
     if (webSocket !== undefined && typeof webSocket !== "function") throw new TypeError("WebSocket must be a constructor.");
     this.#webSocket = webSocket ?? /** @type {SqlSocketConstructor | undefined} */ (/** @type {unknown} */ (globalThis.WebSocket));
-    if ("region" in config && config.region !== undefined) this.#regionPin = regionId(config.region);
+    if ("region" in config && config.region !== undefined && (typeof config.region !== "string" || config.region.trim() !== "")) this.#regionPin = regionId(config.region);
   }
 
   /**

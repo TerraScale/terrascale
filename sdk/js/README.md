@@ -184,7 +184,7 @@ narrower data scopes; they cannot grant `databases:read` or `databases:write`. C
 `Authorization: Bearer <token>` and are held privately. The SDK validates header-safe syntax; authentication and
 authorization belong to the producer. SQL reads need the data read scope; writes and DDL also need the data write
 scope, checked per statement. Keep service credentials private and out of logs and browser bundles.
-`createTerraBaseClient` is an alias of `createTerraBaseV1Client`.
+`createTerraBaseClient` is an alias of `createTerraBaseV1Client`. A region sends `X-TerraScale-Region-Pin`, and a missing, empty, or whitespace region omits it.
 
 `client.databases.create({ name })` uses the called region as the home; `homeRegion` selects another serving region.
 
