@@ -18,6 +18,16 @@ ts db import target-db dump.sql
 
 `-` reads the script from stdin, so `ts db export source-db | ts db import target-db -` also works, and any SQLite-dialect `.sql` file can be imported the same way. The import is not atomic: each batch commits on its own. If a statement fails, the CLI prints the 1-based number of the first statement of the failed batch and you resume with `-from <n>`, which skips the first n-1 statements.
 
+## From an existing SQLite file
+
+TerraScale does not open a local `.sqlite` or `.db` file, and it does not attach or replicate one. Dump the file to SQLite SQL, then load that script:
+
+```sh
+sqlite3 existing.db .dump | ts db import target-db -
+```
+
+`sqlite3 .dump` writes the schema and rows as SQL. `ts db import` sends that script in batches. A dump you already have as `.sql` loads with `ts db import target-db dump.sql`.
+
 ## Load rows in batches
 
 One `POST /v1/projects/{project}/databases/{database}/sql/execute` carries 1 to 256 statements and runs them as one transaction, all or nothing. Give each row its own `INSERT` with bound parameters, and keep every batch inside the limits: at most 256 statements, each at most 16 KiB, a body of at most 1 MiB and at most 1,024 rows changed — past them the request answers `413 too_large`. Writes need the `sql:write` scope.
@@ -39,6 +49,8 @@ The access token comes from a project API key, as in [SQL over HTTP](/guides/sql
 
 The [export](/guides/sql-http#export-a-database) endpoint returns one SQL script of the whole source database — schema, rows, indexes, views and triggers — from a single read snapshot. Split that script into batches within the limits above and `POST` them to the target database; the statements are plain SQLite SQL and run unchanged.
 
-## Coming from PostgreSQL
+## Coming from PostgreSQL or another SQLite database
 
-Statements use the SQLite dialect, and Postgres-only syntax is refused over HTTP. A `pg_dump --data-only --inserts --column-inserts` dump must be converted to SQLite SQL first — table definitions are not translated. The [Postgres wire](/guides/postgres-clients) accepts a few Postgres spellings (`SERIAL`, `ILIKE`, `now()`, `expr::type`), but only on that transport, and `COPY … FROM STDIN` and psql's `\copy` are not supported there either: the wire serves queries only. Convert the dump's `INSERT` statements to batches like the ones above.
+Imports from PostgreSQL, and from another SQLite database, are a dump you load. There is no live link, attached database, replica, or continuous sync from either source, and TerraScale does not run a hosted migration service.
+
+Statements use the SQLite dialect, and Postgres-only syntax is refused over HTTP. A `pg_dump --data-only --inserts --column-inserts` dump must be converted to SQLite SQL first — table definitions are not translated. The [Postgres wire](/guides/postgres-clients) accepts a few Postgres spellings (`SERIAL`, `ILIKE`, `now()`, `expr::type`), but only on that transport, and `COPY … FROM STDIN` and psql's `\copy` are not supported there either: the wire serves queries only. Convert the dump's `INSERT` statements to batches like the ones above. Another SQLite database is dumped to SQL the same way as a local file, then loaded with `ts db import`.
