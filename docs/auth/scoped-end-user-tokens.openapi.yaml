@@ -3,9 +3,6 @@ info:
   title: TerraScale scoped end-user token API
   version: v1
   description: Standalone supplement to platform-api.openapi.yaml for backend-asserted end-user identities.
-  license:
-    name: Apache-2.0
-    identifier: Apache-2.0
 servers:
   - url: https://auth.terrascale.tech
 security:

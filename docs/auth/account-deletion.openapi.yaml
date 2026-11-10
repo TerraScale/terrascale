@@ -3,9 +3,6 @@ info:
   title: TerraScale account deletion status API
   version: v1
   description: Status-only supplement to platform-api.openapi.yaml; see account-deletion-receipts.md for authenticated receipt binding.
-  license:
-    name: Apache-2.0
-    identifier: Apache-2.0
 servers:
   - url: https://auth.terrascale.tech
 security:

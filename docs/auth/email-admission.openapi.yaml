@@ -3,9 +3,6 @@ info:
   title: TerraScale infrastructure email admission
   version: v1
   description: Scoped relay supplement; see email/capacity-reserve.md for account budgets and rollout.
-  license:
-    name: Apache-2.0
-    identifier: Apache-2.0
 servers:
   - url: https://auth.terrascale.tech
 security:

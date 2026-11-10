@@ -3,9 +3,6 @@ info:
   title: TerraScale account sign-in providers API
   version: v1
   description: Supplement to platform-api.openapi.yaml for linked sign-in providers.
-  license:
-    name: Apache-2.0
-    identifier: Apache-2.0
 servers:
   - url: https://auth.terrascale.tech
 security:

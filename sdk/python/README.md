@@ -269,8 +269,6 @@ request against the published route list in `contracts/openapi-routes.json`
 server. Releases: bump `src/terrascale/_version.py`, tag `vX.Y.Z` and publish a
 GitHub release for it; the publish workflow uploads to PyPI with trusted publishing.
 
-License: Apache-2.0.
-
 `401 key_revoked` and `401 key_expired` raise `KeyRevokedError` and
 `KeyExpiredError`, subclasses of `AuthenticationError` retaining `code` and
 `message`. They never retry or refresh. Built-in sync and async token sources
