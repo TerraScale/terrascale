@@ -78,7 +78,7 @@ export const en = {
 
   homeStats: {
     regions: 'Serving regions',
-    writeRegion: 'Home is the durable apply point',
+    writeRegion: 'Home region',
     statements: 'Statements per transaction',
   },
 
@@ -388,7 +388,7 @@ export const en = {
       'TerraScale builds TerraBase, a SQL database service. The dashboard brings together databases, access management and usage.',
     databaseTitle: 'TerraBase',
     databaseText:
-      'Each database uses three regions. A replica region can take a local SQL write, and the home is the durable apply point.',
+      'The service has three regions. A database can live in one region. A replica region can take a local SQL write, and the home is the durable apply point.',
     integrationText:
       'Use the SQLite SQL dialect through PostgreSQL-compatible clients, the HTTP API or the SDKs. Manage databases and API keys in the dashboard.',
     alphaTitle: 'Public Alpha',
