@@ -62,6 +62,8 @@ An interactive transaction runs over one dedicated SQL WebSocket session, and th
 
 The adapter maps the server's SQLSTATE to Prisma's error kinds: unique violations to P2002, not-null violations to P2011, foreign-key violations to P2003, missing tables to P2021 and missing columns to P2022. Every other refusal keeps the server's message and surfaces as a generic database error.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Migrations
 
 Prisma does not run migrations here: `prisma migrate dev` and `prisma db push` (and the shadow database they need) are not supported. Generate SQL instead and apply it yourself:
