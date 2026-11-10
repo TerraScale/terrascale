@@ -119,8 +119,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(workflow, (root / 'scripts/dashboard/workflows-reference/images-ghcr.yml').read_text())
         release = workflow.split('      - name: Release to every region\n', 1)[1]
         self.assertIn('          test "$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")" = true\n'
-                      '          # ts-orch normally finishes a dashboard release in 133-141 s.\n'
-                      '          bash scripts/ci/release-app.sh', release)
+                      '          bash scripts/ci/release-app.sh ts-dashboard "$IMAGE"\n', release)
 
     def test_ci_service_jobs_preserve_the_main_ref_boundary(self):
         workflow = (Path(__file__).resolve().parents[3] / '.github/workflows/ci.yml').read_text()

@@ -144,6 +144,9 @@ work to `HomeRegion`, or retry it yourself when it is safe to repeat.
 `dotnet ef migrations script`) work against TerraBase. The provider ships its design-time services for
 `dotnet ef migrations add`.
 
+- Never edit a merged migration; add a new one. EF Core records each applied migration by its id in the history
+  table (`__EFMigrationsHistory` by default): an edited migration never runs again where it was applied, and a renamed
+  or regenerated one runs again against the tables it already created.
 - Each migration runs in one WebSocket transaction, so it must finish within the 5-second transaction limit. Split
   large data moves into their own migrations.
 - The migrations lock is a row in `__EFMigrationsLock` that each migration transaction writes first, so migrations
