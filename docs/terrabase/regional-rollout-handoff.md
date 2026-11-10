@@ -141,3 +141,6 @@ with the peer credential, and answers 503 while no writer is known.
 `tests/TerraBase.Slow/Sync/RegionalSocketForwardingTests.cs` runs EF Core
 migrations, an explicit transaction and a 300-row save through the serving peer
 over both listeners.
+
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
