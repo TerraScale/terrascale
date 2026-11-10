@@ -17,3 +17,5 @@ No API, SDK or storage contract changes or migrations are required. Embedded com
 Fast listener cases cover batching, read grants, empty tables/catalogs, 100-table truncation,
 quoted names, types and metadata failure after successful execution. Slow covers completion and loading/refresh.
 Builds and integration/browser tests have not run for this prepared follow-up; running-app captures are pending.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
