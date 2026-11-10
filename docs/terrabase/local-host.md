@@ -17,3 +17,5 @@ node is a cell of its own, named `local`, in any environment:
 Every `TERRABASE_*` variable and each Tigris bucket variable (`AWS_*`, `BUCKET_NAME`) also accepts `<NAME>_FILE=/path`:
 TerraBase reads the file, trims the trailing newline, and the file wins over `<NAME>`. A host that mounts secrets as files
 (OCI Vault on gru) delivers them this way. An unreadable file stops the start, naming only the variable.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
