@@ -4,6 +4,7 @@ import { parseV1Error } from "./errors.js";
 import { requireDatabaseSelector, requireProject } from "./ids.js";
 import { object } from "./decode.js";
 import { parseExactJson } from "./json.js";
+import { region as regionId } from "./catalog.js";
 import { v1Route, v1RoutePath } from "./routes.js";
 import { V1SqlSocket, sqlSocketProtocol } from "./sql-socket.js";
 import { ShapeHints, shapeHintProtocol } from "./shape-hints.js";
@@ -188,6 +189,7 @@ export class V1Transport {
   #maxResponseBytes;
   /** @type {SqlSocketConstructor | undefined} */
   #webSocket;
+  #regionPin = "";
 
   /** @param {TerraBaseV1ClientConfig | (import("./system.js").TerraBaseSystemClientConfig & { project?: undefined; endpointResolver?: undefined })} config */
   constructor(config) {
@@ -220,6 +222,7 @@ export class V1Transport {
     const webSocket = "WebSocket" in config ? config.WebSocket : undefined;
     if (webSocket !== undefined && typeof webSocket !== "function") throw new TypeError("WebSocket must be a constructor.");
     this.#webSocket = webSocket ?? /** @type {SqlSocketConstructor | undefined} */ (/** @type {unknown} */ (globalThis.WebSocket));
+    if ("region" in config && config.region !== undefined) this.#regionPin = regionId(config.region);
   }
 
   /**
@@ -235,7 +238,11 @@ export class V1Transport {
     const url = new URL(await this.url("connectSql", params, signal));
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const token = await this.#accessToken(signal);
-    if (sendsUpgradeHeaders()) return V1SqlSocket.open(new WebSocketClass(url.href, { protocols: [sqlSocketProtocol], headers: { authorization: `Bearer ${token}` } }), signal);
+    if (sendsUpgradeHeaders()) {
+      const headers = { authorization: `Bearer ${token}` };
+      if (this.#regionPin !== "") Object.assign(headers, { "X-TerraScale-Region-Pin": this.#regionPin });
+      return V1SqlSocket.open(new WebSocketClass(url.href, { protocols: [sqlSocketProtocol], headers }), signal);
+    }
     return V1SqlSocket.open(new WebSocketClass(url.href, [sqlSocketProtocol]), signal, token);
   }
 
@@ -247,7 +254,11 @@ export class V1Transport {
     url.search = query.toString();
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const token = await this.#accessToken(signal);
-    if (sendsUpgradeHeaders()) return ShapeHints.open(new WebSocketClass(url.href, { protocols: [shapeHintProtocol], headers: { authorization: `Bearer ${token}` } }), signal, undefined);
+    if (sendsUpgradeHeaders()) {
+      const headers = { authorization: `Bearer ${token}` };
+      if (this.#regionPin !== "") Object.assign(headers, { "X-TerraScale-Region-Pin": this.#regionPin });
+      return ShapeHints.open(new WebSocketClass(url.href, { protocols: [shapeHintProtocol], headers }), signal, undefined);
+    }
     return ShapeHints.open(new WebSocketClass(url.href, [shapeHintProtocol]), signal, token);
   }
 
@@ -650,6 +661,7 @@ export class V1Transport {
         headers.set("authorization", `Bearer ${await this.#accessToken(signal)}`);
       if (route.responseMediaType !== "") headers.set("accept", route.responseMediaType);
       if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
+      if (this.#regionPin !== "") headers.set("X-TerraScale-Region-Pin", this.#regionPin);
       /** @type {RequestInit & { duplex?: "half" }} */
       const init = { method: route.method, headers, redirect: options.redirect ?? "manual" };
       if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
