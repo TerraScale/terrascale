@@ -85,7 +85,7 @@ internal sealed class WriteRouter(
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(statements);
         var decided = preference == WriteOverride.Home ? new StatementRoute(WritePath.Home, WriteReasons.Override)
-            : await DecideAsync(database, reader, statements, preference, cancellationToken).ConfigureAwait(false);
+            : await DecideAsync(database, reader, statements, cancellationToken).ConfigureAwait(false);
         return Record(decided, decided.Path == WritePath.Local && LocalCommitAvailable(database, homeDurable));
     }
 
@@ -118,7 +118,7 @@ internal sealed class WriteRouter(
     }
 
     private async ValueTask<StatementRoute> DecideAsync(
-        TenantContext database, IReplicaReader? reader, IReadOnlyList<string> statements, WriteOverride preference, CancellationToken cancellationToken)
+        TenantContext database, IReplicaReader? reader, IReadOnlyList<string> statements, CancellationToken cancellationToken)
     {
         if (reader is null)
         {
@@ -156,11 +156,6 @@ internal sealed class WriteRouter(
             }
 
             var route = Classify(facts, schema);
-            if (route.Path == WritePath.Home && preference == WriteOverride.Local && route.Reason is not (WriteReasons.Ddl or WriteReasons.Unknown))
-            {
-                route = new(WritePath.Local, WriteReasons.Override);
-            }
-
             if (route.Path == WritePath.Home)
             {
                 return route;
