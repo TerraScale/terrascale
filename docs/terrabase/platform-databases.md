@@ -20,3 +20,5 @@ Auth and dashboard use the .NET SDK's SQL endpoint, the dashboard through the Te
 - [Management API](management-api.md).
 
 Platform-admin inspection remains read-only and must redact credential material before returning data. All writes go through the owning service's API. The generated reference is authoritative for the currently exposed inspection operations.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
