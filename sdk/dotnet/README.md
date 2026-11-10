@@ -60,6 +60,8 @@ sync transaction methods throw like the other sync paths).
   A REST request refused with `serialization_conflict` is resent at most twice; nothing else is resent.
 - Primary keys are ULIDs from `TerraScaleIdGenerator`; tables that take local writes avoid `AUTOINCREMENT`.
 
+The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once.
+
 [`samples/sql-quickstart.cs`](samples/sql-quickstart.cs) runs this flow against a live region with a ts CLI sign-in:
 `dotnet run samples/sql-quickstart.cs -- <refresh-token-file> <organization> <project> <database> <region>`.
 
