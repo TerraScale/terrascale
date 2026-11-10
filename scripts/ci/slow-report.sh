@@ -29,10 +29,11 @@ if (( code != 0 )); then
       | sed -E 's/(Bearer|Basic) [^ "]+/\1 [redacted]/g; s/((api[_-]?key|token|secret|password)["=: ]+)[^ ",]+/\1[redacted]/Ig')
     # The suite that reported it: its area's make target runs only that suite.
     target=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1 } on && /^Test run summary/ { print; exit }' slow/log)
-    case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *) target="test-slow" ;; esac
+    case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *Dashboard.E2E*) target="dashboard-test-slow" ;; *) target="test-slow" ;; esac
+    case $AREA in dashboard) stage="pinned Playwright Chromium, no container" ;; *) stage="Dockerfile stage \`test-slow-$AREA\`" ;; esac
     body=$(printf '%s\n' \
       "Failed on \`${SOURCE_SHA:-$GITHUB_SHA}\` in the Slow job: $RUN_URL" "" \
-      "Environment: \`$GITHUB_JOB ($AREA)\` job on GitHub-hosted runner, Dockerfile stage \`test-slow-$AREA\`, Release build." \
+      "Environment: \`$GITHUB_JOB ($AREA)\` job on GitHub-hosted runner, $stage, Release build." \
       "Reproduce: \`nice -n 19 make $target TESTS=\"${test%%(*}\"\`" \
       "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
     number=$(jq -r --arg t "$title" "first(.[] | select(.title == \$t) | .number) // empty" <<< "$open")
