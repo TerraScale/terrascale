@@ -25,3 +25,5 @@ Existing tests also require WAL shipping and customer isolation while drills are
 
 No public API, storage format, migration or authentication behavior changes. CI remains
 the exact-head merge gate.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
