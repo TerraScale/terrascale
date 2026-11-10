@@ -74,7 +74,8 @@ prefix): `None`, `int` (64-bit), finite `float`, `bool` (stored 1/0), `str` and
 `bytes` (sent as `{"base64": ...}`). A `Row` reads by ordinal or column name, with
 `get_int64`, `get_double`, `get_boolean`, `get_string`, `get_bytes` and `is_null`;
 blobs come back as `bytes` and integers stay exact. `TerraScale(region="gru")`
-pins every request to one region.
+pins every request to one region. A missing, empty, or whitespace region sends no
+`X-TerraScale-Region-Pin` header.
 
 A refused statement raises `SqlError` with `code` (a `SqlErrorCodes` constant),
 `message`, `statement` (zero-based), `sqlstate` and `status`; the request rolled
