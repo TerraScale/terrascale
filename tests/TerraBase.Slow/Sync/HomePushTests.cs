@@ -12,6 +12,7 @@ using TerraBase.Engine.Turso;
 using TerraBase.Features.Clock;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.HomePush;
+using TerraBase.Features.LocalAck;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
 using TerraBase.Primitives;
@@ -139,5 +140,133 @@ public sealed class HomePushTests
         var committed = await world.LocalAsync(true, ["INSERT INTO items (id, v) VALUES ('a', 'kept')"], token);
         await Assert.That(committed.Home!.State).IsEqualTo(WriteStates.Confirmed);
         await Assert.That((await world.HomeSqlAsync("SELECT id, v FROM items")).GetRawText()).IsEqualTo("""[["a","kept"]]""");
+    }
+
+    [Test]
+    public async Task A_stuck_database_backoff_does_not_hold_the_parallel_apply_slot()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var nats = await JetStreamServer.StartAsync(token);
+        await using var world = await LocalWriteWorld.StartAsync(nats);
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var filled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var busy = 0;
+        var apply = new CountingApply((database, transaction) =>
+        {
+            if (database.DatabaseId == world.Database.DatabaseId)
+            {
+                ready.TrySetResult();
+                return Confirmed(transaction);
+            }
+
+            if (Interlocked.Increment(ref busy) == 16)
+            {
+                filled.TrySetResult();
+            }
+
+            return ready.Task.IsCompleted ? Confirmed(transaction) : null;
+        });
+        var options = world.Api.Server.Services.GetRequiredService<TerraBaseOptions>() with
+        {
+            Region = "gru",
+            MachineId = "gru-1",
+            DataDirectory = Path.Combine(Path.GetTempPath(), "terrabase-slot-" + EntityIds.New()),
+            NatsUrl = nats.Url,
+            NatsToken = nats.Token,
+        };
+        await using var services = new ServiceCollection().AddSingleton(world.Api.Server.Services.GetRequiredService<ITransactionCrypto>()).AddMetrics().BuildServiceProvider();
+        var home = new HomePush(options, new OriginPeer(), new HomeCatalog(), world.Api.Server.Services.GetRequiredService<IDatabaseReplicas>(),
+            apply, new FixedClock(), new QuietAck(), new RegionalOwners(options), services, services.GetRequiredService<IMeterFactory>(),
+            TimeProvider.System, NullLogger<HomePush>.Instance);
+        await home.StartAsync(token);
+        try
+        {
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(home.Started), TimeSpan.FromSeconds(30));
+            var crypto = world.Api.Server.Services.GetRequiredService<ITransactionCrypto>();
+            var js = new NatsJSContext(world.Client);
+            await world.Client.ConnectAsync();
+            for (var i = 0; i < 16; i++)
+            {
+                var database = new TenantContext(world.Database.OrganizationId, PlanTier.Hobby, world.Database.ProjectId, EntityIds.New().ToString());
+                await PublishAsync(js, crypto, database, token);
+            }
+
+            await filled.Task.WaitAsync(TimeSpan.FromSeconds(8), token);
+            await PublishAsync(js, crypto, world.Database, token);
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+        }
+        finally
+        {
+            await home.StopAsync(CancellationToken.None);
+            home.Dispose();
+        }
+    }
+
+    private static HomeApplyResult Confirmed(RegionTransaction transaction) => new(transaction.Id!, WriteStates.Confirmed, [], []);
+
+    private static async Task PublishAsync(NatsJSContext js, ITransactionCrypto crypto, TenantContext database, CancellationToken token)
+    {
+        var transaction = new RegionTransaction(Ulid.NewUlid().ToString(), "sjc", new HlcTimestamp(1, 0, "sjc-1"), []);
+        var payload = await crypto.SealAsync(database, HomePush.Encode(transaction), token);
+        var published = await js.PublishAsync(PushNames.Subject("sjc", "gru", database), payload, cancellationToken: token);
+        published.EnsureSuccess();
+    }
+
+    private sealed class CountingApply(Func<TenantContext, RegionTransaction, HomeApplyResult?> decide) : IHomeApply
+    {
+        public ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(decide(database, transaction));
+
+        public ValueTask<HomeApplyResult?> StateAsync(TenantContext database, string transactionId, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<HomeApplyResult?>(null);
+
+        public ValueTask PrepareAsync(TenantContext database, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+        public ValueTask StampHomeWritesAsync(IStorageTransaction transaction, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+        public ValueTask<bool> ClaimAsync(IStorageTransaction transaction, string id, CancellationToken cancellationToken) => ValueTask.FromResult(true);
+    }
+
+    private sealed class HomeCatalog : IReplicaCatalog
+    {
+        public ValueTask<DatabaseRecordResult> FindAsync(TenantContext database, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<DatabaseRecordResult>(new TenantDatabaseRecord("main", new DatabasePlacement("gru", ["sjc"], 1)));
+
+        public ValueTask<ReadDatabaseRecordsResult> ListHomedAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public ValueTask<bool> RecordAsync(ReplicaCatalogEntry entry, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public ValueTask UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public ValueTask<ForgetDatabaseResult> ForgetAsync(TenantContext database, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class OriginPeer : IRegionPeers
+    {
+        public ValueTask<IReadOnlyList<RegionPeer>> OtherRegionsAsync(CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<RegionPeer>>([new RegionPeer("sjc", new Uri("https://sjc.peer.test"))]);
+    }
+
+    private sealed class FixedClock : IHlcClock
+    {
+        public ValueTask<HlcTimestamp> NextAsync(CancellationToken cancellationToken) => ValueTask.FromResult(new HlcTimestamp(1, 0, "gru-1"));
+
+        public ValueTask<HlcTimestamp> ObserveAsync(HlcTimestamp remote, CancellationToken cancellationToken) => NextAsync(cancellationToken);
+    }
+
+    private sealed class QuietAck : IInRegionAck
+    {
+        public bool PartnerHealthy => true;
+
+        public bool QuorumHealthy => true;
+
+        public ValueTask<bool> HoldAsync(TenantContext database, string home, ulong sequence, byte[] payload, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(true);
+
+        public void Release(TenantContext database, ulong through)
+        {
+        }
     }
 }

@@ -626,7 +626,6 @@ internal class HomePush(
                 message = queue.Dequeue();
             }
 
-            await _applying.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 await ApplyAsync(nats, message, cancellationToken).ConfigureAwait(false);
@@ -634,10 +633,6 @@ internal class HomePush(
             catch (Exception error) when (error is not OperationCanceledException)
             {
                 logger.ZLogWarning($"A pushed transaction waits for redelivery: {error.GetType().Name:@Error}");
-            }
-            finally
-            {
-                _applying.Release();
             }
         }
     }
@@ -694,6 +689,7 @@ internal class HomePush(
             HomeApplyResult? applied;
             var started = Stopwatch.GetTimestamp();
             var reason = "missing_database";
+            await _applying.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 applied = await apply.ApplyAsync(database, transaction, cancellationToken).ConfigureAwait(false);
@@ -706,6 +702,7 @@ internal class HomePush(
             finally
             {
                 _applyTime?.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                _applying.Release();
             }
 
             if (applied is not null)
