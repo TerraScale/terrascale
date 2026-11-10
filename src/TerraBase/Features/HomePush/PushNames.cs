@@ -1,3 +1,4 @@
+using System.Globalization;
 using TerraBase.Configuration;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -22,6 +23,13 @@ internal static class PushNames
         $"terrabase.applied.{origin}.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}";
 
     public static string AppliedAll(string origin) => $"terrabase.applied.{origin}.>";
+
+    public static string ParkStream(string home) => "TERRABASE_PUSH_PARK_" + home.ToUpperInvariant();
+
+    public static string ParkSubjects(string home) => $"terrabase.push-park.{home}.>";
+
+    public static string ParkSubject(string home, string origin, TenantContext database, ulong sequence) =>
+        $"terrabase.push-park.{home}.{origin}.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}.{sequence.ToString(CultureInfo.InvariantCulture)}";
 
     public static string? Origin(string subject) => subject.Split('.') is [_, _, var origin, ..] && TerraBaseOptions.IsRegion(origin) ? origin : null;
 

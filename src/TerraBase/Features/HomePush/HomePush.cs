@@ -652,7 +652,7 @@ internal class HomePush(
             return;
         }
 
-        if (PushNames.Database(message.Subject) is not { } database || message.Data is not { } data || await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
+        if (PushNames.Database(message.Subject) is not { } database || message.Data is not { } data)
         {
             logger.ZLogWarning($"A malformed pushed message is dropped");
             _applies?.Add(1, new KeyValuePair<string, object?>("state", "malformed"));
@@ -662,6 +662,15 @@ internal class HomePush(
                 Progressed(dropped, PushNames.Database(message.Subject), at.Sequence.Stream);
             }
 
+            return;
+        }
+
+        if (await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
+        {
+            logger.ZLogWarning($"An undecodable pushed message is parked");
+            _applies?.Add(1, new KeyValuePair<string, object?>("state", "parked"));
+            await ParkAsync(database, data, message, cancellationToken).ConfigureAwait(false);
+            await message.AckAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -722,6 +731,32 @@ internal class HomePush(
         }
 
         _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
+    }
+
+    private async Task ParkAsync(TenantContext database, byte[] data, INatsJSMsg<byte[]> message, CancellationToken cancellationToken)
+    {
+        var js = _js ?? throw new IOException("the push connection is not open");
+        var origin = PushNames.Origin(message.Subject) ?? options.Region;
+        var sequence = message.Metadata?.Sequence.Stream ?? 0UL;
+        _ = await js.CreateOrUpdateStreamAsync(new StreamConfig(PushNames.ParkStream(options.Region), [PushNames.ParkSubjects(options.Region)])
+        {
+            Storage = StreamConfigStorage.File,
+            Retention = StreamConfigRetention.Limits,
+            Discard = StreamConfigDiscard.New,
+            MaxBytes = 1L << 30,
+            MaxMsgSize = MaxPayloadBytes,
+            DuplicateWindow = TimeSpan.FromMinutes(10),
+            NumReplicas = 1,
+        }, cancellationToken).ConfigureAwait(false);
+        var parked = await js.PublishAsync(
+            PushNames.ParkSubject(options.Region, origin, database, sequence),
+            data,
+            opts: new NatsJSPubOpts { MsgId = "park-" + origin + "-" + sequence.ToString(CultureInfo.InvariantCulture) },
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (parked.Error is { } error)
+        {
+            throw new IOException(error.Description);
+        }
     }
 
     protected virtual ValueTask<PubAckResponse> PublishStoredAsync(string subject, byte[] payload, string id, NatsHeaders headers, CancellationToken cancellationToken) =>
