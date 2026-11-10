@@ -114,7 +114,7 @@ keys, making retained encrypted backups unreadable; physical cleanup is separate
 
 ### Placement
 
-A database has one home region, which commits its writes, and replica regions, which hold read replicas.
+A database has one home region; a replica region can commit some SQL REST writes locally, and every other write runs at the home.
 `CreateDatabaseOptions` and `DatabasePlacement` accept `home_region`, `replica_regions` and `all_regions`;
 unset options are not sent. `Client::set_database_placement(database, &DatabasePlacement)` needs exactly one
 of `replica_regions` (an empty list removes every replica) or `all_regions`, and no `home_region`.
