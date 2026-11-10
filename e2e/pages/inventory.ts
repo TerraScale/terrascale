@@ -8,6 +8,7 @@ export type PageState = {
   url: (journey: Journey) => string;
   covers: PagePattern;
   status?: number;
+  shell?: false;
   data?: (page: Page, journey: Journey) => Promise<void>;
 };
 
@@ -232,7 +233,34 @@ export const dashboardStates: readonly PageState[] = [
     url: (journey) => `/support?relatedRequestId=${journey.databaseId}`,
     covers: { path: /^\/support$/, query: { relatedRequestId: id } },
   },
-  { name: 'api reference', url: () => '/reference', covers: { path: /^\/reference\/?$/ } },
-  { name: 'page not found', url: () => '/this-page-does-not-exist', covers: { path: /^\/this-page-does-not-exist$/ }, status: 404 },
-  { name: 'platform administration', url: () => '/admin', covers: { path: /^\/admin$/ }, status: 403 },
+  {
+    name: 'api reference',
+    url: () => '/reference',
+    covers: { path: /^\/reference\/?$/ },
+    shell: false,
+    data: async (page) => {
+      await expect(page).toHaveTitle('TerraScale API reference');
+    },
+  },
+  {
+    name: 'page not found',
+    url: () => '/this-page-does-not-exist',
+    covers: { path: /^\/this-page-does-not-exist$/ },
+    status: 404,
+    data: async (page) => {
+      await expect(page).toHaveTitle('Page not found · TerraScale');
+      await heading(page, 'We can’t find that page.');
+    },
+  },
+  {
+    name: 'platform administration',
+    url: () => '/admin',
+    covers: { path: /^\/admin$/ },
+    status: 403,
+    shell: false,
+    data: async (page) => {
+      await expect(page).toHaveTitle('This request was not allowed · TerraScale');
+      await heading(page, 'This request was not allowed');
+    },
+  },
 ];
