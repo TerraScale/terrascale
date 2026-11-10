@@ -21,8 +21,7 @@ a path from PIVOT Appendix E:
 
 | Write | Decision | `reason` |
 |---|---|---|
-| INSERT naming a non-rowid primary key, into a table with no other UNIQUE | local | `ulid_insert` |
-| INSERT of a child row with a foreign key | local (home re-checks it) | `fk_child_insert` |
+| INSERT naming the primary key | home | `client_key` |
 | UPDATE by the whole primary key with constant values, not touching a key, UNIQUE or FK column | local | `update_by_key` |
 | DELETE by the whole primary key of a table nothing references | local | `delete_by_key` |
 | Relative UPDATE (`SET n = n - 1`) | home | `relative_update` |
