@@ -1,8 +1,9 @@
 # Region replicas (PIVOT R3)
 
-A database has one home region, which serves its writes, and up to eight replica regions. A replica region holds a
-read-only copy that it pulls from the home with the engine's official sync client in page mode, through the home's
-[in-process page sync host](page-sync-host.md). The topology is a star: every replica follows its home, only the home's
+A database has one home region and up to eight replica regions. A replica region holds a copy that it pulls from the
+home with the engine's official sync client in page mode, through the home's
+[in-process page sync host](page-sync-host.md). Some SQL REST writes commit on that copy; every other write runs at the
+home ([write routing](sql/write-routing.md)). The topology is a star: every replica follows its home, only the home's
 page answers move (never the engine's push), and a replica can always be deleted and pulled again.
 
 ## Placement
@@ -17,8 +18,11 @@ page answers move (never the engine's push), and a replica can always be deleted
 
 - `POST /v1/projects/{project}/databases/{database}/sql/execute` with only read statements runs on one snapshot of the
   replica, under the home's row, byte and time limits, and is metered as reads in the replica region.
-- A statement that writes, a request before the replica's first pull, and every other data API answer
-  `421 wrong_region` naming the home (`ts-replay: region=<home>`), so the edge replays them there.
+- SQL REST writes follow [write routing](sql/write-routing.md). A batch commits in the replica region only when every
+  write is one the router decides local and the local commit path is ready; otherwise the batch is forwarded to the
+  home. A home that cannot be reached answers `421 wrong_region` naming it. A request before the replica's first pull,
+  and every other data API, answer `421 wrong_region` naming the home (`ts-replay: region=<home>`), so the edge replays
+  them there.
 - **Postgres wire and SQL WebSocket** sessions stay in the region they reached. A read outside a transaction runs on the
   replica; so does a READ ONLY transaction (`BEGIN READ ONLY`, and every read-only WebSocket `execute` frame), on one
   replica snapshot. Read statements are described (Postgres Parse/Describe) on the replica; writes are described at the home, where they run. Postgres catalog
@@ -27,7 +31,7 @@ page answers move (never the engine's push), and a replica can always be deleted
 
 ## Writes and transactions
 
-A write, a transaction that is not READ ONLY, and a read the replica cannot answer yet run on one SQL session at the
+A Postgres or WebSocket write, a transaction that is not READ ONLY, and a read the replica cannot answer yet run on one SQL session at the
 home: `POST /v1/internal/sql/session` on the home's internal listener, with the peer credential, over the private mesh.
 Both bodies are streams of length-prefixed JSON frames (4-byte big-endian length, at most 24 MiB each, reserved against
 the memory budget before they are read): an open frame naming the organization, project, database, replica region and
