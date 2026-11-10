@@ -106,3 +106,5 @@ Fork PRs do not receive repository secrets. Keep this workflow on `pull_request`
 and serialize runs per PR. Use synthetic seed data and run migrations with the
 scoped branch URL. The action's source builds a pinned CLI from the monorepo;
 no new CLI or action release is required.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
