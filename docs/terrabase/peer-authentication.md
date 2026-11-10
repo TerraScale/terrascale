@@ -41,3 +41,5 @@ the separate metrics listener serves metrics only.
 Transport remains HTTP/2 without TLS within the private service network.
 The shared credential does not provide mutual TLS or bind identity to a machine.
 Anyone holding it has peer and operator privileges.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
