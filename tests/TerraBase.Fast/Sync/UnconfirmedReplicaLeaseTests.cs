@@ -5,6 +5,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Primitives;
 using TerraBase.Engine;
+using TerraBase.Features.Replicas;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Sync;
 
@@ -54,5 +56,13 @@ public sealed class UnconfirmedReplicaLeaseTests
         using var accepted = await ManagementApi.SqlAsync(writer, $"/v1/projects/{project}/databases/plain", "CREATE TABLE kept (id INTEGER)", token);
         var acceptedBody = await accepted.Content.ReadAsStringAsync(token);
         await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(acceptedBody);
+
+        gate.Lease(id, held: true);
+        gate.Renewed(gate.Time.GetTimestamp() + (long)(gate.Time.TimestampFrequency * TimeSpan.FromMinutes(5).TotalSeconds));
+        await api.Server.Services.GetRequiredService<HomeLeases>().PrepareAsync(new TenantContext(organization, PlanTier.Hobby, project, id), token);
+        await Assert.That(gate.Holds(id)).IsTrue();
+        using var after = await ManagementApi.SqlAsync(writer, $"/v1/projects/{project}/databases/replicated", "CREATE TABLE kept_after_prepare (id INTEGER)", token);
+        var afterBody = await after.Content.ReadAsStringAsync(token);
+        await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(afterBody);
     }
 }

@@ -144,19 +144,20 @@ internal sealed partial class HomeLeases(
         }
 
         var id = database.DatabaseId!;
-        if (!leaseGate.Leased.Contains(id))
-        {
-            leaseGate.Lease(id, held: false);
-        }
-
-        if (_kv is not { } kv || !Ready)
-        {
-            return false;
-        }
-
+        var kv = _kv;
         await _confirming.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (!leaseGate.Leased.Contains(id))
+            {
+                leaseGate.Lease(id, held: false);
+            }
+
+            if (kv is null || !Ready)
+            {
+                return false;
+            }
+
             await ConfirmAsync(kv, database, placement, cancellationToken).ConfigureAwait(false);
             return leaseGate.Holds(id);
         }
