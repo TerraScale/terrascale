@@ -43,7 +43,6 @@ IPAddress internalAddress;
 try
 {
     TerraBaseOptions.ReadSecretFiles();
-    DevelopmentPeers.Refuse(environmentName);
     options = TerraBaseOptions.FromProcess(args);
     internalCredential = InternalCredential.FromProcess(options);
     internalAddress = Listeners.InternalAddress(options);
