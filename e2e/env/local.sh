@@ -5,6 +5,7 @@ repo=$(dirname "$e2e")
 export E2E_STATE=${E2E_STATE:-$e2e/.state}
 export E2E_TOOLS=${E2E_TOOLS:-${XDG_CACHE_HOME:-$HOME/.cache}/terrascale-e2e}
 export E2E_BUILD=${E2E_BUILD:-$E2E_STATE/build}
+export E2E_SDK_BUILD=${E2E_SDK_BUILD:-$E2E_STATE/sdk}
 export E2E_REVISION=${E2E_REVISION:-$(git -C "$repo" rev-parse HEAD)}
 export NODE_EXTRA_CA_CERTS=$E2E_STATE/pki/ca.pem E2E_CA_FILE=$E2E_STATE/pki/ca.pem
 holder=$E2E_STATE/namespace.pid
@@ -12,6 +13,7 @@ prepare() {
   mkdir -p "$E2E_STATE"
   chmod 700 "$E2E_STATE"
   bash "$here/build.sh" "$repo" "$E2E_BUILD"
+  for sdk in dotnet go rust python js; do bash "$e2e/sdk/build.sh" "$sdk"; done
   bash "$here/tools.sh"
   npm ci --prefix "$e2e" --no-audit --no-fund
   (cd "$e2e" && npx playwright install chromium)
