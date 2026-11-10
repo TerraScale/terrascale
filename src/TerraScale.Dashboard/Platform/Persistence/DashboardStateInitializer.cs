@@ -63,7 +63,10 @@ namespace TerraScale.Dashboard.Platform.Persistence
         private async Task InitializeAsync(CancellationToken cancellationToken)
         {
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            await db.Database.MigrateAsync(cancellationToken);
+            if ((await db.Database.GetPendingMigrationsAsync(cancellationToken)).Any())
+            {
+                await db.Database.MigrateAsync(cancellationToken);
+            }
         }
     }
 }
