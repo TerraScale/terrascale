@@ -105,3 +105,5 @@ this change does not add `/readyz` or claim storage readiness.
 The inspected Atlas `origin/main` still uses `/v1/openapi.json` for its TerraBase
 mutation readiness probe (`API_PROXY.readyPath` in `src/regional-proxy.ts`).
 Switching Atlas to a public `/readyz` requires the TS-483 contract to land first.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
