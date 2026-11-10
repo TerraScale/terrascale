@@ -582,7 +582,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             "Entrar",
             "Não tentou entrar? Ignore este e-mail. Nunca encaminhe este link."),
         [(AuthEmailKind.VerifyEmail, English)] = new(
-            "{{ code }} is your {{ app_name }} verification code",
+            "{{ code }} is your {{ app_name }} sign-up code",
             "Use it to verify your email. It expires in {{ expires_in }}.",
             "Verify your email address",
             "Enter this code in {{ app_name }} to confirm that {{ user.email }} belongs to you.",
