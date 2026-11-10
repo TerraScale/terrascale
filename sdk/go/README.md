@@ -148,7 +148,8 @@ serving region, including regions added later; `MoveDatabaseHome` moves the home
 replica region (`ts db move-home`, `ts db placement ... -all-regions`).
 
 A database has one home region for writes and can have encrypted read replicas in other serving regions.
-REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
+A replica region can accept a local SQL REST write, and the home applies it. The default `TerraScale-Durability` is `local`.
+REST reads can use a ready local replica. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
 preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
