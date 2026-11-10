@@ -45,7 +45,16 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         }
 
         Rejection rejection;
-        var applying = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+        IStorageTransaction? applying;
+        try
+        {
+            applying = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted)
+        {
+            throw new StorageBusyException();
+        }
+
         if (applying is null)
         {
             return null;
@@ -91,6 +100,10 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
                 {
                     rejection = rejected.Rejection;
                 }
+                catch (SqlStatementException error) when (error.Failure is Busy or Interrupted)
+                {
+                    throw new StorageBusyException();
+                }
                 catch (SqlStatementException error) when (Rejects(error) is { } kind)
                 {
                     rejection = new Rejection(kind, run.Current?.Table, run.Current?.Key, error.Message);
@@ -98,7 +111,14 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             }
         }
 
-        return await RevertAsync(database, transaction, rejection, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await RevertAsync(database, transaction, rejection, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted)
+        {
+            throw new StorageBusyException();
+        }
     }
 
     public async ValueTask<HomeApplyResult?> StateAsync(TenantContext database, string transactionId, CancellationToken cancellationToken)
