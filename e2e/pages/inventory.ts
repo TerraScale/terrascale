@@ -60,6 +60,11 @@ const databaseTabs: [string, string][] = [
   ['point-in-time', 'Point-in-time recovery'],
 ];
 
+const tabStates: Record<string, PagePattern['query']> = {
+  sql: { result: optionalId, savedQueryId: optionalId },
+  tables: { table: /^[A-Za-z0-9_]*$/ },
+};
+
 const authSections: [string, string][] = [
   ['overview', 'Overview'],
   ['users', 'Users'],
@@ -138,7 +143,7 @@ export const dashboardStates: readonly PageState[] = [
   ...databaseTabs.map(([tab, title]): PageState => ({
     name: `database ${title.toLowerCase()}`,
     url: (journey) => `${database(journey)}/${tab}`,
-    covers: { path: databasePath(tab) },
+    covers: { path: databasePath(tab), query: tabStates[tab] },
     data: async (page, journey) => {
       await expect(page).toHaveTitle(`${journey.databaseName} · ${title} · TerraScale`);
       await databaseHeader(page, journey);
@@ -217,7 +222,7 @@ export const dashboardStates: readonly PageState[] = [
     (tab): PageState => ({
       name: `profile ${tab}`,
       url: () => `/profile?tab=${tab}`,
-      covers: { path: /^\/profile$/, query: { tab: new RegExp(`^${tab}$`) } },
+      covers: { path: /^\/profile$/, query: { tab: new RegExp(`^${tab}$`), status: /^([a-z-]+)?$/ } },
     }),
   ),
   { name: 'notifications', url: () => '/notifications', covers: { path: /^\/notifications$/ } },
