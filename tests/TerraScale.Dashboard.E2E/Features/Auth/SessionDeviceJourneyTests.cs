@@ -1,18 +1,17 @@
 using System.Net;
+using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Auth
 {
-    public sealed class SessionDeviceJourneyTests
+    [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
+    public sealed class SessionDeviceJourneyTests(DashboardE2EFixture fixture)
     {
         [Test]
         public async Task SessionsTabShowsTheDeviceEachSessionWasCreatedOn()
         {
-            await using var fixture = new DashboardE2EFixture();
-            await fixture.InitializeAsync();
             using var firefox = fixture.CreateClient();
             firefox.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0");
-            using var login = await HttpJourney.LoginAsync(firefox);
-            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await DatabaseJourney.NativeWorkspaceAsync(firefox);
 
             var profile = await firefox.GetStringAsync("/profile?tab=sessions");
             await Assert.That(profile).Contains("Firefox on Linux");
@@ -22,12 +21,11 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Test]
         public async Task RevokingOneSessionKeepsTheOthersSignedIn()
         {
-            await using var fixture = new DashboardE2EFixture();
-            await fixture.InitializeAsync();
             using var first = fixture.CreateClient();
             using var second = fixture.CreateClient();
-            using var firstLogin = await HttpJourney.LoginAsync(first);
-            using var secondLogin = await HttpJourney.LoginAsync(second);
+            var account = await DatabaseJourney.NativeWorkspaceAsync(first);
+            using var secondLogin = await HttpJourney.LoginAsync(second, account.Email, account.Password);
+            await Assert.That(secondLogin.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             var profile = await first.GetStringAsync("/profile?tab=sessions");
             var id = System.Text.RegularExpressions.Regex.Match(profile, "/api/v1/dashboard/profile/sessions/([0-9A-HJKMNP-TV-Z]{26})/revoke").Groups[1].Value;
             await Assert.That(id.Length).IsEqualTo(26);

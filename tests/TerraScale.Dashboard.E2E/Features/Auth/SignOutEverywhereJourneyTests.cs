@@ -1,18 +1,19 @@
 using System.Net;
+using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Auth
 {
-    public sealed class SignOutEverywhereJourneyTests
+    [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
+    public sealed class SignOutEverywhereJourneyTests(DashboardE2EFixture fixture)
     {
         [Test]
         public async Task SignOutEverywhereNeedsCsrfAndEndsEveryLocalSessionOfTheUser()
         {
-            await using var fixture = new DashboardE2EFixture();
-            await fixture.InitializeAsync();
             using var first = fixture.CreateClient();
             using var second = fixture.CreateClient();
-            using var firstLogin = await HttpJourney.LoginAsync(first);
-            using var secondLogin = await HttpJourney.LoginAsync(second);
+            var account = await DatabaseJourney.NativeWorkspaceAsync(first);
+            using var secondLogin = await HttpJourney.LoginAsync(second, account.Email, account.Password);
+            await Assert.That(secondLogin.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             var profile = await first.GetStringAsync("/profile?tab=sessions");
             await Assert.That(profile).Contains("Sign out everywhere?");
 

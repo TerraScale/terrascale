@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
     public sealed partial class TsAuthPlatformJourneyTests
     {
         // PlatformDirectory.ProjectMembersAsync: current effective role; only explicit grants, ordered by user ID.
-        private sealed partial class PlatformProducer
+        internal sealed partial class PlatformProducer
         {
             private HttpResponseMessage? ProjectGrantRoute(Organization org, (string UserId, string Email) caller,
                 string method, string[] parts, string query, string body)

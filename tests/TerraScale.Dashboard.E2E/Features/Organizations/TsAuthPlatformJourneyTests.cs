@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TUnit.Core.Interfaces;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations
 {
@@ -20,7 +21,8 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
     // Collaborator listing and read boundaries follow terrascale 1d823d8534fc PlatformDirectory.
     // Project invitation lookup/acceptance follows local terrascale a095400a1 InvitationEndpoints/Invitations
     // and TerraScale.DotNet 0.0.12's Named, InvitationLookup and AcceptedInvitation DTOs.
-    public sealed partial class TsAuthPlatformJourneyTests
+    [ClassDataSource<TsAuthPlatformJourneyTests.SharedPlatform>(Shared = SharedType.PerTestSession)]
+    public sealed partial class TsAuthPlatformJourneyTests(TsAuthPlatformJourneyTests.SharedPlatform platforms)
     {
         private static readonly string[] ViewerRoleBody = ["{\"role\":\"viewer\"}"];
         [Test]
@@ -29,7 +31,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         [Arguments("admin")]
         public async Task ProjectInviteesAcceptAndReadOnlyTheirLiveProjectsWithoutOrganizationAuthority(string role)
         {
-            await using var platform = await PlatformScenario.StartAsync();
+            var platform = platforms.Scenario;
             var user = platform.Principal("project-" + role);
             var owner = platform.Principal("project-owner");
             using var client = platform.Client();
@@ -265,7 +267,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         public async Task ProjectViewerReadsUsageForTheirGrantedProjectWithoutOrganizationTotals()
         {
             var (platform, client, org, granted, sibling, collaborator) = await UsageCollaboratorAsync("viewer");
-            await using (platform)
+            using (client)
             {
                 using var page = await client.GetAsync("/usage?project=" + granted);
                 await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -285,7 +287,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         public async Task ProjectViewerCannotReadUsageForAnotherProjectOfTheSameOrganization()
         {
             var (platform, client, org, granted, sibling, collaborator) = await UsageCollaboratorAsync("viewer");
-            await using (platform)
+            using (client)
             {
                 using var refused = await client.GetAsync("/usage?project=" + sibling);
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -300,7 +302,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         public async Task ProjectViewerReadsAnalyticsForTheirGrantedProjectWithoutOrganizationTotals()
         {
             var (platform, client, org, granted, sibling, collaborator) = await UsageCollaboratorAsync("viewer");
-            await using (platform)
+            using (client)
             {
                 using var page = await client.GetAsync("/analytics?project=" + granted);
                 await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -318,7 +320,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         public async Task ProjectViewerCannotReadUsageToolForAnotherProjectOfTheSameOrganization()
         {
             var (platform, client, org, granted, sibling, collaborator) = await UsageCollaboratorAsync("viewer");
-            await using (platform)
+            using (client)
             {
                 var secret = await HttpJourney.CreatePatAsync(client, "Analytics collaboration", platform.Principal("usage-collaborator").Password);
                 var refused = await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "get_usage", arguments = new { organizationId = org, projectId = sibling } });
@@ -329,10 +331,10 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             }
         }
 
-        private static async Task<(PlatformScenario Platform, HttpClient Client, string OrganizationId, string GrantedProjectId, string SiblingProjectId, string CollaboratorId)> UsageCollaboratorAsync(
+        private async Task<(PlatformScenario Platform, HttpClient Client, string OrganizationId, string GrantedProjectId, string SiblingProjectId, string CollaboratorId)> UsageCollaboratorAsync(
             string role)
         {
-            var platform = await PlatformScenario.StartAsync();
+            var platform = platforms.Scenario;
             var owner = platform.Principal("usage-owner");
             var collaborator = platform.Principal("usage-collaborator");
             var organization = platform.Producer.AddOrganization("Usage collaboration", owner.Subject);
@@ -352,7 +354,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         [Test]
         public async Task FirstSignInOnTwoReplicasCreatesOnePersonalWorkspaceAndFollowsTsAuthMembership()
         {
-            await using var platform = await PlatformScenario.StartAsync();
+            var platform = platforms.Scenario;
             var user = platform.Principal("platform-first");
             using var first = platform.Client();
             using var second = platform.Client(replica: true);
@@ -419,7 +421,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         [Test]
         public async Task MembersInvitationsOwnershipAndAuditUseTheProducerWire()
         {
-            await using var platform = await PlatformScenario.StartAsync();
+            var platform = platforms.Scenario;
             var owner = platform.Principal("platform-owner");
             var member = platform.Principal("platform-member");
             var invitee = platform.Principal("platform-invitee");
@@ -518,7 +520,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         [Test]
         public async Task InviteAndRevokeRefuseADemotedCallerFromLiveTsAuth()
         {
-            await using var platform = await PlatformScenario.StartAsync();
+            var platform = platforms.Scenario;
             var owner = platform.Principal("live-invite-owner");
             using var client = platform.Client();
             using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
@@ -558,7 +560,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         [Test]
         public async Task AMissingInviteTokenRendersTheInvitationsPage()
         {
-            await using var platform = await PlatformScenario.StartAsync();
+            var platform = platforms.Scenario;
             var owner = platform.Principal("bad-invite-token");
             using var client = platform.Client();
             using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
@@ -581,7 +583,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         [Test]
         public async Task AMissingMembersInviteTokenRendersTheOrganizationPage()
         {
-            await using var platform = await PlatformScenario.StartAsync();
+            var platform = platforms.Scenario;
             var owner = platform.Principal("bad-members-invite-token");
             using var client = platform.Client();
             using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
@@ -632,9 +634,27 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             return JsonElement.Parse(await client.GetStringAsync("/api/v1/dashboard/context"));
         }
 
-        private sealed record Principal(string Subject, string Email, string Password);
+        internal sealed record Principal(string Subject, string Email, string Password);
 
-        private sealed class PlatformScenario : IAsyncDisposable
+        public sealed class SharedPlatform : IAsyncInitializer, IAsyncDisposable
+        {
+            internal PlatformScenario Scenario { get; private set; } = null!;
+
+            public async Task InitializeAsync()
+            {
+                Scenario = await PlatformScenario.StartAsync();
+            }
+
+            public async ValueTask DisposeAsync()
+            {
+                if (Scenario is not null)
+                {
+                    await Scenario.DisposeAsync();
+                }
+            }
+        }
+
+        internal sealed class PlatformScenario : IAsyncDisposable
         {
             private readonly DemoEnvironment environment = new();
             private readonly List<WebApplication> hosts = [];
@@ -710,10 +730,10 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
             public Principal Principal(string name)
             {
-                return principals.GetOrAdd(name, key =>
+                return principals.GetOrAdd(TestContext.Current!.Id + "/" + name, _ =>
             {
-                var principal = new Principal(new TerraScaleIdGenerator().NewId(), key + "-" + Guid.NewGuid().ToString("N")[..8] + "@example.test", "E2E-" + Guid.NewGuid().ToString("N"));
-                auth!.RegisterFixturePrincipal(new(principal.Subject, key, principal.Email, principal.Password));
+                var principal = new Principal(new TerraScaleIdGenerator().NewId(), name + "-" + Guid.NewGuid().ToString("N")[..8] + "@example.test", "E2E-" + Guid.NewGuid().ToString("N"));
+                auth!.RegisterFixturePrincipal(new(principal.Subject, name, principal.Email, principal.Password));
                 return principal;
             });
             }
@@ -811,7 +831,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 
         // Producer-shaped ts-auth platform API: snake_case bodies, {items,next} pages,
         // {"error":{"code","message"}} refusals and Bearer sign-in tokens.
-        private sealed partial class PlatformProducer(Func<string, (string UserId, string Email)?> resolve)
+        internal sealed partial class PlatformProducer(Func<string, (string UserId, string Email)?> resolve)
         {
             public Func<SessionRecord, string, string, bool>? AuthorizeDeletion { get; init; }
             private const int PageSize = 2;

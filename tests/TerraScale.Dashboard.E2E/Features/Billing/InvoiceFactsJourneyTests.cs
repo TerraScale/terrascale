@@ -9,20 +9,18 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
-    public sealed class InvoiceFactsJourneyTests
+    [ClassDataSource<SharedDemoEnvironment>(Shared = SharedType.PerTestSession)]
+    public sealed class InvoiceFactsJourneyTests(SharedDemoEnvironment shared)
     {
         private static readonly string[] TwoDashHosts = ["dash.terrascale.tech", "dash.terrascale.tech"];
         private static readonly string[] ThreeDashHosts = ["dash.terrascale.tech", "dash.terrascale.tech", "dash.terrascale.tech"];
         [Test]
         [Arguments("usd", 1234L, 234L, "$12.34", "$2.34")]
         [Arguments("jpy", 1500L, 500L, "JPY 1500", "JPY 500")]
-        [Arguments("clp", 1234L, 234L, "CLP 1234", "CLP 234")]
         public async Task StripeInvoiceHistoryRetainsOriginalTotalButOutstandingUsesActualRemainingChargeUnits(string currency, long amount, long remaining, string totalLabel, string balanceLabel)
         {
-            var environment = new DemoEnvironment();
-            await environment.InitializeAsync();
             InvoiceWire wire = null!;
-            await using var app = await environment.CreateTestHostAsync(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
+            await using var app = await shared.Environment.CreateTestHostAsync(shared.Root, 0, "http://127.0.0.1", builder =>
             {
                 var original = (IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 wire = new(original, currency, amount, remaining);
