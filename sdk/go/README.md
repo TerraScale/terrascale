@@ -128,8 +128,9 @@ live server behavior remains unqualified.
 
 ### Placement
 
-A database has one home region, which commits its writes, and replica regions,
-which hold read replicas. `CreateDatabaseOptions` accepts `HomeRegion`,
+A database has one home region and replica regions, which hold read replicas; a
+replica region can commit some SQL REST writes locally and every other write
+runs at the home. `CreateDatabaseOptions` accepts `HomeRegion`,
 `ReplicaRegions` and `AllRegions`; unset options are not sent.
 `Database.Regions` reads the home region and home-observed replica pull progress.
 
