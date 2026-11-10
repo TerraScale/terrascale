@@ -2,7 +2,7 @@ export const en = {
   meta: {
     title: 'TerraScale Public Alpha | Regional SQL Database',
     description:
-      'TerraScale Public Alpha: SQL databases with one write region and encrypted read replicas in São Paulo, the San Francisco Bay Area and Frankfurt.',
+      'TerraScale Public Alpha: SQL databases in three regions, São Paulo, the San Francisco Bay Area and Frankfurt. A replica region can take a local SQL write, and the home is the durable apply point.',
   },
 
   chrome: {
@@ -78,18 +78,18 @@ export const en = {
 
   homeStats: {
     regions: 'Serving regions',
-    writeRegion: 'Write region per database',
+    writeRegion: 'Home is the durable apply point',
     statements: 'Statements per transaction',
   },
 
 
   features: {
     titleLead: 'SQL databases',
-    titleAccent: 'and read replicas.',
+    titleAccent: 'with local SQL writes.',
     items: [
       { headline: 'SQL tables, indexes and foreign keys' },
       { headline: 'psql, HTTP and WebSocket connections' },
-      { headline: 'Encrypted read replicas in other regions' },
+      { headline: 'A replica region can take a local SQL write' },
       { headline: 'Filtered live shapes with table read grants' },
       { headline: 'Agent databases with TTL, forks and scoped keys' },
       { headline: 'Database deletion destroys backup keys' },
@@ -126,11 +126,11 @@ export const en = {
       },
       {
         q: 'Which regions serve today?',
-        a: 'São Paulo (gru), the San Francisco Bay Area (sjc), and Frankfurt (fra). Choose one home region for writes and other regions for encrypted read replicas.',
+        a: 'São Paulo (gru), the San Francisco Bay Area (sjc), and Frankfurt (fra). Three regions. A replica region can take a local SQL write, and the home is the durable apply point.',
       },
       {
         q: 'Is my database copied to other regions?',
-        a: 'Yes. Choose replica regions to keep encrypted read-only copies outside the home region. REST, psql and WebSocket can read a ready local replica. Replicas are eventually consistent. Writes go to the home region, reached from any serving region.',
+        a: 'Yes. A replica region can take a local SQL write. REST, psql and WebSocket can use a ready local replica. The home is the durable apply point.',
       },
       {
         q: 'Can I use my Postgres tools?',
@@ -388,7 +388,7 @@ export const en = {
       'TerraScale builds TerraBase, a SQL database service. The dashboard brings together databases, access management and usage.',
     databaseTitle: 'TerraBase',
     databaseText:
-      'Each database has one home region for writes and can have encrypted read replicas in other regions. Replicas are eventually consistent.',
+      'Each database uses three regions. A replica region can take a local SQL write, and the home is the durable apply point.',
     integrationText:
       'Use the SQLite SQL dialect through PostgreSQL-compatible clients, the HTTP API or the SDKs. Manage databases and API keys in the dashboard.',
     alphaTitle: 'Public Alpha',
