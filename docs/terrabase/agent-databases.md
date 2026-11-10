@@ -48,3 +48,5 @@ base64(keyId:key)` of an API key and `{"project","database","access","ttl_second
   string, so revoking or rotating the parent (after any rotation grace) revokes its scoped keys within the usual
   revocation bounds ([key-revocation.md](key-revocation.md)). The scoped key inherits the parent's IP allowlist.
 - 600 scoped keys per parent key per minute.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
