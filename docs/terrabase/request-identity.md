@@ -7,3 +7,5 @@ First-party services use the existing Vault peer credential to authenticate corr
 Authorized database log rows expose nullable `requestId` separately from the event `id`. Existing rows may have no identity. Retention remains best effort: newest 100 observations within 24 hours; `truncated` and `recordingLimited` describe loss. No query strings, record values, credentials or diagnostic lookup privilege are added. The dashboard's authorized Logs and support form carry the customer ID.
 
 TerraBase signs outbound auth requests only for its configured HTTPS issuer origin (scheme, host and port); discovery-selected external JWKS hosts receive no correlation proof. Redirects remain disabled. Auth storage and authenticated internal peer transports carry the same request identity when invoked within a request.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
