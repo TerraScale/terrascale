@@ -12,6 +12,8 @@ per region (`unique_tag` `region:`, `docs/mesh-jetstream.md` in
 ts-orchestrator). An in-region stream replica is therefore impossible, and the stream is on one host. The second copy
 is held by TerraBase itself, on the region's second node.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Nodes of a region
 
 The peers file (`TS_PEERS_FILE`) lists every region's founder, then its fully joined workers (ts-orchestrator
