@@ -225,7 +225,7 @@ TerraBaseManagedDatabase app = await client.Project(projectId).CreateDatabaseAsy
 TerraBaseManagedDatabase copy = await client.Database(projectId, "app").BranchAsync("app-copy", cancellationToken);
 ```
 
-`HomeRegion` names the write region. `CreateDatabaseAsync` without a home region uses the called region.
+`HomeRegion` names the home region. `CreateDatabaseAsync` without a home region uses the called region.
 
 A database has one home region and can have encrypted read replicas in other serving regions.
 A replica region can accept a local SQL REST write; the home applies it. The default
