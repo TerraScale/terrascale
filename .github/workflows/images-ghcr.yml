@@ -92,7 +92,7 @@ jobs:
       needs.ready.outputs.deploy == 'true' && github.ref == 'refs/heads/main'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: read
@@ -151,7 +151,6 @@ jobs:
         run: |
           set -euo pipefail
           test "$(python3 scripts/dashboard/ci/release-gate.py release "$GITHUB_SHA")" = true
-          # ts-orch normally finishes a dashboard release in 133-141 s.
-          bash scripts/ci/release-app.sh ts-dashboard "$IMAGE" 180
+          bash scripts/ci/release-app.sh ts-dashboard "$IMAGE"
       - name: Verify live readiness and deployed source revision
         run: python3 scripts/dashboard/verify-live.py "$GITHUB_SHA"
