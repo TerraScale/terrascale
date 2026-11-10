@@ -20,6 +20,9 @@ namespace TerraScale.Dashboard.Platform.Http
         internal static partial void UpstreamTimingStartMsDurationMs(this ILogger logger, object? upstream, object? host, object? method, object? operation, object? status, object? startMs, object? durationMs);
 
 
+        [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Dashboard request on {Route} lost a concurrent write race; answered 409")]
+        internal static partial void DashboardRequestConflicted(this ILogger logger, object? route);
+
         [LoggerMessage(EventId = 7, Level = LogLevel.Warning, Message = "Refresh of a stored ts-auth grant in {Table} failed ({ErrorType}, status {Status}, code {ErrorCode})")]
         internal static partial void RefreshOfAStoredTsAuth(this ILogger logger, object? table, object? errorType, object? status, object? errorCode);
 

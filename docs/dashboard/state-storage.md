@@ -71,7 +71,9 @@ A constraint violation (a duplicate saved query name, a second redemption of an 
 name in a project) fails the one request and writes nothing; the dashboard answers it as the feature's conflict
 (`409`, `invalid_grant`). A save that loses a concurrency token race, or a create that finds the row already inserted,
 raises EF Core's `DbUpdateConcurrencyException`; callers reread and apply their change again, and one that still loses
-answers `412`.
+answers a retryable conflict, never `500`: `409` with `Retry-After: 1` and a message to try again, or `412` where an
+endpoint maps the error through `DatabaseResults.Status`. A sign-in that still loses after the
+rereads shows the sign-in failure page with its Try again link.
 
 ### Accounts and organizations
 
@@ -83,7 +85,10 @@ organizations load roots and children in parallel, one round trip, started as so
 organizations. A change saves only the
 rows that differ, inserts, updates and deletes, in one `SaveChangesAsync`, and writes a new `version` on the root row as
 its concurrency token. A concurrent change of the same account or organization makes the save write nothing; the
-caller rereads and applies its change again, at most four times, and then answers `412`. ts-auth stays the source of
+caller rereads and applies its change again, at most four times, and then answers that retryable conflict. A change that only appends
+audit events keeps the root's `version` but still checks it, so appends commute with each other (parallel sign-ins of
+one account each record `session.created`) and still lose to any other change of the organization. A change that
+already matches the stored rows writes nothing. ts-auth stays the source of
 names, members, invitations and the project list: those fields are never stored.
 
 The account row is keyed by the subject's SHA-256 (`subject_hash`), so creating it twice for one subject fails on the
@@ -93,7 +98,8 @@ unique index and the second sign-in rereads the first one's row.
 
 An erased account or organization keeps its row with `erasure_id` set to the deletion proof's ULID. The fence clears
 every profile column (an account keeps no `user_id`, name, email, phone or organization list), deletes the child rows
-in the same save, and check constraints keep it that way. A session, PAT or MCP token of an erased subject fails with
+in the same save, and check constraints keep it that way. An organization fence then deletes every audit event of the
+organization, which removes an append that committed between the fence's read and its save. A session, PAT or MCP token of an erased subject fails with
 `401` on its next use (`AccountEnrollment`); a read or write of an erased organization answers `404`. Fencing an
 account or organization that has no row yet inserts the fenced row, so a create racing the deletion fails on the key.
 

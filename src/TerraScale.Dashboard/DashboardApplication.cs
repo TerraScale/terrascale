@@ -4,7 +4,9 @@ using ExceptionFrames = TerraScale.Dashboard.Platform.Http.ExceptionFrames;
 using TerraScale.Dashboard.Platform.Observability;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Routing;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
@@ -46,6 +48,8 @@ namespace TerraScale.Dashboard
 {
     public static class DashboardApplication
     {
+        private const string ConflictRetry = "This changed in another tab or request at the same time. Try again.";
+
         // The service override is for isolated test hosts; production has one service graph.
         public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configureTestHost = null)
         {
@@ -412,7 +416,7 @@ namespace TerraScale.Dashboard
                                               error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested)
                 {
                     // Platform failures never select a demo store or leak response bodies/secrets.
-                    app.Logger.DashboardDependencyFailedOn((context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]",
+                    app.Logger.DashboardDependencyFailedOn((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]",
                         error.GetType().Name, (int?)(error as HttpRequestException)?.StatusCode);
                     if (context.Response.HasStarted)
                     {
@@ -428,9 +432,16 @@ namespace TerraScale.Dashboard
                     view.StatusCode = StatusCodes.Status503ServiceUnavailable;
                     await ((IResult)view).ExecuteAsync(context);
                 }
+                catch (DbUpdateConcurrencyException) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
+                {
+                    app.Logger.DashboardRequestConflicted((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]");
+                    context.Response.Clear();
+                    context.Response.Headers.RetryAfter = "1";
+                    await RequestError.Response(context, StatusCodes.Status409Conflict, ConflictRetry).ExecuteAsync(context);
+                }
                 catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
                 {
-                    app.Logger.DashboardRequestFailed((context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", ExceptionFrames.Describe(error));
+                    app.Logger.DashboardRequestFailed((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", ExceptionFrames.Describe(error));
                     context.Response.Clear();
                     await RequestError.Response(context, StatusCodes.Status500InternalServerError).ExecuteAsync(context);
                 }

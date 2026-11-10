@@ -77,6 +77,11 @@ namespace TerraScale.Dashboard.E2E
             return Client(replica ? ReplicaOrigin : Origin);
         }
 
+        public Task<DashboardDbContext> StorageAsync()
+        {
+            return environment.StorageAsync();
+        }
+
         public HttpClient CreateProviderClient()
         {
             return Client(ProviderOrigin);
