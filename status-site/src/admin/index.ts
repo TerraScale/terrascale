@@ -6,7 +6,7 @@
 
 import { incidents, INCIDENT_COLUMNS, iso } from "../db/reads";
 import { parseSpec } from "../domain/assertions";
-import type { Component, IncidentUpdate } from "../domain/status";
+import { endpointStatus, type Component, type IncidentUpdate, type LatestSample } from "../domain/status";
 import type { Env } from "../env";
 import { isId } from "../ids";
 import { logEvent } from "../log";
@@ -131,7 +131,20 @@ const views: Record<string, View> = {
         endpoint,
         componentName: names.get(endpoint.componentId) ?? "",
         at: sample?.at ?? null,
-        state: sample?.state ?? "none",
+        state: endpointStatus(
+          sample
+            ? ({
+                endpointId: sample.endpointId,
+                at: sample.at,
+                state: sample.state,
+                ok: 0,
+                total: 0,
+                latencyMs: null,
+                results: [],
+              } satisfies LatestSample)
+            : undefined,
+          frame.now,
+        ),
         results: sample ? (JSON.parse(sample.results) as ProbeRow["results"]) : [],
       };
     });
@@ -215,13 +228,13 @@ export async function admin(request: Request, env: Env, now: number): Promise<Ad
       if (match.params.id !== undefined && !isId(match.params.id)) throw new NotFound();
       const path = url.pathname.startsWith("/admin/incidents/") ? "/admin" : (url.pathname as Frame["path"]);
       const done = url.searchParams.get("done") ?? undefined;
-      const answer = await match.value(env, { csrf, path, done }, match.params);
+      const answer = await match.value(env, { csrf, path, done, now }, match.params);
       return answer instanceof Response ? answer : { ...answer, headers: NO_INDEX };
     }
     return await post(request, env, secret, current, csrf, now);
   } catch (error) {
     const page = (status: number, message: string) => ({
-      page: problemPage({ csrf, path: "/admin" }, message),
+      page: problemPage({ csrf, path: "/admin", now }, message),
       status,
       headers: NO_INDEX,
     });
@@ -253,7 +266,7 @@ async function post(
   if (url.pathname === "/admin/probes/run") {
     const endpointId = form.get("endpointId");
     if (endpointId !== null && !isId(endpointId)) throw new Invalid("endpointId", "must be a canonical ULID");
-    const answer = await runChecks(env, { csrf, path: "/admin/probes" }, endpointId);
+    const answer = await runChecks(env, { csrf, path: "/admin/probes", now }, endpointId);
     return answer instanceof Response ? answer : { ...answer, headers: NO_INDEX };
   }
   const match = actionRoute(url.pathname);
