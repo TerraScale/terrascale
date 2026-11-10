@@ -28,3 +28,24 @@ func TestRegionPinHeader(t *testing.T) {
 		t.Fatalf("X-TerraScale-Region-Pin=%q", pin)
 	}
 }
+
+func TestRegionPinEmptySendsNoHeader(t *testing.T) {
+	const project = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	var present bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		present = len(r.Header.Values("X-TerraScale-Region-Pin")) > 0
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(server.Close)
+	c, err := tb.New(tb.Config{BaseURL: server.URL, Token: "header.project.signature", HTTPClient: server.Client(), RegionPin: "  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.Databases(t.Context(), project, tb.PageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if present {
+		t.Fatal("X-TerraScale-Region-Pin was sent")
+	}
+}
