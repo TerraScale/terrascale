@@ -33,3 +33,5 @@ gh workflow run ci.yml --repo TerraScale/terrascale --ref main \
 Keep the `arm64` digest from the last good `BUILD_ONLY` line (or inspect `ghcr.io/terrascale/terrabase@sha256:…`). Dispatch `release-only` again with that digest, on a `--ref` whose workflow SHA matches the image revision label. The job refuses a digest built from a different commit.
 
 While a release is in progress, each region's orchestrator swaps to the new digest, waits until the region is ready, and rolls that region back to the image it was running if the release fails. A superseded release exits without installing the digest. Confirm the revision the service is actually running after the job finishes. Do not write that commit into this page.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
