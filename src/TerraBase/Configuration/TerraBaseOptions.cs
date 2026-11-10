@@ -191,7 +191,14 @@ public sealed record TerraBaseOptions
             }
         }
 
-        return FromValues(values, EnvironmentName(args) != Environments.Development);
+        var outsideDevelopment = EnvironmentName(args) != Environments.Development;
+        var options = FromValues(values, outsideDevelopment);
+        if (options.Backup is null && outsideDevelopment)
+        {
+            throw new TerraBaseConfigurationException($"backup requires {string.Join(", ", BackupSettings.TigrisVariables.Select(variable => variable.Variable))} (attach the Tigris bucket) and TERRABASE_MASTER_KEY outside Development");
+        }
+
+        return options;
     }
 
     public static TerraBaseOptions FromValues(IReadOnlyDictionary<string, string> values, bool production = false)

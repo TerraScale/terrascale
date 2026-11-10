@@ -53,12 +53,6 @@ catch (TerraBaseConfigurationException error)
     await Console.Error.WriteLineAsync($"terrabase: {error.Message}");
     return 2;
 }
-if (options.Backup is null && environmentName != Environments.Development)
-{
-    await Console.Error.WriteLineAsync($"terrabase: backup requires {string.Join(", ", BackupSettings.TigrisVariables.Select(variable => variable.Variable))} (attach the Tigris bucket) and TERRABASE_MASTER_KEY outside Development");
-    return 2;
-}
-
 if (options.ShapeStorage is null && environmentName != Environments.Development)
 {
     await Console.Error.WriteLineAsync("terrabase: TERRABASE_SHAPES_ACCESS_KEY_ID, TERRABASE_SHAPES_SECRET_ACCESS_KEY and TERRABASE_SHAPES_CDN_API_TOKEN are required outside Development");
