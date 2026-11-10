@@ -10,6 +10,41 @@ import { compactBarData, shell } from "./layout";
 
 const now = Date.UTC(2026, 9, 23, 12);
 
+it("labels an unknown page as no data under the component count", async () => {
+  const db = testD1();
+  const snapshot = await loadSnapshot({ STATUS_DB: db } as unknown as Env, snapshotWindow(now, "90d"));
+  const unknown = overview(snapshot, now, "90d");
+  expect(unknown.status).toBe("unknown");
+  const unknownStats = platformSummary(shell(homePage(unknown), 2026).value);
+  expect(unknownStats).toContain("no data");
+  expect(unknownStats).not.toContain("operational now");
+
+  snapshot.components.forEach((component) => {
+    component.lifecycle = "active";
+  });
+  snapshot.endpoints.forEach((endpoint) => {
+    endpoint.liveSince = "2026-01-01T00:00:00Z";
+  });
+  snapshot.latest = snapshot.endpoints.map((endpoint) => ({
+    endpointId: endpoint.id,
+    at: new Date(now).toISOString(),
+    state: "operational",
+    ok: 4,
+    total: 4,
+    latencyMs: 40,
+    results: [],
+  }));
+  const measured = overview(snapshot, now, "90d");
+  expect(measured.status).toBe("operational");
+  expect(platformSummary(shell(homePage(measured), 2026).value)).toContain("operational now");
+  db.sqlite.close();
+});
+
+function platformSummary(markup: string): string {
+  const start = markup.indexOf('aria-label="Platform summary"');
+  return markup.slice(start, markup.indexOf("</dl>", start));
+}
+
 describe("home HTML budget", () => {
   it("keeps the complete catalog and full 90-day charts below 150,000 UTF-8 bytes", async () => {
     const db = testD1();

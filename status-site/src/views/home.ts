@@ -437,7 +437,7 @@ export function homePage(view: Overview): Page {
   )}
 
   <dl class="ts-stats" aria-label="Platform summary">
-    ${stat("Components", `${operational}/${measured.length}`, "operational now")}
+    ${stat("Components", `${operational}/${measured.length}`, view.status === "unknown" ? "no data" : "operational now")}
     ${stat("Regions", `${live}/${view.regions.length}`, regionDetail(live, view))}
     ${stat("Uptime", formatUptime(view.uptime), `last ${range}`)}
     ${stat("Active incidents", String(view.activeIncidents.length), view.activeIncidents.length === 0 ? "nothing to report" : "see below")}
