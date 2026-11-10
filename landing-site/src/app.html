@@ -23,21 +23,8 @@
     <script>
       (function () {
         try {
-          var stored = localStorage.getItem('ts-locale');
-          var lang = stored;
-          if (!lang || ['en', 'es', 'pt-br'].indexOf(lang) === -1) {
-            var list = navigator.languages || [navigator.language || ''];
-            lang = 'en';
-            for (var i = 0; i < list.length; i++) {
-              var n = (list[i] || '').toLowerCase();
-              if (n.indexOf('pt') === 0) { lang = 'pt-br'; break; }
-              if (n.indexOf('es') === 0) { lang = 'es'; break; }
-              if (n.indexOf('en') === 0) { lang = 'en'; break; }
-            }
-          }
-          var bcp47 = { en: 'en', es: 'es', 'pt-br': 'pt-BR' }[lang] || 'en';
-          document.documentElement.lang = bcp47;
-          window.__TS_LOCALE__ = lang;
+          document.documentElement.lang = 'en';
+          window.__TS_LOCALE__ = 'en';
         } catch {
           document.documentElement.lang = 'en';
           window.__TS_LOCALE__ = 'en';

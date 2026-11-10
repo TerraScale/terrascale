@@ -3,20 +3,16 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { annualSavingMonths, formatEntitlementRows, formatPlanBilling, formatPlanCadences, formatPlanLimits } from '../src/lib/pricing.ts';
 import { en } from '../src/lib/i18n/messages/en.ts';
-import { es } from '../src/lib/i18n/messages/es.ts';
-import { ptBr } from '../src/lib/i18n/messages/pt-br.ts';
 
 const catalog = JSON.parse(readFileSync(new URL('../static/pricing.json', import.meta.url), 'utf8'));
-const locales = [['en', en], ['es', es], ['pt-BR', ptBr]];
+const locales = [['en', en]];
 const billed = (plan) => ({ price: plan.priceMonthlyUsd, annualPrice: plan.priceAnnualUsd, available: plan.available, billingIntervals: plan.billingIntervals });
 const usageCaveats = {
   en: /storage over it is billed per GB-month; client egress overage is not billed yet/i,
-  es: /almacenamiento por encima de ella se factura por GB-mes; el excedente de salida a clientes aún no se factura/i,
-  'pt-BR': /armazenamento acima dela é cobrado por GB-mês; o excedente de saída para clientes ainda não é cobrado/i,
 };
-const overageRules = { en: /next (?:subscription )?invoice/i, es: /próxima factura/i, 'pt-BR': /próxima fatura/i };
-const staleClaims = /not yet collected|aún no se cobran|ainda não são coletadas|self-service purchase|compra directa|contratação direta|confirm (?:paid plan )?enrollment/i;
-const operationRules = { en: /each started 4 KiB/i, es: /cada 4 KiB.*iniciados/i, 'pt-BR': /cada 4 KiB.*iniciados/i };
+const overageRules = { en: /next (?:subscription )?invoice/i };
+const staleClaims = /not yet collected|self-service purchase|confirm (?:paid plan )?enrollment/i;
+const operationRules = { en: /each started 4 KiB/i };
 // Replicas do not multiply customer writes or the billed storage.
 
 for (const [locale, messages] of locales) {

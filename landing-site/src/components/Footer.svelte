@@ -1,7 +1,6 @@
 <script lang="ts">
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
-  import LanguageSelector from '@/components/LanguageSelector.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { footerColumns, registrationUrl, socialLinks } from '@/lib/site'
   import { dict } from '@/lib/i18n'
@@ -76,9 +75,6 @@
           <span class="ts-dot ts-dot-live site-footer__dot" aria-hidden="true"></span>
           {$dict.chrome.status}
         </ExternalLink>
-        <div class="site-footer__lang">
-          <LanguageSelector variant="inline" />
-        </div>
       </div>
     </div>
   </div>

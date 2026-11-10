@@ -1,7 +1,5 @@
 import { writable, derived, get } from 'svelte/store'
 import { en, type Messages } from './messages/en'
-import { ptBr } from './messages/pt-br'
-import { es } from './messages/es'
 import {
   LOCALES,
   DEFAULT_LOCALE,
@@ -18,8 +16,6 @@ const PRECOMPUTED_KEY = '__TS_LOCALE__'
 
 const messages: Record<LocaleCode, Messages> = {
   en,
-  es,
-  'pt-br': ptBr,
 }
 
 export const locale = writable<LocaleCode>(DEFAULT_LOCALE)
@@ -72,8 +68,6 @@ function detectBrowser(): LocaleCode | null {
   const langs = navigator.languages ?? [navigator.language]
   for (const l of langs) {
     const norm = (l ?? '').toLowerCase()
-    if (norm.startsWith('pt')) return 'pt-br'
-    if (norm.startsWith('es')) return 'es'
     if (norm.startsWith('en')) return 'en'
   }
   return null
