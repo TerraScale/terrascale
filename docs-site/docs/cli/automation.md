@@ -11,6 +11,8 @@ Exit codes are **0** success, **1** operational failure and **2** invalid argume
 
 Errors use `{"error":{"code":"invalid_arguments","message":"…"}}`, with optional HTTP `status` and safe `requestId`. Inspect uncertain writes before retrying. A writer failure can leave incomplete output even after a mutation committed. If a `keys create` or `keys rotate` confirmation is not approved within its five-minute window, the command fails with `{"error":{"code":"step_up_required","status":403,…}}`; run it again for a fresh confirmation URL. No secret is issued without confirmation.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 `shell` uses NDJSON: `{"type":"record","data":…}` followed by exactly one `{"type":"complete"}` on successful termination, or `{"type":"error","error":…}` and nonzero exit. Missing complete means incomplete; JSON SIGINT exits 1.
 
 
