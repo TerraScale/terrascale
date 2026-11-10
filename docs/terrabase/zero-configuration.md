@@ -36,3 +36,5 @@ Legacy option names, deployed-state observations and test fixture inputs in
 technical references describe the current implementation or recorded evidence.
 They are not production setup recipes. Existing automation is evidence only
 for the operations it actually performs, not for the complete contract.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
