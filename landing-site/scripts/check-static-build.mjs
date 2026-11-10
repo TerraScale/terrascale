@@ -50,6 +50,7 @@ for (const href of ['https://github.com/TerraScale', 'https://docs.terrascale.te
 }
 
 assert.match(read('robots.txt'), /Sitemap: https:\/\/terrascale.tech\/sitemap.xml/)
+assert.match(read('.well-known/security.txt'), /Contact: mailto:security@terrascale\.tech\nExpires: 2027-11-10T00:00:00\.000Z\nPreferred-Languages: en\n/)
 for (const route of ['/', '/about', '/pricing', '/contact']) {
   assert.ok(read('sitemap.xml').includes(`<loc>https://terrascale.tech${route}</loc>`))
 }
