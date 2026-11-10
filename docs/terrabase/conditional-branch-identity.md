@@ -32,3 +32,5 @@ checking it in a separate GET before branching by name. SDK/CLI support must
 ship before preview actions adopt it. Expected-ID DELETE support is a separate
 SDK/CLI prerequisite for safe preview cleanup; this route does not implement it.
 No generic rename change, storage-format change or migration is required.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
