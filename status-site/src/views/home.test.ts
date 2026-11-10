@@ -40,6 +40,32 @@ it("labels an unknown page as no data under the component count", async () => {
   db.sqlite.close();
 });
 
+it("labels a major outage page without operational now", async () => {
+  const db = testD1();
+  const snapshot = await loadSnapshot({ STATUS_DB: db } as unknown as Env, snapshotWindow(now, "90d"));
+  snapshot.components.forEach((component) => {
+    component.lifecycle = "active";
+  });
+  snapshot.endpoints.forEach((endpoint) => {
+    endpoint.liveSince = "2026-01-01T00:00:00Z";
+  });
+  snapshot.latest = snapshot.endpoints.map((endpoint) => ({
+    endpointId: endpoint.id,
+    at: new Date(now).toISOString(),
+    state: "major_outage",
+    ok: 0,
+    total: 4,
+    latencyMs: 40,
+    results: [],
+  }));
+  const outage = overview(snapshot, now, "90d");
+  expect(outage.status).toBe("major_outage");
+  const stats = platformSummary(shell(homePage(outage), 2026).value);
+  expect(stats).toContain("Major system outage");
+  expect(stats).not.toContain("operational now");
+  db.sqlite.close();
+});
+
 function platformSummary(markup: string): string {
   const start = markup.indexOf('aria-label="Platform summary"');
   return markup.slice(start, markup.indexOf("</dl>", start));
