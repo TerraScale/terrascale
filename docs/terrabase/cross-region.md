@@ -5,7 +5,7 @@ Each database has a home region and can have encrypted regional replicas. Ready 
 ## Placement
 
 A database record carries a placement (`DatabasePlacement` in `Tenancy/ITenantDirectory.cs`): `Home`, `Replicas`,
-`Version` and `AllRegions`. Replica regions hold read replicas ([region replicas](region-replicas.md)); the placement API
+`Version` and `AllRegions`. Replica regions hold replicas ([region replicas](region-replicas.md)); the placement API
 and moving the home are in [placement](placement.md).
 
 - **Create.** `homeRegion` defaults to the called region. A region TerraBase does not serve, or a value that is not a
