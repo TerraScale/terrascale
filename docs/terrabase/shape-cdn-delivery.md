@@ -68,3 +68,5 @@ and the WAF guard. Delete the proof database and account afterward.
 The live qualification includes
 all five SDK User-Agents/defaults, MISS/HIT pairs at GRU/SJC/FRA and authorization
 negative controls. F11 owns the separate post-delete eviction and erasure proof.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
