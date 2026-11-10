@@ -47,3 +47,6 @@ psql "host=pg.terrascale.tech port=5432 dbname=<project>/<database> user=any ssl
 
 - `tests/TerraBase.Fast/Platform/TransportSecurityTests.cs`
 - ts-orchestrator `internal/edge` tests for the edge's TLS listeners.
+
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
