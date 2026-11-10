@@ -14,6 +14,7 @@ on:
       - 'tests/TerraScale.Dashboard*/**'
       - 'scripts/dashboard/**'
       - 'scripts/ci/release-only.sh'
+      - 'scripts/ci/fast-budget.py'
       - 'sdk/dotnet/**'
       - 'Directory.*'
       - '.editorconfig'
