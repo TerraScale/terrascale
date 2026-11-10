@@ -21,7 +21,7 @@ internal sealed class ListDashboardDatabaseLogsEndpoint(IProjectCatalog projects
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        Metadata(ListDatabaseLogsEndpoint.CursorParameter());
+        Metadata(ListDatabaseLogsEndpoint.CursorParameter(), ListenerMetadata.Internal);
         AllowAnonymous();
     }
 

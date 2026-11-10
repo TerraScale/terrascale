@@ -1,3 +1,4 @@
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Pressure;
@@ -12,6 +13,7 @@ public sealed class PressureEndpoint(IPressureSignals pressure) : EndpointWithou
         Description("Reports local readiness, storage admissions and measured process load. Unavailable I/O measurements remain explicit null.");
         Tags("Administration");
         AllowAnonymous();
+        Metadata(ListenerMetadata.Internal);
     }
     public override ValueTask<PressureBody> HandleAsync(CancellationToken cancellationToken)
     {

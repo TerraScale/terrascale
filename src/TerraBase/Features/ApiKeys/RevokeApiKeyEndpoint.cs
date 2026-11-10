@@ -11,7 +11,7 @@ public sealed class RevokeApiKeyEndpoint(IApiKeyStore keys) : EndpointWithoutReq
     public override void Configure()
     {
         Delete("/admin/api-keys/{key}");
-        Metadata(AnchoredRevocation.Instance);
+        Metadata(AnchoredRevocation.Instance, ListenerMetadata.Internal);
         Name("revokeApiKey");
         Summary("Revokes an operator-issued API key");
         Description("The key stops authenticating immediately. Served only on the internal administrative listener.");
