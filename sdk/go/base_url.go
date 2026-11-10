@@ -13,6 +13,7 @@ const publicAPIHostname = "api.terrascale.tech"
 // may include a path prefix; status requires an origin without one.
 func resolveServiceBase(raw, field string, allowPath bool) (string, error) {
 	base := strings.TrimSpace(raw)
+
 	u, err := url.Parse(base)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", &ValidationError{Field: field, Message: "must be an absolute http or https URL"}
