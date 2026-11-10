@@ -28,3 +28,5 @@ and closure id. Legacy `not_empty` or `closure_conflict` retains the account era
 encounter a newer fence whose response was lost. Legacy acceptance cannot certify erasure. The background
 driver retries version 2 and completes automatically after FR1 upgrades TerraBase, without another submit.
 Collect live acceptance evidence after every holder is upgraded.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
