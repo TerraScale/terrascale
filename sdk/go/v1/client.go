@@ -402,7 +402,7 @@ func backoff(attempt int) time.Duration {
 }
 
 func (c *Client) pin(h http.Header) {
-	if c.regionPin != "" {
+	if c.regionPin != "" && h.Get("X-TerraScale-Region-Pin") == "" {
 		h.Set("X-TerraScale-Region-Pin", c.regionPin)
 	}
 }
