@@ -284,7 +284,7 @@ with a buffered body at most twice. Safe GET/HEAD reads also resend `429 tenant_
 `storage_busy` and `capacity`, gateway 502 and 504 answers, and a lost connection. Each resend asks the
 `AccessTokenProvider` again and waits for `Retry-After` plus up to 250 ms, or full jitter over 250/500 ms; when that
 wait would pass the request deadline, the failure is thrown at once. Authentication errors never retry.
-NATS error 10074 is not retried because the stream wants more replicas than the cluster has.
+A TerraBase push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 The SDK does not exchange or cache tokens; caller-owned token providers must drop revoked/expired tokens
 and stop exchanging the refused key. `503 write_outcome_unknown` and all other errors are sent once. TerraBase
 rejects `Idempotency-Key`; do not replay a write whose outcome is unknown.
