@@ -66,3 +66,5 @@ Generate SQL migration files with `drizzle-kit generate`, then apply them with `
 
 - `query(sql, params, method)`: sends one statement with `db.execute` and maps the result rows — `all` and `values` return rows as arrays of column values in column order, `get` returns the first row (or no row), `run` returns no rows.
 - `batch(queries)`: sends every statement in one `db.batch` request and maps each result the same way.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
