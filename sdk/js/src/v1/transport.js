@@ -650,8 +650,7 @@ export class V1Transport {
       if (this.#regionPin !== "") headers.set("X-TerraScale-Region-Pin", this.#regionPin);
       /** @type {RequestInit & { duplex?: "half" }} */
       const init = { method: route.method, headers, redirect: options.redirect ?? "manual" };
-      if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
-        // Node fetch replays buffered or absent bodies on 421; use a one-shot stream, including DELETE.
+      if (route.permission.endsWith(":write")) {
         init.body = new ReadableStream({ start(controller) { if (bytes !== undefined && bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
         init.duplex = "half";
       } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
