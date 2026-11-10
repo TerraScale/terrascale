@@ -21,8 +21,8 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
     // Collaborator listing and read boundaries follow terrascale 1d823d8534fc PlatformDirectory.
     // Project invitation lookup/acceptance follows local terrascale a095400a1 InvitationEndpoints/Invitations
     // and TerraScale.DotNet 0.0.12's Named, InvitationLookup and AcceptedInvitation DTOs.
-    [ClassDataSource<TsAuthPlatformJourneyTests.SharedPlatform>(Shared = SharedType.PerTestSession)]
-    public sealed partial class TsAuthPlatformJourneyTests(TsAuthPlatformJourneyTests.SharedPlatform platforms)
+    [ClassDataSource<SharedTsAuthPlatform>(Shared = SharedType.PerTestSession)]
+    public sealed partial class TsAuthPlatformJourneyTests(SharedTsAuthPlatform platforms)
     {
         private static readonly string[] ViewerRoleBody = ["{\"role\":\"viewer\"}"];
         [Test]
@@ -635,24 +635,6 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
         }
 
         internal sealed record Principal(string Subject, string Email, string Password);
-
-        public sealed class SharedPlatform : IAsyncInitializer, IAsyncDisposable
-        {
-            internal PlatformScenario Scenario { get; private set; } = null!;
-
-            public async Task InitializeAsync()
-            {
-                Scenario = await PlatformScenario.StartAsync();
-            }
-
-            public async ValueTask DisposeAsync()
-            {
-                if (Scenario is not null)
-                {
-                    await Scenario.DisposeAsync();
-                }
-            }
-        }
 
         internal sealed class PlatformScenario : IAsyncDisposable
         {

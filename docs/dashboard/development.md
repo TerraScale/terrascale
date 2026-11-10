@@ -104,8 +104,12 @@ on the 4 vCPU runner, so Fast journeys share hosts and isolate themselves by acc
 - Take a session-wide fixture with `[ClassDataSource<T>(Shared = SharedType.PerTestSession)]`:
   `DashboardE2EFixture` (a dashboard host pair), `SharedDatabaseSdk` (the customer-SDK producer
   and its host pair), `SharedAuthProvider` (the hosted sign-in stand-in for ts-auth and its host
-  pair) or `SharedDemoEnvironment` (the fakes and database, for a journey that starts its own
-  configured host). They live in `tests/TerraScale.Dashboard.E2E/Demo/SharedScenarios.cs`.
+  pair), `SharedDemoEnvironment` (the fakes and database, for a journey that starts its own
+  configured host) or `SharedTsAuthPlatform` (the ts-auth platform producer and its host pair).
+  They live in `tests/TerraScale.Dashboard.E2E/Demo/SharedScenarios.cs`, and
+  `scripts/dashboard/verify-e2e.py` (run by `make dashboard-lint`) rejects `PerTestSession` on any
+  other type: add a new shared fixture to that file and to this list instead of sharing state from a
+  test class.
 - Sign up a fresh account in each journey (`DatabaseJourney.NativeWorkspaceAsync`, or
   `HttpJourney.NewAccount` with `LoginAsync(..., signUp: true)`) and act only on its own
   organizations, projects and databases. Never sign in as the seeded `user@example.com`
