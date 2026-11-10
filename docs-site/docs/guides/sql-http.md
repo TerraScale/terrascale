@@ -15,6 +15,8 @@ Authorization: Bearer <access token>
 Content-Type: application/json
 ```
 
+A client may send `X-TerraScale-Region-Pin` with one region ID, and an empty value is omitted.
+
 Exchange a project API key for the access token first, as in [getting started](/getting-started/#exchange-the-key-for-an-access-token); tokens live at most 60 seconds and the key itself is refused as a bearer token. Get the project ID from the dashboard or `ts projects`.
 
 The body carries `statements`, each with `sql` and either positional `args` or a `named` map:
