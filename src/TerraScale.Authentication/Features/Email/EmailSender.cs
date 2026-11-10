@@ -106,7 +106,7 @@ public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEm
 /// account's token. Registered only when <see cref="AuthOptions.CloudflareEmail"/> is set. The From address is
 /// fixed: it is the domain the account sends for.
 /// </summary>
-public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOptions email, ILogger<CloudflareEmailSender> logger) : IEmailSender
+public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOptions email, ILogger<CloudflareEmailSender> logger) : IEmailSender, IEmailProvider
 {
     private const string SenderAddress = "no-reply@terrascale.tech";
 
@@ -118,7 +118,7 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
         => (await this.DeliverResultAsync(recipient, message, cancellationToken).ConfigureAwait(false)).Outcome;
 
-    internal async Task<EmailProviderResult> DeliverResultAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+    public async Task<EmailProviderResult> DeliverResultAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         var outcome = "error";
         try
@@ -280,7 +280,7 @@ internal sealed record CloudflareSender([property: JsonPropertyName("address")] 
 [JsonSerializable(typeof(CloudflareSendRequest))]
 internal sealed partial class CloudflareEmailJson : JsonSerializerContext;
 
-internal sealed record EmailProviderResult(EmailDeliveryOutcome Outcome, DateTimeOffset? Reset = null, TimeSpan? ResetDelay = null)
+public sealed record EmailProviderResult(EmailDeliveryOutcome Outcome, DateTimeOffset? Reset = null, TimeSpan? ResetDelay = null)
 {
     public static implicit operator EmailProviderResult(EmailDeliveryOutcome outcome)
     {

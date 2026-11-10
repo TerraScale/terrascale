@@ -73,9 +73,11 @@ Guest admission permits 30 requests per client per minute. Upgrade requests
 permit five per user and per target-mailbox bucket per minute. These counters
 use conditional writes on the authority and do not reset on process restart.
 They supplement, rather than replace, edge controls and bot protection. User
-quota is the final durable admission boundary. Configure Cloudflare Email Sending
-(`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_TOKEN`) for actual email
-delivery; the development logging sender does not expose verification codes.
+quota is the final durable admission boundary. Configure OCI Email Delivery
+(`TS_AUTH_SMTP_HOST`, `TS_AUTH_SMTP_USERNAME`, `TS_AUTH_SMTP_PASSWORD`) and
+Cloudflare Email Sending (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_TOKEN`)
+for actual email delivery, SMTP first with Cloudflare as fallback; the
+development logging sender does not expose verification codes.
 
 The conversion is committed before credentials are returned. If the response is
 lost after conversion, sign in using verified email or the chosen password;

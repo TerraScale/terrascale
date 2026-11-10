@@ -9,7 +9,7 @@ namespace TerraScale.Authentication.Features.Email;
 
 public sealed class EmailAdmission(AuthData data, TimeProvider clock)
 {
-    private const string Key = "cloudflare";
+    private const string Key = "smtp";
     private static readonly Meter Meter = new(AuthMetrics.MeterName);
     private static readonly Counter<long> Decisions = Meter.CreateCounter<long>("ts_auth.email_admission");
     private static readonly Gauge<long> Remaining = Meter.CreateGauge<long>("ts_auth.email_remaining");
@@ -27,16 +27,23 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
             var state = await data.ReadAsync(async (db, token) =>
             {
                 await db.EmailReservations.Where(item => item.At <= cutoff).ExecuteDeleteAsync(token).ConfigureAwait(false);
-                return await db.EmailBudgets.Where(budget => budget.Key == Key)
-                    .Select(budget => new
-                    {
-                        Budget = new Versioned<EmailBudgetRecord>(budget, EF.Property<string>(budget, AuthDbContext.VersionProperty)),
-                        Total = db.EmailReservations.Count(),
-                        Authentication = db.EmailReservations.Count(item => item.Purpose == EmailPurpose.Authentication),
-                        Purpose = db.EmailReservations.Count(item => item.Purpose == purpose),
-                        Tenant = db.EmailReservations.Count(item => item.Purpose != EmailPurpose.Authentication && item.Tenant == tenant),
-                        Attempt = attemptId != null && db.EmailReservations.Any(item => item.AttemptId == attemptId),
-                    }).SingleOrDefaultAsync(token).ConfigureAwait(false);
+                var budget = await db.EmailBudgets.Where(row => row.Key == Key)
+                    .Select(row => new Versioned<EmailBudgetRecord>(row, EF.Property<string>(row, AuthDbContext.VersionProperty)))
+                    .SingleOrDefaultAsync(token).ConfigureAwait(false);
+                if (budget is null)
+                {
+                    return null;
+                }
+
+                return new
+                {
+                    Budget = budget,
+                    Total = await db.EmailReservations.CountAsync(token).ConfigureAwait(false),
+                    Authentication = await db.EmailReservations.CountAsync(item => item.Purpose == EmailPurpose.Authentication, token).ConfigureAwait(false),
+                    Purpose = await db.EmailReservations.CountAsync(item => item.Purpose == purpose, token).ConfigureAwait(false),
+                    Tenant = await db.EmailReservations.CountAsync(item => item.Purpose != EmailPurpose.Authentication && item.Tenant == tenant, token).ConfigureAwait(false),
+                    Attempt = attemptId != null && await db.EmailReservations.AnyAsync(item => item.AttemptId == attemptId, token).ConfigureAwait(false),
+                };
             }, cancellationToken).ConfigureAwait(false);
             if (state is null)
             {
@@ -100,7 +107,7 @@ public sealed record EmailBudgetRecord(string Key, DateTimeOffset PausedUntil);
 
 public sealed record EmailReservationRecord(string Id, DateTimeOffset At, EmailPurpose Purpose, string Tenant, string? AttemptId = null);
 
-public sealed class AdmittedEmailSender(EmailAdmission admission, CloudflareEmailSender provider, ILogger<AdmittedEmailSender> logger) : IEmailSender
+public sealed class AdmittedEmailSender(EmailAdmission admission, FailoverEmailSender provider, ILogger<AdmittedEmailSender> logger) : IEmailSender
 {
     public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
         _ = await this.DeliverAsync(recipient, message, cancellationToken).ConfigureAwait(false);

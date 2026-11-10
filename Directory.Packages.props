@@ -64,6 +64,7 @@
   </ItemGroup>
   <!-- ts-auth OIDC discovery, JWKS and JWT validation (Features/UserAuth). -->
   <ItemGroup Label="Authentication">
+    <PackageVersion Include="MailKit" Version="5.0.0" />
     <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.23.0" />
     <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.23.0" />
     <PackageVersion Include="OpenIddict.Core" Version="7.7.1" />
@@ -128,6 +129,7 @@
   </ItemGroup>
   <ItemGroup Label="Integration tests">
     <PackageVersion Include="TUnit" Version="1.73.19" />
+    <PackageVersion Include="SmtpServer" Version="11.1.0" />
     <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="11.0.0-rc.3.26522.148" />
     <PackageVersion Include="Bogus" Version="35.6.5" />

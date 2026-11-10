@@ -51,6 +51,7 @@
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="OpenIddict.Server.AspNetCore" />
     <PackageReference Include="Otp.NET" />
+    <PackageReference Include="MailKit" />
     <PackageReference Include="QRCoder" />
     <PackageReference Include="Fido2" />
   </ItemGroup>

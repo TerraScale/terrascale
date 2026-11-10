@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -10,16 +11,16 @@ using Microsoft.Extensions.Logging;
 
 namespace TerraScale.Authentication.Tests;
 
-/// <summary>Controlled HTTP mail provider shared by the Fast and Slow integration suites.</summary>
 internal static class EmailProviderFixture
 {
     private const string Recipient = "private-person@example.test";
     private const string AcceptedResponse = "{\"success\":true,\"result\":{\"delivered\":[],\"queued\":[\"" + Recipient + "\"],\"permanent_bounces\":[],\"suppressed_recipients\":[]}}";
 
-    /// <summary>A real HTTP provider on a test-owned ephemeral loopback port.</summary>
     internal sealed class FakeCloudflare(WebApplication app) : IAsyncDisposable
     {
         private readonly WebApplication app = app;
+        private readonly Lock gate = new();
+        private readonly Dictionary<string, TaskCompletionSource<string>> arrivals = new(StringComparer.OrdinalIgnoreCase);
 
         public Uri Address { get; private set; } = null!;
 
@@ -34,6 +35,38 @@ internal static class EmailProviderFixture
         public HttpStatusCode Status { get; set; }
 
         public string ResponseBody { get; set; } = AcceptedResponse;
+
+        public Task<string> WaitForAsync(string recipient)
+        {
+            lock (this.gate)
+            {
+                if (this.arrivals.TryGetValue(recipient, out var source))
+                {
+                    return source.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                }
+
+                var pending = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                this.arrivals[recipient] = pending;
+                return pending.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+
+        private void Arrived(string recipient, string body)
+        {
+            lock (this.gate)
+            {
+                if (this.arrivals.TryGetValue(recipient, out var source))
+                {
+                    source.TrySetResult(body);
+                }
+                else
+                {
+                    var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    done.SetResult(body);
+                    this.arrivals[recipient] = done;
+                }
+            }
+        }
 
         public static async Task<FakeCloudflare> StartAsync(HttpStatusCode status = HttpStatusCode.OK, bool abort = false, string body = AcceptedResponse)
         {
@@ -60,7 +93,9 @@ internal static class EmailProviderFixture
             provider.Authorization = context.Request.Headers.Authorization.ToString();
             provider.Calls++;
             using var reader = new StreamReader(context.Request.Body, Encoding.UTF8);
-            provider.Body = await reader.ReadToEndAsync(context.RequestAborted);
+            var body = await reader.ReadToEndAsync(context.RequestAborted);
+            provider.Body = body;
+            provider.Arrived(RecipientOf(body), body);
             if (abort)
             {
                 context.Abort();
@@ -69,8 +104,14 @@ internal static class EmailProviderFixture
 
             context.Response.StatusCode = (int)provider.Status;
             context.Response.ContentType = "application/json";
-            await context.Response.WriteAsync(provider.ResponseBody, context.RequestAborted);
+            await context.Response.WriteAsync(provider.ResponseBody == AcceptedResponse ? EchoRecipient(body) : provider.ResponseBody, context.RequestAborted);
         });
+
+        private static string EchoRecipient(string body) =>
+            "{\"success\":true,\"result\":{\"delivered\":[],\"queued\":[\"" + RecipientOf(body) + "\"],\"permanent_bounces\":[],\"suppressed_recipients\":[]}}";
+
+        private static string RecipientOf(string body) =>
+            body.Length == 0 ? "unknown" : (JsonNode.Parse(body)?["to"]?.GetValue<string>() ?? "unknown");
 
         public ValueTask DisposeAsync() => this.app.DisposeAsync();
     }

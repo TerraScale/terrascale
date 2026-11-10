@@ -36,6 +36,10 @@ public sealed partial record AuthOptions
         "github-oauth",
         "google-oauth",
         "terrabase-url",
+        "smtp-host",
+        "smtp-port",
+        "smtp-username",
+        "smtp-password",
         "environment");
 
     /// <summary>Plain-HTTP listen address of the public API (8090, behind the ts-orch TLS edge). TerraBase uses port 8080 on the shared host network.</summary>
@@ -69,6 +73,8 @@ public sealed partial record AuthOptions
 
     /// <summary>Cloudflare Email Sending account and token; without them email is logged, not delivered.</summary>
     public CloudflareEmailOptions? CloudflareEmail { get; init; }
+
+    public SmtpEmailOptions? Smtp { get; init; }
 
     /// <summary>Platform OAuth clients, supplied as JSON credentials from OCI Vault; absent credentials hide the button.</summary>
     public IReadOnlyList<Features.ProjectTenants.SocialProviderRecord> SocialClients { get; init; } = [];
@@ -111,7 +117,7 @@ public sealed partial record AuthOptions
     /// </summary>
     public override string ToString() =>
         $"AuthOptions {{ Listen = {this.Listen}, MetricsListen = {this.MetricsListen}, PublicOrigin = {this.PublicOrigin}, "
-        + $"Development = {this.Development}, Email = {(this.CloudflareEmail is null ? "off" : "on")}, "
+        + $"Development = {this.Development}, Email = {(this.Smtp is null && this.CloudflareEmail is null ? "off" : "on")}, "
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
 
@@ -218,6 +224,22 @@ public sealed partial record AuthOptions
             throw Invalid("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN must be set together");
         }
 
+        var smtpHost = Optional("smtp-host");
+        var smtpUsername = Optional("smtp-username");
+        var smtpPassword = Optional("smtp-password");
+        var smtpPort = 587;
+        if (Optional("smtp-port") is { } rawPort
+            && (!int.TryParse(rawPort, NumberStyles.None, CultureInfo.InvariantCulture, out smtpPort) || smtpPort is < 1 or > 65535))
+        {
+            throw Invalid("TS_AUTH_SMTP_PORT must be a TCP port number");
+        }
+
+        var smtpSettings = new[] { smtpHost, smtpUsername, smtpPassword };
+        if (smtpSettings.Any(setting => setting is null) && smtpSettings.Any(setting => setting is not null))
+        {
+            throw Invalid("TS_AUTH_SMTP_HOST, TS_AUTH_SMTP_USERNAME and TS_AUTH_SMTP_PASSWORD must be set together");
+        }
+
         var rateLimit = 1000;
         if (Optional("rate-limit") is { } rawLimit
             && (!int.TryParse(rawLimit, NumberStyles.None, CultureInfo.InvariantCulture, out rateLimit) || rateLimit < 1))
@@ -236,6 +258,7 @@ public sealed partial record AuthOptions
             RateLimitPerWindow = rateLimit,
             TrustedProxies = ParseTrustedProxies(Optional("trusted-proxies")),
             CloudflareEmail = cloudflareAccountId is null || cloudflareEmailToken is null ? null : new CloudflareEmailOptions(cloudflareAccountId, cloudflareEmailToken),
+            Smtp = smtpHost is null ? null : new SmtpEmailOptions(smtpHost, smtpPort, smtpUsername!, smtpPassword!),
             SentryDsn = Optional("sentry-dsn") is { } dsn ? ValidateDsn(dsn) : null,
             DashboardClient = ParseDashboardClient(Optional("dashboard-client-secret"), Optional("dashboard-redirect-uris"), Optional("dashboard-post-logout-redirect-uris")),
             AccessTokenAudiences = [.. ParseAudiences(Optional("access-token-audiences")).Prepend(TerraBaseAudience).Distinct(StringComparer.Ordinal)],
@@ -529,5 +552,10 @@ public sealed record CloudflareEmailOptions(string AccountId, string ApiToken)
 {
     /// <summary>Omits the token, so formatting or logging the record never discloses it.</summary>
     public override string ToString() => nameof(CloudflareEmailOptions);
+}
+
+public sealed record SmtpEmailOptions(string Host, int Port, string Username, string Password, bool RequireTls = true)
+{
+    public override string ToString() => nameof(SmtpEmailOptions);
 }
 

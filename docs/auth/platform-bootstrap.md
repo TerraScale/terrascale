@@ -14,7 +14,8 @@ identity exists; ts-auth never creates its database or reads the dashboard's dat
 
 The initial passwordless user is `mariogk@terrascale.tech`, owner of the organization and explicit admin of both projects.
 The account has no password or authentication bypass: email-code sign-in still proves control of its mailbox through
-Cloudflare Email Sending. `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_EMAIL_TOKEN` come from OCI Vault.
+OCI Email Delivery with Cloudflare fallback. `TS_AUTH_SMTP_USERNAME`, `TS_AUTH_SMTP_PASSWORD`,
+`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_EMAIL_TOKEN` come from OCI Vault.
 
 Every startup applies pending EF Core migrations, creates the owner unless its normalized email already has an account,
 and creates the organization, two projects, roles and audit event in one create-only request. Concurrent starts read the

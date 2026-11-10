@@ -39,7 +39,7 @@ public static class App
     public static void ValidateAuthenticationAuthority(AuthOptions options, string? region)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if ((!options.Development || options.CloudflareEmail is not null) && (region ?? (options.Development ? "gru" : null)) != "gru")
+        if ((!options.Development || options.Smtp is not null || options.CloudflareEmail is not null) && (region ?? (options.Development ? "gru" : null)) != "gru")
         {
             throw new AuthConfigurationException("Authentication requires the GRU authority for durable single-use proofs and email admission");
         }
@@ -205,10 +205,35 @@ public static class App
             services.GetRequiredService<IConfiguration>()["TS_REGION"] ?? (options.Development ? "gru" : throw new AuthConfigurationException("TS_REGION is required outside Development")),
             services.GetRequiredService<ILogger<AttemptLimiter>>()));
         builder.Services.AddSingleton<EmailAdmission>();
+        if (options.Smtp is { } smtp)
+        {
+            builder.Services.AddSingleton(smtp);
+            builder.Services.AddSingleton<SmtpEmailSender>();
+        }
+
         if (options.CloudflareEmail is { } cloudflareEmail)
         {
             builder.Services.AddSingleton(cloudflareEmail);
             builder.Services.AddHttpClient<CloudflareEmailSender>(client => client.Timeout = TimeSpan.FromSeconds(30));
+        }
+
+        if (options.Smtp is not null || options.CloudflareEmail is not null)
+        {
+            builder.Services.AddSingleton(provider =>
+            {
+                var providers = new List<IEmailProvider>();
+                if (options.Smtp is not null)
+                {
+                    providers.Add(provider.GetRequiredService<SmtpEmailSender>());
+                }
+
+                if (options.CloudflareEmail is not null)
+                {
+                    providers.Add(provider.GetRequiredService<CloudflareEmailSender>());
+                }
+
+                return new FailoverEmailSender(providers, provider.GetRequiredService<ILogger<FailoverEmailSender>>());
+            });
             builder.Services.AddTransient<IEmailSender, AdmittedEmailSender>();
         }
         else
@@ -274,9 +299,9 @@ public static class App
         builder.Configuration["ForwardedHeaders_Enabled"] = "false";
 
         _ = TerraBaseOrigin(options);
-        if (!options.Development && options.CloudflareEmail is null)
+        if (!options.Development && (options.Smtp is null || options.CloudflareEmail is null))
         {
-            throw new AuthConfigurationException("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are required outside Development");
+            throw new AuthConfigurationException("TS_AUTH_SMTP_HOST, TS_AUTH_SMTP_USERNAME, TS_AUTH_SMTP_PASSWORD, CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are required outside Development");
         }
 
         var app = builder.Build();
