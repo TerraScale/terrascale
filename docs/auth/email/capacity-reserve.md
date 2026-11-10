@@ -2,14 +2,15 @@
 
 The OCI Email Delivery account has finite capacity: admission is not an inbox-delivery guarantee.
 All ts-auth mail and the ts-orch alert relay reserve an attempt in `email_admission`
-before contacting the SMTP provider. Dashboard mail already uses ts-auth. Deployment must
+before contacting any email provider: one admission per message covers the SMTP
+primary and the Cloudflare fallback together. Dashboard mail already uses ts-auth. Deployment must
 install both consumers before protection covers every sender; previously spent
 provider quota cannot be recovered by a new ledger.
 
 A single conditional-write record on GRU retains at most 1,000 reservations for 25
 hours. This conservative window includes provider request/grant duration and avoids
 assuming a midnight reset. It stays below TerraBase's 1 MiB record limit. Every
-instance shares it; production SMTP delivery refuses startup outside GRU,
+instance shares it; production email delivery refuses startup outside GRU,
 matching the current GRU-only auth decision. Regional serving requires a different
 coordination design. Storage errors fail closed. No process-local lock is authority.
 

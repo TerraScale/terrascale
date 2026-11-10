@@ -35,7 +35,8 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var authorization = this.HttpContext.Request.Headers.Authorization.ToString();
-        var expected = options.Smtp is { } smtp ? Credential(smtp.Password) : string.Empty;
+        var expected = options.Smtp is { } smtp ? Credential(smtp.Password)
+            : options.CloudflareEmail is { } cloudflare ? Credential(cloudflare.ApiToken) : string.Empty;
         if (expected.Length == 0 || !CryptographicOperations.FixedTimeEquals(
             SHA256.HashData(Encoding.UTF8.GetBytes(authorization)), SHA256.HashData(Encoding.UTF8.GetBytes("Bearer " + expected))))
         {

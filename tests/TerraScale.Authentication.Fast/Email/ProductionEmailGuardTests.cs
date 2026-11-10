@@ -15,6 +15,6 @@ public sealed class ProductionEmailGuardTests
             settings["terrabase-url"] = "https://storage.example.invalid";
         })).Throws<AuthConfigurationException>();
 
-        await Assert.That(error!.Message).IsEqualTo("TS_AUTH_SMTP_HOST, TS_AUTH_SMTP_USERNAME and TS_AUTH_SMTP_PASSWORD are required outside Development");
+        await Assert.That(error!.Message).IsEqualTo("TS_AUTH_SMTP_HOST, TS_AUTH_SMTP_USERNAME, TS_AUTH_SMTP_PASSWORD, CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are required outside Development");
     }
 }

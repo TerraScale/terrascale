@@ -8,7 +8,7 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.Email;
 
-public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSender> logger) : IEmailSender
+public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSender> logger) : IEmailSender, IEmailProvider
 {
     private const string SenderAddress = "no-reply@terrascale.tech";
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(30);
@@ -19,7 +19,7 @@ public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSen
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
         => (await this.DeliverResultAsync(recipient, message, cancellationToken).ConfigureAwait(false)).Outcome;
 
-    internal async Task<EmailProviderResult> DeliverResultAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+    public async Task<EmailProviderResult> DeliverResultAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         var outcome = "error";
         try
@@ -27,6 +27,8 @@ public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSen
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(ConnectTimeout);
             using var client = new SmtpClient();
+            client.CheckCertificateRevocation = false;
+            client.Timeout = (int)ConnectTimeout.TotalMilliseconds;
             await client.ConnectAsync(email.Host, email.Port, email.RequireTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None, timeout.Token).ConfigureAwait(false);
             try
             {
@@ -45,12 +47,14 @@ public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSen
         catch (SmtpCommandException command) when ((int)command.StatusCode >= 400 && (int)command.StatusCode < 500)
         {
             AuthMetrics.Email("failed");
+            this.LogSmtpFailure((int)command.StatusCode);
             return EmailDeliveryOutcome.Retryable;
         }
         catch (SmtpCommandException command) when ((int)command.StatusCode >= 500 && (int)command.StatusCode < 600)
         {
             AuthMetrics.Email("failed");
             outcome = "bounced";
+            this.LogSmtpFailure((int)command.StatusCode);
             return EmailDeliveryOutcome.Rejected;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -71,6 +75,18 @@ public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSen
         finally
         {
             EmailOutcomeLog.Write(logger, recipient, outcome);
+        }
+    }
+
+    private void LogSmtpFailure(int status)
+    {
+        try
+        {
+            logger.ZLogError($"Email delivery failed: SMTP answered {status:@Status}");
+        }
+        catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+        {
+            _ = logFailure;
         }
     }
 

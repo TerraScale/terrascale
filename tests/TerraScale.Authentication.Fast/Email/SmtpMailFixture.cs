@@ -38,6 +38,9 @@ public sealed class SmtpMailFixture : IAsyncDisposable
         set => this.state.RefuseRecipientsWith = value;
     }
 
+    public Task<ReceivedMail> WaitForAsync(string recipient) =>
+        this.state.WaitForAsync(recipient).WaitAsync(TimeSpan.FromSeconds(10));
+
     public static async Task<SmtpMailFixture> StartAsync()
     {
         var state = new State();
@@ -81,6 +84,53 @@ public sealed class SmtpMailFixture : IAsyncDisposable
         public readonly ConcurrentQueue<ReceivedMail> Accepted = [];
 
         public SmtpReplyCode? RefuseRecipientsWith;
+
+        private readonly Lock gate = new();
+        private readonly Dictionary<string, TaskCompletionSource<ReceivedMail>> arrivals = new(StringComparer.OrdinalIgnoreCase);
+
+        public Task<ReceivedMail> WaitForAsync(string recipient)
+        {
+            lock (this.gate)
+            {
+                if (this.arrivals.TryGetValue(recipient, out var pending) && pending.Task.IsCompleted)
+                {
+                    return pending.Task;
+                }
+
+                var source = new TaskCompletionSource<ReceivedMail>(TaskCreationOptions.RunContinuationsAsynchronously);
+                this.arrivals[recipient] = source;
+                return source.Task;
+            }
+        }
+
+        public void Arrived(ReceivedMail mail)
+        {
+            this.Accepted.Enqueue(mail);
+            lock (this.gate)
+            {
+                foreach (var to in mail.To)
+                {
+                    if (this.arrivals.TryGetValue(to, out var source))
+                    {
+                        source.TrySetResult(mail);
+                    }
+                    else
+                    {
+                        this.arrivals[to] = TaskCompletionSourceFactory.Completed(mail);
+                    }
+                }
+            }
+        }
+    }
+
+    private static class TaskCompletionSourceFactory
+    {
+        public static TaskCompletionSource<ReceivedMail> Completed(ReceivedMail mail)
+        {
+            var source = new TaskCompletionSource<ReceivedMail>(TaskCreationOptions.RunContinuationsAsynchronously);
+            source.SetResult(mail);
+            return source;
+        }
     }
 
     private sealed class RecordingStore(State state) : MessageStore
@@ -88,7 +138,7 @@ public sealed class SmtpMailFixture : IAsyncDisposable
         public override async Task<SmtpServer.Protocol.SmtpResponse> SaveAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
         {
             using var copy = new MemoryStream(buffer.ToArray());
-            state.Accepted.Enqueue(new ReceivedMail(
+            state.Arrived(new ReceivedMail(
                 transaction.From.AsAddress(),
                 [.. transaction.To.Select(to => to.AsAddress())],
                 await MimeKit.MimeMessage.LoadAsync(copy, cancellationToken)));
