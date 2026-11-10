@@ -83,6 +83,7 @@ export interface Frame {
   csrf: string;
   path: (typeof NAV)[number]["href"];
   done?: string;
+  now: number;
 }
 
 const hidden = (csrf: string) => html`<input type="hidden" name="csrf" value="${csrf}">`;

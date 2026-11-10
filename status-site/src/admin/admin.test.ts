@@ -410,6 +410,27 @@ describe("admin actions", () => {
     expect(one("SELECT count(*) AS n FROM subscribers")).toEqual({ n: 0 });
   });
 
+  it("shows a missing or stale probe as no data", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-09-26T10:15:00Z"), toFake: ["Date"] });
+    try {
+    const { get, env } = await setup();
+    env.STATUS_DB.sqlite.exec(`
+      UPDATE endpoints SET live_since = '2026-01-01 00:00:00' WHERE id = '${GRU_API}';
+      INSERT INTO probe_samples (endpoint_id, at, state, ok, total, results) VALUES
+        ('${GRU_API}', '2026-09-26 10:10:00', 'operational', 4, 4, '[]');
+    `);
+    const stale = await (await get("/admin/probes")).text();
+    expect(stale).toContain("TerraBase API · gru");
+    expect(stale).toContain('data-state="none"');
+    expect(stale).not.toContain('data-state="operational"');
+    env.STATUS_DB.sqlite.exec(`UPDATE probe_samples SET at = '2026-09-26 10:14:30' WHERE endpoint_id = '${GRU_API}'`);
+    const fresh = await (await get("/admin/probes")).text();
+    expect(fresh).toContain('data-state="operational"');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("checks endpoints from every vantage on demand, storing nothing", async () => {
     const { post, get, one } = await setup();
     const all = await post("/admin/probes/run");
