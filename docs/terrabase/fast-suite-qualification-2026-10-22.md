@@ -128,3 +128,5 @@ Its source SHA256 is
 
 No workflows, storage format, production authentication, public API or migration
 behavior changed.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
