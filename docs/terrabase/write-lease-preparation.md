@@ -28,3 +28,5 @@ acknowledgement holds are independent and remain intact.
 Legacy global platform keys must remain until all watchers run this isolation
 code. Removing those keys is separate from deploying the code and requires a
 placement/data audit; deleting keys alone does not make a watcher restart safe.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
