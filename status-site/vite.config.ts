@@ -12,7 +12,6 @@ export default defineConfig((): ViteUserConfig & Pick<UserConfig, "fmt"> => ({
     ? []
     : [
         cloudflare({
-          // GitHub Actions sets the commit; baked into the build so any deploy command reports it.
           config: (config) => ({ vars: { ...config.vars, VERSION: process.env.REVISION ?? "unknown" } }),
           auxiliaryWorkers: (
             [

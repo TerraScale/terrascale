@@ -69,7 +69,13 @@ gh workflow run sites.yml --repo TerraScale/terrascale --ref main
 
 `deploy-landing` and `deploy-status` build and deploy the tip of `main` and
 prove the live revision. `deploy-docs` runs `docs-deploy.yml`, which skips the
-dispatched revision once a newer commit is the head of `main` and requires every
-push workflow of that commit to be green (`docs-site/scripts/check-main.py`). To retry
-one failed site deploy, re-run the failed jobs of its `Sites` run: a re-run
-landing or status job deploys the tip of `main` at that moment.
+run's revision once a newer commit is the head of `main`. A `Sites` dispatch
+redeploys docs only when the tip of `main` has a push `CI` run in which no job
+failed and `test` succeeded (or was skipped in a run that succeeded), and every
+other push run of the tip completed as success or skipped
+(`docs-site/scripts/check-main.py`); otherwise its docs job fails without
+deploying. To retry a failed site deploy, re-run the whole `Sites` run with
+`gh run rerun <run id>`, never with `--failed`: a full re-run checks the head of
+`main` again before it deploys docs and deploys landing and status from the tip
+of `main` at that moment, while `--failed` keeps the first attempt's head check
+and can put an older docs revision live after a newer one.

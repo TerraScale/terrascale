@@ -205,7 +205,6 @@ jobs:
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
         run: |
-          # The ts-auth image does not contain TerraBase: main publishes and Slow-tests auth only for its own changes.
           echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
           # A push changing both TerraBase's server and what ts-auth calls it with releases TerraBase first (scope
           # skew, 2026-11-04); every other push releases both services in parallel. Dispatches keep the order.
