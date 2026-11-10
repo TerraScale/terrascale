@@ -147,7 +147,7 @@ qualify the HTTP boundary. All-regions placement (`AllRegions`) keeps a replica 
 serving region, including regions added later; `MoveDatabaseHome` moves the home to a
 replica region (`ts db move-home`, `ts db placement ... -all-regions`).
 
-A database has one home region for writes and can have encrypted read replicas in other serving regions.
+A database's home region is the durable apply point for writes, a replica region can accept a local SQL REST write, and encrypted read replicas can live in other serving regions.
 A replica region can accept a local SQL REST write, and the home applies it. The default `TerraScale-Durability` is `local`.
 REST reads can use a ready local replica. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
@@ -339,7 +339,7 @@ collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
 the management service credential on the admin listener.
 A rejected token or credential is `ErrInvalidKey`.
 
-Each database commits writes in one home region and can hold encrypted read replicas in other regions.
+Each database's home region is the durable apply point for writes, a replica region can accept a local SQL REST write, and encrypted read replicas can live in other regions.
 The public region IDs are `gru`, `sjc` and `fra`. `ManagedDatabase` reports `Region` (the
 answering node) and `HomeRegion`.
 `CreateDatabaseIn(ctx, org, project, name, "gru")` (or `Database.CreateIn`)
