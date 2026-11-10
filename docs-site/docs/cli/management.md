@@ -19,3 +19,5 @@ Check `ts help <command>` for your installed release. Select a project with `-pr
 Project deletion refuses a nonempty or unreadable database inventory before deletion. This preflight does not serialize concurrent database creation and does not promise tenant teardown or billing cleanup. Organization deletion requires an empty organization and appropriate role.
 
 For destination set, redirect a private file into `ts -yes backup destination set`. Input is at most 16 KiB: `endpoint`, `region`, `bucket`, `mode` (`both` or `customer`), `accessKeyId`, `secretKey`. Never put credentials in argv/logs; output contains only public metadata. Database-restricted keys cannot administer project destinations. Removing the destination preserves customer objects and resumes platform shipping.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
