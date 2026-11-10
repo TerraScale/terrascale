@@ -37,3 +37,5 @@ Account, organization and project roots create logical deletion jobs in the same
 ## Measured verification
 
 Fast integration coverage uses real hosts/SDK calls and controlled clocks for fixed deadlines, restart/failure recovery, held readers, late authority, collected catalog tombstones, ID rejection, unrelated-file preservation, retention refusals, multipart/version continuation and independent destinations. The PR records the exact commands and results. CI remains the integrated validation gate; focused local results do not establish live physical erasure.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
