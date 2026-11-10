@@ -25,7 +25,7 @@ The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to
 
 ## Recovery and availability
 
-Replicas catch up after a restart or a temporary connection failure. A ready replica can serve SQL reads while
+Replicas catch up after a restart or a temporary connection failure. NATS error 10074 is not retried because the stream wants more replicas than the cluster has. A ready replica can serve SQL reads while
 its home is unreachable, using the state it already holds.
 
 If the home region of a database with replica regions stops responding, the most caught-up replica becomes the
