@@ -188,7 +188,7 @@ scope, checked per statement. Keep service credentials private and out of logs a
 
 `client.databases.create({ name })` uses the called region as the home; `homeRegion` selects another serving region.
 
-A database has one home region and can have encrypted read replicas in other serving regions.
+A database has one home region and can have replicas in other serving regions.
 A replica region can accept a local SQL REST write; the home applies it. The default
 `TerraScale-Durability` is `local`. REST reads can use a ready local replica. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
