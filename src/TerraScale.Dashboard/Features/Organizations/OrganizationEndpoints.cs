@@ -140,7 +140,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                         var intent = StepUpFlow.Intent(http, context, "start_ownership_transfer");
                         if (intent is null)
                         {
-                            return await StepUpFlow.StartAsync(http, context, "start_ownership_transfer", "ts-auth");
+                            return await StepUpFlow.StartAsync(http, context, "start_ownership_transfer", "ts-auth", boundOrganizationId: context.Organization.Id);
                         }
 
                         proof = intent.Challenge.Proof;
@@ -194,7 +194,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     var intent = StepUpFlow.Intent(http, context, "delete_organization");
                     if (intent is null)
                     {
-                        return await StepUpFlow.StartAsync(http, context, "delete_organization", "ts-auth");
+                        return await StepUpFlow.StartAsync(http, context, "delete_organization", "ts-auth", boundOrganizationId: context.Organization.Id);
                     }
 
                     await lifecycle.DeleteAsync(context, form["confirmation"].ToString(), http.RequestAborted, intent.Challenge.Proof);

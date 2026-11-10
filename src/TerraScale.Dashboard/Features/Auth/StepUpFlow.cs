@@ -93,7 +93,7 @@ namespace TerraScale.Dashboard.Features.Auth
             }
         }
 
-        public static async Task<IResult> StartAsync(HttpContext http, AccountContext context, string purpose, string audience, string? receipt = null, McpAuthorization? mcp = null)
+        public static async Task<IResult> StartAsync(HttpContext http, AccountContext context, string purpose, string audience, string? receipt = null, McpAuthorization? mcp = null, string? boundOrganizationId = null)
         {
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             // API clients receive an actionable refusal; proofs must never be submitted in forms or URLs.
@@ -102,7 +102,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 throw Required();
             }
 
-            var challenge = await http.RequestServices.GetRequiredService<IAuthStepUpGateway>().BeginAsync(context.Session, purpose, audience, context.Organization?.Id,
+            var challenge = await http.RequestServices.GetRequiredService<IAuthStepUpGateway>().BeginAsync(context.Session, purpose, audience, boundOrganizationId,
                 $"{http.Request.Scheme}://{http.Request.Host}/auth/step-up/callback", http.RequestAborted);
             if (challenge.Proof.Length is 0 or > 4096 || challenge.ExpiresAt <= http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow() ||
                 !Uri.TryCreate(challenge.StepUpUrl, UriKind.Absolute, out var url) || url.Scheme != "https" || !url.IsDefaultPort ||
