@@ -41,10 +41,10 @@ public sealed class WriteRouterTests
         await using var cluster = await Cluster.StartAsync(token);
         (string Route, string Reason, string? Header, string[] Sql)[] rows =
         [
-            ("local", "ulid_insert", null, [$"INSERT INTO events (id, body) VALUES ('{EntityIds.New()}', 'x')"]),
+            ("home", "client_key", null, [$"INSERT INTO events (id, body) VALUES ('{EntityIds.New()}', 'x')"]),
             ("local", "update_by_key", null, ["UPDATE counters SET label = 'second' WHERE id = 'c1'"]),
             ("local", "delete_by_key", null, ["DELETE FROM events WHERE id = 'missing'"]),
-            ("local", "fk_child_insert", null, [$"INSERT INTO children (id, parent, body) VALUES ('{EntityIds.New()}', 'p1', 'b')"]),
+            ("home", "client_key", null, [$"INSERT INTO children (id, parent, body) VALUES ('{EntityIds.New()}', 'p1', 'b')"]),
             ("home", "relative_update", null, ["UPDATE counters SET n = n - 1 WHERE id = 'c1'"]),
             ("home", "unique", null, [$"INSERT INTO users (id, email) VALUES ('{EntityIds.New()}', '{EntityIds.New()}@example.com')"]),
             ("home", "unique_change", null, ["UPDATE users SET email = 'changed@example.com' WHERE id = 'u1'"]),
@@ -177,18 +177,33 @@ public sealed class WriteRouterTests
         await using var nats = await JetStreamServer.StartAsync(token);
         await using var cluster = await Cluster.StartAsync(token, nats);
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(cluster.Sjc.Server.Services.GetRequiredService<HomePush>().Started), TimeSpan.FromSeconds(30));
-        var id = EntityIds.New().ToString();
         using var request = new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri(cluster.Database.Data + "/sql/execute"))
         {
-            Content = JsonContent.Create(new { statements = new[] { new { sql = $"INSERT INTO events (id, body) VALUES ('{id}', 'from sjc')" } } }),
+            Content = JsonContent.Create(new { statements = new[] { new { sql = "UPDATE counters SET label = 'from sjc' WHERE id = 'c1'" } } }),
         };
         request.Headers.Add("TerraScale-Durability", "home");
 
         using var response = await cluster.ViaSjc.SendAsync(request, token);
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync(token));
-        await Assert.That(response.Headers.GetValues("TerraScale-Write-Route").Single()).IsEqualTo("route=local; reason=ulid_insert; commit=local");
-        await Assert.That((await cluster.HomeAsync($"SELECT body FROM events WHERE id = '{id}'", token))[0].GetString()).IsEqualTo("from sjc");
+        await Assert.That(response.Headers.GetValues("TerraScale-Write-Route").Single()).IsEqualTo("route=local; reason=update_by_key; commit=local");
+        await Assert.That((await cluster.HomeAsync("SELECT label FROM counters WHERE id = 'c1'", token))[0].GetString()).IsEqualTo("from sjc");
+    }
+
+    [Test]
+    public async Task An_insert_that_names_the_primary_key_commits_at_the_home()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var cluster = await Cluster.StartAsync(token);
+        using var request = new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri(cluster.Database.Data + "/sql/execute"))
+        {
+            Content = JsonContent.Create(new { statements = new[] { new { sql = $"INSERT INTO events (id, body) VALUES ('{EntityIds.New()}', 'named')" } } }),
+        };
+
+        using var response = await cluster.ViaSjc.SendAsync(request, token);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync(token));
+        await Assert.That(response.Headers.GetValues("TerraScale-Write-Route").Single()).IsEqualTo("route=home; reason=client_key; commit=home");
     }
 
     private sealed class Cluster : IAsyncDisposable
