@@ -35,7 +35,7 @@ regions added later; otherwise name each replica region.
 
 REST requests and Postgres sessions can reach the database from any serving region. The home applies writes and remains the durable apply point.
 REST requests containing only reads, psql reads outside a transaction or in a read-only transaction, and read-only
-SQL WebSocket frames can use a ready replica in the region receiving the connection. A replica region can accept a local SQL write; the home applies it. `TerraScale-Durability: home` waits for that apply.
+SQL WebSocket frames can use a ready replica in the region receiving the connection. A replica region can accept a local SQL write; the home applies it. The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once. `TerraScale-Durability: home` waits for that apply.
 Reads before the replica is ready go to the home.
 
 A replica can lag behind the home. Postgres and WebSocket sessions preserve read-your-writes by using the home until
