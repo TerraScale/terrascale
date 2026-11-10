@@ -8,7 +8,8 @@ public sealed record TerraBaseSqlClientOptions
 {
     /// <summary>
     /// HTTPS origin of the TerraBase client listener, for example <c>https://api.terrascale.tech</c>, or the plain-HTTP
-    /// origin of a private listener on NetBird <c>100.64.0.0/10</c> addresses or loopback.
+    /// origin of a private listener on NetBird <c>100.64.0.0/10</c> addresses or loopback. With an ApiKey and no
+    /// EndpointResolver or AuthAddress it defaults to <c>https://api.terrascale.tech</c>.
     /// </summary>
     public Uri? BaseAddress { get; init; }
 
@@ -77,7 +78,10 @@ public sealed partial class TerraBaseSqlClient
         }
 
         ArgumentNullException.ThrowIfNull(httpClient);
-        connect = provider => new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
+        var baseAddress = options is { BaseAddress: null, EndpointResolver: null, AuthAddress: null }
+            ? TerraBaseRegion.PublicOrigin
+            : options.BaseAddress;
+        connect = provider => new TerraBaseConnection(httpClient, baseAddress, options.EndpointResolver, null, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline,
             TerraBaseConnection.DefaultMaxResponseBytes, provider, region: options.Region);
         _ = connect(static _ => ValueTask.FromResult(string.Empty)); // validates the endpoint options now
         apiKeyTokens = new TerraScaleApiKeyTokens(httpClient, AuthOrigin(options), options.ApiKey, nameof(options.ApiKey), TimeProvider.System);
