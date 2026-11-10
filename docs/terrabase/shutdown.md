@@ -19,3 +19,5 @@ The budgets require cancellation-aware work and responsive local I/O. The entry 
 and native cleanup rather than disposing dependencies under them or reporting a successful close with open sessions.
 A stuck native call or a worker that ignores cancellation can still exceed the target; verify the actual runtime
 termination deadline. The shutdown logs identify unfinished stages.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
