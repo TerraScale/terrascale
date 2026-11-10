@@ -1,5 +1,8 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using TerraScale.Dashboard.Common.Formatting;
 
 namespace TerraScale.Dashboard.E2E.Features.Home
 {
@@ -35,6 +38,21 @@ namespace TerraScale.Dashboard.E2E.Features.Home
             await Assert.That(noCsrf.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             using var after = JsonDocument.Parse(await client.GetStringAsync("/__test/reporting/probe"));
             await Assert.That(after.RootElement.GetProperty("requests").GetArrayLength()).IsEqualTo(requestsBefore);
+        }
+
+        [Test]
+        public async Task SignedInUsagePageStatesTheReportedPeriod()
+        {
+            using var client = fixture.CreateClient();
+            using var login = await HttpJourney.LoginAsync(client);
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            var html = await client.GetStringAsync("/usage");
+            var match = Regex.Match(html, "id=\"usage-period\"[\\s\\S]*?<time datetime=\"([^\"]+)\"[\\s\\S]*?<time datetime=\"([^\"]+)\"");
+            await Assert.That(match.Success).IsTrue();
+            var from = DateTimeOffset.Parse(WebUtility.HtmlDecode(match.Groups[1].Value), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+            var to = DateTimeOffset.Parse(WebUtility.HtmlDecode(match.Groups[2].Value), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+            await Assert.That(to > from).IsTrue();
+            await Assert.That(html).Contains(ValueFormat.UtcDate(from)).And.Contains(ValueFormat.UtcDate(to));
         }
     }
 }
