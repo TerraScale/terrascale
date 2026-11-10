@@ -421,6 +421,10 @@ Replace the documentation network above with your application's real egress CIDR
 Expiry accepts `30d`, `90d`, `365d` or `never`; CIDRs are comma-separated. Treat the
 one-time key output as a secret; write it only to a private file or secret store.
 
+## Push streams
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Sign out
 
 ```sh
