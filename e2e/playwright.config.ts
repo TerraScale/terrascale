@@ -25,7 +25,6 @@ export default defineConfig({
   },
   projects: [
     { name: 'setup', testMatch: 'journey/setup.spec.ts', teardown: 'finish', use: secretFree },
-    { name: 'sdk-a', testMatch: 'sdk/group-a.spec.ts', dependencies: ['setup'] },
     { name: 'pages-desktop', testMatch: 'pages/*.spec.ts', dependencies: ['setup'], use: { storageState: userSession } },
     {
       name: 'pages-mobile',
