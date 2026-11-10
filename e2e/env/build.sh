@@ -1,14 +1,31 @@
 set -euo pipefail
 root=$(cd "${1:?source root}" && pwd)
 out=${2:?output directory}
+service=${3:?terrabase, ts-auth or dashboard}
 revision=${E2E_REVISION:?E2E_REVISION is the commit the services are built from}
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 cd "$root"
-make turso-native
-dotnet restore e2e/env/services.slnf --locked-mode
-dotnet build e2e/env/services.slnf --configuration Release --no-restore -p:SourceRevisionId="$revision"
-dotnet publish src/TerraScale.Dashboard --configuration Release --no-build --output "$out/dashboard"
-rm -rf "$out/terrabase" "$out/ts-auth"
-cp -a src/TerraBase/bin/Release/net11.0 "$out/terrabase"
-cp -a src/TerraScale.Authentication/bin/Release/net11.0 "$out/ts-auth"
+case $service in
+  terrabase)
+    make turso-native
+    dotnet restore src/TerraBase/TerraBase.csproj --locked-mode
+    dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore -p:SourceRevisionId="$revision"
+    rm -rf "$out/terrabase"
+    cp -a src/TerraBase/bin/Release/net11.0 "$out/terrabase"
+    ;;
+  ts-auth)
+    dotnet restore src/TerraScale.Authentication/TerraScale.Authentication.csproj --locked-mode
+    dotnet build src/TerraScale.Authentication/TerraScale.Authentication.csproj --configuration Release --no-restore -p:SourceRevisionId="$revision"
+    rm -rf "$out/ts-auth"
+    cp -a src/TerraScale.Authentication/bin/Release/net11.0 "$out/ts-auth"
+    ;;
+  dashboard)
+    dotnet restore src/TerraScale.Dashboard/TerraScale.Dashboard.csproj --locked-mode
+    dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore --output "$out/dashboard" -p:SourceRevisionId="$revision"
+    ;;
+  *)
+    echo "unknown service $service" >&2
+    exit 2
+    ;;
+esac

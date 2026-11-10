@@ -6,6 +6,58 @@ on:
 permissions: {}
 
 jobs:
+  services:
+    name: build ${{ matrix.service }}
+    strategy:
+      matrix:
+        service: [terrabase, ts-auth, dashboard]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      SERVICE: ${{ matrix.service }}
+      E2E_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        if: matrix.service == 'dashboard'
+        with:
+          node-version: '24.21.0'
+      - id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.nuget/packages
+            ~/.npm
+          key: journey-build-${{ matrix.service }}-${{ hashFiles('**/packages.lock.json', 'src/TerraScale.Dashboard/web/package-lock.json') }}
+      - id: build
+        name: Build the service
+        run: |
+          bash e2e/env/build.sh . "$RUNNER_TEMP/services" "$SERVICE"
+          if [ "$SERVICE" = ts-auth ]; then E2E_SDK_BUILD="$RUNNER_TEMP/services/sdk" bash e2e/sdk/build.sh dotnet; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: services-${{ matrix.service }}
+          path: ${{ runner.temp }}/services
+          retention-days: 1
+          if-no-files-found: error
+      - if: always() && steps.build.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.nuget/packages
+            ~/.npm
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
   runners:
     name: runner ${{ matrix.sdk }}
     strategy:
@@ -67,13 +119,22 @@ jobs:
           key: ${{ steps.cache.outputs.cache-primary-key }}
 
   journey:
-    needs: runners
+    name: journey ${{ matrix.shard }}
+    needs: [services, runners]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: desktop
+            projects: --project setup --project pages-desktop
+          - shard: phone and flows
+            projects: --project setup --project pages-mobile --project hosted --project interactions --project invitation
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
     env:
-      E2E_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      PROJECTS: ${{ matrix.projects }}
       E2E_STATE: ${{ github.workspace }}/e2e/.state
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       DOTNET_NOLOGO: 1
@@ -86,7 +147,7 @@ jobs:
         run: |
           {
             echo "E2E_TOOLS=$HOME/.cache/terrascale-e2e"
-            echo "E2E_BUILD=$RUNNER_TEMP/journey-build"
+            echo "E2E_BUILD=$RUNNER_TEMP/services"
             echo "E2E_SDK_BUILD=$RUNNER_TEMP/sdk"
           } >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
@@ -95,18 +156,13 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24.21.0'
-      - id: nuget
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.nuget/packages
-          key: journey-nuget-${{ hashFiles('**/packages.lock.json') }}
       - id: packages
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.npm
             ~/.cache/pip
-          key: journey-packages-${{ hashFiles('e2e/package-lock.json', 'src/TerraScale.Dashboard/web/package-lock.json', 'sdk/js/package-lock.json', 'sdk/python/pyproject.toml') }}
+          key: journey-packages-${{ hashFiles('e2e/package-lock.json', 'sdk/js/package-lock.json', 'sdk/python/pyproject.toml') }}
       - id: tools
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -117,29 +173,30 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: journey-chromium-${{ hashFiles('e2e/package-lock.json') }}
-      - id: build
-        name: Build the services and the .NET, Python and JS runners
-        run: |
-          bash e2e/sdk/build.sh python > "$RUNNER_TEMP/python-runner.log" 2>&1 &
-          python=$!
-          bash e2e/sdk/build.sh js > "$RUNNER_TEMP/js-runner.log" 2>&1 &
-          js=$!
-          bash e2e/env/build.sh . "$E2E_BUILD"
-          bash e2e/sdk/build.sh dotnet
-          wait "$python" || { cat "$RUNNER_TEMP/python-runner.log"; exit 1; }
-          wait "$js" || { cat "$RUNNER_TEMP/js-runner.log"; exit 1; }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: services-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/services
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: runner-*
           merge-multiple: true
           path: ${{ runner.temp }}/sdk
       - id: install
-        name: Install the suite and its browser
+        name: Install the suite, its browser and the runners
         working-directory: e2e
         run: |
+          mv "$E2E_BUILD/sdk/dotnet" "$E2E_SDK_BUILD/dotnet"
           chmod +x "$E2E_SDK_BUILD/go/runner" "$E2E_SDK_BUILD/rust/runner"
+          bash sdk/build.sh python > "$RUNNER_TEMP/python-runner.log" 2>&1 &
+          python=$!
+          bash sdk/build.sh js > "$RUNNER_TEMP/js-runner.log" 2>&1 &
+          js=$!
           npm ci --no-audit --no-fund
           npx playwright install --only-shell chromium
+          wait "$python" || { cat "$RUNNER_TEMP/python-runner.log"; exit 1; }
+          wait "$js" || { cat "$RUNNER_TEMP/js-runner.log"; exit 1; }
       - id: trust
         name: Pin the production names and trust the run CA
         run: |
@@ -159,7 +216,9 @@ jobs:
           SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/e2e/.state/pki/ca.pem
           E2E_CA_FILE: ${{ github.workspace }}/e2e/.state/pki/ca.pem
-        run: npx playwright test
+        run: |
+          read -ra projects <<< "$PROJECTS"
+          npx playwright test "${projects[@]}"
       - name: Stop the stack
         if: always()
         run: bash e2e/env/down.sh
@@ -169,25 +228,20 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: journey-report
+          name: journey-report-${{ strategy.job-index }}
           path: e2e/playwright-report
           retention-days: 7
           if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
-          name: journey-evidence
+          name: journey-evidence-${{ strategy.job-index }}
           path: |
             e2e/test-results
             e2e/.state/logs
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore
-      - if: always() && steps.build.outcome == 'success' && steps.nuget.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.nuget/packages
-          key: ${{ steps.nuget.outputs.cache-primary-key }}
       - if: always() && steps.install.outcome == 'success' && steps.packages.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
