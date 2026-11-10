@@ -21,20 +21,7 @@ export TERRASCALE_DATABASE_NAME=main                       # your database's nam
 
 ## Install the SDK
 
-The crate is not on crates.io yet; install it from the monorepo:
-
-```bash
-cargo new quickstart && cd quickstart
-```
-
-Then add the dependency exactly as documented to `Cargo.toml`:
-
-```toml
-[dependencies]
-terrascale = { git = "https://github.com/TerraScale/terrascale.git" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-serde = { version = "1", features = ["derive"] }
-```
+The Rust SDK is not published. The source stays in `sdk/rust`; there is no crates.io package and no install command.
 
 ## Run the quickstart
 

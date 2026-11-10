@@ -3,14 +3,9 @@
 `terrascale::v1` is the Rust client for TerraBase SQL at `https://api.terrascale.tech`. It follows the
 shared [SQL SDK API shape](../SQL-API.md).
 
-## Quickstart
+The Rust SDK is not published. This directory is source only; there is no crates.io package and no install command.
 
-```toml
-[dependencies]
-terrascale = { git = "https://github.com/TerraScale/terrascale" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-serde = { version = "1", features = ["derive"] }
-```
+## Quickstart
 
 ```rust,no_run
 use terrascale::v1::{new_id, Client, SqlStatement};
