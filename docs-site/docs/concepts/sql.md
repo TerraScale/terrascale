@@ -4,7 +4,7 @@ title: SQL
 
 # SQL
 
-Each TerraScale database is a SQL database in the SQLite dialect. It commits writes in one home region: São Paulo (`gru`), the San Francisco Bay Area (`sjc`) or Frankfurt (`fra`). Encrypted read replicas can serve REST reads in other regions. See [regions](/concepts/regions) and [replication](/concepts/replication).
+Each TerraScale database is a SQL database in the SQLite dialect. A replica region can accept a local SQL REST write, the home applies it, and the default `TerraScale-Durability` is `local`; the home is São Paulo (`gru`), the San Francisco Bay Area (`sjc`) or Frankfurt (`fra`). See [regions](/concepts/regions) and [replication](/concepts/replication).
 
 ## Quickstart
 
