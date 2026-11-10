@@ -351,3 +351,5 @@ Q6 alerts on actual storage, Class A/B, cache hit ratio and purge backlog.
 
 W0-7 changes no API, storage format, credentials or infrastructure. F6/F11
 own the implementation and security qualification above. No visual change.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
