@@ -14,6 +14,7 @@ using TerraBase.Features.Shapes;
 using TerraBase.Features.Sql.Routing;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
@@ -21,7 +22,7 @@ namespace TerraBase.Features.Sql;
 
 internal sealed class SqlExecuteEndpoint(
     ISqlService sql, IAuthorizationService authorization, ITenantDirectory tenants, IReplicaCatalog placements, IDatabaseReplicas replicas, IReplicaPeers peers,
-    WriteRouter router, ILocalWrites local, ReplicaHolds holds, TerraBaseOptions options, ShapeOverlay overlay) : EndpointWithoutRequest<IResult>
+    WriteRouter router, ILocalWrites local, ReplicaHolds holds, TerraBaseOptions options, ShapeOverlay overlay, IHomeApply apply) : EndpointWithoutRequest<IResult>
 {
 
     public override void Configure()
@@ -100,10 +101,23 @@ internal sealed class SqlExecuteEndpoint(
             return unsettled;
         }
 
+        var publishId = Listeners.IsForwarded(HttpContext) && HttpContext.Request.Headers[HomeForwarding.PublishIdHeader] is [{ } raw] && EntityIds.IsValid(raw)
+            ? raw
+            : null;
+        if (publishId is not null && await apply.StateAsync(database, publishId, cancellationToken).ConfigureAwait(false) is { State: not WriteStates.Provisional })
+        {
+            return TypedResults.Json(new SqlExecuteBody([.. commands.Select(_ => new SqlStatementBody([], [], 0, null))]), SqlJsonContext.Default.SqlExecuteBody);
+        }
+
         var canWrite = (await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.SqlWrite)).Succeeded;
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
         {
+            if (publishId is not null && session is SqlSession publishing)
+            {
+                publishing.UsePublishId(publishId);
+            }
+
             var forwarded = Listeners.IsForwarded(HttpContext);
             if (forwarded)
             {
@@ -165,15 +179,21 @@ internal sealed class SqlExecuteEndpoint(
                 await reader.DisposeAsync();
             }
 
+            string? publishId = null;
             if (route?.Commit == WritePath.Local && !all && every.Count == commands.Count
                 && (await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.SqlWrite)).Succeeded
-                && await LocalAsync(database, route, every, homeDurable, cancellationToken) is { } answered)
+                && await LocalAsync(database, route, every, homeDurable, cancellationToken) is { } localAnswer)
             {
-                return answered;
+                if (localAnswer.Result is { } answered)
+                {
+                    return answered;
+                }
+
+                publishId = localAnswer.PublishId;
             }
 
             var forwarded = await ForwardAsync(placement.Home, route is { Commit: WritePath.Local } ? route with { Commit = WritePath.Home } : route, body,
-                writes ? database : null, cancellationToken);
+                writes ? database : null, cancellationToken, publishId);
             if (writes)
             {
                 local.Forwarded(database);
@@ -211,7 +231,7 @@ internal sealed class SqlExecuteEndpoint(
             : Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, "the region's earlier writes have not reached the home yet; retry"), 0));
     }
 
-    private async ValueTask<IResult?> LocalAsync(
+    private async ValueTask<(IResult? Result, string? PublishId)?> LocalAsync(
         TenantContext database, WriteRoute route, List<SqlPlannedCommand> statements, bool homeDurable, CancellationToken cancellationToken)
     {
         ILocalTransaction? transaction;
@@ -237,7 +257,7 @@ internal sealed class SqlExecuteEndpoint(
             SqlRequestTiming.Mark(HttpContext, "local_execute");
             if (outcome is ReplicaSqlFailure failed)
             {
-                return Error(new SqlBatchFailure(failed.Error, failed.Statement));
+                return (Error(new SqlBatchFailure(failed.Error, failed.Statement)), null);
             }
 
             if (outcome is not IReadOnlyList<SqlResult> results)
@@ -255,13 +275,13 @@ internal sealed class SqlExecuteEndpoint(
                     SqlRequestTiming.Record(HttpContext, timing.Key, timing.Value);
                 }
             }
-            catch (LocalWriteRefusedException)
+            catch (LocalWriteRefusedException refused)
             {
-                return null;
+                return (null, refused.PublishId);
             }
             catch (LocalOutcomeUnknownException)
             {
-                return Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, "the write reached the push stream but its outcome is unknown; read it at the home"), 0));
+                return (Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, "the write reached the push stream but its outcome is unknown; read it at the home"), 0)), null);
             }
 
             sql.RecordLocalWrites(database, results.Sum(result => result.RowsAffected));
@@ -269,11 +289,11 @@ internal sealed class SqlExecuteEndpoint(
             HttpContext.Response.Headers[RouteHeader] = route.Header;
             if (committed.Home is { State: WriteStates.Reverted } reverted)
             {
-                return Error(new SqlBatchFailure(Reverted(reverted), 0));
+                return (Error(new SqlBatchFailure(Reverted(reverted), 0)), null);
             }
 
-            return TypedResults.Json(new SqlExecuteBody([.. results.Select(SqlStatementBody.Of)]),
-                SqlJsonContext.Default.SqlExecuteBody);
+            return (TypedResults.Json(new SqlExecuteBody([.. results.Select(SqlStatementBody.Of)]),
+                SqlJsonContext.Default.SqlExecuteBody), null);
         }
     }
 
@@ -293,7 +313,7 @@ internal sealed class SqlExecuteEndpoint(
         return new SqlError(code, conflict?.Message ?? "the database's home rejected the write");
     }
 
-    private async ValueTask<IResult> ForwardAsync(string home, WriteRoute? route, byte[] body, TenantContext? writing, CancellationToken cancellationToken)
+    private async ValueTask<IResult> ForwardAsync(string home, WriteRoute? route, byte[] body, TenantContext? writing, CancellationToken cancellationToken, string? publishId = null)
     {
         if ((await peers.ListAsync(cancellationToken)).FirstOrDefault(peer => peer.Region == home) is not { } node)
         {
@@ -313,7 +333,7 @@ internal sealed class SqlExecuteEndpoint(
                 {
                     overlay.Forwarded(writing, string.Concat(committed));
                 }
-            });
+            }, publishId);
         return Results.Empty;
     }
 

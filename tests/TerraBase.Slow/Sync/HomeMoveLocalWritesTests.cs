@@ -170,6 +170,7 @@ public sealed class HomeMoveLocalWritesTests
         public ValueTask<HomeApplyResult?> StateAsync(TenantContext database, string transactionId, CancellationToken cancellationToken) => inner.StateAsync(database, transactionId, cancellationToken);
         public ValueTask PrepareAsync(TenantContext database, CancellationToken cancellationToken) => inner.PrepareAsync(database, cancellationToken);
         public ValueTask StampHomeWritesAsync(IStorageTransaction transaction, CancellationToken cancellationToken) => inner.StampHomeWritesAsync(transaction, cancellationToken);
+        public ValueTask<bool> ClaimAsync(IStorageTransaction transaction, string id, CancellationToken cancellationToken) => inner.ClaimAsync(transaction, id, cancellationToken);
     }
 
     private sealed class Mesh { public (string Region, ManagementApi Api)[] Nodes { get; set; } = []; }

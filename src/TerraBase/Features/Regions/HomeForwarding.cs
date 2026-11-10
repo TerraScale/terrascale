@@ -16,12 +16,13 @@ internal static class HomeForwarding
 {
     internal const string ForwardedForHeader = "X-TerraBase-Forwarded-For";
     internal const string PushThroughHeader = "TerraBase-Push-Through";
+    internal const string PublishIdHeader = "TerraBase-Publish-Id";
 
     private static readonly HashSet<string> Unforwarded = new(StringComparer.OrdinalIgnoreCase)
     {
         "Host", "Connection", "Keep-Alive", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Proxy-Connection", "Proxy-Authorization",
         "Content-Length", "Content-Type", "X-TerraScale-Region-Pin", "ts-replay-src", "ts-replay-failed", "X-Forwarded-For", "X-Forwarded-Host",
-        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader,
+        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader,
     };
 
     private static readonly HashSet<string> Unreturned = new(StringComparer.OrdinalIgnoreCase)
@@ -173,7 +174,7 @@ internal static class HomeForwarding
     }
 
     internal static async Task ForwardAsync(HttpContext context, HomeNode home, byte[]? body = null, string? pushThrough = null,
-        Action<HttpResponseMessage>? answered = null)
+        Action<HttpResponseMessage>? answered = null, string? publishId = null)
     {
         var services = context.RequestServices;
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method),
@@ -195,6 +196,11 @@ internal static class HomeForwarding
         if (pushThrough is not null)
         {
             request.Headers.TryAddWithoutValidation(PushThroughHeader, pushThrough);
+        }
+
+        if (publishId is not null)
+        {
+            request.Headers.TryAddWithoutValidation(PublishIdHeader, publishId);
         }
 
         HttpResponseMessage response;

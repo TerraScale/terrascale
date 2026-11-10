@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Globalization;
+using TerraBase.Engine;
 using System.Net;
 using System.Text.Json;
 using Bogus;
@@ -8,9 +10,15 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using TerraBase.Configuration;
 using TerraBase.Features.Clock;
+using Microsoft.Extensions.Logging;
+using NATS.Client.Core;
+using NATS.Client.JetStream.Models;
+using TerraBase.Features.HomeApply;
 using TerraBase.Features.HomePush;
+using TerraBase.Features.LocalAck;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Sql.Routing;
 using TerraBase.Primitives;
 
 namespace TerraBase.Slow.Sql;
@@ -171,6 +179,34 @@ public sealed class WriteRouterTests
     }
 
     [Test]
+    public async Task A_timed_out_local_publish_is_forwarded_once()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var nats = await JetStreamServer.StartAsync(token);
+        await using var cluster = await Cluster.StartAsync(token, nats, (services, region) =>
+        {
+            if (region != "sjc")
+            {
+                return;
+            }
+
+            services.Replace(ServiceDescriptor.Singleton<HomePush>(provider => ActivatorUtilities.CreateInstance<TimeoutOncePush>(provider)));
+            services.Replace(ServiceDescriptor.Singleton<ILocalWrites>(provider => provider.GetRequiredService<HomePush>()));
+            services.Replace(ServiceDescriptor.Singleton<ILocalCommitPath>(provider => provider.GetRequiredService<HomePush>()));
+        });
+        using var request = new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri(cluster.Database.Data + "/sql/execute"))
+        {
+            Content = JsonContent.Create(new { statements = new[] { new { sql = "UPDATE counters SET label = 'once' WHERE id = 'c1'" } } }),
+        };
+        request.Headers.Add("TerraScale-Durability", "home");
+        using var response = await cluster.ViaSjc.SendAsync(request, token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync(token));
+        await Assert.That(response.Headers.GetValues("TerraScale-Write-Route").Single()).IsEqualTo("route=local; reason=update_by_key; commit=home");
+        await Assert.That((await cluster.HomeAsync("SELECT label FROM counters WHERE id = 'c1'", token)).GetString()).IsEqualTo("once");
+        await Assert.That((await cluster.HomeAsync("SELECT count(*) FROM counters", token)).GetInt64()).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task A_home_durable_write_in_a_replica_region_commits_locally_and_answers_after_the_home_applied_it()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -229,14 +265,14 @@ public sealed class WriteRouterTests
 
         public string Key { get; }
 
-        public static async Task<Cluster> StartAsync(CancellationToken token, JetStreamServer? nats = null)
+        public static async Task<Cluster> StartAsync(CancellationToken token, JetStreamServer? nats = null, Action<IServiceCollection, string>? configure = null)
         {
             var issuer = new TestIssuer();
             var keys = new FakeS3();
             var regions = new ConcurrentQueue<RegionPeer>();
-            var gru = await StartAsync("gru", issuer, regions, nats, keys);
+            var gru = await StartAsync("gru", issuer, regions, nats, keys, configure);
             regions.Enqueue(new RegionPeer("gru", gru.Server.BaseAddress));
-            var sjc = await StartAsync("sjc", issuer, regions, nats, keys);
+            var sjc = await StartAsync("sjc", issuer, regions, nats, keys, configure);
             regions.Enqueue(new RegionPeer("sjc", sjc.Server.BaseAddress));
             var organization = await gru.CreateOrganizationAsync("Org " + EntityIds.New());
             await gru.SetPlanAsync(gru.User, organization, "hobby", token);
@@ -281,7 +317,7 @@ public sealed class WriteRouterTests
             _issuer.Dispose();
         }
 
-        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, ConcurrentQueue<RegionPeer> regions, JetStreamServer? nats, FakeS3 keys) => ManagementApi.StartAsync(
+        private static Task<ManagementApi> StartAsync(string region, TestIssuer issuer, ConcurrentQueue<RegionPeer> regions, JetStreamServer? nats, FakeS3 keys, Action<IServiceCollection, string>? configure = null) => ManagementApi.StartAsync(
             settings =>
             {
                 settings["region"] = region;
@@ -300,6 +336,8 @@ public sealed class WriteRouterTests
                 {
                     services.AddSingleton<ILocalWriteClock>(new Admitted());
                 }
+
+                configure?.Invoke(services, region);
             },
             sharedIssuer: issuer);
 
@@ -315,6 +353,25 @@ public sealed class WriteRouterTests
                 token.Claims["scope"] = "sql:read sql:write";
             }) : null);
             return key;
+        }
+    }
+
+    private sealed class TimeoutOncePush(
+        TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
+        IInRegionAck partner, RegionalOwners owners, IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger)
+        : HomePush(options, peers, catalog, replicas, apply, clock, partner, owners, services, meters, time, logger)
+    {
+        private int _thrown;
+
+        protected override async ValueTask<PubAckResponse> PublishStoredAsync(string subject, byte[] payload, string id, NatsHeaders headers, CancellationToken cancellationToken)
+        {
+            var ack = await base.PublishStoredAsync(subject, payload, id, headers, cancellationToken);
+            if (Interlocked.Exchange(ref _thrown, 1) == 0)
+            {
+                throw new TimeoutException();
+            }
+
+            return ack;
         }
     }
 

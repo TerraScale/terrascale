@@ -4,7 +4,10 @@ using TerraBase.Features.HomeApply;
 
 namespace TerraBase.Features.HomePush;
 
-internal sealed class LocalWriteRefusedException(string message) : InvalidOperationException(message);
+internal sealed class LocalWriteRefusedException(string message, string? publishId = null) : InvalidOperationException(message)
+{
+    public string? PublishId { get; } = publishId;
+}
 
 internal static class PushChanges
 {

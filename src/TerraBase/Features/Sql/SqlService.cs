@@ -218,10 +218,13 @@ internal sealed class SqlSession(
     private int _generation;
     private int _expiring = -1;
     private List<IReadOnlyList<CapturedRowChange>>? _committed;
+    private string? _publishId;
 
     public bool IsAutocommit => !_inTransaction;
 
     public void KeepCommitted() => _committed ??= [];
+
+    public void UsePublishId(string id) => _publishId = id;
 
     public IReadOnlyList<IReadOnlyList<CapturedRowChange>> Committed => _committed ?? [];
 
@@ -817,6 +820,11 @@ internal sealed class SqlSession(
         try
         {
             await ChargedAsync(async () => { await apply.StampHomeWritesAsync(transaction, cancellationToken).ConfigureAwait(false); return true; }).ConfigureAwait(false);
+            if (_publishId is { } publishId && !await ChargedAsync(() => apply.ClaimAsync(transaction, publishId, cancellationToken)).ConfigureAwait(false))
+            {
+                return null;
+            }
+
             if (await ChargedAsync(() => MeasureAsync(transaction, cancellationToken)).ConfigureAwait(false) is not long after)
             {
                 return SqlErrors.Busy("the database is busy; retry");

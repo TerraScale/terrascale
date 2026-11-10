@@ -140,6 +140,20 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         }
     }
 
+    public async ValueTask<bool> ClaimAsync(IStorageTransaction transaction, string id, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        await EnsureTablesAsync(transaction, cancellationToken).ConfigureAwait(false);
+        if (await RecordedAsync(transaction, id, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return false;
+        }
+
+        var result = new HomeApplyResult(id, WriteStates.Confirmed, [], []);
+        await RecordAsync(transaction, new RegionTransaction(id, options.Region, null, []), result, [], cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     public async ValueTask StampHomeWritesAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(transaction);

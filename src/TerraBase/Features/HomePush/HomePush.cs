@@ -48,7 +48,7 @@ internal sealed record LocalCommit(string? Id, HomeApplyResult? Home);
 
 internal sealed class LocalOutcomeUnknownException(string message, Exception inner) : Exception(message, inner);
 
-internal sealed class HomePush(
+internal class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
     IInRegionAck partner, RegionalOwners owners, IServiceProvider services, IMeterFactory meters, TimeProvider time, ILogger<HomePush> logger)
     : BackgroundService, ILocalWrites, ILocalCommitPath
@@ -724,6 +724,9 @@ internal sealed class HomePush(
         _applies?.Add(1, new KeyValuePair<string, object?>("state", result.State));
     }
 
+    protected virtual ValueTask<PubAckResponse> PublishStoredAsync(string subject, byte[] payload, string id, NatsHeaders headers, CancellationToken cancellationToken) =>
+        _js!.PublishAsync(subject, payload, opts: new NatsJSPubOpts { MsgId = id }, headers: headers, cancellationToken: cancellationToken);
+
     private void OnReverted(TenantContext database, HomeApplyResult result)
     {
         _reverts?.Add(1);
@@ -843,15 +846,14 @@ internal sealed class HomePush(
             PubAckResponse acknowledged;
             try
             {
-                acknowledged = await push._js!.PublishAsync(PushNames.Subject(push.Region, home, database), payload,
-                    opts: new NatsJSPubOpts { MsgId = transaction.Id }, headers: Headers(stamp, epoch), cancellationToken: cancellationToken).ConfigureAwait(false);
+                acknowledged = await push.PublishStoredAsync(PushNames.Subject(push.Region, home, database), payload, transaction.Id!, Headers(stamp, epoch), cancellationToken).ConfigureAwait(false);
                 acknowledged.EnsureSuccess();
                 Record("push_publish", ref started);
             }
             catch (Exception error) when (error is NatsException or TimeoutException)
             {
                 push._overlay.Drop(database, transaction.Id!);
-                throw new LocalWriteRefusedException("the push stream did not store the transaction; it commits at the database's home");
+                throw new LocalWriteRefusedException("the push stream did not store the transaction; it commits at the database's home", transaction.Id);
             }
             catch
             {
