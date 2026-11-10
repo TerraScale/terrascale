@@ -82,9 +82,8 @@ events, so the workflow_run-triggered run never deploys; after each CI completio
 reruns an existing push/dispatch Images run if it ended without releasing it, or dispatches
 Images when the qualified revision is still main head and its push event was missed.
 Normal main CI dispatches qualify through the same required quality gate; native
-maintenance cannot qualify. See [CI recovery](../dev/ci-recovery.md). Dashboard Slow runs in
-`slow.yml` with the auth and TerraBase Slow suites, on `main` every 3 hours when its inputs
-changed; each failure stays visible and creates or updates a matching GitHub issue.
+maintenance cannot qualify. See [CI recovery](../dev/ci-recovery.md). No workflow runs Dashboard
+Slow; run it with `make dashboard-test-slow`.
 CI does not run the explicit hot-reload journey. For changes to `scripts/dashboard/demo.sh`, `scripts/dashboard/dev.sh`, the asset scripts or the demo host,
 use `nice -n 19 make -f scripts/dashboard/Makefile test-hot-reload` on a tailnet machine when investigating hot reload locally.
 `check-e2e-shards` lists the discovered tests. The solution contains one
