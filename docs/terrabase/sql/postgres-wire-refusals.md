@@ -19,3 +19,4 @@
   stays `ISO, MDY`. `SET … TO DEFAULT` and `RESET TimeZone`/`RESET DateStyle` restore those defaults. Times always render
   in UTC and dates in ISO regardless (see [temporal types](../postgres-temporal-types.md)).
 - `INSERT`/`UPDATE`/`DELETE … RETURNING` is supported over the wire (see `native-sql.md`).
+- A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
