@@ -16,7 +16,8 @@ namespace TerraScale.Dashboard.Features.Billing
         public static IServiceCollection AddBillingFeatures(this IServiceCollection services)
         {
             return services.AddSingleton<StripeBilling>().AddSingleton<InternalBillingService>().AddHostedService<PlanReconciler>()
-                .AddHostedService<StripeBindingRefresh>()
+                .AddSingleton<StripeBindingRefresh>()
+                .AddHostedService(services => services.GetRequiredService<StripeBindingRefresh>())
                 .AddSingleton<UsageOverageReporter>().AddHostedService<UsageOverageWorker>();
         }
 
