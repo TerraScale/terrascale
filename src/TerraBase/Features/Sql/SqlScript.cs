@@ -119,7 +119,7 @@ internal static class SqlScript
                 continue;
             }
 
-            if (SqlSandbox.IsHidden(token.Value))
+            if (token.Kind is not SqlTokenKind.String && SqlSandbox.IsHidden(token.Value))
             {
                 return verb is "CREATE" or "ALTER" ? SqlSandbox.Reserved : SqlSandbox.Hidden;
             }

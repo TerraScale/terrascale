@@ -22,6 +22,7 @@ public sealed class SqlSandboxTests
         "PRAGMA journal_mode = DELETE",
         "PRAGMA database_list",
         "CREATE TABLE _ts_meta (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE _ts_applied (id TEXT PRIMARY KEY)",
     ];
 
     private static readonly string[] Internal =
@@ -102,6 +103,23 @@ public sealed class SqlSandboxTests
         await Assert.That(listings[2].GetProperty("rows").EnumerateArray().Select(row => row[1].GetString()!).Where(name => !name.StartsWith("sqlite_", StringComparison.Ordinal)))
             .IsEquivalentTo(["notes"]);
         await Assert.That(wire.Where(message => message.Type == 'D').Select(message => string.Join(',', message.Fields))).IsEquivalentTo(["index,notes_body", "table,notes"]);
+    }
+
+    [Test]
+    public async Task A_string_literal_that_contains_a_reserved_name_is_stored()
+    {
+        await using var db = await StartSharedAsync();
+        await db.OkAsync("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)", "INSERT INTO notes (id, body) VALUES (1, '_ts_applied')");
+        var stored = await db.OkAsync("SELECT body FROM notes");
+        await Assert.That(stored[0].GetProperty("rows")[0][0].GetString()).IsEqualTo("_ts_applied");
+    }
+
+    [Test]
+    public async Task A_table_named_collections_is_not_a_reserved_name()
+    {
+        await using var db = await StartSharedAsync();
+        var created = await db.OkAsync("CREATE TABLE collections (id INTEGER PRIMARY KEY)", "INSERT INTO collections (id) VALUES (1)", "SELECT count(*) FROM collections");
+        await Assert.That(created[2].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
     }
 
     private static string? ErrorState(List<(char Type, string?[] Fields)> messages) =>
