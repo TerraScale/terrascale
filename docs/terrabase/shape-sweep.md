@@ -142,3 +142,5 @@ request's do.
   no-op there.
 - Changing the incarnation in place is not exercised by the tests; it takes the same comparison as a
   generation change.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
