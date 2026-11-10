@@ -23,6 +23,7 @@ public enum TerraBaseListener
 }
 public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Listeners)
 {
+    public static ListenerMetadata Closed { get; } = new([]);
     public static ListenerMetadata Internal { get; } = new(TerraBaseListener.Internal);
     public static ListenerMetadata Client { get; } = new(TerraBaseListener.Client, TerraBaseListener.Internal);
     public static ListenerMetadata Probe { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Client);
@@ -308,7 +309,7 @@ public static class Listeners
                 }
             }
 
-            var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listeners ?? ListenerMetadata.Internal.Listeners;
+            var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listeners ?? ListenerMetadata.Closed.Listeners;
             if (arrivedOn == TerraBaseListener.Internal
                 && context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
                 && context.GetEndpoint()?.Metadata.GetMetadata<ManagementUserRoute>() is null)
