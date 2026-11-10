@@ -1,0 +1,19 @@
+{
+  "name": "terrascale-e2e",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "local": "bash env/local.sh"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.6.6",
+    "playwright-core": "1.63.0",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

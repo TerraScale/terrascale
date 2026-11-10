@@ -1,0 +1,46 @@
+{
+	admin off
+	auto_https off
+	persist_config off
+	skip_install_trust
+}
+
+(edge) {
+	tls {$E2E_EDGE_CERT} {$E2E_EDGE_KEY}
+}
+
+https://dash.terrascale.tech, https://mcp.terrascale.tech, https://platform.terrascale.tech {
+	import edge
+	reverse_proxy 127.0.0.1:8085 {
+		flush_interval -1
+	}
+}
+
+https://auth.terrascale.tech {
+	import edge
+	reverse_proxy 127.0.0.1:8090 {
+		flush_interval -1
+	}
+}
+
+https://api.terrascale.tech, https://gru.api.terrascale.tech {
+	import edge
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1
+	}
+}
+
+https://api.cloudflare.com {
+	import edge
+	reverse_proxy 127.0.0.1:8026
+}
+
+https://status.terrascale.tech {
+	import edge
+	respond 404
+}
+
+https://api.stripe.com, https://checkout.stripe.com, https://billing.stripe.com {
+	import edge
+	abort
+}

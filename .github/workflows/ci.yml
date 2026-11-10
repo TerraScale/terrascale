@@ -59,6 +59,7 @@ jobs:
       main: ${{ steps.areas.outputs.main }}
       ordered: ${{ steps.areas.outputs.ordered }}
       sha: ${{ steps.source.outputs.sha }}
+      journey: ${{ steps.journey.outputs.journey }}
     steps:
       # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -138,6 +139,18 @@ jobs:
               - tests/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - scripts/terrabase/!(AGENTS.md|CLAUDE.md)
               - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
+      - id: journey
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          predicate-quantifier: every
+          filters: |
+            journey:
+              - '!docs-site/**'
+              - '!landing-site/**'
+              - '!status-site/**'
+              - '!docs/**'
+              - '!**/*.md'
       - id: areas
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
@@ -372,6 +385,11 @@ jobs:
       - name: Checked build, integration proofs and TerraBase Fast
         working-directory: terrascale
         run: bash scripts/ci/test-area.sh fast terrabase
+
+  journey:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true'
+    uses: ./.github/workflows/journey.yml
 
   main:
     needs: [changes, terrabase, test]
