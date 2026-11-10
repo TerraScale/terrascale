@@ -118,7 +118,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             {
                 htmlRestore.Headers.Accept.ParseAdd("text/html");
                 using var redirected = await client.SendAsync(htmlRestore);
-                var location = redirected.Headers.Location?.PathAndQuery ?? "";
+                var location = redirected.Headers.Location?.OriginalString ?? "";
                 var htmlOperation = location.StartsWith("/databases/" + id + "/backups?restore=", StringComparison.Ordinal)
                     ? location[("/databases/" + id + "/backups?restore=").Length..] : "";
                 Check(redirected.StatusCode == HttpStatusCode.SeeOther && TerraScaleIds.IsValid(htmlOperation),
