@@ -97,4 +97,47 @@ public sealed class HomePushTests
         await Assert.That(await world.RegionScalarAsync("SELECT count(*) || '/' || sum(n) FROM counts", token)).IsEqualTo("5/110");
         await Assert.That(world.Region.Overlay.Count).IsEqualTo(0);
     }
+
+    [Test]
+    public async Task An_undecodable_push_is_parked_unapplied_and_a_later_write_still_applies()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var nats = await JetStreamServer.StartAsync(token);
+        await using var world = await LocalWriteWorld.StartAsync(nats);
+        await using var home = await world.HomeNodeAsync();
+        var payload = "not-a-transaction"u8.ToArray();
+        var js = new NatsJSContext(world.Client);
+        var published = await js.PublishAsync(PushNames.Subject("sjc", "gru", world.Database), payload, cancellationToken: token);
+        await Assert.That(published.Error).IsNull();
+        await TerraBaseTestServer.EventuallyAsync(async cancellation =>
+        {
+            try
+            {
+                var consumer = await js.CreateOrderedConsumerAsync(PushNames.ParkStream("gru"), new NatsJSOrderedConsumerOpts
+                {
+                    FilterSubjects = [PushNames.ParkSubjects("gru")],
+                    DeliverPolicy = NATS.Client.JetStream.Models.ConsumerConfigDeliverPolicy.All,
+                }, cancellation);
+                await foreach (var message in consumer.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 4 }, cancellationToken: cancellation))
+                {
+                    if (message.Data is { } parked && parked.AsSpan().SequenceEqual(payload))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch (NATS.Client.JetStream.NatsJSApiException)
+            {
+                return false;
+            }
+
+            return false;
+        }, TimeSpan.FromSeconds(8));
+        var retained = await js.GetStreamAsync(PushNames.Stream("sjc"), cancellationToken: token);
+        await Assert.That(retained.Info.State.Messages > 0).IsTrue();
+        await Assert.That((await world.HomeSqlAsync("SELECT count(*) FROM items")).GetRawText()).IsEqualTo("[[0]]");
+        var committed = await world.LocalAsync(true, ["INSERT INTO items (id, v) VALUES ('a', 'kept')"], token);
+        await Assert.That(committed.Home!.State).IsEqualTo(WriteStates.Confirmed);
+        await Assert.That((await world.HomeSqlAsync("SELECT id, v FROM items")).GetRawText()).IsEqualTo("""[["a","kept"]]""");
+    }
 }
