@@ -25,6 +25,7 @@ TerraScale's own databases (ts-auth and ts-dashboard, [platform databases](platf
   file on the first stream or refill, and they serve the database. Nobody calls an API.
 - A region that leaves stops being a peer, so nothing streams to it and no write waits for it. Its machines and their
   copies leave with it.
+- A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 - There is no replica cap: the 8-region cap applies to a `replicaRegions` list only.
 - One serving region is valid. Writes follow decision 0013a: in a cell, they are confirmed once a second region serves.
 
