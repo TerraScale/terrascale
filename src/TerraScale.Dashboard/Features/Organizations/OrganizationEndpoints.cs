@@ -44,20 +44,21 @@ namespace TerraScale.Dashboard.Features.Organizations
             return slice;
         }
 
-        internal static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null)
+        internal static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null, bool openCreateProject = false)
         {
             if (context.Organization is not null && context.Role.Length == 0)
             {
                 throw new AccountAccessException("Organization membership is required.");
             }
 
-            var tab = tabOverride ?? (http.Request.Query["newProject"] == "1" ? "projects" : http.Request.Query["tab"].ToString());
+            openCreateProject |= http.Request.Query["newProject"] == "1";
+            var tab = tabOverride ?? (openCreateProject ? "projects" : http.Request.Query["tab"].ToString());
             if (tab is not ("projects" or "members" or "invitations" or "audit" or "sso" or "billing" or "danger"))
             {
                 tab = "organization";
             }
 
-            var regionsRead = tab == "projects" || http.Request.Query["newOrganization"] == "project" || http.Request.Query["newProject"] == "1"
+            var regionsRead = tab == "projects" || http.Request.Query["newOrganization"] == "project" || openCreateProject
                 ? placement.RegionsAsync(http.RequestAborted) : null;
             // The projects and billing tabs render no members, invitations, audit events or ownership transfer.
             var accessRead = context.Organization is not null && tab is not ("projects" or "billing")
@@ -84,8 +85,9 @@ namespace TerraScale.Dashboard.Features.Organizations
             var requireMfa = tab == "organization" && context.Role == "owner" && context.Organization is { } owned
                 ? await http.RequestServices.GetRequiredService<ITsAuthMfa>().GetRequireMfaAsync(context.Session, owned.Id, http.RequestAborted) : null;
             var shell = ShellModel.For(http, context, "Organization");
-            return new(wizard.Length > 0 ? shell with { ReturnUrl = WorkspaceUrl.For(context, "/organization") } : shell, tab, regions, error,
-                http.Request.Query["newProject"] == "1", wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
+            var pageWithoutDialog = wizard.Length > 0 ? "/organization" : openCreateProject ? "/organization?tab=projects" : null;
+            return new(pageWithoutDialog is null ? shell : shell with { ReturnUrl = WorkspaceUrl.For(context, pageWithoutDialog) }, tab, regions, error,
+                openCreateProject, wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
                 Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "", RequireMfa: requireMfa,
                 Sso: tab == "sso" && context.CanManage ? await http.RequestServices.GetRequiredService<OrganizationSsoService>().ReadAsync(context, http.RequestAborted) : null);
         }
@@ -277,18 +279,14 @@ namespace TerraScale.Dashboard.Features.Organizations
                     return await PageAsync(http, context, placement, error.Message, error.StatusCode);
                 }
 
-                var available = await placement.RegionsAsync(http.RequestAborted);
-                var page = (await PageModelAsync(http, context, placement, error.Message)) with
+                var page = await PageModelAsync(http, context, placement, error.Message, openCreateProject: true);
+                var slice = OrganizationView.Create(page with
                 {
-                    Tab = "projects",
-                    Regions = available,
-                    OpenCreateProject = true,
                     ProjectDraftName = form["name"].ToString(),
-                    ProjectDraftRegions = [.. form["regions"].Select(value => value ?? "").Where(available.Contains)],
+                    ProjectDraftRegions = [.. form["regions"].Select(value => value ?? "").Where(page.Regions.Contains)],
                     ProjectDraftPrimaryRegion = form["region"].ToString(),
                     ProjectDraftBackupRegion = form["backupRegion"].ToString()
-                };
-                var slice = OrganizationView.Create(page);
+                });
                 slice.StatusCode = error.StatusCode;
                 return slice;
             }
