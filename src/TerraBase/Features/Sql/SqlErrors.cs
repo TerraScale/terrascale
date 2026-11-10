@@ -116,7 +116,7 @@ internal static partial class SqlErrors
             _ when Has(message, "database is locked") || Has(message, "database is busy") || Has(message, "schema changed") || Has(message, "schema conflict")
                 || Has(message, "write-write conflict") => (new Busy(), "the database is busy; retry"),
             _ when parse => (new Syntax(), "SQL syntax error"),
-            _ => (new Busy(), "the database is busy; retry"),
+            _ => (new Error(), message),
         };
     }
 
