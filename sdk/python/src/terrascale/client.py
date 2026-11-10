@@ -102,7 +102,7 @@ class TerraScale:
             self._source = APIKeyTokenSource(api_key, project=self.project, scopes=scopes, issuer=issuer,
                                              max_attempts=self._max_attempts, http_client=self._http)
         self._headers = {"User-Agent": _spec.USER_AGENT_PREFIX + __version__, "Accept": "application/json"}
-        if region is not None:
+        if region is not None and (not isinstance(region, str) or region.strip()):
             self._headers[_spec.REGION_PIN] = _spec.region(region)
 
     # Lifecycle -----------------------------------------------------------
