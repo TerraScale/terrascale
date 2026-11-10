@@ -21,7 +21,7 @@ internal sealed class CreateManagedDatabaseEndpoint(
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("Creates a database in its home region. replicaRegions names up to 8 other regions that hold read replicas: they pull the home's pages and serve SQL reads, while writes go to the home. allRegions places a replica in every serving region, including regions that join later." + DatabaseTtl.Description + " " + ProjectApiRoute.IdentityDescription);
+        Description("Creates a database in its home region. replicaRegions names up to 8 other regions that hold replicas: they pull the home's pages, serve SQL reads, and accept local SQL REST writes that the home applies. allRegions places a replica in every serving region, including regions that join later." + DatabaseTtl.Description + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
