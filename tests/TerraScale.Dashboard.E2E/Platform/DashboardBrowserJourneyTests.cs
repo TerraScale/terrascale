@@ -39,6 +39,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                     await page.Locator("#displayName").FillAsync("Test User");
                     await SubmitAsync("form:is([action=\"/api/v1/dashboard/profile\"],[action^=\"/api/v1/dashboard/profile?\"])", "Save profile");
                     await GotoAsync("/project");
+                    await GotoAsync("/support");
 
                     await GotoAsync("/databases");
                     await ShotAsync("databases");
