@@ -30,6 +30,8 @@ operations. SQL/query observations with latency at least100ms are slow queries.
 Recording is best effort; crashes or late remote observations can cause loss.
 The result provides no durable ordering, completeness, checkpoint or retry promise.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 The SDK uses the existing connection deadline, response bound, response disposal
 and cancellation. It does not poll, cache, retry or dispose the caller's HttpClient.
 The new feature has its own source-generated JSON context with required
