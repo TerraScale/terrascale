@@ -555,6 +555,29 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
             await Assert.That(platform.Producer.Failures).IsEmpty();
         }
 
+        [Test]
+        public async Task AMissingInviteTokenRendersTheInvitationsPage()
+        {
+            await using var platform = await PlatformScenario.StartAsync();
+            var owner = platform.Principal("bad-invite-token");
+            using var client = platform.Client();
+            using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
+            {
+                await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
+
+            var business = platform.Producer.AddOrganization("Bad token organization", owner.Subject, owner.Email);
+            await SwitchAsync(client, business);
+            using var posted = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations", new()
+            { ["email"] = "guest@example.test", ["role"] = "member" });
+            await Assert.That(posted.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            var html = await posted.Content.ReadAsStringAsync();
+            await Assert.That(html.Contains("Could not update access", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(html.Contains("Invalid form token.", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(html.Contains("id=\"team-invitations\"", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(platform.Producer.Count("POST", "/v1/terrascale/organizations/" + business + "/invitations", owner.Subject)).IsEqualTo(0);
+        }
+
         private static async Task<string> SwitchAsync(HttpClient client, string organizationId)
         {
             var csrf = await HttpJourney.CsrfAsync(client, "/organization");
