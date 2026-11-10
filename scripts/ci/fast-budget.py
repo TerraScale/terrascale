@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 BUDGET_SECONDS = 30
 TEST_SECONDS = 10
+KILL_SECONDS = 4 * BUDGET_SECONDS
 ROOT = Path(__file__).resolve().parents[2]
 FORMATS = ('trx', 'pytest', 'vitest', 'go', 'rust')
 
@@ -151,10 +152,11 @@ def main():
     reader = threading.Thread(target=pump)
     reader.start()
     try:
-        code = process.wait(timeout=BUDGET_SECONDS)
+        code = process.wait(timeout=KILL_SECONDS)
         reader.join(timeout=5)
     except subprocess.TimeoutExpired:
-        print(f'FAILED Fast suite exceeded {BUDGET_SECONDS}s: {suite}', file=sys.stderr, flush=True)
+        print(f'FAILED Fast suite exceeded {BUDGET_SECONDS}s and was killed at {KILL_SECONDS}s: {suite}',
+              file=sys.stderr, flush=True)
         code = 124
     finally:
         try:
@@ -180,7 +182,7 @@ def main():
     elif fmt == 'rust':
         rows = rust_durations(output)
     if rows:
-        code = code or int(enforce(rows, elapsed, suite, note))
+        code = int(enforce(rows, elapsed, suite, note)) or code
     elif code == 0:
         sys.exit(f'FAILED Fast suite produced no {"TRX report" if fmt == "trx" else "timings"}')
     return code
