@@ -4,6 +4,7 @@ import { runOperations, sdks } from '../support/sdk';
 import { shell } from '../support/shell';
 import { auth, dash, desktop } from '../support/stack';
 import { journey } from '../support/state';
+import { enterSecret } from '../support/secret';
 
 test.describe.configure({ mode: 'default' });
 
@@ -80,7 +81,7 @@ test.describe('teardown', () => {
     await again.waitForURL(onHosted('sign-in'));
     await again.locator('#sign-in-email').fill(current.email);
     await again.getByRole('button', { name: 'Use a password instead' }).click();
-    await again.locator('#sign-in-password').fill(current.password);
+    await enterSecret(again.locator('#sign-in-password'), current.password);
     await again.getByRole('button', { name: 'Sign in', exact: true }).click();
     await expect(again.locator('#sign-in-error')).toBeVisible();
     expect(new URL(again.url()).origin, 'the deleted account stays on the hosted sign-in').toBe(auth);

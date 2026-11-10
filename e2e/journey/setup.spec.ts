@@ -5,6 +5,7 @@ import { cloudflareSendCount, nextMail } from '../support/inbox';
 import { saveJourney } from '../support/state';
 import { shell } from '../support/shell';
 import { auth, dash, userSession } from '../support/stack';
+import { enterSecret } from '../support/secret';
 
 function stat(page: Page, label: string) {
   return page.locator('dl[aria-label="Workspace metrics"] .ts-stat').filter({ has: page.locator('dt', { hasText: label }) }).locator('dd');
@@ -28,7 +29,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await audit.check('sign-up');
 
   await page.locator('#sign-up-email').fill(email);
-  await page.locator('#sign-up-password').fill(password);
+  await enterSecret(page.locator('#sign-up-password'), password);
   await page.locator('form[action="/ui/terrascale/sign-up"] button[type=submit]').click();
   await expect(page).toHaveTitle('Verify your email · TerraScale');
   await expect(page.locator('form:has(#sign-up-code-digit) input[type=hidden][name=pending_token]')).toHaveCount(1);
@@ -41,7 +42,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   expect(mail.subject.replace(code, '<code>')).toBe('<code> is your TerraScale verification code');
   expect(await cloudflareSendCount(), 'messages sent through the Cloudflare fallback').toBe(0);
 
-  await page.locator('#sign-up-code-digit').fill(code);
+  await enterSecret(page.locator('#sign-up-code-digit'), code);
   await page.getByRole('button', { name: 'Verify email' }).click();
   await page.waitForURL((url) => url.origin === dash && url.pathname === '/onboarding');
   await expect(page).toHaveTitle('Activate your TerraScale account · TerraScale');
@@ -91,7 +92,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await page.locator('#create-key form').getByRole('button', { name: 'Create key', exact: true }).click();
   await page.waitForURL((url) => url.origin === auth && url.pathname.startsWith('/ui/terrascale/step-up/'));
   await audit.check('API key confirmation');
-  await page.locator('input[type=password]').fill(password);
+  await enterSecret(page.locator('input[type=password]'), password);
   await page.locator('form button[type=submit]').first().click();
   const secret = page.locator('.ts-apikeys-secret-value');
   await expect(secret).toBeVisible();
