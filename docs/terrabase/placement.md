@@ -1,8 +1,8 @@
 # Database placement (PIVOT R9)
 
-Each database chooses where it lives: one **home region**, which commits its writes, and **replica regions**, which
-hold read replicas ([region replicas](region-replicas.md)). A database can move its home to one of its replica regions
-while it takes writes.
+Each database chooses where it lives: one **home region** and **replica regions**
+([region replicas](region-replicas.md)). A replica region can commit some SQL REST writes locally; every other write
+runs at the home. A database can move its home to one of its replica regions while it takes writes.
 
 ## API
 
