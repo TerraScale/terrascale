@@ -11,7 +11,8 @@ type Expected = { url: RegExp; status: number; seen: number; logged: number };
 export class Audit {
   private problems: string[] = [];
   private readonly expected: Expected[] = [];
-  private readonly inflight = new Set<Request>();
+  private readonly inflight = new Map<Request, number>();
+  private generation = 0;
   private lastActivity = Date.now();
 
   constructor(
@@ -29,16 +30,24 @@ export class Audit {
     page.on('request', (request) => this.started(request));
     page.on('requestfinished', (request) => this.ended(request));
     page.on('requestfailed', (request) => this.ended(request));
+    page.on('framenavigated', (frame) => {
+      if (frame !== page.mainFrame()) return;
+      this.generation += 1;
+      for (const [request, generation] of this.inflight) if (generation < this.generation && !request.isNavigationRequest()) this.inflight.delete(request);
+    });
   }
 
   async quiet(): Promise<void> {
     await expect
-      .poll(() => this.inflight.size === 0 && Date.now() - this.lastActivity >= 500, { message: 'no request in flight for 500 ms', intervals: [100] })
-      .toBe(true);
+      .poll(() => (this.inflight.size === 0 && Date.now() - this.lastActivity >= 500 ? [] : [...this.inflight.keys()].map((request) => `${request.method()} ${request.url()}`)), {
+        message: 'requests still in flight (none for 500 ms is quiet)',
+        intervals: [100],
+      })
+      .toEqual([]);
   }
 
   private started(request: Request): void {
-    this.inflight.add(request);
+    this.inflight.set(request, this.generation);
     this.lastActivity = Date.now();
   }
 
