@@ -257,7 +257,7 @@ attempts run out the `TerraScaleError` names the cause and says the request was
 not sent. SQL statements and other writes are never replayed after an ambiguous
 failure: a transport failure after sending, 5xx or malformed acknowledgement
 raises `CommitUncertainError`; reconcile state before retrying. Malformed read responses raise `InvalidResponseError`.
-The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once.
+The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once. NATS error 10074 is not retried because the stream wants more replicas than the cluster has.
 
 ## Development
 
