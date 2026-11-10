@@ -81,3 +81,5 @@ Call `list_conflicts` on the [dashboard MCP server](/guides/mcp):
 ```
 
 The result contains `conflicts`, `nextBefore`, `hasMore`, and `limit`. Each conflict includes `winner` and `loser` objects with value, region, node, HLC, transaction ID, `state` and `transactionState`. A loser with `state: "superseded"` has `transactionState: "confirmed"`. Pass `nextBefore` as `before`, keeping the filters, to continue. The limit is 1–100; the default is 50. Omit filters to read recent conflicts across tables. `organizationId` and `projectId` follow the MCP server's usual scope selection and permissions.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
