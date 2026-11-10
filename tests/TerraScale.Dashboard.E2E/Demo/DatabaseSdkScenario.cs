@@ -79,9 +79,20 @@ namespace TerraScale.Dashboard.E2E
                 : null;
         }
 
+        internal TestAuth Auth { get; private set; } = null!;
+
         public HttpClient CreateClient(bool replica = false)
         {
             return Client(replica ? ReplicaOrigin : Origin);
+        }
+
+        public void Intercept(string projectId, Func<HttpContext, Task<IResult?>> extension)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(projectId);
+            if (!protocol.ProjectExtensions.TryAdd(projectId, extension))
+            {
+                throw new InvalidOperationException("A project registers one producer interception.");
+            }
         }
 
         public HttpClient CreateProviderClient()
@@ -147,6 +158,7 @@ namespace TerraScale.Dashboard.E2E
                 protocol.Platform ??= ProjectCounter.Wrap(environment.Workspace, protocol.CountProject);
                 application.Services.Replace(ServiceDescriptor.Singleton(protocol.Platform));
                 var auth = (TestAuth)application.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
+                Auth = auth;
                 protocol.ResolveAccessToken = auth.ResolveAccessToken;
                 protocol.ResolveProjectToken = token => auth.ResolveProjectToken(token) ?? protocol.ApiKeys?.ResolveMachineToken(token);
                 protocol.ApiKeys ??= new TestAuthApiKeys(auth.ResolveAccessToken, protocol.KeyRole);
@@ -333,6 +345,7 @@ namespace TerraScale.Dashboard.E2E
                 }
             }
             public Func<HttpContext, Task<IResult?>>? Extension { get; set; }
+            public ConcurrentDictionary<string, Func<HttpContext, Task<IResult?>>> ProjectExtensions { get; } = new(StringComparer.Ordinal);
             // The region reported by the public TerraBase origin.
             public string ApiRegion { get; set; } = "gru";
             // TerraBase's /v1/regions catalog; unset, it names only the answering region, as /healthz does.
@@ -394,6 +407,12 @@ namespace TerraScale.Dashboard.E2E
                     if (Extension is not null && await Extension(http) is { } extensionResult)
                     {
                         return extensionResult;
+                    }
+
+                    if (path.Split('/') is ["", "v1", "projects", var scopedProject, ..] && ProjectExtensions.TryGetValue(scopedProject, out var scoped)
+                        && await scoped(http) is { } scopedResult)
+                    {
+                        return scopedResult;
                     }
 
                     if (path == "/__test/control")

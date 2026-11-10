@@ -6,8 +6,8 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects
 {
-    [ClassDataSource<DashboardE2EFixture>]
-    public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixture)
+    [ClassDataSource<DashboardRootFixture>]
+    public sealed class OnboardingProjectsAuditJourneyTests(DashboardRootFixture fixture)
     {
         [Test]
         public async Task ProducerAuthenticatedSetupResumesAfterLoginAndValidationFailure()

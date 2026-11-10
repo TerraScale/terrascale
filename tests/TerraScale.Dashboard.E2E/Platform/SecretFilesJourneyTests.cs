@@ -7,8 +7,8 @@ using TerraScale.Dashboard.Platform.Persistence;
 namespace TerraScale.Dashboard.E2E.Platform
 {
     // ts-orch delivers OCI Vault secrets as files and sets <NAME>_FILE to each path.
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class SecretFilesJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDemoEnvironment>(Shared = SharedType.PerTestSession)]
+    public sealed class SecretFilesJourneyTests(SharedDemoEnvironment shared)
     {
         [Test]
         public async Task HostStartsWithSecretsDeliveredAsFiles()
@@ -35,9 +35,7 @@ namespace TerraScale.Dashboard.E2E.Platform
                 var credentials = await identity.ReadAsync(CancellationToken.None);
                 await Assert.That(credentials.SessionEncryptionKey).IsEqualTo(values[DashboardIdentity.SessionEncryptionKeyName]);
 
-                var environment = new DemoEnvironment();
-                await environment.InitializeAsync();
-                await using var app = await environment.CreateHostAsync(fixture.Root, 0, "http://127.0.0.1", builder =>
+                await using var app = await shared.Environment.CreateHostAsync(shared.Root, 0, "http://127.0.0.1", builder =>
                     builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity)));
                 await app.StartAsync();
                 using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };

@@ -3,15 +3,13 @@ using System.Text.RegularExpressions;
 
 namespace TerraScale.Dashboard.E2E.Features.Auth
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class WebhookEndpointJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDemoEnvironment>(Shared = SharedType.PerTestSession)]
+    public sealed class WebhookEndpointJourneyTests(SharedDemoEnvironment shared)
     {
         [Test]
         public async Task CreateAnswersTheSecretOnceAndListsTheEndpoint()
         {
-            var environment = new DemoEnvironment();
-            await environment.InitializeAsync();
-            var app = await environment.CreateTestHostAsync(fixture.Root, 0, "http://127.0.0.1");
+            var app = await shared.Environment.CreateTestHostAsync(shared.Root, 0, "http://127.0.0.1");
             await app.StartAsync();
             try
             {

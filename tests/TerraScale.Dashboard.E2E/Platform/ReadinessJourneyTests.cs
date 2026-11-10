@@ -6,8 +6,8 @@ namespace TerraScale.Dashboard.E2E.Platform
 {
     // ts-orch probes /readyz and ts-status probes /health/ready: both must fail, naming the dependency, when a signed-in
     // request would fail, and each body carries the build revision it reports through X-TerraScale-Revision.
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class ReadinessJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDemoEnvironment>(Shared = SharedType.PerTestSession)]
+    public sealed class ReadinessJourneyTests(SharedDemoEnvironment shared)
     {
         private static readonly string[] ReadyPaths = ["/readyz", "/health/ready"];
 
@@ -16,6 +16,7 @@ namespace TerraScale.Dashboard.E2E.Platform
         {
             var environment = new DemoEnvironment();
             environment.ApiKeys.Ready = false;
+            await environment.InitializeAsync();
             await using var app = await StartAsync(environment);
             using var client = Client(app);
             foreach (var path in ReadyPaths)
@@ -32,7 +33,7 @@ namespace TerraScale.Dashboard.E2E.Platform
         [Test]
         public async Task ReadyBodiesNameTheRegionAndTheBuildRevision()
         {
-            await using var app = await StartAsync(new DemoEnvironment());
+            await using var app = await StartAsync(shared.Environment);
             using var client = Client(app);
             string? revision = null;
             foreach (var path in ReadyPaths.Append("/health/live"))
@@ -53,9 +54,8 @@ namespace TerraScale.Dashboard.E2E.Platform
 
         private async Task<WebApplication> StartAsync(DemoEnvironment environment)
         {
-            await environment.InitializeAsync();
             // ts-orch sets TS_REGION in the environment; per-host configuration keeps parallel hosts apart.
-            var app = await environment.CreateTestHostAsync(fixture.Root, 0, "http://127.0.0.1", builder => builder.Configuration["TS_REGION"] = "gru");
+            var app = await environment.CreateTestHostAsync(shared.Root, 0, "http://127.0.0.1", builder => builder.Configuration["TS_REGION"] = "gru");
             await app.StartAsync();
             return app;
         }

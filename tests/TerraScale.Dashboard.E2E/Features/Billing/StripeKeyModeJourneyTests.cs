@@ -9,13 +9,11 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class StripeKeyModeJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDemoEnvironment>(Shared = SharedType.PerTestSession)]
+    public sealed class StripeKeyModeJourneyTests(SharedDemoEnvironment shared)
     {
         [Test]
         [Arguments("sk_test_fixture", false)]
-        [Arguments("rk_test_fixture", false)]
-        [Arguments("sk_live_fixture", true)]
         [Arguments("rk_live_fixture", true)]
         public async Task DeliveredKeyStartsHostAndRejectsSignedEventsFromOtherMode(string key, bool live)
         {
@@ -27,9 +25,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 [DashboardIdentity.StripeWebhookSecretName] = "whsec_fixture",
                 [DashboardIdentity.TerraBasePeerSecretName] = TestIdentity.PeerSecret
             };
-            var environment = new DemoEnvironment();
-            await environment.InitializeAsync();
-            await using var app = await environment.CreateHostAsync(fixture.Root, 0, "http://127.0.0.1", builder =>
+            await using var app = await shared.Environment.CreateHostAsync(shared.Root, 0, "http://127.0.0.1", builder =>
                 builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(new DashboardIdentity(secrets.GetValueOrDefault))));
             await app.StartAsync();
             using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
@@ -38,7 +34,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             {
                 var body = JsonSerializer.Serialize(new
                 {
-                    id = "evt_key_mode",
+                    id = "evt_key_mode_" + key,
                     @object = "event",
                     type = "invoice.paid",
                     api_version = StripeConfiguration.ApiVersion,

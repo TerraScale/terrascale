@@ -6,15 +6,18 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed partial class DatabaseGrantsJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+    public sealed partial class DatabaseGrantsJourneyTests(SharedDatabaseSdk shared)
     {
         // Add a table read grant on the Grants tab, see it listed, then remove it. The producer stands in for TerraBase's read-grant routes.
         [Test]
         public async Task GrantIsAddedListedAndRemoved()
         {
             var grants = new ConcurrentDictionary<string, object>(StringComparer.Ordinal);
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
+            var scenario = shared.Scenario;
+            using var client = scenario.CreateClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+            scenario.Intercept(await DatabaseJourney.ProjectIdAsync(client), async http =>
             {
                 var path = http.Request.Path.Value!;
                 if (path.EndsWith("/read-grants", StringComparison.Ordinal) && http.Request.Method == "GET")
@@ -40,8 +43,6 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 grants[table] = grant;
                 return Results.Json(grant);
             });
-            using var client = scenario.CreateClient();
-            await DatabaseJourney.NativeWorkspaceAsync(client);
             var id = await HttpJourney.CreateDatabaseAsync(client, "grants-journey");
             var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + id + "/grants");
 

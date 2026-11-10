@@ -18,7 +18,10 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         public async Task CheckReportsDiagnosticsRetainsSubmittedSqlAndNeverExecutesIt(string sql, bool invalid)
         {
             var executions = 0;
-            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root, producerExtension: async http =>
+            var scenario = shared.Scenario;
+            using var client = scenario.CreateClient();
+            await DatabaseJourney.NativeWorkspaceAsync(client);
+            scenario.Intercept(await DatabaseJourney.ProjectIdAsync(client), async http =>
             {
                 if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal))
                 {
@@ -33,8 +36,6 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                 Interlocked.Increment(ref executions);
                 return null;
             });
-            using var client = scenario.CreateClient();
-            await DatabaseJourney.NativeWorkspaceAsync(client);
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
             { ["_csrf"] = csrf, ["name"] = "sql-check", ["homeRegion"] = "GRU" });

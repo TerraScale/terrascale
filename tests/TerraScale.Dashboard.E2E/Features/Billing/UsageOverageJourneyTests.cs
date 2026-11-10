@@ -9,7 +9,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
-    [ClassDataSource<DashboardE2EFixture>]
+    [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
     public sealed class UsageOverageJourneyTests(DashboardE2EFixture fixture)
     {
         private const long StarterAllowance = 250_000;

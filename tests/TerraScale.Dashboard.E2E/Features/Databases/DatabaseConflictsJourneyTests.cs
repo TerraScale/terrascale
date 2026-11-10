@@ -5,17 +5,20 @@ using TerraScale.Dashboard.E2E.Features.Data;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
-[ClassDataSource<DashboardRootFixture>]
-public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
+[ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+public sealed class DatabaseConflictsJourneyTests(SharedDatabaseSdk shared)
 {
     private static readonly string[] ConflictColumns = ["id", "kind", "table_name", "row_key", "column_name", "winner_value", "loser_value", "winner_region", "winner_node", "winner_hlc", "winner_transaction_id", "winner_state", "loser_region", "loser_node", "loser_hlc", "loser_transaction_id", "loser_state", "message", "created_at"];
     private static readonly string[] SqlReadScope = ["sql:read"];
     [Test]
     public async Task ConflictsUseReadAuthorityAndKeepFiltersAndTransactionOutcome()
     {
-        TestAuth auth = null!;
         var statements = new List<string>();
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseJourney.CaptureAuth(value => auth = value), async http =>
+        var scenario = shared.Scenario;
+        var auth = scenario.Auth;
+        using var client = scenario.CreateClient();
+        var account = await DatabaseJourney.NativeWorkspaceAsync(client);
+        scenario.Intercept(await DatabaseJourney.ProjectIdAsync(client), async http =>
         {
             if (!http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) { return null; }
             http.Request.EnableBuffering();
@@ -31,8 +34,6 @@ public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
                 new object?[] { "01M4EQ00000000000000000001", "foreign_key", "orders'archive", "{\"id\":\"order-2\"}", null, "null", "[{\"op\":\"delete\",\"table\":\"orders'archive\",\"key\":{\"id\":\"order-2\"}}]", null, null, null, null, null, "fra", "fra-1", "019a50c1e2f2.00000000:fra-1", "01M4EP00000000000000000001", "reverted", "A foreign key would be broken.", "2026-11-04T11:00:00.000Z" }]);
             return Results.Json(new { results = new[] { result } });
         });
-        using var client = scenario.CreateClient();
-        var account = await DatabaseJourney.NativeWorkspaceAsync(client);
         var id = await HttpJourney.CreateDatabaseAsync(client, "conflicts");
         var pat = await HttpJourney.CreatePatAsync(client, "Conflicts", account.Password);
         var path = "/databases/" + id + "/conflicts?table=orders%27archive&since=2026-11-04T00%3A00%3A00&until=2026-11-05T00%3A00%3A00";
@@ -64,7 +65,10 @@ public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
     public async Task UnavailableConflictsAreAnErrorAndAnotherDatabaseCannotBeRead()
     {
         var reads = 0;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
+        var scenario = shared.Scenario;
+        using var client = scenario.CreateClient();
+        var account = await DatabaseJourney.NativeWorkspaceAsync(client);
+        scenario.Intercept(await DatabaseJourney.ProjectIdAsync(client), async http =>
         {
             if (!http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) { return null; }
             http.Request.EnableBuffering();
@@ -74,8 +78,6 @@ public sealed class DatabaseConflictsJourneyTests(DashboardRootFixture fixture)
             Interlocked.Increment(ref reads);
             return Results.StatusCode(403);
         });
-        using var client = scenario.CreateClient();
-        var account = await DatabaseJourney.NativeWorkspaceAsync(client);
         var id = await HttpJourney.CreateDatabaseAsync(client, "conflicts-denied");
         var pat = await HttpJourney.CreatePatAsync(client, "Conflict isolation", account.Password);
         using var page = await client.GetAsync("/databases/" + id + "/conflicts");

@@ -7,7 +7,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E.Features.Notifications;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
 public sealed class AlertRuleJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]

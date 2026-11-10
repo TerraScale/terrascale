@@ -21,4 +21,21 @@ namespace TerraScale.Dashboard.E2E
             }
         }
     }
+
+    public sealed class SharedDemoEnvironment : IAsyncInitializer, IDisposable
+    {
+        public string Root { get; } = DashboardE2EFixture.FindRoot();
+
+        public DemoEnvironment Environment { get; } = new();
+
+        public Task InitializeAsync()
+        {
+            return Environment.InitializeAsync();
+        }
+
+        public void Dispose()
+        {
+            Environment.Dispose();
+        }
+    }
 }
