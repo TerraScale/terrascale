@@ -27,3 +27,5 @@ not a retained commit record raises `ShapeSealOffsetException` (`must_refetch`).
 Sealed bodies are inserted once with `SuspendCaptureAsync` and never rebuilt. Shape tables are derived data: copies,
 backups and rewrites omit their rows, and every shape restarts under a new incarnation. Memory is reserved before
 decoding images and before returning bodies; refusal, rollback and cancellation release it.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
