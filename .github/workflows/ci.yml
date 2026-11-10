@@ -500,7 +500,7 @@ jobs:
       group: production-terrabase
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 210
     permissions:
       contents: read
       # Reads the private TerraBase image to check its revision label.
