@@ -2,9 +2,6 @@ openapi: 3.1.0
 info:
   title: TerraScale Auth platform API
   version: v1.1-contract
-  license:
-    name: Apache-2.0
-    identifier: Apache-2.0
   description: |
     Contract v1 of the platform identity API (TS-598, epic TS-597): organizations, projects, members, roles,
     invitations, ownership transfer, audit events and API keys of the `terrascale` tenant, and the token

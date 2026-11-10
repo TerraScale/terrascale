@@ -10,7 +10,6 @@
     <RepositoryUrl>https://github.com/TerraScale/terrascale</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>terrascale;logging;json;console;zlogger</PackageTags>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -22,7 +21,6 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
-    <None Include="LICENSE" Pack="true" PackagePath="\" />
     <PackageReference Include="ZLogger" />
     <PackageReference Include="ZString" />
     <InternalsVisibleTo Include="TerraScale.Logging.Tests" />

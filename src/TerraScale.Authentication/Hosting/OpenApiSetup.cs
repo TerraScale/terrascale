@@ -310,7 +310,6 @@ public static partial class OpenApiSetup
     {
         // The configured public origin, never the request's Host header.
         schema.Servers = [new OpenApiServer { Url = publicOrigin.GetLeftPart(UriPartial.Path).TrimEnd('/') }];
-        schema.Info.License = new OpenApiLicense { Name = "Apache-2.0", Identifier = "Apache-2.0" };
 
         var used = new SortedSet<string>(StringComparer.Ordinal);
         foreach (var (path, item) in schema.Paths)
