@@ -42,6 +42,7 @@ pub mod sql_error_codes {
     /// The statement leaves the SQL sandbox (ATTACH, VACUUM, file functions, …).
     pub const SQL_SANDBOX: &str = "sql_sandbox";
     pub const SERIALIZATION_CONFLICT: &str = "serialization_conflict";
+    pub const ROW_CONFLICT: &str = "row_conflict";
     pub const TOO_LARGE: &str = "too_large";
     pub const QUERY_CANCELED: &str = "query_canceled";
     pub const TRANSACTION_ROLLED_BACK: &str = "transaction_rolled_back";

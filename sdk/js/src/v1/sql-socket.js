@@ -30,7 +30,7 @@ export const sqlSocketProtocol = "terrascale.sql.v1";
 const maximumStatements = 256;
 const maximumFrameBytes = 1024 * 1024;
 const statusByCode = new Map([
-  ["forbidden_scope", 403], ["sql_sandbox", 403], ["serialization_conflict", 409], ["too_large", 413], ["quota_exceeded", 429],
+  ["forbidden_scope", 403], ["sql_sandbox", 403], ["serialization_conflict", 409], ["row_conflict", 409], ["too_large", 413], ["quota_exceeded", 429],
   ["tenant_busy", 429], ["unauthorized", 401], ["unavailable", 503], ["wrong_region", 421], ["internal_error", 500],
 ]);
 

@@ -341,6 +341,10 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 409 — pointInTime falls between two transactions and cannot be proven. Choose a proven point. Retry: no.
 
+### `row_conflict`
+
+409, SQLSTATE P0001 — a `terrascale_expect_changes(changes(), n)` guard found that the previous statement did not change `n` rows: the row was changed or deleted since you read it. The request rolled back. Reload the row and decide again. Retry: no.
+
 ### `serialization_conflict`
 
 409, SQLSTATE 40001 — the transaction's write set conflicted with a concurrent one. Rerun the transaction; SDKs resend it at most twice. Retry: yes.
@@ -463,11 +467,11 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 ### `write_outcome_unknown`
 
-503 — a write committed or may have committed, but its durable copy in another region was not confirmed in time. Read what the write would have produced before repeating it. Retry: not blindly.
+503 — a write committed or may have committed: its durable copy in another region was not confirmed in time, or the region you called forwarded it to the database's writer and got no answer. Read what the write would have produced before repeating it. Retry: not blindly.
 
 ### `wrong_region`
 
-421, SQLSTATE 08004 — the region you called does not serve the database; only its home region does. Resend to the region named in the response. Retry: yes.
+421, SQLSTATE 08004 — the region you called does not serve the database, or could not get the request to its writer; nothing was written. Resend to the region named in the response. Retry: yes.
 
 ## Wrong region
 

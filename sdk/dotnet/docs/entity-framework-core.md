@@ -122,9 +122,11 @@ The execution strategy retries nothing else. Below it, the SDK's HTTP client res
 times, after `Retry-After` when TerraBase sends one, only when TerraBase answers `serialization_conflict` or a `503` it
 marks retry-safe (`remote_region_unavailable`, `confirmation_busy`, `catalog_stale`). SQL requests are POSTs, so a
 `502`, a `504` or a lost connection is not resent: the write may already have committed. A `421 wrong_region` is not
-retried at any level. A region that loses its connection to the database's writer answers it too, possibly after the
-request reached the writer, so a resent write could commit twice. Catch `TerraBaseWrongRegionException` and send the
-work to `HomeRegion`, or retry it yourself when it is safe to repeat.
+retried at any level either; it means nothing was written, so catch `TerraBaseWrongRegionException` and send the work to
+`HomeRegion`. A region that forwards the request to the database's writer answers `421` only when the request never
+left it. When the writer was sent the request and did not answer, the region answers
+`503 write_outcome_unknown` instead (`TerraBaseException.ErrorCode`, the writer's region in `OutcomeRegion`): the write
+may have committed, so nothing resends it. Read what it would have written before you run it again.
 
 ## Writers and replicas
 
@@ -258,3 +260,10 @@ in SQL (`session.ExpiresAt > now`).
 - There are no sequences, schemas or spatial types.
 - EF Core's SQLite query pipeline reads the version of the bundled native SQLite library when it starts; the
   provider ships that library for this reason only and never opens a local database.
+
+## Changing the provider
+
+ts-auth and ts-dashboard run this provider and are released on every main push that changes `sdk/dotnet/`, but
+production TerraBase is released by hand later. A provider change that emits SQL or reads a code only a newer TerraBase
+serves (such as a new SQL function) merges in its own PR after production TerraBase runs a build with that server
+change; until then the provider keeps the SQL production TerraBase already serves.

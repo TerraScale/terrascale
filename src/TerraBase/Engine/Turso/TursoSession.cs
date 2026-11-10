@@ -43,6 +43,8 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
 
     internal const string StoppedMessage = "terrabase: statement stopped";
 
+    private const string ExpectChanges = "terrascale_expect_changes";
+
     public void Charge(Func<long, bool>? scan, Func<bool>? row)
     {
         _scanCharge = scan;
@@ -71,6 +73,8 @@ internal sealed class TursoSession(SqliteConnection connection, TimeProvider tim
             ThrowIfStopped();
             return 1;
         }, isDeterministic: false);
+        connection.CreateFunction<long, long, long>(ExpectChanges,
+            (changed, expected) => changed == expected ? changed : throw new InvalidOperationException(SqlErrors.StaleRowMessage), isDeterministic: false);
     }
 
     public void StopWhen(Func<bool>? stop) => _stop = stop;

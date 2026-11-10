@@ -1089,6 +1089,7 @@ internal sealed class SqlSession(
         TooBig => SqlErrors.TooBig(error.Message),
         Interrupted => SqlErrors.Interrupt,
         ReadOnly => canWrite ? new SqlError(SqlErrors.ReadOnlyTransaction, error.Message) : SqlErrors.Auth,
+        StaleRow => new SqlError(SqlErrors.RowConflict, error.Message),
         Error => SqlErrors.Error(error.Message),
     };
 

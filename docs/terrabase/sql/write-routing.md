@@ -54,7 +54,8 @@ home: `commit=home`. Nothing is configured; the router reads these facts on each
   [cross-region](../cross-region.md)); the home authenticates, meters and runs it as one transaction. The answer is the
   home's, with the statements' rows (`RETURNING` included) and two headers:
   `TerraScale-Write-Route: route=<local|home>; reason=<reason>; commit=<local|home>` and
-  `Server-Timing: home;dur=<ms>;desc="<home region>"`. An unreachable home answers `421 wrong_region` naming it.
+  `Server-Timing: home;dur=<ms>;desc="<home region>"`. A home that cannot be
+  reached answers `421 wrong_region` naming it; see [unanswered forwards](#unanswered-forwards).
 - **421 retry URL**: every `421 wrong_region` carries `https://<home>.api.terrascale.tech<path>?<query>` (the same
   path and query) in `error.url` and in `Location`; clients retry there.
 - **WebSocket**: an `execute` frame with a write (or any frame inside a transaction open at the home) runs at the home
@@ -62,6 +63,19 @@ home: `commit=home`. Nothing is configured; the router reads these facts on each
 - **Postgres wire**: the connection is pinned to one home session for every write and transaction. A transaction
   starts in the region on a replica snapshot, so read-only transactions never leave it. Its first write, when nothing
   was read yet, opens the transaction at the home and runs it there.
+
+## Unanswered forwards
+
+A forwarded request that gets no answer from the home (or, inside a region, from the regional writer) answers by what
+the home could have done with it:
+
+- `421 wrong_region` when nothing was written there: the request is a `GET` or `HEAD`, which never writes, or the connection
+  failed before the request was sent (name resolution, connect or TLS refused). Resend it to the named region.
+- `503 write_outcome_unknown` with `error.region` naming the home for any other request: it was sent, or may have been
+  (a connect timeout cannot be told from a lost answer), and the connection broke or timed out before the answer. The
+  write may have committed. No SDK resends it; read what it would have written before running it again.
+
+A WebSocket relay that cannot open its socket to the home answers `421`: the upgrade carries no SQL.
 
 ## `40001` retry
 

@@ -15,6 +15,7 @@
     {"code": "forbidden_scope", "sqlstate": "42501", "status": 403},
     {"code": "sql_sandbox", "sqlstate": "42501", "status": 403},
     {"code": "serialization_conflict", "sqlstate": "40001", "status": 409},
+    {"code": "row_conflict", "sqlstate": "P0001", "status": 409},
     {"code": "too_large", "sqlstate": "54000", "status": 413},
     {"code": "query_canceled", "sqlstate": "57014", "status": 400},
     {"code": "transaction_rolled_back", "sqlstate": "40000", "status": 400},

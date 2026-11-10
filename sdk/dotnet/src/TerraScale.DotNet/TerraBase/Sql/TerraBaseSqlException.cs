@@ -47,6 +47,9 @@ public static class TerraBaseSqlErrorCodes
     /// <summary>A concurrent writer won; the request rolled back and may be sent again (40001, HTTP 409).</summary>
     public const string SerializationConflict = "serialization_conflict";
 
+    /// <summary>A <c>terrascale_expect_changes</c> row guard saw a different number of changed rows; the request rolled back (P0001, HTTP 409).</summary>
+    public const string RowConflict = "row_conflict";
+
     /// <summary>A statement, result or transaction passed a size limit (54000, HTTP 413).</summary>
     public const string TooLarge = "too_large";
 

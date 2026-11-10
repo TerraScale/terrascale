@@ -156,6 +156,7 @@ class SqlErrorCodes:
     FORBIDDEN_SCOPE = "forbidden_scope"
     SQL_SANDBOX = "sql_sandbox"
     SERIALIZATION_CONFLICT = "serialization_conflict"
+    ROW_CONFLICT = "row_conflict"
     TOO_LARGE = "too_large"
     QUERY_CANCELED = "query_canceled"
     TRANSACTION_ROLLED_BACK = "transaction_rolled_back"

@@ -55,6 +55,8 @@ internal sealed record class Interrupted : SqlFailure;
 
 internal sealed record class ReadOnly : SqlFailure;
 
+internal sealed record class StaleRow : SqlFailure;
+
 internal sealed class SqlStatementException(SqlFailure failure, string message, bool transactionEnded, Exception? innerException = null)
     : Exception(message, innerException)
 {

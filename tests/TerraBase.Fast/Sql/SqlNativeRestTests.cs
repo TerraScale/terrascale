@@ -70,6 +70,7 @@ public sealed class SqlNativeRestTests
         var notNull = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, NULL, ?, 0)", Faker.Internet.Email()));
         var check = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, 1, ?, -1)", Faker.Internet.Email()));
         var orphan = await db.RefusedAsync(db.Writer, Stmt("INSERT INTO players VALUES (2, 99, ?, 0)", Faker.Internet.Email()));
+        var stale = await db.RefusedAsync("UPDATE teams SET name = 'renamed' WHERE id = 2", "SELECT terrascale_expect_changes(changes(), 1)");
         var enforced = await db.OkAsync("PRAGMA foreign_keys");
         await db.OkAsync("DELETE FROM teams WHERE id = 1");
 
@@ -84,6 +85,7 @@ public sealed class SqlNativeRestTests
         await Assert.That(notNull.Code).IsEqualTo("not_null_violation");
         await Assert.That(check.Code).IsEqualTo("check_violation");
         await Assert.That(orphan.Code).IsEqualTo("foreign_key_violation");
+        await Assert.That(stale).IsEqualTo(new SqlRefusal(HttpStatusCode.Conflict, "row_conflict", 1));
         await Assert.That(enforced[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
         await Assert.That(await db.CountAsync("players")).IsEqualTo(0);
     }

@@ -41,6 +41,18 @@ Schema listings expose only customer objects. A table or column mentioned in an 
 
 [Home apply](../home-apply.md) owns transaction acceptance and HLC column conflict resolution. [Regional replicas](../region-replicas.md) and [local overlay](../local-overlay.md) describe regional reads, pending writes and home durability.
 
+## Row guards
+
+`terrascale_expect_changes(changes(), n)` returns the previous statement's changed-row count when it is `n` and
+otherwise fails the statement with `409 row_conflict` (SQLSTATE `P0001`), which rolls the request back like any failed
+statement and aborts an open transaction. Put it right after an `UPDATE` or `DELETE` guarded by a version column to get
+optimistic concurrency with a code clients can classify:
+
+```sql
+UPDATE accounts SET email = ?, version = ? WHERE id = ? AND version = ?;
+SELECT terrascale_expect_changes(changes(), 1);
+```
+
 ## Errors
 
 | Code | SQLSTATE |
@@ -51,6 +63,7 @@ Schema listings expose only customer objects. A table or column mentioned in an 
 | `not_null_violation`, `check_violation`, `foreign_key_violation` | 23502, 23514, 23503 |
 | `forbidden_scope`, `sql_sandbox` | 42501 |
 | `serialization_conflict` | 40001 |
+| `row_conflict` | P0001 |
 | `too_large`, `query_canceled` | 54000, 57014 |
 | `transaction_rolled_back`, `transaction_aborted` | 40000, 25P02 |
 | `read_only_transaction`, `transaction_state` | 25006, 25000 |

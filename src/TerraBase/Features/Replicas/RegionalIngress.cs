@@ -111,9 +111,9 @@ internal sealed class RegionalIngress(InternalCredential credential) : IDisposab
         {
             answered = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted).ConfigureAwait(false);
         }
-        catch (HttpRequestException)
+        catch (Exception error) when (HomeForwarding.Unanswered(context, error))
         {
-            await HomeForwarding.MisdirectedAsync(context, writer.Region).ConfigureAwait(false);
+            await HomeForwarding.UnansweredAsync(context, writer.Region, error).ConfigureAwait(false);
             return;
         }
 

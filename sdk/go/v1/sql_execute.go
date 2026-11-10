@@ -35,6 +35,7 @@ const (
 	ErrConstraintViolation   ErrorCode = "constraint_violation"
 	ErrSQLSandbox            ErrorCode = "sql_sandbox" // 403: the statement leaves the SQL sandbox (ATTACH, VACUUM, file functions, …)
 	ErrSerializationConflict ErrorCode = "serialization_conflict"
+	ErrRowConflict           ErrorCode = "row_conflict"
 	ErrTooLarge              ErrorCode = "too_large"
 	ErrQueryCanceled         ErrorCode = "query_canceled"
 	ErrTransactionRolledBack ErrorCode = "transaction_rolled_back"

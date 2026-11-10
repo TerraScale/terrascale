@@ -41,7 +41,8 @@ mesh.
   there over HTTP/2 with the peer credential and `X-TerraBase-Forwarded-For` (the client address the edge reported). The
   home serves it as a client-listener request: the same token checks, IP allowlists, quotas and metering, once, at the home.
   `X-TerraBase-Region` names the home. A forwarded request is never forwarded again. When the home cannot be reached the
-  answer is `421 wrong_region` with `X-TerraBase-Database-Home` and the home's regional host. Listing a project's
+  answer is `421 wrong_region` with `X-TerraBase-Database-Home` and the home's regional host; a write the home was sent
+  but never answered is `503 write_outcome_unknown` instead ([unanswered forwards](sql/write-routing.md#unanswered-forwards)). Listing a project's
   databases is forwarded to a region that holds the project when this one does not.
 - **Enrollment.** A create that enrolls a project (its first database) sends the same project→organization binding to every
   other region (`PUT /admin/projects/{project}/enrollment`, peer credential, idempotent), so every region resolves the

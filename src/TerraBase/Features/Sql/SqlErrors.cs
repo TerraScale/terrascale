@@ -19,6 +19,7 @@ internal static partial class SqlErrors
     public const string ForbiddenScope = "forbidden_scope";
     public const string Sandbox = "sql_sandbox";
     public const string SerializationConflict = "serialization_conflict";
+    public const string RowConflict = "row_conflict";
     public const string TooLarge = "too_large";
     public const string QueryCanceled = "query_canceled";
     public const string TransactionRolledBack = "transaction_rolled_back";
@@ -46,6 +47,7 @@ internal static partial class SqlErrors
         ConstraintViolation => "23000",
         ForbiddenScope or Sandbox => "42501",
         SerializationConflict => "40001",
+        RowConflict => "P0001",
         TooLarge => "54000",
         QueryCanceled => "57014",
         TransactionRolledBack => "40000",
@@ -66,7 +68,7 @@ internal static partial class SqlErrors
     {
         Unauthorized => StatusCodes.Status401Unauthorized,
         ForbiddenScope or Sandbox => StatusCodes.Status403Forbidden,
-        SerializationConflict => StatusCodes.Status409Conflict,
+        SerializationConflict or RowConflict => StatusCodes.Status409Conflict,
         TooLarge => StatusCodes.Status413PayloadTooLarge,
         QuotaExceeded or TenantBusy => StatusCodes.Status429TooManyRequests,
         Unavailable => StatusCodes.Status503ServiceUnavailable,
@@ -84,8 +86,11 @@ internal static partial class SqlErrors
         _ => SqlError,
     }, message);
 
+    public const string StaleRowMessage = "terrascale: the statement changed a different number of rows than expected";
+
     public static (SqlFailure Failure, string Message) Classify(string message, bool parse, bool interrupted) => message switch
     {
+        _ when message.Contains(StaleRowMessage, StringComparison.Ordinal) => (new StaleRow(), "the row was changed or deleted since it was read"),
         _ when Has(message, "UNIQUE constraint failed") => (new Unique(), "UNIQUE constraint failed" + Names(message)),
         _ when Has(message, "NOT NULL constraint failed") => (new NotNull(), "NOT NULL constraint failed" + Names(message)),
         _ when Has(message, "CHECK constraint failed") => (new Check(), "CHECK constraint failed" + Names(message)),
