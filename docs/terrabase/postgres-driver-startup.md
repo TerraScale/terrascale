@@ -16,3 +16,5 @@ These changes support specific driver workflows. They do not implement arbitrary
 PostgreSQL catalogs, savepoints, identity DDL, extensions, COPY or PostgreSQL ORM
 migration tooling. ORM guides must identify their actual SQL dialect and transport;
 Validation of SQLite-oriented ORMs does not establish PostgreSQL dialect compatibility.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
