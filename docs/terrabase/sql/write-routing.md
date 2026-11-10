@@ -93,7 +93,7 @@ transaction's first statement (its fingerprint: the statement with literals remo
 | REST, WebSocket | `TerraScale-Write` request header (on the upgrade for WebSocket) | same; anything else is `400 invalid_request` on REST |
 
 `home` sends every transaction and read of the session or request to the home (read your writes without waiting for a
-pull). `local` marks every write local except DDL and statements the router cannot parse (`reason=override`).
+pull). `local` is accepted and ignored.
 `SHOW terrascale.write_route` answers the session's last decision.
 
 ## Metric
