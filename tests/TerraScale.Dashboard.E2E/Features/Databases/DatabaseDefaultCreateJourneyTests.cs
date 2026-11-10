@@ -5,8 +5,8 @@ using System.Text.RegularExpressions;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class DatabaseDefaultCreateJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+    public sealed class DatabaseDefaultCreateJourneyTests(SharedDatabaseSdk shared)
     {
         private static readonly string[] CatalogGruSjc = ["gru", "sjc"];
         private static readonly string[] CatalogGruFraSfo = ["gru", "fra", "sfo"];
@@ -19,7 +19,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task EmptyDatabasesPageCreatesThroughTheDialogAndTheOverviewLinksOpenIt()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root);
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task DefaultCreateSucceedsWithOnlyAHomeRegionAndTheDatabaseCanBeDeleted()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root);
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
@@ -127,7 +127,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task CreateWithAJsonBodyAnswersUnsupportedMediaType()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
 
@@ -140,7 +140,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task ReplicaRegionsAreAddedAndTheHomeMovesToAReplica()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root);
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);

@@ -3,13 +3,13 @@ using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Functions
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class FunctionPageJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+    public sealed class FunctionPageJourneyTests(SharedDatabaseSdk shared)
     {
         [Test]
         public async Task OwnerOpensFunctionsTab()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
             var id = await HttpJourney.CreateDatabaseAsync(client, "functions-journey");

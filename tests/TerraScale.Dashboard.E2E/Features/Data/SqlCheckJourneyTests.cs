@@ -6,8 +6,8 @@ using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Data
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class SqlCheckJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+    public sealed class SqlCheckJourneyTests(SharedDatabaseSdk shared)
     {
         [Test]
         [Arguments("SELECT * FROM items WHERE title = $1 LIMIT 20", true)]
@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         public async Task CheckReportsDiagnosticsRetainsSubmittedSqlAndNeverExecutesIt(string sql, bool invalid)
         {
             var executions = 0;
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
+            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root, producerExtension: async http =>
             {
                 if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal))
                 {
@@ -70,7 +70,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         [Test]
         public async Task RunExecutesRelationalSqlAndShowsTerraBaseMessages()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
             var id = await HttpJourney.CreateDatabaseAsync(client, "sql-run");

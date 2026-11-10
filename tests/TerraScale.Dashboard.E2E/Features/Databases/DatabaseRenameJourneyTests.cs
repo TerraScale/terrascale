@@ -3,13 +3,13 @@ using System.Net.Http.Headers;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class DatabaseRenameJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+    public sealed class DatabaseRenameJourneyTests(SharedDatabaseSdk shared)
     {
         [Test]
         public async Task RenameRefusesNamesCreateRefuses()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
             var id = await HttpJourney.CreateDatabaseAsync(client, "rename-rules");
