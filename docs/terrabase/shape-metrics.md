@@ -34,3 +34,5 @@ The exporter retains its bounded label policy and overflow sentinel.
 This is origin storage work even when SQLite serves it from its page cache; it does not measure physical disk I/O.
 Benchmark comparisons must take before/after deltas on the same node-scoped metrics listener and name their sampling
 window. No API, stored format, authentication or migration behavior changes.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
