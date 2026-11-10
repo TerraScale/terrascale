@@ -39,3 +39,5 @@ node and shared fairly between organizations.
 
 Proof: `tests/TerraBase.Slow/Tenancy/SharedProcessTests.cs` (1,000 databases), `tests/TerraBase.Fast/Tenancy/SharedProcessTests.cs` (noisy neighbour),
 benchmark results in `benchmark/bench/2026-11-04-shared-process-tenancy.md`.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
