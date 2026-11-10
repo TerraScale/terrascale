@@ -114,6 +114,8 @@ Beyond the request, burst or concurrency limit, HTTP answers \`429 tenant_busy\`
 ${plans.map((plan) => `| ${plan.name} | ${count(plan.limits.operationUnitsPerMonth)} | ${count(plan.limits.operationUnitCapPerMonth)} | ${count(plan.limits.sqlReadUnitsPerMonth)} |`).join('\n')}
 
 One unit is each started 4 KiB. At the cap (the allowance on Free) new writes, and at fair use new SQL reads, answer \`429 quota_exceeded\` (SQLSTATE \`53100\`) until the next UTC month or an upgrade. Shape reads stay available. See [pricing](/pricing) for billing and overage.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 `,
 };
 for (const [path, text] of Object.entries(outputs)) {
