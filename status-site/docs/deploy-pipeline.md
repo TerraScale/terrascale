@@ -10,10 +10,10 @@ that cache. Cached observations keep their original timestamps; clients receive
 produce unknown observations for that region while preserving the other region.
 
 ts-status lives in `status-site/` of the terrascale monorepo.
-`.github/workflows/status-ci.yml` runs on every pull request and main push that
-touches it: the `test` job runs `npm ci`, `npm run check`, `npm test`, the
+`.github/workflows/ci.yml` runs on every pull request and main push; when one
+touches `status-site/`, the `status` job runs `npm ci`, `npm run check`, `npm test`, the
 Python tests, `npm run lint` and `npm run build` on a GitHub-hosted runner.
-On main, the `deploy` job then deploys that exact build with `npm run
+On main, the `deploy-status` job then deploys that exact build with `npm run
 deploy:prebuilt` (the two vantage Workers, then `ts-status`) using the
 repository's `CLOUDFLARE_API_TOKEN`, and checks that the live revision is the
 pushed commit. Pull requests never deploy and the Worker has no preview URLs.
@@ -27,7 +27,7 @@ credentials are Worker secrets.
 The build's `GITHUB_SHA` supplies the status Worker's `VERSION` binding.
 `GET https://status.terrascale.tech/health/version` returns that full revision
 and the colo the request entered (not proof of where any vantage ran) without
-caching or reading D1; the deploy job checks it matches the pushed commit.
+caching or reading D1; `deploy-status` checks it matches the pushed commit.
 
 ## Monitoring coverage
 

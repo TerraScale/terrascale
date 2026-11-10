@@ -58,15 +58,19 @@ jobs:
       fast: ${{ steps.areas.outputs.fast }}
       main: ${{ steps.areas.outputs.main }}
       ordered: ${{ steps.areas.outputs.ordered }}
-      sha: ${{ steps.source.outputs.sha }}
+      sha: ${{ github.sha }}
+      sdks: ${{ steps.areas.outputs.sdks }}
+      docs: ${{ github.event_name == 'pull_request' && steps.filter.outputs.docs || steps.filter.outputs.docs-push }}
+      landing: ${{ steps.filter.outputs.landing }}
+      status: ${{ steps.filter.outputs.status }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
     steps:
       # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - if: github.event_name != 'pull_request'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
-      - id: source
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - id: filter
         if: github.event_name != 'workflow_dispatch'
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
@@ -99,7 +103,6 @@ jobs:
               - tests/TerraScale.Logging.Tests/**/!(AGENTS.md|CLAUDE.md)
               - benchmark/dotnet/TerraScale.Endpoints.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
               - benchmark/dotnet/TerraScale.Logging.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
-              # Self-check changes run in changes; executor changes still qualify both native Fast areas.
               - scripts/ci/image-payloads.sh
               - scripts/ci/test-area.sh
             auth:
@@ -138,6 +141,68 @@ jobs:
               - tests/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - scripts/terrabase/!(AGENTS.md|CLAUDE.md)
               - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
+            sdk-dotnet:
+              - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/sdk-dotnet-*.yml
+              - .github/workflows/sdk-fast.yml
+              - .github/workflows/ci.yml
+              - .github/actions/dotnet-setup/**/!(AGENTS.md|CLAUDE.md)
+            sdk-go:
+              - sdk/go/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/sdk-go-*.yml
+              - .github/workflows/sdk-fast.yml
+              - .github/workflows/ci.yml
+            sdk-js:
+              - sdk/js/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/sdk-js-*.yml
+              - .github/workflows/sdk-fast.yml
+              - .github/workflows/ci.yml
+            sdk-python:
+              - sdk/python/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/sdk-python-*.yml
+              - .github/workflows/sdk-fast.yml
+              - .github/workflows/ci.yml
+            sdk-rust:
+              - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/sdk-rust-*.yml
+              - .github/workflows/sdk-fast.yml
+              - .github/workflows/ci.yml
+            docs-push: &docs-push
+              - docs-site/**/!(AGENTS.md|CLAUDE.md)
+              - Makefile
+              - .github/workflows/docs-*.yml
+              - .github/workflows/ci.yml
+            docs:
+              - *docs-push
+              - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.Dashboard/sdk-versions.json
+              - src/TerraScale.Dashboard/Features/Home/SdkVersions.cs
+              - sdk/go/README.md
+            landing:
+              - landing-site/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/ci.yml
+            status:
+              - status-site/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/ci.yml
+            dashboard:
+              - src/TerraScale.Dashboard*/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.Endpoints/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md|CLAUDE.md)
+              - tests/TerraScale.Dashboard*/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/dashboard/**/!(AGENTS.md|CLAUDE.md)
+              - scripts/ci/release-only.sh
+              - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - Directory.*
+              - .editorconfig
+              - BannedSymbols.txt
+              - global.json
+              - NuGet.config
+              - Makefile
+              - .github/actions/**/!(AGENTS.md|CLAUDE.md)
+              - .github/workflows/dashboard-ci.yml
+              - .github/workflows/images-ghcr.yml
+              - .github/workflows/ci.yml
       - id: areas
         env:
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
@@ -151,6 +216,7 @@ jobs:
           echo "ordered=$ordered" >> "$GITHUB_OUTPUT"
           [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
           echo "fast=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
+          echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
   # Cheap policy checks run beside changes instead of before the Fast receipts; test (and so every release) requires
   # them.
@@ -166,21 +232,22 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
           fetch-depth: 2
-      # The scan is the longest check: it runs while the path-filter fixtures and self-checks do.
       - name: Start the legacy scan
         run: |
           (status=0
             python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log 2>&1 || status=$?
             echo "$status" > legacy-scan.exit.tmp && mv legacy-scan.exit.tmp legacy-scan.exit) > /dev/null 2>&1 &
-      - name: Check out the path-filter matcher for regression fixtures
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          repository: dorny/paths-filter
-          ref: 0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
-          path: path-filter-action
-          persist-credentials: false
-      - name: Verify CI path filters
-        run: python3 scripts/ci/path-filter-test.py .github/workflows/ci.yml path-filter-action/dist/index.js
+      - name: Lint workflows
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          sha256sum --check --strict <<EOF
+          8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz
+          8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $RUNNER_TEMP/shellcheck.tar.xz
+          EOF
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 shellcheck-v0.11.0/shellcheck
+          "$RUNNER_TEMP/actionlint" -shellcheck "$RUNNER_TEMP/shellcheck"
       - name: Merged EF Core migrations stay unchanged
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/migrations-frozen.py HEAD^1
@@ -189,20 +256,6 @@ jobs:
       - name: Workflows name no retired hosting provider
         if: github.event_name != 'push'
         run: '! grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
-      - name: Slow report, cache policy, storage train and e2e summary self-checks
-        if: github.event_name != 'push'
-        run: |
-          python3 scripts/legacy-scan/process-test.py
-          python3 scripts/ci/slow-report-test.py
-          python3 scripts/ci/cache-policy-test.py
-          python3 scripts/ci/fast-budget-test.py
-          bash scripts/ci/release-app-test.sh
-          python3 scripts/ci/migrations-frozen-test.py
-          python3 scripts/vendor/turso-native-pipeline-test.py
-          bash scripts/terrabase/storage-format-check-test.sh
-          bash scripts/terrabase/e2e-summary-test.sh
-      - name: all-green-rerun workflow list covers every pull_request workflow
-        run: python3 scripts/ci/check-all-green-rerun.py
       # Reads the labels live: after labelling, re-run checks (docs/terrabase/ci.md, storage train).
       - name: Storage train
         if: github.event_name == 'pull_request'
@@ -319,17 +372,11 @@ jobs:
           path: terrascale
           persist-credentials: false
           ref: ${{ needs.changes.outputs.sha }}
-      - &setup-dotnet
-        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          global-json-file: terrascale/global.json
-      # Restore the pinned native libraries from the Actions cache before make verifies them: with the
-      # pins unchanged the release-CDN download is skipped entirely, so a CDN outage cannot fail every area.
-      - &turso-native-cache
-        name: Cached pinned Turso native libraries
-        uses: ./terrascale/.github/actions/turso-native-cache
+      - &dotnet-setup
+        uses: ./terrascale/.github/actions/dotnet-setup
         with:
           dir: terrascale
+          solution: TerraScale.slnx
       - &locked-restore
         name: Locked restore and pinned native libraries
         working-directory: terrascale
@@ -345,8 +392,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - *checkout
-      - *setup-dotnet
-      - *turso-native-cache
+      - *dotnet-setup
       - *locked-restore
       - name: Checked Auth build
         working-directory: terrascale
@@ -366,8 +412,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - *checkout
-      - *setup-dotnet
-      - *turso-native-cache
+      - *dotnet-setup
       - *locked-restore
       - name: Checked build, integration proofs and TerraBase Fast
         working-directory: terrascale
@@ -606,34 +651,197 @@ jobs:
           for area in $(jq -r '.[]' <<< "$FAST_AREAS"); do
             [[ $(jq -r --arg area "$area" '.[$area].result' <<< "$RESULTS") == success ]] || exit 1
           done
-      - if: github.event_name == 'pull_request'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          path: terrascale
-          persist-credentials: false
-          ref: ${{ needs.changes.outputs.sha }}
-      - name: Fast job times
-        if: github.event_name == 'pull_request'
-        working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/run-budget.py "$GITHUB_RUN_ID"
 
-  budget:
-    name: Fast timing budget
-    needs: [changes, libs, auth, terrabase, test, main, main-auth, main-auth-ordered]
-    if: >-
-      ${{ !cancelled() && github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
-      && (needs.changes.result != 'success' || needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]') }}
+  dashboard:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.dashboard == 'true'
+    uses: ./.github/workflows/dashboard-ci.yml
+
+  sdk:
+    needs: changes
+    if: needs.changes.outputs.sdks != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        area: ${{ fromJSON(needs.changes.outputs.sdks) }}
+    uses: ./.github/workflows/sdk-fast.yml
+    with:
+      area: ${{ matrix.area }}
+
+  docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions:
-      actions: read
-      contents: read
+    timeout-minutes: 10
     steps:
-      - *checkout
-      - name: Enforce Fast job budgets and report end-to-end CI time
-        working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci/run-budget.py "$GITHUB_RUN_ID"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: docs-site/.node-version
+          package-manager-cache: false
+      - name: Docs Fast
+        run: make docs-test-fast
+
+  deploy-docs:
+    needs: docs
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/docs-deploy.yml
+    with:
+      revision: ${{ github.sha }}
+    secrets: inherit
+
+  landing:
+    needs: changes
+    if: needs.changes.outputs.landing == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: landing-site/.node-version
+          cache: npm
+          cache-dependency-path: landing-site/package-lock.json
+      - name: Install dependencies
+        working-directory: landing-site
+        run: npm ci --no-audit --no-fund
+      - name: Run tests and validate the static build
+        working-directory: landing-site
+        run: npm run build
+      - name: Upload the verified static build
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: landing-build
+          path: landing-site/build
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy-landing:
+    needs: landing
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: landing-deploy
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: landing-site/.node-version
+          cache: npm
+          cache-dependency-path: landing-site/package-lock.json
+      - name: Install dependencies
+        working-directory: landing-site
+        run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: landing-build
+          path: landing-site/build
+      - name: Deploy static assets
+        working-directory: landing-site
+        run: npx wrangler deploy
+      - name: Prove the live revision
+        run: |
+          set -euo pipefail
+          live=$(curl -fsS https://terrascale.tech/build-info.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])')
+          test "$live" = "$GITHUB_SHA"
+          echo "live revision $live matches $GITHUB_SHA"
+
+  status:
+    needs: changes
+    if: needs.changes.outputs.status == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: status-site/.node-version
+          cache: npm
+          cache-dependency-path: status-site/package-lock.json
+      - name: Install dependencies
+        working-directory: status-site
+        run: npm ci --no-audit --no-fund
+      - name: Check, test and build
+        working-directory: status-site
+        run: |
+          npm run check
+          npm test
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          npm run lint
+          npm run build
+      - name: Upload the verified build
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: status-build
+          path: status-site/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy-status:
+    needs: status
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: status-deploy
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: status-site/.node-version
+          cache: npm
+          cache-dependency-path: status-site/package-lock.json
+      - name: Install dependencies
+        working-directory: status-site
+        run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: status-build
+          path: status-site/dist
+      - name: Deploy the status Workers
+        working-directory: status-site
+        run: npm run deploy:prebuilt
+      - name: Prove the live revision
+        run: |
+          set -euo pipefail
+          live=$(curl -fsS https://status.terrascale.tech/health/version | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          test "$live" = "$GITHUB_SHA"
+          echo "live revision $live matches $GITHUB_SHA"
+
+  all-green:
+    name: all-green
+    if: always()
+    needs: [changes, checks, libs, auth, terrabase, dashboard, sdk, docs, landing, status, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - run: test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false

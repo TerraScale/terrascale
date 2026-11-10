@@ -2,30 +2,6 @@ name: Dashboard Fast
 
 # Main pushes run this through images-ghcr.yml, the dashboard's single main entry point.
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/TerraScale.Dashboard*/**'
-      # The dashboard calls TerraBase through these MagicOnion contracts.
-      - 'src/TerraScale.TerraBase.Contracts/**'
-      # The dashboard's endpoints and their source generator.
-      - 'src/TerraScale.Endpoints/**'
-      - 'src/TerraScale.Endpoints.Generators/**'
-      - 'tests/TerraScale.Dashboard*/**'
-      - 'scripts/dashboard/**'
-      - 'scripts/ci/release-only.sh'
-      - 'sdk/dotnet/**'
-      - 'Directory.*'
-      - '.editorconfig'
-      - 'BannedSymbols.txt'
-      - 'global.json'
-      - 'NuGet.config'
-      - 'Makefile'
-      - '.github/actions/**'
-      - '.github/workflows/dashboard-ci.yml'
-      - '.github/workflows/images-ghcr.yml'
-      - '!**/AGENTS.md'
-      - '!**/CLAUDE.md'
   workflow_call:
   workflow_dispatch:
 
@@ -45,13 +21,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+      - uses: ./.github/actions/dotnet-setup
         with:
-          global-json-file: global.json
-      # dashboard-test-fast verifies the pinned native libraries (or downloads them on a miss): the
-      # cache keeps a release-CDN outage from blocking the dashboard's only build job.
-      - name: Cached pinned Turso native libraries
-        uses: ./.github/actions/turso-native-cache
+          solution: scripts/dashboard/TerraScale.Dashboard.slnx
       - name: Dashboard Fast
         run: make dashboard-test-fast
       # The image job wraps these exact bytes without another build.
@@ -78,9 +50,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+      - uses: ./.github/actions/dotnet-setup
         with:
-          global-json-file: global.json
+          solution: scripts/dashboard/TerraScale.Dashboard.slnx
       - name: Restore the dashboard
         run: dotnet restore scripts/dashboard/TerraScale.Dashboard.slnx --locked-mode
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
