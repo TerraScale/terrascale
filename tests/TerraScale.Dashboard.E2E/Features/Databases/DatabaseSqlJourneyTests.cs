@@ -44,6 +44,8 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
             var summary = await overview.Content.ReadAsStringAsync();
             await Assert.That(summary).Contains("Tables</dt><dd class=\"ts-stat-value\">1</dd>");
             await Assert.That(summary).Contains("id=\"db-connect-psql\"");
+            await Assert.That(summary).Contains("id=\"db-connect-wss\">GET wss://api.terrascale.tech/v1/projects/");
+            await Assert.That(summary).Contains("/databases/sql-journey/sql/ws");
         }
     }
 }

@@ -13,11 +13,13 @@ namespace TerraScale.Dashboard.Features.Databases
         // Public protocol contracts: docs.terrascale.tech/guides/{postgres-clients,sql-http}; the API key is the password.
         public static IReadOnlyList<DatabaseConnection> For(string projectId, string database)
         {
-            var endpoint = $"{ApiUrl}/v1/projects/{Uri.EscapeDataString(projectId)}/databases/{Uri.EscapeDataString(database)}";
+            var path = $"/v1/projects/{Uri.EscapeDataString(projectId)}/databases/{Uri.EscapeDataString(database)}";
+            var endpoint = ApiUrl + path;
             return
             [
                 new("psql", "psql", $"psql \"host=pg.terrascale.tech port=5432 dbname={projectId}/{database} user=any sslmode=verify-full sslrootcert=system\"", "guides/postgres-clients.html"),
-                new("sql", "SQL over HTTP", "POST " + endpoint + "/sql/execute", "guides/sql-http.html")
+                new("sql", "SQL over HTTP", "POST " + endpoint + "/sql/execute", "guides/sql-http.html"),
+                new("wss", "SQL over WebSocket", "GET wss://" + TerraBaseDiscovery.Origin.Host + path + "/sql/ws", "concepts/sql.html")
             ];
         }
 
