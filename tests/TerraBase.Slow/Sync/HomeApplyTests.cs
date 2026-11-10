@@ -198,6 +198,36 @@ public sealed class HomeApplyTests
             .IsEqualTo("""[["CREATE TRIGGER orders_audit AFTER INSERT ON orders BEGIN INSERT INTO audit (order_id) VALUES (new.id); END"]]""");
     }
 
+    [Test]
+    public async Task A_transient_sqlite_error_during_apply_is_not_stored_as_a_revert()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var home = await HomeAsync();
+        await home.SqlAsync("CREATE TABLE gauges (id TEXT PRIMARY KEY, v INTEGER NOT NULL CHECK (v = abs(-9223372036854775808)))");
+        var id = EntityIds.New().ToString();
+        var at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1_000;
+        var hlc = new { physicalMilliseconds = at, logical = 0, nodeId = "sjc-1" };
+        using var content = new StringContent(JsonSerializer.Serialize(new
+        {
+            id,
+            region = "sjc",
+            hlc,
+            changes = new[] { Insert("gauges", new { id = "g1", v = 1 }) },
+        }), System.Text.Encoding.UTF8, "application/json");
+        using var response = await home.Peer.PostAsync(home.ApplyPath, content, token);
+        var body = await response.Content.ReadAsStringAsync(token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(body);
+        await Assert.That(JsonElement.Parse(body).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
+        using var state = await home.Peer.GetAsync(home.ApplyPath + "/" + id, token);
+        var recorded = await state.Content.ReadFromJsonAsync<JsonElement>(token);
+        await Assert.That(recorded.GetProperty("state").GetString()).IsEqualTo("provisional");
+        await Assert.That((await home.SqlAsync("SELECT count(*) FROM gauges")).GetRawText()).IsEqualTo("[[0]]");
+        await home.SqlAsync("DROP TABLE gauges");
+        await home.SqlAsync("CREATE TABLE gauges (id TEXT PRIMARY KEY, v INTEGER NOT NULL)");
+        var (_, confirmed) = await home.ApplyAsync("sjc", at + 1, [Insert("gauges", new { id = "g1", v = 1 })]);
+        await Assert.That(confirmed.GetProperty("state").GetString()).IsEqualTo("confirmed");
+    }
+
     private static async Task<Home> HomeAsync()
     {
         var api = await ManagementApi.StartAsync(

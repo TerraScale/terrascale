@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.RegularExpressions;
+using Turso.Data.Sqlite;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Sql;
 using Turso.Raw.Public;
@@ -350,13 +352,14 @@ internal sealed partial class TursoStorageTransaction
 
     internal static (SqlFailure Failure, string Message) Classify(TursoDatabaseHandle native, TursoException error)
     {
-        var (message, parse) = Unwrap(error.Message);
-        var (failure, reported) = SqlErrors.Classify(message, parse, error is TursoNativeException { StatusCode: 5 });
+        var (message, parse, code) = Unwrap(error);
+        var (failure, reported) = SqlErrors.Classify(message, parse, error is TursoNativeException { StatusCode: 5 }, code);
         return failure is Unique && IsPrimaryKey(native, reported) ? (new PrimaryKey(), reported) : (failure, reported);
     }
 
-    private static (string Message, bool Parse) Unwrap(string message)
+    private static (string Message, bool Parse, int Code) Unwrap(Exception error)
     {
+        var message = error.Message;
         var parse = false;
         foreach (var prefix in (ReadOnlySpan<string>)["Unable to prepare statement: ", "Parse error: ", "Extension error: "])
         {
@@ -367,10 +370,28 @@ internal sealed partial class TursoStorageTransaction
             }
         }
 
-        return (SqliteCoded().Match(message) is { Success: true } coded ? coded.Groups[1].Value : message, parse);
+        if (SqliteCoded().Match(message) is { Success: true } coded)
+        {
+            return (coded.Groups[2].Value, parse, int.Parse(coded.Groups[1].ValueSpan, CultureInfo.InvariantCulture));
+        }
+
+        return (message, parse, SqliteCode(error));
     }
 
-    [GeneratedRegex(@"\A__turso_sqlite_error__:\d+:(.*)\z", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static int SqliteCode(Exception error)
+    {
+        for (var current = error; current is not null; current = current.InnerException)
+        {
+            if (current is SqliteException sqlite)
+            {
+                return sqlite.SqliteExtendedErrorCode == 0 ? sqlite.SqliteErrorCode : sqlite.SqliteExtendedErrorCode;
+            }
+        }
+
+        return 0;
+    }
+
+    [GeneratedRegex(@"\A__turso_sqlite_error__:(\d+):(.*)\z", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex SqliteCoded();
 
     private bool EndedByFailure(TursoDatabaseHandle native)
