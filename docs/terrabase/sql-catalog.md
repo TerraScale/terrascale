@@ -41,3 +41,5 @@ its own rows, and a database homed elsewhere answers as an unknown database ([cr
 ## Tests
 
 `tests/TerraBase.Fast/Catalog/SqlCatalogTests.cs` (create, list, drop, restart, rows in `catalog_databases`).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
