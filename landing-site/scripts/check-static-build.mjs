@@ -41,6 +41,8 @@ assert.ok(contactMain, 'contact: prerendered main content')
 const contactLinks = [...contactMain.matchAll(/<a\b([^>]*)>/g)].map(([, attributes]) => attributes)
 assert.equal(contactLinks.filter((attributes) => /href="mailto:support@terrascale.tech"/.test(attributes)).length, 2,
   'contact: the primary email button and readable address both open the mail client')
+assert.equal(contactLinks.filter((attributes) => /href="mailto:security@terrascale.tech"/.test(attributes)).length, 1,
+  'contact: the security address opens the mail client')
 for (const href of ['https://github.com/TerraScale', 'https://docs.terrascale.tech',
   'https://status.terrascale.tech', 'https://api.terrascale.tech/scalar/']) {
   const attributes = contactLinks.find((attributes) => attributes.includes(`href="${href}"`))
