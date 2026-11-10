@@ -27,7 +27,7 @@ A client retries a `serialization_conflict` with the same idempotency key. `comm
 
 - **SQL** goes through the SDK's database handle against `https://api.terrascale.tech`, with a project access token.
 - **Key exchange** happens against `https://auth.terrascale.tech/terrascale/oauth/token` with the client credentials grant. Go, Python, Rust and .NET do the exchange when you pass the dashboard API key; the previous published JavaScript package (0.0.17) exposes the token call and a token-provider hook (its quickstart shows the code). See [authentication](/guides/authentication).
-- **SQL over plain HTTP** (any HTTP client) is documented in [SQL over HTTP](/guides/sql-http); PostgreSQL-compatible clients work too ([PostgreSQL clients](/guides/postgres-clients)).
+- **SQL over plain HTTP** (any HTTP client) is documented in [SQL over HTTP](/guides/sql-http); Postgres wire protocol, SQLite SQL dialect clients work too ([PostgreSQL clients](/guides/postgres-clients)).
 
 ## Versioning
 
