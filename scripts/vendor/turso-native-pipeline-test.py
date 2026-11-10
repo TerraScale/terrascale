@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
 """Exercise pinned-download/cached-byte trust boundaries without network or Rust."""
 import hashlib
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 workflow = (root / ".github/workflows/ci.yml").read_text()
@@ -45,6 +44,9 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
     scripts.mkdir(parents=True)
     vendor = fixture / "src/vendor/Turso.Native"
     vendor.mkdir(parents=True)
+    pin = fixture / "benchmark/turso-sync-host"
+    pin.mkdir(parents=True)
+    shutil.copy2(root / "benchmark/turso-sync-host/turso-pin.env", pin / "turso-pin.env")
     assets = fixture / "assets"
     assets.mkdir()
     for script in ("download-turso-native.sh", "verify-turso-native.sh", "prepare-turso-native-release.sh", "check-turso-native-crypto.sh"):
@@ -67,7 +69,7 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
     output = fixture / "native"
 
     def run(script, *arguments, succeeds=True):
-        result = subprocess.run(["bash", str(scripts / script), *map(str, arguments)], env=env, capture_output=True, text=True, cwd=fixture if script == "check-turso-native-crypto.sh" else None)
+        result = subprocess.run(["bash", str(scripts / script), *map(str, arguments)], check=False, env=env, capture_output=True, text=True, cwd=fixture if script == "check-turso-native-crypto.sh" else None)
         assert (result.returncode == 0) == succeeds, (script, result.returncode, result.stdout, result.stderr)
 
     # Tool fixtures exercise refusal of missing hardware, dispatch, fallback and macro evidence.

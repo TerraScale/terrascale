@@ -3,6 +3,7 @@ ENV SOURCE_DATE_EPOCH=1791270348 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/parser-ta
 ENV RUSTFLAGS="--remap-path-prefix=/repo=/usr/src/terrascale"
 WORKDIR /repo
 COPY src/vendor/Turso.Native/sql src/vendor/Turso.Native/sql
+COPY benchmark/turso-sync-host/turso-pin.env benchmark/turso-sync-host/turso-pin.env
 COPY scripts/vendor/prepare-router-parser-source.sh scripts/vendor/prepare-router-parser-source.sh
 RUN bash scripts/vendor/prepare-router-parser-source.sh \
     && cargo build --manifest-path src/vendor/Turso.Native/sql/Cargo.toml --locked --release
