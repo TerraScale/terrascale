@@ -8,7 +8,9 @@ namespace TerraScale.EntityFrameworkCore.Update;
 
 internal sealed class TerraBaseUpdateSqlGenerator(UpdateSqlGeneratorDependencies dependencies) : UpdateAndSelectSqlGenerator(dependencies)
 {
-    internal const string RowsAffectedGuard = "SELECT terrascale_expect_changes(changes(), 1)";
+    internal const string RowsAffectedGuard = "SELECT iif(changes() = 1, 1, json('TerraBase: the row was changed or deleted'))";
+
+    internal const string RowsAffectedGuardError = "malformed JSON";
 
     public override ResultSetMapping AppendInsertOperation(
         StringBuilder commandStringBuilder, IReadOnlyModificationCommand command, int commandPosition, out bool requiresTransaction) =>

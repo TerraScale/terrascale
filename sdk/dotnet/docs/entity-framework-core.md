@@ -77,10 +77,9 @@ control character), and a `byte[]` is base64, so a single blob can hold about 76
 under TerraBase's 16 KiB statement limit, which only very wide tables reach; the provider refuses such a row with
 `NotSupportedException`, and the save writes nothing.
 
-Every `UPDATE` and `DELETE` must change exactly one row. The provider follows each one with
-`SELECT terrascale_expect_changes(changes(), 1)`, which fails the request with `409 row_conflict` when the row was not
-changed, so a stale concurrency token or a row deleted by someone else throws `DbUpdateConcurrencyException` (its inner
-exception is the `TerraBaseSqlException` with code `row_conflict`) and the rest of the save is rolled back with it. A constraint violation
+Every `UPDATE` and `DELETE` must change exactly one row. The provider follows each one with a guard statement that
+fails the request when the row was not changed, so a stale concurrency token or a row deleted by someone else throws
+`DbUpdateConcurrencyException` and the rest of the save is rolled back with it. A constraint violation
 (`unique_violation`, `foreign_key_violation`, `check_violation`, …) throws `DbUpdateException` whose inner
 exception is the `TerraBaseSqlException`, and likewise writes nothing.
 
@@ -258,3 +257,10 @@ in SQL (`session.ExpiresAt > now`).
 - There are no sequences, schemas or spatial types.
 - EF Core's SQLite query pipeline reads the version of the bundled native SQLite library when it starts; the
   provider ships that library for this reason only and never opens a local database.
+
+## Changing the provider
+
+ts-auth and ts-dashboard run this provider and are released on every main push that changes `sdk/dotnet/`, but
+production TerraBase is released by hand later. A provider change that emits SQL or reads a code only a newer TerraBase
+serves (such as a new SQL function) merges in its own PR after production TerraBase runs a build with that server
+change; until then the provider keeps the SQL production TerraBase already serves.

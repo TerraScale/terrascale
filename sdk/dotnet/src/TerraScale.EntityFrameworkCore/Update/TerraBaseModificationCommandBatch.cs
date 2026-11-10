@@ -10,7 +10,6 @@ namespace TerraScale.EntityFrameworkCore.Update;
 internal sealed class TerraBaseModificationCommandBatch(ModificationCommandBatchFactoryDependencies dependencies, int maxBatchSize)
     : AffectedCountModificationCommandBatch(dependencies, maxBatchSize)
 {
-    private const string RowConflict = "row_conflict";
     private const int MaxRequestBytes = 1024 * 1024;
     private const int MaxStatementBytes = 16 * 1024;
     private const int RequestBytes = 32;
@@ -33,7 +32,7 @@ internal sealed class TerraBaseModificationCommandBatch(ModificationCommandBatch
             await base.ExecuteAsync(connection, cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateException exception) when (exception is not DbUpdateConcurrencyException
-            && exception.InnerException is TerraBaseSqlException { Code: RowConflict } error
+            && exception.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SqlError, Message: TerraBaseUpdateSqlGenerator.RowsAffectedGuardError } error
             && commands.FindIndex(command => command.Guarded && command.FirstStatement + 1 == error.Statement) is var index and >= 0)
         {
             throw new DbUpdateConcurrencyException(
