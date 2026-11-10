@@ -1,0 +1,10 @@
+{
+  "solution": {
+    "path": "../../TerraScale.slnx",
+    "projects": [
+      "src/TerraBase/TerraBase.csproj",
+      "src/TerraScale.Authentication/TerraScale.Authentication.csproj",
+      "src/TerraScale.Dashboard/TerraScale.Dashboard.csproj"
+    ]
+  }
+}
