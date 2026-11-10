@@ -203,7 +203,7 @@ public sealed class HomeApplyTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var home = await HomeAsync();
-        await home.SqlAsync("CREATE TABLE gauges (id TEXT PRIMARY KEY, v INTEGER NOT NULL DEFAULT (\"database is locked\"(0)))");
+        await home.SqlAsync("CREATE TABLE gauges (id TEXT PRIMARY KEY, v INTEGER NOT NULL DEFAULT (abs(1, 2)))");
         var id = EntityIds.New().ToString();
         var at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1_000;
         var hlc = new { physicalMilliseconds = at, logical = 0, nodeId = "sjc-1" };

@@ -107,14 +107,14 @@ internal static partial class SqlErrors
             _ when Has(message, "no such table") => (new NoSuchTable(), "no such table" + Names(message)),
             _ when Has(message, "no such column") => (new NoSuchColumn(), "no such column" + Names(message)),
             _ when Has(message, "already exists") => (new AlreadyExists(), "already exists" + Existing(message)),
-            _ when Has(message, "database is locked") || Has(message, "busy") || Has(message, "schema changed") || Has(message, "schema conflict")
-                || Has(message, "write-write conflict") => (new Busy(), "the database is busy; retry"),
             _ when primary == SqliteInterrupt || interrupted || Has(message, "interrupt") => (new Interrupted(), "the statement was interrupted"),
             _ when Has(message, "readonly") || Has(message, "read-only") || Has(message, "query_only") => (new ReadOnly(), "attempt to write a readonly database"),
             _ when primary == SqliteTooBig || Has(message, "too big") || Has(message, "too large") || Has(message, "too many") => (new TooBig(), "a value or statement is too big"),
             _ when Has(message, "syntax error") || Has(message, "near \"") || Has(message, "unexpected") || Has(message, "unrecognized token") =>
                 (new Syntax(), "SQL syntax error"),
             _ when SqlPhrases.FirstOrDefault(phrase => Has(message, phrase)) is { } phrase => (new Error(), phrase),
+            _ when Has(message, "database is locked") || Has(message, "database is busy") || Has(message, "schema changed") || Has(message, "schema conflict")
+                || Has(message, "write-write conflict") => (new Busy(), "the database is busy; retry"),
             _ when parse => (new Syntax(), "SQL syntax error"),
             _ => (new Busy(), "the database is busy; retry"),
         };
