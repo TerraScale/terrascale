@@ -15,3 +15,5 @@ one poll interval. It then withdraws key authority or makes status unavailable, 
 existing 2.25-second bound, and requires the established stream to end.
 Existing admission and Postgres revocation cases remain active. Benchmark first-chance exception counts are
 process-wide mechanism evidence, not a substitute for revocation integration coverage or latency measurements.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
