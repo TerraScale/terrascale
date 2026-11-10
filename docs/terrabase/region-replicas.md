@@ -94,12 +94,13 @@ eventual consistency.
    replica pulls from the home on a catalog sweep when no changed revision has been applied for at least 30 seconds,
    and after every NATS reconnect. Active replicas keep consuming pushed answers without recovery round trips ahead of
    them. An idle replica is checked within two sweeps of its last applied change, so lost notices and network cuts converge.
-   A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
    Without NATS settings a node logs a warning and replicas follow on the sweep alone. Status reports
    to the home run beside the pull loop, never between pulls.
 4. **Restarts.** A restarted replica region reopens its replicas from their files and serves them before the home is
    reachable again; the next pull is incremental. A restarted home keeps its durable revision ledger, so replicas pull
    incrementally or, for a rewritten or restored home, take a full answer.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Anti-entropy (PIVOT R11, D18)
 
