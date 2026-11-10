@@ -12,7 +12,7 @@ holder=$E2E_STATE/namespace.pid
 prepare() {
   mkdir -p "$E2E_STATE"
   chmod 700 "$E2E_STATE"
-  bash "$here/build.sh" "$repo" "$E2E_BUILD"
+  for service in terrabase ts-auth dashboard; do bash "$here/build.sh" "$repo" "$E2E_BUILD" "$service"; done
   for sdk in dotnet go rust python js; do bash "$e2e/sdk/build.sh" "$sdk"; done
   bash "$here/tools.sh"
   npm ci --prefix "$e2e" --no-audit --no-fund
