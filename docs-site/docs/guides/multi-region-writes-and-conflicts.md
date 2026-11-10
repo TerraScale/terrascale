@@ -24,7 +24,7 @@ The conflict log records decisions at apply time. Reading the application's row 
 
 A conflict's `loser_state` is `superseded` or `reverted`. `superseded` records losing columns in a **confirmed** transaction. A provisional transaction has no conflict record until the home makes its decision. An empty conflict list does not prove that a transaction was confirmed.
 
-A delete leaves a stamped tombstone, so an older write cannot resurrect the row. Inserts with an existing primary key and updates to a missing row revert the transaction. Unique, foreign-key and other constraint failures also revert the whole transaction. A stamp more than 60 seconds ahead of the home clock is rejected as `clock`.
+A delete leaves a stamped tombstone, so an older write cannot resurrect the row. Inserts with an existing primary key and updates to a missing row revert the transaction. Unique, foreign-key and other constraint failures also revert the whole transaction. A stamp more than 50 milliseconds ahead of the peer clocks the home already holds is rejected as `clock`.
 
 ## Read conflicts with SQL or an SDK
 

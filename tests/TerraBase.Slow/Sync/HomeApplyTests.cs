@@ -219,6 +219,19 @@ public sealed class HomeApplyTests
         await Assert.That(confirmed.GetProperty("state").GetString()).IsEqualTo("confirmed");
     }
 
+    [Test]
+    public async Task A_timestamp_thirty_seconds_ahead_of_the_peer_clocks_reverts_without_applying()
+    {
+        await using var home = await HomeAsync();
+        await home.SqlAsync("CREATE TABLE clocks (id TEXT PRIMARY KEY, v INTEGER)");
+        var ahead = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000;
+        var (id, result) = await home.ApplyAsync("sjc", ahead, [Insert("clocks", new { id = "c1", v = 1 })]);
+        await Assert.That(result.GetProperty("state").GetString()).IsEqualTo("reverted");
+        await Assert.That((await home.SqlAsync("SELECT kind FROM terrascale.conflicts WHERE loser_transaction_id = ?", id)).GetRawText())
+            .IsEqualTo("""[["clock"]]""");
+        await Assert.That((await home.SqlAsync("SELECT count(*) FROM clocks")).GetRawText()).IsEqualTo("[[0]]");
+    }
+
     private static async Task<Home> HomeAsync()
     {
         var api = await ManagementApi.StartAsync(
