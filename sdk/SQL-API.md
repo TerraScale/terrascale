@@ -57,7 +57,8 @@ Durations are seconds in every SDK (`TimeSpan`/`Duration` accepted where idiomat
 
 ## Placement: where a database lives
 
-A database has one home region, which commits its writes, and replica regions, which hold read replicas. All-regions
+A replica region can accept a local SQL REST write; the home is the durable apply point, and the default
+`TerraScale-Durability` is `local`. All-regions
 mode places a replica in every serving region, including regions that join later. A database can move its home to one
 of its replica regions. Server contract: `docs/terrabase/placement.md`; recorded fixtures:
 `sdk/dotnet/contracts/terrabase/placement/`. Routes need `databases:write`.
