@@ -38,25 +38,6 @@ jobs:
             ~/go/pkg/mod
             ~/.cache/go-build
           key: sdk-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('sdk/go/.go-version', 'sdk/go/go.sum') }}
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        if: inputs.area == 'sdk-js'
-        with:
-          path: ~/.npm
-          key: sdk-js-${{ runner.os }}-${{ hashFiles('sdk/js/package-lock.json') }}
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        if: inputs.area == 'sdk-python'
-        with:
-          path: ~/.cache/uv
-          key: sdk-python-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('sdk/python/requirements-ci.txt') }}
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        if: inputs.area == 'sdk-rust'
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            sdk/rust/target
-          key: sdk-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('sdk/rust/rust-toolchain.toml', 'sdk/rust/Cargo.lock') }}
       - name: Install the pinned SDK toolchain
         run: |
           set -euo pipefail
