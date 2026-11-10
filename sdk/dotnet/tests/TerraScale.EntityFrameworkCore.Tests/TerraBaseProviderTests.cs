@@ -150,6 +150,7 @@ public sealed class TerraBaseProviderTests(TerraBaseFixture fixture)
         var conflict = await Assert.That(() => stale.SaveChangesAsync(cancellationToken)).Throws<DbUpdateConcurrencyException>();
         await Assert.That(counter.Executed - before).IsEqualTo(0);
         await Assert.That(conflict!.Entries.Single().Entity).IsSameReferenceAs(staleAccount);
+        await Assert.That((conflict.InnerException as TerraBaseSqlException)?.Code).IsEqualTo("row_conflict");
 
         await using (var context = new AppDbContext(options))
         {
