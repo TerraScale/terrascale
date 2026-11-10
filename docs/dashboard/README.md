@@ -21,6 +21,8 @@ Connect an assistant with the [MCP guide](https://docs.terrascale.tech/guides/mc
 The [dashboard integration API](platform-api.md) describes the serving
 session-authenticated contract and links its interactive reference.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Layout
 - `src/TerraScale.Dashboard/`: the application (`Features/`, `Platform/`, `UI/`).
   CSS/JS sources are in `web/assets/`, feature CSS sits beside its slice in `Features/`; served files are in `web/static/`.
