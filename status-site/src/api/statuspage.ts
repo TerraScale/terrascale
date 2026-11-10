@@ -16,15 +16,13 @@ import type { Overview } from "../overview";
 
 const PAGE_ID = "01M4E7GK59RY4WPKPBBKFEDF48";
 
-// Statuspage has no state for "nothing measured", so an unmeasured component
-// reads as operational; the status description says when monitoring lags.
 const COMPONENT_STATUS: Record<TimelineState, string> = {
   operational: "operational",
   maintenance: "under_maintenance",
   degraded: "degraded_performance",
   partial_outage: "partial_outage",
   major_outage: "major_outage",
-  none: "operational",
+  none: "unknown",
 };
 
 const INDICATOR: Record<PageStatus, string> = {
