@@ -19,3 +19,5 @@ is accepted only in the Development environment for tests.
 Absent, partial, unreadable or malformed file credentials leave record and
 backup service available. File transfers return 503 and release their storage
 reservation. Supplying Tigris backup credentials alone never enables transfers.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
