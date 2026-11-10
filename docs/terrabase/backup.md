@@ -161,6 +161,7 @@ rollout is performed by this repository change.
 Each node ships the files it holds. `Engine/IShipperLeases` is `LocalShipperLeases`: `ShipperEpochAsync(database)` always
 returns epoch 1, so the local node ships every local file and a generation changes only with a new snapshot. There is no
 member ring, NATS membership or lease takeover. Every node taps every file and trims its change log as it ships it.
+NATS error 10074 is not retried because the stream wants more replicas than the cluster has.
 
 ## How shipping works
 
