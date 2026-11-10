@@ -1,4 +1,4 @@
-export type LocaleCode = 'en' | 'es' | 'pt-br'
+export type LocaleCode = 'en'
 
 export type LocaleMeta = {
   code: LocaleCode
@@ -9,8 +9,6 @@ export type LocaleMeta = {
 
 export const LOCALES: LocaleMeta[] = [
   { code: 'en', label: 'English', short: 'EN', bcp47: 'en' },
-  { code: 'es', label: 'Español', short: 'ES', bcp47: 'es' },
-  { code: 'pt-br', label: 'Português (Brasil)', short: 'PT', bcp47: 'pt-BR' },
 ]
 
 export const DEFAULT_LOCALE: LocaleCode = 'en'

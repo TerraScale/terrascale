@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { en } from '../src/lib/i18n/messages/en.ts';
-import { es } from '../src/lib/i18n/messages/es.ts';
-import { ptBr } from '../src/lib/i18n/messages/pt-br.ts';
 
-const locales = [['en', en], ['es', es], ['pt-BR', ptBr]];
+const locales = [['en', en]];
 // Public Alpha makes no availability or latency promise, so the home page must not imply one.
 const unverifiedClaims = /\b\d{2}(?:\.\d+)?\s*%|sub[- ]?\d+\s*ms|SOC 2|\d+\+ regions/i;
-const noSla = { en: /no uptime percentage\b.*\bSLA/i, es: /ni SLA/i, 'pt-BR': /nem SLA/i };
+const noSla = { en: /no uptime percentage\b.*\bSLA/i };
 
 for (const [locale, messages] of locales) {
   test(`${locale}: hero has one primary call to action and the FAQ states there is no SLA`, () => {

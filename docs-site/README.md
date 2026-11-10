@@ -13,7 +13,7 @@ nice -n 19 npm run build
 ```
 
 Run `nice -n 19 npm test` after building. CI checks public output and local links,
-published catalog parity, generated pricing and locale copies, SDK examples,
+published catalog parity, generated pricing, SDK examples,
 starter authentication and connection validation. It never downloads or runs a
 TerraBase engine; engine qualification belongs in the monorepo.
 
@@ -36,10 +36,7 @@ application feature switches remain rejected by the source gate.
 
 ## Edit public content
 
-English pages are canonical. Run `nice -n 19 npm run i18n:sync` after editing.
-All current locale copies are visibly bannered English fallbacks; a reviewed
-translation removes its fallback marker. Never mark untranslated content as
-reviewed. Keep legal routes noindex until approved documents are available.
+English is the only docs locale. Keep legal routes noindex until approved documents are available.
 
 Subscription pricing derives from the published catalog; use
 `nice -n 19 npm run canonical:sync` to refresh it. Do not invent SDK releases,

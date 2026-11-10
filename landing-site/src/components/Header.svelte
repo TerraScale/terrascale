@@ -2,7 +2,6 @@
   import { afterNavigate } from '$app/navigation'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
-  import LanguageSelector from '@/components/LanguageSelector.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { docsLink, getStartedLink, loginUrl, navigation } from '@/lib/site'
   import { dict } from '@/lib/i18n'
@@ -68,10 +67,6 @@
       </ExternalLink>
 
   <div class="ts-topnav-end">
-    <div class="site-nav__desktop">
-      <LanguageSelector />
-    </div>
-
     <ExternalLink href={getStartedLink.href} class="ts-cta ts-header__mobile-cta">
       {$dict.chrome.getStarted}
       <Icon name={getStartedLink.icon} className="ts-cta__icon" />
@@ -117,7 +112,6 @@
         <ExternalLink href={loginUrl} class="ts-btn ts-btn-secondary ts-btn-lg">{$dict.chrome.login}</ExternalLink>
         <ExternalLink href={getStartedLink.href} class="ts-btn ts-btn-primary ts-btn-lg">{$dict.chrome.getStarted}</ExternalLink>
       </div>
-      <LanguageSelector variant="inline" />
     </div>
   {/if}
     </div>
