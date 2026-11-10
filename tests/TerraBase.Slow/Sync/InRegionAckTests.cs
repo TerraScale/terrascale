@@ -26,18 +26,18 @@ public sealed class InRegionAckTests
     }
 
     [Test]
-    public async Task A_one_node_region_acknowledges_locally_without_waiting_for_home_and_preserves_home_durability()
+    public async Task A_one_node_region_does_not_acknowledge_a_write_locally()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var nats = await JetStreamServer.StartAsync(token);
         await using var world = await LocalWriteWorld.StartAsync(nats, LocalPartner.Alone);
-        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(world.Region.LocalAckAvailable), TimeSpan.FromSeconds(10));
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(world.Region.Started), TimeSpan.FromSeconds(10));
+        await Assert.That(world.Region.LocalAckAvailable).IsFalse();
         await Assert.That(world.Region.TwoNodeAck).IsFalse();
+        await using var home = await world.HomeNodeAsync();
         var committed = await world.LocalAsync(homeDurable: false, ["INSERT INTO items (id, v) VALUES ('a', 'sjc')"], token);
 
-        await Assert.That(committed.Home).IsNull().Because("a discovered one-node region uses a one-node quorum before N1 activation");
-        await using var home = await world.HomeNodeAsync();
-        var durable = await world.LocalAsync(homeDurable: true, ["INSERT INTO items (id, v) VALUES ('b', 'sjc')"], token);
-        await Assert.That(durable.Home?.State).IsEqualTo(WriteStates.Confirmed);
+        await Assert.That(committed.Home).IsNotNull().Because("a region with no partner does not acknowledge the write on one disk");
+        await Assert.That(committed.Home!.State).IsEqualTo(WriteStates.Confirmed);
     }
 }
