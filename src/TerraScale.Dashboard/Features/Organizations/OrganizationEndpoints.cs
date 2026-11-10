@@ -100,9 +100,9 @@ namespace TerraScale.Dashboard.Features.Organizations
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                if (operation == "invite" && http.Request.Path.Equals("/api/v1/access/invitations", StringComparison.Ordinal))
+                if (operation == "invite" && http.Request.Path.Value is "/api/v1/access/invitations" or "/api/v1/dashboard/organization/members/invite")
                 {
-                    return await PageAsync(http, context, placement, "Invalid form token.", 400, "invitations");
+                    return await PageAsync(http, context, placement, "Invalid form token.", 400, http.Request.Path.Value == "/api/v1/access/invitations" ? "invitations" : "members");
                 }
 
                 return Results.BadRequest("Invalid form token.");
