@@ -12,4 +12,6 @@ internal interface IHomeApply
     ValueTask PrepareAsync(TenantContext database, CancellationToken cancellationToken);
 
     ValueTask StampHomeWritesAsync(IStorageTransaction transaction, CancellationToken cancellationToken);
+
+    ValueTask<bool> ClaimAsync(IStorageTransaction transaction, string id, CancellationToken cancellationToken);
 }

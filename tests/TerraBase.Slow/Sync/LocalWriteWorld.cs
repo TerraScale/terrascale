@@ -322,6 +322,8 @@ internal sealed class LocalWriteWorld : IAsyncDisposable
         public ValueTask PrepareAsync(TenantContext database, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 
         public ValueTask StampHomeWritesAsync(IStorageTransaction transaction, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
+        public ValueTask<bool> ClaimAsync(IStorageTransaction transaction, string id, CancellationToken cancellationToken) => ValueTask.FromResult(true);
     }
 
     private sealed class Serving : IRegionCatalog
