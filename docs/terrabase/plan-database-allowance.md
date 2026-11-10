@@ -66,3 +66,5 @@ Body: `{"plan": "hobby" | "starter" | "pro" | "team" | "enterprise"}`.
 
 The first database a project token creates for the organization adopts the record and keeps its
 plan. `PUT /admin/projects/{project}/plan` keeps working for enrolled projects.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
