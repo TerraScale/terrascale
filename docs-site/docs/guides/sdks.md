@@ -17,6 +17,8 @@ Official SDKs for the TerraBase SQL API at `https://api.terrascale.tech`. Every 
 
 Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `/v1/projects/{project}/databases/{database}/sql/execute`, one request and one transaction each, with positional or named arguments and typed rows. The .NET, Go, Python and Rust SDKs also open a WebSocket session on `/sql/ws` for interactive transactions (`begin`, `commit`, `rollback`): `SqlSession` in Python and Rust, the session clients in Go and .NET. The previous published JavaScript package (0.0.17) does not open one. Primary keys are ULIDs from each SDK's ID generator.
 
+A client retries a `serialization_conflict` with the same idempotency key. `commit_uncertain` means the write may have applied, so the caller checks the result before sending it again.
+
 ## Query from your application
 
 <SdkQueryTabs />
