@@ -23,7 +23,11 @@ request and to the SQL WebSocket upgrade:
 
 Request paths save with one `SaveChangesAsync` (one `/sql/execute` request, one transaction) or one
 `ExecuteDeleteAsync`; none opens an explicit transaction. Storage calls appear in `Server-Timing` as `terrabase`
-calls named `state/sql/execute`.
+calls named `state/sql/execute`. Only writes (`SaveChangesAsync`, `ExecuteUpdateAsync`, `ExecuteDeleteAsync`) count as a
+request's state change: a request reuses the account context it loaded until it writes, and a page reads a billing row or
+Stripe customer once. A write that just saved a billing row starts the next change from that row and rereads only after
+losing a concurrency race. Startup reads the migration history and takes the migration lock only when a migration is
+pending.
 
 ### Schema
 
