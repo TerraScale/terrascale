@@ -6,13 +6,13 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
 {
     // The dashboard as a plain OIDC client of ts-auth's hosted pages, through the real
     // TsAuthGateway against the test-only ts-auth producer.
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class HostedSignInJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedAuthProvider>(Shared = SharedType.PerTestSession)]
+    public sealed class HostedSignInJourneyTests(SharedAuthProvider shared)
     {
         [Test]
         public async Task LoginRedirectsToHostedAuthorizeWithPkceStateAndNonce()
         {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var browser = scenario.CreateClient();
             using var start = await browser.GetAsync("/login?returnTo=%2Fdatabases");
             await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
@@ -35,9 +35,10 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Test]
         public async Task CallbackCreatesTheSessionAndALaterLoginDoesNotLoop()
         {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var browser = scenario.CreateClient();
-            using (var signedIn = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me"))
+            var (email, password) = HttpJourney.NewAccount("callback");
+            using (var signedIn = await HttpJourney.LoginAsync(browser, email, password, "/api/v1/auth/me", signUp: true))
             {
                 await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
                 await Assert.That(signedIn.Headers.Location!.OriginalString).IsEqualTo("/api/v1/auth/me");
@@ -55,7 +56,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Test]
         public async Task AnEarlierSignInFinishesAfterALaterOneStartsInTheSameBrowser()
         {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var browser = scenario.CreateClient();
             var first = await browser.GetAsync("/login?returnTo=%2Fapi%2Fv1%2Fauth%2Fme");
             using (var second = await browser.GetAsync("/login?returnTo=%2Fdatabases"))
@@ -64,7 +65,8 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
             }
 
             var callback = first.Headers.Location!;
-            using (var signedIn = await HttpJourney.HostedSignInAsync(browser, first))
+            var (email, password) = HttpJourney.NewAccount("earlier");
+            using (var signedIn = await HttpJourney.HostedSignInAsync(browser, first, email, password, signUp: true))
             {
                 await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
                 await Assert.That(signedIn.Headers.Location!.OriginalString).IsEqualTo("/api/v1/auth/me");
@@ -79,7 +81,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Test]
         public async Task ForgedStateAndDeniedConsentNeverCreateASession()
         {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var browser = scenario.CreateClient();
             using (var start = await browser.GetAsync("/login"))
             {
@@ -113,7 +115,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Test]
         public async Task AccessExpiryDuringIssuerValidationRefreshesTheSameBrowserSession()
         {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            await using var scenario = await AuthProviderScenario.StartAsync(shared.Root);
             using var producer = scenario.CreateProviderClient();
             using var browser = scenario.CreateClient();
             using var replica = scenario.CreateClient(replica: true);
@@ -140,7 +142,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Test]
         public async Task IssuerRevocationDuringValidationStillEndsTheBrowserSession()
         {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            await using var scenario = await AuthProviderScenario.StartAsync(shared.Root);
             using var producer = scenario.CreateProviderClient();
             using var browser = scenario.CreateClient();
             using var replica = scenario.CreateClient(replica: true);
@@ -166,9 +168,10 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Test]
         public async Task LogoutEndsTheSessionAtHostedEndSession()
         {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var browser = scenario.CreateClient();
-            using (var signedIn = await HttpJourney.LoginAsync(browser))
+            var (email, password) = HttpJourney.NewAccount("logout");
+            using (var signedIn = await HttpJourney.LoginAsync(browser, email, password, signUp: true))
             {
                 await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             }

@@ -38,4 +38,24 @@ namespace TerraScale.Dashboard.E2E
             Environment.Dispose();
         }
     }
+
+    public sealed class SharedAuthProvider : IAsyncInitializer, IAsyncDisposable
+    {
+        public string Root { get; } = DashboardE2EFixture.FindRoot();
+
+        public AuthProviderScenario Scenario { get; private set; } = null!;
+
+        public async Task InitializeAsync()
+        {
+            Scenario = await AuthProviderScenario.StartAsync(Root);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Scenario is not null)
+            {
+                await Scenario.DisposeAsync();
+            }
+        }
+    }
 }

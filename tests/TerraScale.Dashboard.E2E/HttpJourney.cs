@@ -103,6 +103,12 @@ namespace TerraScale.Dashboard.E2E
             return await client.GetAsync(callback.IsAbsoluteUri ? callback.PathAndQuery : callback.OriginalString);
         }
 
+        public static (string Email, string Password) NewAccount(string prefix)
+        {
+            var suffix = Guid.NewGuid().ToString("N")[..12];
+            return (prefix + "-" + suffix + "@example.test", "E2E-" + prefix + "-" + suffix);
+        }
+
         public static Task<HttpResponseMessage> PostFormAsync(HttpClient client, string path, Dictionary<string, string> body)
         {
             var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(body) };

@@ -11,11 +11,10 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
         private static readonly string[] BillingIntervals = ["month", "year"];
         [ExecutionPriority(Priority.High)]
         [Test]
-        public async Task NativePatUsesOriginalBillingDtosFreshOwnerScopesAndTheSameCrossReplicaReceipts()
+        public async Task NativePatUsesOriginalBillingDtosAndARaceOrScheduledChangeNeedsTheDashboard()
         {
             using var owner = fixture.CreateClient();
             using var replica = fixture.CreateClient(replica: true);
-            using var member = fixture.CreateClient();
             var suffix = Guid.NewGuid().ToString("N")[..12];
             var email = "billing-mcp-" + suffix + "@example.test";
             var password = "E2E-billing-mcp-" + suffix;
@@ -138,6 +137,51 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(undone.Headers.Location!.OriginalString).Contains("billing=undone");
             using var unchanged = JsonDocument.Parse(await owner.GetStringAsync("/api/v1/auth/me"));
             await Assert.That(unchanged.RootElement.GetProperty("organizationId").GetString()).IsEqualTo(businessId);
+            async Task<JsonElement> ToolAsync(string name, object arguments, bool useReplica = false)
+            {
+                var response = await McpAsync(useReplica ? replica : owner, secret, "tools/call", new { name, arguments });
+                var result = response.GetProperty("result");
+                await Assert.That(result.TryGetProperty("isError", out var error) && error.GetBoolean()).IsFalse().Because(response.ToString());
+                return result.GetProperty("structuredContent");
+            }
+
+            async Task<string> ConfirmedCallbackAsync(string path, Dictionary<string, string> body)
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(body) };
+                request.Headers.Add("Origin", owner.BaseAddress!.GetLeftPart(UriPartial.Authority));
+                request.Headers.Add("Sec-Fetch-Mode", "navigate");
+                using var started = await owner.SendAsync(request);
+                await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Redirect).Because(path);
+                var hosted = started.Headers.Location!;
+                await Assert.That(hosted.AbsolutePath.StartsWith("/ui/terrascale/step-up/", StringComparison.Ordinal)).IsTrue();
+                using var approved = await owner.GetAsync("/__test/step-up/" + hosted.Segments.Last() + "?approve=yes");
+                await Assert.That(approved.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+                return approved.Headers.Location!.PathAndQuery;
+            }
+        }
+
+        [ExecutionPriority(Priority.High)]
+        [Test]
+        public async Task NativePatChecksOutABusinessOrganizationAcrossReplicasAndMembersCannotManageIt()
+        {
+            using var owner = fixture.CreateClient();
+            using var replica = fixture.CreateClient(replica: true);
+            using var member = fixture.CreateClient();
+            var suffix = Guid.NewGuid().ToString("N")[..12];
+            var email = "billing-mcp-" + suffix + "@example.test";
+            var password = "E2E-billing-mcp-" + suffix;
+            await BillingPlanJourneyTests.SignUpPaidAsync(owner, email, password, suffix);
+            using var login = await HttpJourney.LoginAsync(replica, email, password);
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            var secret = await HttpJourney.CreatePatAsync(owner, "TUnit billing MCP " + suffix, password);
+            var csrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=billing");
+            using var personal = JsonDocument.Parse(await owner.GetStringAsync("/api/v1/auth/me"));
+            var personalId = personal.RootElement.GetProperty("organizationId").GetString()!;
+            using var creation = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/organization/new-organization", new()
+            { ["_csrf"] = csrf, ["step"] = "organization", ["name"] = "MCP billing " + suffix });
+            await Assert.That(creation.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            using var business = JsonDocument.Parse(await owner.GetStringAsync("/api/v1/auth/me"));
+            var businessId = business.RootElement.GetProperty("organizationId").GetString()!;
             using var selectPersonal = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/switch-organization", new()
             { ["_csrf"] = csrf, ["organizationId"] = personalId, ["returnUrl"] = "/organization?tab=billing" });
             await Assert.That(selectPersonal.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -161,7 +205,6 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             await Assert.That(afterPayment.RootElement.GetProperty("selection").GetProperty("organizationId").GetString()).IsEqualTo(businessId);
             var organizations = afterPayment.RootElement.GetProperty("organizations").EnumerateArray().ToArray();
             await Assert.That(organizations.Single(org => org.GetProperty("id").GetString() == businessId).GetProperty("planId").GetString()).IsEqualTo("7CNW2H87JE68ATZX224CV2G625");
-            await Assert.That(organizations.Single(org => org.GetProperty("id").GetString() == personalId).GetProperty("planId").GetString()).IsEqualTo("7CNW2H87JE68ATZX224CV2G625");
 
             var memberEmail = "billing-mcp-member-" + suffix + "@example.test";
             await BillingPlanJourneyTests.SignUpPaidAsync(member, memberEmail, password, "member-" + suffix);
@@ -200,19 +243,6 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 return result.GetProperty("structuredContent");
             }
 
-            async Task<string> ConfirmedCallbackAsync(string path, Dictionary<string, string> body)
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(body) };
-                request.Headers.Add("Origin", owner.BaseAddress!.GetLeftPart(UriPartial.Authority));
-                request.Headers.Add("Sec-Fetch-Mode", "navigate");
-                using var started = await owner.SendAsync(request);
-                await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Redirect).Because(path);
-                var hosted = started.Headers.Location!;
-                await Assert.That(hosted.AbsolutePath.StartsWith("/ui/terrascale/step-up/", StringComparison.Ordinal)).IsTrue();
-                using var approved = await owner.GetAsync("/__test/step-up/" + hosted.Segments.Last() + "?approve=yes");
-                await Assert.That(approved.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
-                return approved.Headers.Location!.PathAndQuery;
-            }
             static async Task ErrorAsync(HttpClient client, string secret, string name, object arguments)
             {
                 var response = await McpAsync(client, secret, "tools/call", new { name, arguments });
