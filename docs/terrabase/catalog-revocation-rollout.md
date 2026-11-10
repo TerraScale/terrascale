@@ -7,3 +7,5 @@ An unclean restart changes a peer's replica epoch. Its authenticated catalog anc
 A mismatched incarnation, an older catalog head, or an unreadable anchor supplies no such proof. Restored majorities remain closed when every available catalog lacks an externally witnessed revocation.
 
 The internal catalog-gate status includes the active anchor-listing, anchor-reading, coverage-checking or snapshot-import phase. Snapshot logs report import results and missing replica cuts without catalog contents or credentials.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
