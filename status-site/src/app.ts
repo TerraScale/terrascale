@@ -269,7 +269,11 @@ const route = createRouter<Route>({
       const view = await loadOverview(env, now, "24h");
       if (params.id === "status")
         return text(
-          badge("TerraScale", view.status, view.status === "operational" ? "Operational" : HEADLINES[view.status]),
+          badge(
+            "TerraScale",
+            view.status === "unknown" ? "none" : view.status,
+            view.status === "operational" ? "Operational" : HEADLINES[view.status],
+          ),
           "image/svg+xml",
         );
       const component = view.groups.flatMap((group) => group.components).find((entry) => entry.id === params.id);

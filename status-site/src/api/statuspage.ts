@@ -3,7 +3,7 @@
    one. Planned components and those pending launch are left out:
    Statuspage has no such state. */
 
-import type { Component, Incident, IncidentUpdate, Status, TimelineState } from "../domain/status";
+import type { Component, Incident, IncidentUpdate, PageStatus, TimelineState } from "../domain/status";
 import {
   aggregate,
   HEADLINES,
@@ -27,12 +27,13 @@ const COMPONENT_STATUS: Record<TimelineState, string> = {
   none: "operational",
 };
 
-const INDICATOR: Record<Status, string> = {
+const INDICATOR: Record<PageStatus, string> = {
   operational: "none",
   maintenance: "maintenance",
   degraded: "minor",
   partial_outage: "major",
   major_outage: "critical",
+  unknown: "minor",
 };
 
 export interface Feed {

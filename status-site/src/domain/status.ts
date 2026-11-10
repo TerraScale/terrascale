@@ -8,6 +8,8 @@ export const STATES = ["operational", "maintenance", "degraded", "partial_outage
 
 export type Status = (typeof STATES)[number];
 
+export type PageStatus = Status | "unknown";
+
 /** A timeline state: a status, or "none" where nothing was measured. */
 export type TimelineState = Status | "none";
 
@@ -102,8 +104,14 @@ export const STATE_LABELS: Record<TimelineState, string> = {
 
 /** The data-state value of a state in the shared status contract, which
     names the outages "partial" and "outage". */
-export const stateAttr = (state: TimelineState): string =>
-  state === "partial_outage" ? "partial" : state === "major_outage" ? "outage" : state;
+export const stateAttr = (state: TimelineState | PageStatus): string =>
+  state === "unknown" || state === "none"
+    ? "none"
+    : state === "partial_outage"
+      ? "partial"
+      : state === "major_outage"
+        ? "outage"
+        : state;
 
 /** The note of an endpoint the latest round found not configured, and of a
     component whose every endpoint it found so (see src/probe/terrabase.ts). */
@@ -137,12 +145,13 @@ export const PENDING_LAUNCH = "Pending launch";
 export const COMING_SOON = "Coming soon";
 
 /** The headline for each overall state. */
-export const HEADLINES: Record<Status, string> = {
+export const HEADLINES: Record<PageStatus, string> = {
   operational: "All systems operational",
   maintenance: "Scheduled maintenance in progress",
   degraded: "Some systems are degraded",
   partial_outage: "Partial system outage",
   major_outage: "Major system outage",
+  unknown: "Component status unknown",
 };
 
 /** The state an active incident implies. */
@@ -211,12 +220,13 @@ export function overallStatus(
   components: readonly TimelineState[],
   incidents: readonly Incident[],
   now: number,
-): Status {
+): PageStatus {
   let state = aggregate(components);
   for (const incident of incidents) {
     if (!isActive(incident, now) || incident.components.length > 0) continue;
     state = worst(state, incident.kind === "maintenance" ? "maintenance" : IMPACT_STATUS[incident.impact]);
   }
+  if (components.includes("none") && (state === "none" || state === "operational")) return "unknown";
   return state === "none" ? "operational" : state;
 }
 
