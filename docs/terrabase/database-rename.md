@@ -22,3 +22,5 @@ is its immutable ULID or current name. This supersedes the "PATCH `name` returns
 A key or token narrowed to one database carries its ULID (`database` claim); TerraBase refuses a token whose
 `database` claim is a name, and ts-auth only creates keys narrowed by ULID. A rename therefore never moves a
 credential to another database that later takes the old name.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
