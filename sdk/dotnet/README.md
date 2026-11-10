@@ -227,8 +227,9 @@ TerraBaseManagedDatabase copy = await client.Database(projectId, "app").BranchAs
 
 `HomeRegion` names the write region. `CreateDatabaseAsync` without a home region uses the called region.
 
-A database has one home region for writes and can have encrypted read replicas in other serving regions.
-REST reads can use a ready local replica; writes route to the home from any serving region. Replicas are eventually
+A database has one home region and can have encrypted read replicas in other serving regions.
+A replica region can accept a local SQL REST write; the home applies it. The default
+`TerraScale-Durability` is `local`. REST reads can use a ready local replica. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
 preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
 placement (`-all-regions` on `ts db create` and `ts db placement`) holds a replica in every
