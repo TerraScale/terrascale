@@ -9,6 +9,8 @@ The dashboard calls TerraBase's placement API through the management RPC contrac
 home, replicas and endpoint. The old home becomes a replica. A failed or unresolved move displays TerraBase's error;
 the dashboard does not assume that a failed response changed the home.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 Catalog reconciliation also refreshes the home and replica set after a move made through a CLI or SDK. When regional
 catalogs disagree, it prefers the record returned by the database's home region. Each update
 checks the dashboard placement revision again inside its storage compare-and-set, so a listing started before a
