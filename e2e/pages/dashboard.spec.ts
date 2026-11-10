@@ -13,7 +13,7 @@ for (const state of dashboardStates) {
     if (state.status) audit.expectStatus(new RegExp(`^${literal(target.origin + target.pathname)}(\\?|$)`), state.status);
     const response = await page.goto(target.href);
     expect(response?.status(), `HTTP status of ${state.name}`).toBe(state.status ?? 200);
-    if (state.status === undefined) await shell(page, current);
+    if (state.shell !== false) await shell(page, current);
     await state.data?.(page, current);
     await audit.check(state.name);
   });
