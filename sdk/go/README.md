@@ -148,8 +148,7 @@ qualify the HTTP boundary. All-regions placement (`AllRegions`) keeps a replica 
 serving region, including regions added later; `MoveDatabaseHome` moves the home to a
 replica region (`ts db move-home`, `ts db placement ... -all-regions`).
 
-A database's home region is the durable apply point for writes, a replica region can accept a local SQL REST write, and replicas can live in other serving regions.
-A replica region can accept a local SQL REST write, and the home applies it. The default `TerraScale-Durability` is `local`.
+A database's home region is the durable apply point for writes, a replica region can accept a local SQL REST write and the home applies it, and replicas can live in other serving regions. The default `TerraScale-Durability` is `local`.
 REST reads can use a ready local replica. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
 preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
