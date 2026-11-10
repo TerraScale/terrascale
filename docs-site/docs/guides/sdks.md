@@ -1,6 +1,6 @@
 ---
 title: SDK reference
-description: TerraScale SDKs for JavaScript, C#, Go, Python and Rust, with install commands and quickstarts.
+description: TerraScale SDKs for JavaScript, C#, Go and Python, with install commands and quickstarts. The Rust SDK is not published.
 ---
 
 # SDK reference
@@ -10,10 +10,10 @@ Official SDKs for the TerraBase SQL API at `https://api.terrascale.tech`. Every 
 | Language | Package | Install | Quickstart |
 | --- | --- | --- | --- |
 | JavaScript / TypeScript | `@terrascale/sdk` on npm | `npm install @terrascale/sdk@0.0.17` | [JavaScript quickstart](/getting-started/javascript) |
-| C# / .NET | `TerraScale.DotNet` (source; NuGet pending) | `dotnet pack` from the monorepo into a local package folder | [C# quickstart](/getting-started/csharp) |
+| C# / .NET | `TerraScale.DotNet` (preview; not on NuGet) | preview: `dotnet pack` from the monorepo into a local package folder | [C# quickstart](/getting-started/csharp) |
 | Go | `terrascale.tech/sdk` | `go get terrascale.tech/sdk@v0.0.27` | [Go quickstart](/getting-started/go) |
 | Python | `terrascale` (source; PyPI pending) | `pip install "git+https://github.com/TerraScale/terrascale@main#subdirectory=sdk/python"` | [Python quickstart](/getting-started/python) |
-| Rust | `terrascale` (source; crates.io pending) | `terrascale = { git = "https://github.com/TerraScale/terrascale.git" }` in `Cargo.toml` | [Rust quickstart](/getting-started/rust) |
+| Rust | not published (`sdk/rust` remains in the repository) | none | — |
 
 Every SDK runs SQL with the same calls: `execute`, `query` and `batch` post to `/v1/projects/{project}/databases/{database}/sql/execute`, one request and one transaction each, with positional or named arguments and typed rows. The .NET, Go, Python and Rust SDKs also open a WebSocket session on `/sql/ws` for interactive transactions (`begin`, `commit`, `rollback`): `SqlSession` in Python and Rust, the session clients in Go and .NET. The published JavaScript SDK (0.0.17) does not open one yet. Primary keys are ULIDs from each SDK's ID generator.
 

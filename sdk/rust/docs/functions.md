@@ -1,7 +1,6 @@
 # Customer functions
 
-Install the Rust SDK from an immutable Git revision; crates.io publication is
-pending the user-owned release step. Functions use the same project client and
+The Rust SDK is not published. This directory is source only. Functions use the same project client and
 customer authorization as SQL.
 
 `Database::deploy_function` takes a `FunctionDeployment` containing JavaScript

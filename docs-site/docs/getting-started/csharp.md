@@ -22,7 +22,7 @@ export TERRASCALE_REGION=gru                               # your database's hom
 
 ## Install the SDK
 
-The .NET SDK is not on NuGet yet. Build a package once from the monorepo and add it to a local package folder:
+The .NET SDK is a preview and is not on NuGet. Build a package once from the monorepo and add it to a local package folder:
 
 ```bash
 git clone --depth 1 https://github.com/TerraScale/terrascale.git
