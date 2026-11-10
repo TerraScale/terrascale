@@ -2,7 +2,9 @@
 
 Each database chooses where it lives: one **home region** and **replica regions**
 ([region replicas](region-replicas.md)). A replica region can commit some SQL REST writes locally; every other write
-runs at the home. A database can move its home to one of its replica regions while it takes writes.
+runs at the home. The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same
+transaction id and the home applies that write once. A database can move its home to one of its replica regions while it
+takes writes.
 
 ## API
 
