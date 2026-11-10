@@ -74,7 +74,7 @@ public sealed class PostgresWireTests
 
         await Assert.That(connection.PostgreSqlVersion).IsEqualTo(new Version(16, 0));
         await Assert.That(duplicate!.SqlState).IsEqualTo("42P07");
-        await Assert.That(session[0]).IsEquivalentTo([database.Name, "public", "wire", "PostgreSQL 16.0 (TerraBase)"]);
+        await Assert.That(session[0]).IsEquivalentTo([database.Name, "public", "wire", "16.0 (TerraScale)"]);
         await Assert.That(shown[0][0]).IsEqualTo("wire test");
         await Assert.That(unsupported!.SqlState).IsEqualTo("0A000");
         await Assert.That(values[0]).IsEquivalentTo(["42", "2.5", "XY", "0"]);

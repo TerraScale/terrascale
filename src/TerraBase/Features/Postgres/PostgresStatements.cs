@@ -29,7 +29,7 @@ internal readonly union PgParse(PgStatement[], PgError);
 internal static partial class PostgresStatements
 {
     public const int FirstTableOid = 16384, ProtocolVersion = 196608;
-    public const string ServerVersion = "16.0";
+    public const string ServerVersion = "16.0 (TerraScale)";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly PostgreSqlDialect Dialect = new();
@@ -67,7 +67,7 @@ internal static partial class PostgresStatements
         return settings;
     }
 
-    public static string Version => $"PostgreSQL {ServerVersion} (TerraBase)";
+    public static string Version => ServerVersion;
 
     public static PgParse Parse(string sql)
     {
