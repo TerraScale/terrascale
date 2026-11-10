@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { statuspage, type Feed } from "../api/statuspage";
 import { emptyHistogram } from "./histogram";
 import {
   aggregate,
@@ -212,5 +213,53 @@ describe("probes", () => {
     expect(meanLatency({ checks: 2, failures: 2, latencySum: 0 })).toBeNull();
     expect(probeUptime({ checks: 4, failures: 1 })).toBe(0.75);
     expect(probeUptime({ checks: 0, failures: 0 })).toBeNull();
+  });
+});
+
+describe("statuspage component status", () => {
+  it("maps an unmeasured component to unknown", () => {
+    const component = {
+      id: "01M4E7G1W82VKFPF5FJ9AVK1CZ",
+      groupId: "01M4E7G1W82VKFPF5FJ9AVK1AA",
+      name: "API",
+      description: "",
+      lifecycle: "active" as const,
+      status: "none" as const,
+      clusters: [],
+      vantagePings: {},
+      note: null,
+      bars: [],
+      latency: [],
+      uptime: null,
+    };
+    const feed: Feed = {
+      view: {
+        generatedAt: 0,
+        range: "24h",
+        status: "unknown",
+        monitoring: {
+          lastRoundAt: null,
+          delayed: false,
+          coverage: { level: "insufficient", answered: 0, verified: 0, total: 0, minimum: 1, vantages: [] },
+          issues: [],
+        },
+        groups: [{ id: component.groupId, name: "Platform", components: [component] }],
+        regions: [],
+        endpoints: [],
+        expiring: [],
+        activeIncidents: [],
+        resolvedIncidents: [],
+        maintenance: [],
+        days: [],
+        uptime: null,
+        uptimeHistory: null,
+      },
+      incidents: [],
+      updates: [],
+      components: [],
+      origin: "https://status.test",
+    };
+    const body = statuspage["components.json"](feed);
+    expect(body.components.find((entry) => entry.id === component.id)?.status).toBe("unknown");
   });
 });
