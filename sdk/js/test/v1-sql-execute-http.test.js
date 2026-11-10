@@ -37,6 +37,27 @@ test("batch sends every statement in one request and keeps integers beyond 2^53 
   expect(results[1]?.rows).toEqual(people.rows);
 });
 
+test("a serialization conflict is sent again twice and then raised", async () => {
+  const { client, requests } = await fixture((_request, response) => json(response, { error: { code: "serialization_conflict", message: "conflict", statement: 0, sqlstate: "40001" } }, 409));
+  const error = await client.database("app").execute("INSERT INTO t VALUES (1)").catch(caught => caught);
+  expect(requests).toHaveLength(3);
+  expect(error).toBeInstanceOf(SqlError);
+  expect(error).toMatchObject({ status: 409, code: "serialization_conflict", statement: 0, sqlstate: "40001" });
+});
+
+test("a serialization conflict that commits on the second attempt returns the row", async () => {
+  let calls = 0;
+  const row = { columns: [{ name: "id", decltype: "INTEGER" }], rows: [[7]], rows_affected: 1, last_insert_rowid: null };
+  const { client, requests } = await fixture((_request, response) => {
+    calls += 1;
+    if (calls === 1) json(response, { error: { code: "serialization_conflict", message: "conflict", statement: 0, sqlstate: "40001" } }, 409);
+    else json(response, { results: [row] });
+  });
+  const result = await client.database("app").execute("INSERT INTO t VALUES (1)");
+  expect(requests).toHaveLength(2);
+  expect(result).toEqual({ columns: row.columns, rows: [[7]], rowsAffected: 1, lastInsertRowid: null });
+});
+
 test.each([
   [400, "primary_key_violation", "23505", false],
   [409, "serialization_conflict", "40001", true],
