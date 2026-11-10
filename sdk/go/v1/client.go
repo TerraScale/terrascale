@@ -78,6 +78,7 @@ type Config struct {
 	// TLS 1.3. The client is copied and its redirect policy replaced, so the
 	// bearer token is never forwarded to a redirect target.
 	HTTPClient *http.Client
+	RegionPin  string
 }
 
 // Client is a data-plane client for one API key. It is safe for concurrent use.
@@ -90,6 +91,7 @@ type Client struct {
 	hc          *http.Client
 	maxRetries  int
 	maxResponse int64
+	regionPin   string
 }
 
 // TokenSource supplies access tokens; TerraBase validates their claims.
@@ -171,7 +173,7 @@ func newClient(cfg Config) (*Client, error) {
 		hc = &copied
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: DefaultMaxRetries, maxResponse: DefaultMaxResponseBytes}
+	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: DefaultMaxRetries, maxResponse: DefaultMaxResponseBytes, regionPin: strings.TrimSpace(cfg.RegionPin)}
 	if cfg.APIKey != "" {
 		source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: cfg.APIKey, HTTPClient: hc})
 		if err != nil {
@@ -399,6 +401,12 @@ func backoff(attempt int) time.Duration {
 	return d/2 + mrand.N(d/2+1)
 }
 
+func (c *Client) pin(h http.Header) {
+	if c.regionPin != "" {
+		h.Set("X-TerraScale-Region-Pin", c.regionPin)
+	}
+}
+
 func sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
 		return ctx.Err()
@@ -433,6 +441,7 @@ func (c *Client) send(ctx context.Context, req request, target string) (*respons
 		}
 	}
 	hr.Header.Set("Accept", "application/json")
+	c.pin(hr.Header)
 	if req.body != nil {
 		hr.Header.Set("Content-Type", cmp.Or(req.contentType, "application/json"))
 	}

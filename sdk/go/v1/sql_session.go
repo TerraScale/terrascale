@@ -250,9 +250,11 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 		if err != nil {
 			return nil, err
 		}
+		header := http.Header{"Authorization": {"Bearer " + token}}
+		c.pin(header)
 		ws, resp, err := websocket.Dial(ctx, target, &websocket.DialOptions{
 			HTTPClient:   c.hc,
-			HTTPHeader:   http.Header{"Authorization": {"Bearer " + token}},
+			HTTPHeader:   header,
 			Subprotocols: []string{SQLSubprotocol},
 		})
 		if err != nil {

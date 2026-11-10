@@ -69,6 +69,7 @@ func (c *Client) ProjectPrometheusMetrics(ctx context.Context, project string) (
 	}
 	req.Header.Set("Accept", prometheusMedia)
 	req.Header.Set("Authorization", "Bearer "+token)
+	c.pin(req.Header)
 	res, err := c.hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("terrabase: project Prometheus request: %w", err)

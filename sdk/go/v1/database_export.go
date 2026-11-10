@@ -32,6 +32,7 @@ func (c *Client) ExportDatabase(ctx context.Context, project, database string) (
 	}
 	req.Header.Set("Accept", "text/plain")
 	req.Header.Set("Authorization", "Bearer "+token)
+	pc.pin(req.Header)
 	res, err := pc.hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("terrabase: database export request: %w", err)
