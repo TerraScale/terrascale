@@ -16,3 +16,5 @@ commits applied between regions keep accepting any well-formed region: they repe
 
 The dashboard, SDKs and sign-up read the catalog instead of a fixed list; `https://<id>.api.terrascale.tech` reaches
 region `<id>` ([region-identity.md](region-identity.md#regional-hosts)).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
