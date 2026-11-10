@@ -32,6 +32,8 @@ fi
 
 source "$root/benchmark/turso-sync-host/turso-pin.env"
 [[ $TURSO_COMMIT =~ ^[0-9a-f]{40}$ ]]
+printf 'pin %s\n' "$TURSO_COMMIT"
+since=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
 token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
 hdr=(-H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28')
 if [[ -n $token ]]; then
@@ -39,12 +41,17 @@ if [[ -n $token ]]; then
 fi
 page=1
 hits=()
-while [[ $page -le 40 ]]; do
+while [[ $page -le 5 ]]; do
   body=$(mktemp)
-  curl -fsSL "${hdr[@]}" "https://api.github.com/repos/tursodatabase/turso/compare/${TURSO_COMMIT}...main?per_page=100&page=${page}" -o "$body"
-  count=$(jq 'if type == "object" and (.commits | type) == "array" then (.commits | length) else -1 end' "$body")
+  curl -fsSL -G "${hdr[@]}" \
+    --data-urlencode "since=${since}" \
+    --data-urlencode "sha=main" \
+    --data-urlencode "per_page=100" \
+    --data-urlencode "page=${page}" \
+    "https://api.github.com/repos/tursodatabase/turso/commits" -o "$body"
+  count=$(jq 'if type == "array" then length else -1 end' "$body")
   if [[ $count -lt 0 ]]; then
-    jq -r '.message // "compare request failed"' "$body" >&2
+    jq -r '.message // "commits request failed"' "$body" >&2
     rm -f "$body"
     exit 1
   fi
@@ -53,10 +60,11 @@ while [[ $page -le 40 ]]; do
     break
   fi
   while IFS= read -r subject; do
+    [[ -z $subject ]] && continue
     if subject_hits_storage_risk "$subject"; then
       hits+=("$subject")
     fi
-  done < <(jq -r '.commits[].commit.message | split("\n")[0]' "$body")
+  done < <(jq -r '.[].commit.message | split("\n")[0]' "$body")
   rm -f "$body"
   page=$((page + 1))
 done
@@ -64,4 +72,4 @@ if ((${#hits[@]} > 0)); then
   printf '%s\n' "${hits[@]}"
   exit 1
 fi
-printf 'no storage-risk commits since %s\n' "$TURSO_COMMIT"
+printf 'no storage-risk commits in the last 7 days\n'
