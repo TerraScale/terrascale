@@ -5,7 +5,7 @@ namespace TerraScale.TerraBase.Contracts
     {
         private static readonly string[] Prefixes = ["_tb_", "_ts_", "turso_", "__turso_", "tb_index_", "fts_dir_", "pragma_", "sqlite_stat"];
 
-        private static readonly string[] Tables = ["_collections", "_indexes", "_unique", "collections", "commit_offset"];
+        private static readonly string[] Tables = ["_collections", "_indexes", "_unique", "commit_offset"];
 
         private static readonly HashSet<string> ReservedTables = new(Tables, StringComparer.OrdinalIgnoreCase);
 
