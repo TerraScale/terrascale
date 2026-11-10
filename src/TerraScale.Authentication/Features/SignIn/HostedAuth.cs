@@ -28,6 +28,10 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     /// <summary>Mail-sending calls an end-user IP may burst; one more is regained every <see cref="MailInterval"/>.</summary>
     public const int MailPerIp = 30;
 
+    public const int SignUpsPerIp = 20;
+
+    public static readonly TimeSpan SignUpWindow = TimeSpan.FromHours(1);
+
     /// <summary>Password attempts per email per <see cref="PasswordWindow"/>.</summary>
     public const int PasswordPerEmail = 10;
 
@@ -69,6 +73,12 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
     {
         // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
         using var reservation = mail.Reserve();
+        if (await limiter.AcquireWithDeadlineAsync(this.Tenant, "hosted-signup-ip", limiter.Fold(ip), SignUpsPerIp, SignUpWindow, cancellationToken) is { } signupLimit)
+        {
+            logger.ZLogWarning($"Audit: hosted request rate-limited by the {"hosted-signup-ip":@Purpose} budget");
+            return (null, new MailRefusal(signupLimit.RetryAfter, BudgetExhausted: false));
+        }
+
         if (await this.LimitMailAsync(email, ip, cancellationToken) is { } refusal)
         {
             return (null, refusal);

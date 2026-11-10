@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.SignIn;
@@ -62,4 +63,41 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
             await Assert.That(recovery.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
     }
+
+    [Test]
+    public async Task One_ip_stops_at_twenty_sign_ups_an_hour_and_another_ip_is_admitted()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        const string password = "correct horse battery";
+        for (var attempt = 0; attempt < HostedAuth.SignUpsPerIp; attempt++)
+        {
+            using var admitted = await oidc.PostFormAsync(SignUp, new() { ["email"] = $"signup{attempt}@example.test", ["password"] = password, ["next"] = string.Empty });
+            await Assert.That(admitted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        using var limited = await oidc.PostFormAsync(SignUp, new() { ["email"] = "signup-over@example.test", ["password"] = password, ["next"] = string.Empty });
+        await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+
+        using var other = ClientFrom(oidc.Server.BaseAddress, IPAddress.Parse("127.0.0.2"));
+        using var allowed = await oidc.PostFormAsync(SignUp, new() { ["email"] = "signup-other@example.test", ["password"] = password, ["next"] = string.Empty }, client: other);
+        await Assert.That(allowed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    private static HttpClient ClientFrom(Uri baseAddress, IPAddress local) =>
+        new(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false,
+            ConnectCallback = async (context, cancellationToken) =>
+            {
+                var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                socket.Bind(new IPEndPoint(local, 0));
+                await socket.ConnectAsync(context.DnsEndPoint, cancellationToken);
+                return new NetworkStream(socket, ownsSocket: true);
+            },
+        })
+        {
+            BaseAddress = baseAddress,
+            Timeout = TimeSpan.FromSeconds(30),
+        };
 }
