@@ -54,6 +54,26 @@ public sealed class SqlSandboxTests
     }
 
     [Test]
+    public async Task An_unknown_verb_is_refused_with_sql_sandbox()
+    {
+        await using var db = await StartSharedAsync();
+        var (status, body) = await db.PostAsync(db.Writer, Stmt("GRANT SELECT ON notes TO public"));
+        var error = body.GetProperty("error");
+        await Assert.That((status, error.GetProperty("code").GetString(), error.GetProperty("sqlstate").GetString()))
+            .IsEqualTo((HttpStatusCode.Forbidden, "sql_sandbox", "42501"));
+    }
+
+    [Test]
+    public async Task A_quoted_denied_function_is_refused_with_sql_sandbox()
+    {
+        await using var db = await StartSharedAsync();
+        var (status, body) = await db.PostAsync(db.Writer, Stmt("SELECT \"load_extension\"('/tmp/evil.so')"));
+        var error = body.GetProperty("error");
+        await Assert.That((status, error.GetProperty("code").GetString(), error.GetProperty("sqlstate").GetString()))
+            .IsEqualTo((HttpStatusCode.Forbidden, "sql_sandbox", "42501"));
+    }
+
+    [Test]
     public async Task Internal_tables_are_invisible_to_queries_and_schema_listings()
     {
         await using var db = await StartSharedAsync();

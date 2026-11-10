@@ -166,7 +166,7 @@ internal static class SqlScript
             "RELEASE" => Plan(SqlStatementKind.Release),
             "PRAGMA" => Pragma(tokens, Plan),
             "COMMIT" or "END" or "ROLLBACK" or "START" => SqlErrors.Error("SQL syntax error in a transaction statement"),
-            _ => Plan(SqlStatementKind.Read),
+            _ => verb.Length == 0 ? Plan(SqlStatementKind.Read) : SqlSandbox.Denied($"{verb} is not supported"),
         };
         if (verb == "PRAGMA" || outcome is not SqlStatementPlan { Kind: SqlStatementKind.Read or SqlStatementKind.Write } plan)
         {

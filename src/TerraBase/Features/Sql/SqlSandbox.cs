@@ -62,7 +62,7 @@ internal static class SqlSandbox
                 return Denied($"{token.Value.ToLowerInvariant()} is not available");
             }
 
-            if (token.Kind == SqlTokenKind.Word && i + 1 < tokens.Count && tokens[i + 1].Kind == SqlTokenKind.Open && DeniedFunctions.Contains(token.Value))
+            if (token.Kind is SqlTokenKind.Word or SqlTokenKind.Quoted && i + 1 < tokens.Count && tokens[i + 1].Kind == SqlTokenKind.Open && DeniedFunctions.Contains(token.Value))
             {
                 return Denied($"the function {token.Value.ToLowerInvariant()} is not available");
             }
