@@ -23,3 +23,5 @@ Older servers return 404 for the new route. Clients must fail closed and never
 fall back to unconditional deletion. The existing database DELETE is unchanged.
 This prerequisite does not provide atomic branch reset, name swap, provenance
 validation or recovery after delete-before-create failure.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
