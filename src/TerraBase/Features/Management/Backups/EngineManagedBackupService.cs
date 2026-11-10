@@ -23,7 +23,8 @@ namespace TerraBase.Features.Management.Backups;
 
 internal sealed partial class EngineManagedBackupService(
     IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, IDatabaseRewind rewind, TimeProvider time,
-    ILogger<EngineManagedBackupService> logger, TerraBaseOptions options, Lazy<IBackupKeyShredding> shredding, IHostApplicationLifetime lifetime, IMemoryBudget memoryBudget)
+    ILogger<EngineManagedBackupService> logger, TerraBaseOptions options, Lazy<IBackupKeyShredding> shredding, IHostApplicationLifetime lifetime, IMemoryBudget memoryBudget,
+    IServiceProvider services)
     : IManagedBackupService
 {
     public const string BackedUpDatabases = "backed_up_databases";
@@ -307,6 +308,13 @@ internal sealed partial class EngineManagedBackupService(
             {
                 await FailAsync(record, "source_missing", "The database's files could not be read").ConfigureAwait(false);
                 return new NotFound();
+            }
+
+            if (services.GetService(typeof(IObjectStore)) is IObjectStore store)
+            {
+                var copy = Path.Combine(options.DataDirectory, record.OrganizationId, record.ProjectId, record.Id + ".db");
+                await using var copied = new FileStream(copy, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 16, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                await store.PutAsync(BackupLayout.FileRoot(snapshot) + "/managed-backup", copied, cancellationToken).ConfigureAwait(false);
             }
 
             var size = await engine.GetDatabaseSizeAsync(snapshot, cancellationToken).ConfigureAwait(false) ?? 0;
