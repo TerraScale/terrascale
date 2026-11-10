@@ -72,6 +72,8 @@ SELECT terrascale_expect_changes(changes(), 1);
 
 The served [API reference](../api-reference.md) includes HTTP statuses and the complete response schemas.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Metering and storage
 
 SQL reads are free with monthly fair use. Shape reads are free and unmetered. Committed writes bill the larger of changed rows and started 4 KiB of database growth; rollback and refused statements add no write units. See [operation allowances](../operation-allowance.md).
