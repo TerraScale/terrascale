@@ -1,3 +1,4 @@
+using Grpc.Core;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
@@ -43,16 +44,19 @@ namespace TerraScale.Dashboard.Common.Databases
             "Reads keep working, and writes resume next month (UTC). Upgrade the plan on the organization's Billing tab to keep writing now; Usage shows this month's total.";
         private static string Generic(Exception error)
         {
-            return Status(error) switch { 401 => "The data plane requires valid authentication.", 404 => "The requested resource is unavailable.", 403 => "Organization access is required.", 409 => "The request conflicts with the current database state.", 413 => "The payload is too large. Reduce the size and try again.", 429 => "Too many requests on this database. Wait a moment and try again.", 400 or 422 => "TerraBase refused the request.", _ => "The data plane could not complete the request. Try again shortly." };
+            return Status(error) switch { 401 => "The data plane requires valid authentication.", 404 => "The requested resource is unavailable.", 403 => "Organization access is required.", 409 => "The request conflicts with the current database state.", 413 => "The payload is too large. Reduce the size and try again.", 429 => "Too many requests on this database. Wait a moment and try again.", 400 or 422 => "TerraBase refused the request.", _ when AnsweredFailure(error) => "TerraBase could not complete the request.", _ => "The data plane could not complete the request. Try again shortly." };
         }
 
-        // TerraBase error messages name the rule that failed and never echo request input, so a refusal can say why.
-        // TerraBase writes lowercase fragments ("the cursor does not belong to this query"); present them as a sentence.
         private static string Reason(Exception error)
         {
-            return error is TerraBaseException { Message: { Length: > 0 and <= 300 } message } && Status(error) is 400 or 409 or 413 or 422 or 429 &&
+            return error is TerraBaseException { Message: { Length: > 0 and <= 300 } message } && (Status(error) is 400 or 409 or 413 or 422 or 429 || AnsweredFailure(error)) &&
             message.Trim() is { Length: > 0 } reason
             ? " " + char.ToUpperInvariant(reason[0]) + reason[1..] + (reason[^1] is '.' or '!' or '?' ? "" : ".") : "";
+        }
+
+        private static bool AnsweredFailure(Exception error)
+        {
+            return error is TerraBaseException { Status: >= 500, InnerException: RpcException { Trailers: var trailers } } && trailers.GetValueBytes(TerraBaseRpc.FaultTrailer) is not null;
         }
 
         internal static IResult Failure(Exception error)
