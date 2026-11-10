@@ -21,6 +21,7 @@ catches up. REST reads have no session; use the home when a read must see a prev
 completed its first pull sends reads to the home.
 
 On SQL over REST, `TerraScale-Durability: home` acknowledges a local write only after the home applied it. The default, `local`, acknowledges that write on the replica region's quorum. A write the region does not commit locally still runs at the home.
+The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once.
 
 ## Recovery and availability
 
