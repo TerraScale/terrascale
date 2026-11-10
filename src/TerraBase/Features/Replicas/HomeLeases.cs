@@ -132,6 +132,23 @@ internal sealed partial class HomeLeases(
             return true;
         }
 
+        if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
+            || placement.Home != options.Region)
+        {
+            return false;
+        }
+
+        if (placement is { AllRegions: false, Replicas.Count: 0 })
+        {
+            return true;
+        }
+
+        var id = database.DatabaseId!;
+        if (!leaseGate.Leased.Contains(id))
+        {
+            leaseGate.Lease(id, held: false);
+        }
+
         if (_kv is not { } kv || !Ready)
         {
             return false;
@@ -140,19 +157,8 @@ internal sealed partial class HomeLeases(
         await _confirming.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-                || placement.Home != options.Region)
-            {
-                return false;
-            }
-
-            if (placement is { AllRegions: false, Replicas.Count: 0 })
-            {
-                return true;
-            }
-
             await ConfirmAsync(kv, database, placement, cancellationToken).ConfigureAwait(false);
-            return leaseGate.Holds(database.DatabaseId!);
+            return leaseGate.Holds(id);
         }
         finally
         {
