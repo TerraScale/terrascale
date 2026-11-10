@@ -35,7 +35,7 @@ public sealed class DevelopmentPeersTests
 
                 await Assert.That(process.ExitCode).IsEqualTo(2);
                 await Assert.That(await output).IsEmpty();
-                await Assert.That(await error).Contains("DOTNET_ENVIRONMENT=Development cannot start when TS_PEERS_FILE is set");
+                await Assert.That(await error).Contains("Development refuses TS_PEERS_FILE");
             }
             finally
             {

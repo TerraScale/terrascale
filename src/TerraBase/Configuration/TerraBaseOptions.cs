@@ -192,6 +192,11 @@ public sealed record TerraBaseOptions
         }
 
         var outsideDevelopment = EnvironmentName(args) != Environments.Development;
+        if (!outsideDevelopment && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TS_PEERS_FILE")))
+        {
+            throw new TerraBaseConfigurationException("Development refuses TS_PEERS_FILE");
+        }
+
         var options = FromValues(values, outsideDevelopment);
         if (options.Backup is null && outsideDevelopment)
         {
