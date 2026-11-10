@@ -18,22 +18,14 @@ public enum PasswordProblem
     Common,
 }
 
-/// <summary>
-/// The new-password rules for password-only (single-factor) accounts, after NIST SP 800-63B: 15 to 256 Unicode
-/// characters (code points) of any kind, no composition rules, and refusal of common, repetitive or context-specific
-/// choices. The common list is checked in memory, so no password ever leaves the process. Sign-in only needs
-/// <see cref="Verifiable"/>, so the policy never locks out an existing account.
-/// </summary>
 public static class PasswordPolicy
 {
     /// <summary>Fewest Unicode characters in a new password.</summary>
-    public const int MinCharacters = 15;
+    public const int MinCharacters = 10;
 
     /// <summary>Most Unicode characters in any password (at most 1024 UTF-8 bytes for Argon2id).</summary>
     public const int MaxCharacters = 256;
 
-    // Passwords of 15+ characters from SecLists (MIT) 100k-most-used-passwords-NCSC and
-    // xato-net-10-million-passwords-1000000, NFKC-normalized and lower-cased, one per line, gzip.
     private const string CommonResource = "assets/passwords/common.txt.gz";
 
     private static readonly Lazy<FrozenSet<string>> CommonPasswords = new(LoadCommon);
