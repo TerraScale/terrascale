@@ -9,6 +9,7 @@ from fake import API_KEY, BASE, ISSUER, PROJECT, Fake
 
 import terrascale
 from terrascale import (
+    AsyncTerraScale,
     CommitUncertainError,
     ConflictError,
     RateLimitError,
@@ -139,3 +140,21 @@ def test_if_id_branch_and_delete_guard_the_identity(ts: TerraScale, fake: Fake) 
         f"POST /v1/projects/{PROJECT}/databases/main/branches/if-id/{created.id}",
         f"DELETE /v1/projects/{PROJECT}/databases/copy/if-id/{branch.id}",
     ]
+
+
+async def test_blank_region_sends_no_pin() -> None:
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("x-terrascale-region-pin"))
+        return httpx.Response(200, json={"items": []})
+
+    for pin in ("", "   "):
+        sync = httpx.Client(transport=httpx.MockTransport(handler))
+        TerraScale(project=PROJECT, token="fixture-token", region=pin, base_url=BASE, http_client=sync).list_databases()
+        sync.close()
+        async_http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        await AsyncTerraScale(
+            project=PROJECT, token="fixture-token", region=pin, base_url=BASE, http_client=async_http).list_databases()
+        await async_http.aclose()
+    assert seen == [None, None, None, None]
