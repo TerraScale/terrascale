@@ -54,7 +54,7 @@ partner does not acknowledge the write locally; the router forwards it to the ho
 
 The stream lives in the writer's region so the acknowledgement is a local round trip, and a cut link to the home
 only delays delivery. JetStream drops a republished message with a known `Nats-Msg-Id`, and the home drops a known
-transaction id, so nothing is applied twice.
+transaction id, so nothing is applied twice. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Home consumer
 
