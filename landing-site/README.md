@@ -78,3 +78,5 @@ cancellation. No service secret belongs in a browser bundle, and sample keys
 are not landing-site runtime configuration. Existing static-origin bypass and
 launch-copy selectors remain inventoried for owning implementation changes;
 this docs-only change does not remove them or prove a launch phase is deployed.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
