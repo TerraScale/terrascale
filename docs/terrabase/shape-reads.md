@@ -206,3 +206,5 @@ change gives a filtered shape a new handle and `409` for the old one; unsafe `wh
 `tests/TerraBase.Slow/Shapes/TableShapeWorkloadTests.cs`: a shape equals its table after 100,000 random inserts, upserts,
 updates, row id changes, replaces and deletes, for a client that synced before the workload, one that bootstrapped in
 the middle, and a fresh snapshot afterwards.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
