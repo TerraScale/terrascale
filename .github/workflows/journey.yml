@@ -6,7 +6,68 @@ on:
 permissions: {}
 
 jobs:
+  runners:
+    name: runner ${{ matrix.sdk }}
+    strategy:
+      matrix:
+        sdk: [go, rust]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      SDK: ${{ matrix.sdk }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        if: matrix.sdk == 'go'
+        with:
+          install: false
+      - name: Install the pinned toolchain
+        run: |
+          echo "E2E_SDK_BUILD=$RUNNER_TEMP/sdk" >> "$GITHUB_ENV"
+          case "$SDK" in
+            go) mise use -g "go@$(cat sdk/go/.go-version)"; dirname "$(mise which go)" >> "$GITHUB_PATH" ;;
+            rust) rustup toolchain install 1.99.1 --profile minimal ;;
+          esac
+      - id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            e2e/sdk/rust/target
+          key: journey-${{ matrix.sdk }}-${{ hashFiles('e2e/sdk/go/go.sum', 'sdk/go/go.sum', 'e2e/sdk/rust/Cargo.lock') }}-${{ hashFiles(format('sdk/{0}/**', matrix.sdk), format('e2e/sdk/{0}/**', matrix.sdk)) }}
+          restore-keys: journey-${{ matrix.sdk }}-${{ hashFiles('e2e/sdk/go/go.sum', 'sdk/go/go.sum', 'e2e/sdk/rust/Cargo.lock') }}-
+      - id: build
+        name: Build the runner
+        run: bash e2e/sdk/build.sh "$SDK"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: runner-${{ matrix.sdk }}
+          path: ${{ runner.temp }}/sdk
+          retention-days: 1
+          if-no-files-found: error
+      - if: always() && steps.build.outcome == 'success' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            e2e/sdk/rust/target
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
   journey:
+    needs: runners
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -26,6 +87,7 @@ jobs:
           {
             echo "E2E_TOOLS=$HOME/.cache/terrascale-e2e"
             echo "E2E_BUILD=$RUNNER_TEMP/journey-build"
+            echo "E2E_SDK_BUILD=$RUNNER_TEMP/sdk"
           } >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
@@ -38,11 +100,13 @@ jobs:
         with:
           path: ~/.nuget/packages
           key: journey-nuget-${{ hashFiles('**/packages.lock.json') }}
-      - id: npm
+      - id: packages
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: ~/.npm
-          key: journey-npm-${{ hashFiles('e2e/package-lock.json', 'src/TerraScale.Dashboard/web/package-lock.json') }}
+          path: |
+            ~/.npm
+            ~/.cache/pip
+          key: journey-packages-${{ hashFiles('e2e/package-lock.json', 'src/TerraScale.Dashboard/web/package-lock.json', 'sdk/js/package-lock.json', 'sdk/python/pyproject.toml') }}
       - id: tools
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -54,12 +118,26 @@ jobs:
           path: ~/.cache/ms-playwright
           key: journey-chromium-${{ hashFiles('e2e/package-lock.json') }}
       - id: build
-        name: Build the services
-        run: bash e2e/env/build.sh . "$E2E_BUILD"
+        name: Build the services and the .NET, Python and JS runners
+        run: |
+          bash e2e/sdk/build.sh python > "$RUNNER_TEMP/python-runner.log" 2>&1 &
+          python=$!
+          bash e2e/sdk/build.sh js > "$RUNNER_TEMP/js-runner.log" 2>&1 &
+          js=$!
+          bash e2e/env/build.sh . "$E2E_BUILD"
+          bash e2e/sdk/build.sh dotnet
+          wait "$python" || { cat "$RUNNER_TEMP/python-runner.log"; exit 1; }
+          wait "$js" || { cat "$RUNNER_TEMP/js-runner.log"; exit 1; }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: runner-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/sdk
       - id: install
         name: Install the suite and its browser
         working-directory: e2e
         run: |
+          chmod +x "$E2E_SDK_BUILD/go/runner" "$E2E_SDK_BUILD/rust/runner"
           npm ci --no-audit --no-fund
           npx playwright install --only-shell chromium
       - id: trust
@@ -110,11 +188,13 @@ jobs:
         with:
           path: ~/.nuget/packages
           key: ${{ steps.nuget.outputs.cache-primary-key }}
-      - if: always() && steps.install.outcome == 'success' && steps.npm.outputs.cache-hit != 'true'
+      - if: always() && steps.install.outcome == 'success' && steps.packages.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: ~/.npm
-          key: ${{ steps.npm.outputs.cache-primary-key }}
+          path: |
+            ~/.npm
+            ~/.cache/pip
+          key: ${{ steps.packages.outputs.cache-primary-key }}
       - if: always() && steps.trust.outcome == 'success' && steps.tools.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
