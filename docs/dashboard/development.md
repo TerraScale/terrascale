@@ -196,3 +196,5 @@ production demo selection and manual endpoint/secret overrides are prohibited.
 
 Do not deploy until the live SDK, persistence, identity delivery and release
 gates in [state storage](state-storage.md) are satisfied.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
