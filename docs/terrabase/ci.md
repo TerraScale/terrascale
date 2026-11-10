@@ -11,3 +11,5 @@ The Slow suite is not required on every pull request. `.github/workflows/slow.ym
 The power-loss end-to-end tests run nightly on `main` from `.github/workflows/terrabase-power-loss.yml` and are not part of every pull request. The nightly power-loss job runs the local-only category through `make terrabase-e2e-local`.
 
 Local Fast validation is `make terrabase-test-fast`. Local Slow validation is `make terrabase-test-slow`.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
