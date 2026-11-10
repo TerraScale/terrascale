@@ -66,7 +66,8 @@ Each home region has one durable pull consumer `home-<home>` on every other regi
 - After `ApplyAsync` returns, whatever the state, the home acks the message and publishes the `applied` notice.
   A rejected transaction is `reverted`, so it never stalls the stream.
 - An unavailable home (busy, storage fault, shutdown) does not ack. The database's later messages wait behind it, so
-  order holds, and other databases continue.
+  order holds, and other databases continue. A stuck home-apply backoff releases its MaxParallelDatabases slot
+  before the delay.
 - On start, the consumer restarts from its ack floor. A redelivered message can never overtake a later one, and an
   applied one is answered from its recorded state.
 - An undecodable home push is parked on stream `TERRABASE_PUSH_PARK_<home>` and then acknowledged, not terminated.
