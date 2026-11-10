@@ -19,3 +19,5 @@ management authorization and current-name confirmation without step-up.
 
 The dashboard uses main’s TerraScale.DotNet 0.0.20 package. HTTP fake journeys
 verify the consumer contract; they do not qualify live convergence.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
