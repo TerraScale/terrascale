@@ -198,5 +198,5 @@ across clones; create a new client with a replacement key. A refused token excha
 terminal `Error::TokenExchange` code `invalid_key` (upstream bodies remain redacted). `503 auth_unavailable`
 uses the existing replay-safe backoff and `Retry-After` policy without discarding the token.
 
-NATS error 10074 is not retried because the stream wants more replicas than the cluster has.
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
