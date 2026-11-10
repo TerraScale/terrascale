@@ -96,6 +96,7 @@ func (c *Client) PutObject(ctx context.Context, project, bucketID, key string, b
 	for k, v := range capability.Headers {
 		put.Header.Set(k, v)
 	}
+	c.pin(put.Header)
 	put.ContentLength = size
 	res, err := c.hc.Do(put)
 	if err != nil {
@@ -129,6 +130,7 @@ func (c *Client) GetObject(ctx context.Context, project, bucketID, key string) (
 	if err != nil {
 		return nil, nil, fmt.Errorf("terrabase: build download request: %w", err)
 	}
+	c.pin(get.Header)
 	res, err := c.hc.Do(get)
 	if err != nil {
 		return nil, nil, fmt.Errorf("terrabase: get object: %w", err)

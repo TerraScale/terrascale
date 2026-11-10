@@ -64,6 +64,64 @@ func TestFileObjectRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFileCapabilityURLRegionPin(t *testing.T) {
+	const (
+		fileID   = "01JA0000000000000000000003"
+		fileURL  = "https://store.test/objects/hello.txt"
+		expires  = "2026-01-01T00:00:00.000Z"
+		fileBody = "hello"
+	)
+	digest := base64.StdEncoding.EncodeToString(sum256(fileBody))
+	fileBase := "/v1/projects/" + bucketProject + "/buckets/" + bucketID + "/files"
+	signedJSON := `{"id":"` + fileID + `","url":"` + fileURL + `","expiresAt":"` + expires + `","headers":{"content-type":"text/plain","content-length":"5","x-amz-checksum-sha256":"` + digest + `"}}`
+	downloadJSON := `{"id":"` + fileID + `","url":"` + fileURL + `","expiresAt":"` + expires + `","headers":{}}`
+	fileJSON := `{"id":"` + fileID + `","name":"hello.txt","contentType":"text/plain","size":5,"sha256":"` + digest + `","metadata":{},"status":"ready","uploadExpiresAt":"` + expires + `","deleteAfter":null}`
+	pageJSON := `{"items":[` + fileJSON + `],"next":null}`
+	for _, pin := range []string{"sjc", ""} {
+		var storage []string
+		hc := &http.Client{Transport: bucketTransport(func(r *http.Request) (*http.Response, error) {
+			if !strings.HasPrefix(r.URL.Path, "/v1/") {
+				storage = append(storage, r.Header.Get("X-TerraScale-Region-Pin"))
+			}
+			reply := fileJSON
+			switch r.URL.Path {
+			case "/objects/hello.txt":
+				if r.Method == http.MethodGet {
+					reply = fileBody
+				}
+			case fileBase:
+				reply = pageJSON
+			case fileBase + "/upload":
+				reply = signedJSON
+			case fileBase + "/" + fileID + "/download":
+				reply = downloadJSON
+			}
+			status := http.StatusOK
+			if r.URL.Path == fileBase+"/upload" {
+				status = http.StatusCreated
+			}
+			return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(reply)), Request: r}, nil
+		})}
+		c, err := tb.New(tb.Config{Token: "fixture.jwt.sig", HTTPClient: hc, RegionPin: pin})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := t.Context()
+		if _, err = c.PutObject(ctx, bucketProject, bucketID, "hello.txt", strings.NewReader(fileBody), "text/plain"); err != nil {
+			t.Fatal(err)
+		}
+		body, _, err := c.GetObject(ctx, bucketProject, bucketID, "hello.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, body)
+		body.Close()
+		if len(storage) != 2 || storage[0] != pin || storage[1] != pin {
+			t.Fatalf("pin %q storage headers %q", pin, storage)
+		}
+	}
+}
+
 func sum256(data string) []byte {
 	sum := sha256.Sum256([]byte(data))
 	return sum[:]
