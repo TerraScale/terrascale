@@ -5,13 +5,13 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations;
 
-[ClassDataSource<DashboardRootFixture>]
-public sealed class OrganizationStorageJourneyTests(DashboardRootFixture fixture)
+[ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+public sealed class OrganizationStorageJourneyTests(SharedDatabaseSdk shared)
 {
     [Test]
     public async Task ConcurrentOrganizationWritesKeepEveryRowAndAProjectRefusesADuplicateDatabaseName()
     {
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+        var scenario = shared.Scenario;
         using var client = scenario.CreateClient();
         using var producer = scenario.CreateProviderClient();
         var account = await DatabaseJourney.NativeWorkspaceAsync(client);

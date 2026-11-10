@@ -1187,6 +1187,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         private readonly ConcurrentDictionary<string, InvoiceItem> invoiceItems = new();
         private readonly ConcurrentDictionary<string, string> invoiceItemIds = new();
         private string origin = "http://localhost";
+        private readonly AsyncLocal<string?> servingOrigin = new();
         private InvoiceItem[] InvoiceItems(string customer)
         {
             return invoiceItems.Values.Where(item => item.Customer == customer).ToArray();
@@ -1388,7 +1389,7 @@ namespace TerraScale.Dashboard.E2E.Demo
             else if (request.Method == HttpMethod.Post && path == "/v1/billing_portal/sessions")
             {
                 ObserveReturn("return_url", form["return_url"].ToString());
-                value = new { id = "bps_demo", @object = "billing_portal.session", url = origin + "/__test/portal" };
+                value = new { id = "bps_demo", @object = "billing_portal.session", url = (servingOrigin.Value ?? origin) + "/__test/portal" };
             }
             else
             {
@@ -1400,6 +1401,11 @@ namespace TerraScale.Dashboard.E2E.Demo
         public void SetOrigin(string value)
         {
             origin = value;
+        }
+
+        public void ServeFrom(string value)
+        {
+            servingOrigin.Value = value;
         }
 
         private void ObserveReturn(string field, string value)
@@ -1450,7 +1456,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 metadata = checkout.Metadata,
                 status = checkout.Completed ? "complete" : "open",
                 mode = checkout.Mode,
-                url = origin + "/__test/checkout?id=" + checkout.Id,
+                url = (servingOrigin.Value ?? origin) + "/__test/checkout?id=" + checkout.Id,
                 subscription = checkout.SubscriptionId.Length > 0 ? checkout.SubscriptionId : null,
                 setup_intent = checkout.Mode == "setup" && checkout.Completed ? new { id = "seti_demo", @object = "setup_intent", status = "succeeded", payment_method = "pm_demo" } : null
             };
@@ -1518,7 +1524,7 @@ namespace TerraScale.Dashboard.E2E.Demo
         {
             return app =>
         {
-            app.Use((context, handler) => { context.Connection.RemoteIpAddress ??= IPAddress.Loopback; stripe.SetOrigin(context.Request.Scheme + "://" + context.Request.Host); return handler(context); });
+            app.Use((context, handler) => { context.Connection.RemoteIpAddress ??= IPAddress.Loopback; stripe.ServeFrom(context.Request.Scheme + "://" + context.Request.Host); return handler(context); });
             next(app);
         };
         }

@@ -9,6 +9,43 @@ import xml.etree.ElementTree as ET
 
 root = Path(__file__).resolve().parents[2]
 suite = root / "tests/TerraScale.Dashboard.E2E"
+shared_scenarios = suite / "Demo/SharedScenarios.cs"
+shared_docs = "docs/dashboard/development.md#writing-a-fast-journey"
+
+
+def session_fixtures(text):
+    return set(re.findall(r"\bpublic\s+sealed\s+class\s+(\w+)\s*:\s*IAsyncInitializer\b", text))
+
+
+def unsanctioned_session_sharing(attributes, sanctioned):
+    for attribute in attributes:
+        if not re.search(r"\bPerTestSession\b", attribute):
+            continue
+        match = re.fullmatch(r"\s*ClassDataSource\s*<\s*(\w+)\s*>\s*\(\s*Shared\s*=\s*SharedType\s*\.\s*PerTestSession\s*\)\s*",
+                             attribute)
+        if match is None or match.group(1) not in sanctioned:
+            return attribute
+    return None
+
+
+sample_fixtures = session_fixtures("public sealed class SharedSample : IAsyncInitializer, IAsyncDisposable\n"
+                                   "public sealed class PlainSample\n")
+assert sample_fixtures == {"SharedSample"}, "verify-e2e self-test: only IAsyncInitializer fixtures are sanctioned"
+assert unsanctioned_session_sharing(["ClassDataSource<SharedSample>(Shared = SharedType.PerTestSession)", "Test"],
+                                    sample_fixtures) is None, \
+    "verify-e2e self-test: a sanctioned shared scenario must be allowed"
+for rejected in ("ClassDataSource<SessionState>(Shared = SharedType.PerTestSession)",
+                 "ClassDataSource<PlainSample>(Shared = SharedType.PerTestSession)",
+                 "ClassDataSource<Journey.SharedSample>(Shared = SharedType.PerTestSession)",
+                 "ClassDataSource(typeof(SharedSample), Shared = SharedType.PerTestSession)"):
+    assert unsanctioned_session_sharing([rejected], sample_fixtures) == rejected, \
+        f"verify-e2e self-test: ad-hoc session sharing must be rejected: {rejected}"
+
+sanctioned_fixtures = session_fixtures(shared_scenarios.read_text())
+assert sanctioned_fixtures, f"{shared_scenarios.relative_to(root)} must define the shared session fixtures"
+fast_journey_docs = (root / "docs/dashboard/development.md").read_text().split("### Writing a Fast journey", 1)[1].split("\n#", 1)[0]
+for fixture in sorted(sanctioned_fixtures):
+    assert f"`{fixture}`" in fast_journey_docs, f"List the shared fixture {fixture} in {shared_docs}"
 project = ET.parse(suite / "TerraScale.Dashboard.E2E.csproj")
 packages = {item.get("Include") for item in project.findall(".//PackageReference")}
 assert "TUnit" in packages, "Dashboard E2E tests must use TUnit"
@@ -45,8 +82,10 @@ for source in [*app.rglob("*.cs"), *suite.rglob("*.cs")]:
     attributes = "\n".join(re.findall(r"\[([^\]]+)\]", text))
     assert not re.search(r"\b(?:NotInParallel|ParallelLimiter)(?:Attribute)?\b", attributes), \
         f"Fix per-test isolation instead of limiting parallel execution: {source}"
-    assert not re.search(r"\bSharedType\s*\.\s*PerTestSession\b", attributes), \
-        f"Give each test its own fixture instead of sharing session state: {source}"
+    shared = unsanctioned_session_sharing(re.findall(r"\[([^\]]+)\]", text), sanctioned_fixtures)
+    assert shared is None, \
+        (f"Share session state only through a fixture in {shared_scenarios.relative_to(root)} "
+         f"({', '.join(sorted(sanctioned_fixtures))}), see {shared_docs}: {source}: [{shared}]")
     assert not re.search(r"\b(?:Fact|Theory|TestMethod|DataTestMethod|TestCase|TestCaseSource)(?:Attribute)?\b", attributes), \
         f"Use TUnit application journeys, not another test framework: {source}"
     if not re.search(r"(?:^|[,\s:.])Test(?:Attribute)?\s*(?:\(|,|$)", attributes, re.MULTILINE):

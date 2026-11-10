@@ -2,7 +2,7 @@ using System.Net;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {
-    [ClassDataSource<DashboardE2EFixture>]
+    [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
     public sealed class BrowserSecurityJourneyTests(DashboardE2EFixture fixture)
     {
         [Test]

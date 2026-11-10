@@ -11,8 +11,8 @@ using TerraScale.Dashboard.Features.Home;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class SensitiveLoggingJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDemoEnvironment>(Shared = SharedType.PerTestSession)]
+    public sealed class SensitiveLoggingJourneyTests(SharedDemoEnvironment shared)
     {
         [Test]
         [Arguments(false)]
@@ -21,10 +21,8 @@ namespace TerraScale.Dashboard.E2E.Platform
         {
             var secret = "sensitive-" + new Faker().Random.AlphaNumeric(32);
             var captured = new Capture();
-            var environment = new DemoEnvironment();
-            await environment.InitializeAsync();
             FailingStripe stripe = null!;
-            await using var app = await environment.CreateTestHostAsync(fixture.Root, 0, "http://127.0.0.1", builder =>
+            await using var app = await shared.Environment.CreateTestHostAsync(shared.Root, 0, "http://127.0.0.1", builder =>
             {
                 builder.Logging.ClearProviders();
                 builder.Logging.SetMinimumLevel(LogLevel.Trace);

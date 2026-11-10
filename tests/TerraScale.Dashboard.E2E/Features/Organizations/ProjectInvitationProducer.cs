@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations
 {
     public sealed partial class TsAuthPlatformJourneyTests
     {
-        private sealed partial class PlatformProducer
+        internal sealed partial class PlatformProducer
         {
             public void ClearProjectInvitations(string org, string project)
             {

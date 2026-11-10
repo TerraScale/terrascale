@@ -30,7 +30,8 @@ namespace TerraScale.Dashboard.E2E.Demo
         private readonly ConcurrentDictionary<string, (string Customer, string Price)> uncertainUpdates = new();
         private readonly ConcurrentQueue<(string Customer, string Price, string RequestKey)> updateAttempts = new();
         private readonly ConcurrentQueue<(string Customer, string Path)> mutations = new();
-        private readonly SemaphoreSlim serial = new(1);
+        private readonly ConcurrentDictionary<string, string> scheduleSubscriptions = new();
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new(StringComparer.Ordinal);
         public void MapRoutes(WebApplication app)
         {
             app.MapPost("/__test/billing/plans/scenario", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
@@ -64,7 +65,8 @@ namespace TerraScale.Dashboard.E2E.Demo
                     return Results.BadRequest();
                 }
 
-                await serial.WaitAsync(http.RequestAborted);
+                var gate = Gate(binding.SubscriptionId.Length > 0 ? binding.SubscriptionId : binding.CustomerId);
+                await gate.WaitAsync(http.RequestAborted);
                 try
                 {
                     // The billing portal's "use as default" sets the customer's invoice default, not the subscription's.
@@ -131,7 +133,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                         scenarios[binding.CustomerId] = scenario == "confirm-payment" ? "confirmed" : scenario;
                     }
                 }
-                finally { serial.Release(); }
+                finally { gate.Release(); }
                 return Results.NoContent();
             });
             // Organization deletion removes the binding's organization, so this reads Stripe's side by its metadata.
@@ -246,14 +248,15 @@ namespace TerraScale.Dashboard.E2E.Demo
             BillingPlanBarrier? blocked = null;
             if (isSubscription && request.Method == HttpMethod.Get)
             {
-                await serial.WaitAsync(cancellationToken);
+                var read = Gate(path.Split('/')[3]);
+                await read.WaitAsync(cancellationToken);
                 try
                 {
                     var subscription = await SubscriptionAsync(path.Split('/')[3], cancellationToken);
                     if (barriers.TryGetValue(subscription["customer"]!.GetValue<string>(), out var barrier) && ++barrier.Reads == 2)
                     { blocked = barrier; barrier.Waiting.TrySetResult(); }
                 }
-                finally { serial.Release(); }
+                finally { read.Release(); }
             }
             if (blocked is not null)
             {
@@ -261,10 +264,15 @@ namespace TerraScale.Dashboard.E2E.Demo
                 deadline.CancelAfter(TimeSpan.FromSeconds(10));
                 await blocked.Resume.Task.WaitAsync(deadline.Token);
             }
-            await serial.WaitAsync(cancellationToken);
+            var form = QueryHelpers.ParseQuery(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
+            var gate = Gate(isSubscription ? path.Split('/')[3]
+                : isExpire ? checkoutId
+                : path == "/v1/subscription_schedules" ? form.GetValueOrDefault("from_subscription").ToString()
+                : isSchedule ? scheduleSubscriptions[path.Split('/')[3]]
+                : form.GetValueOrDefault("subscription").ToString());
+            await gate.WaitAsync(cancellationToken);
             try
             {
-                var form = QueryHelpers.ParseQuery(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
                 var key = request.Headers.TryGetValues("Idempotency-Key", out var keys) ? keys.Single() : "";
                 if ((request.Method == HttpMethod.Post && !isPreview() || request.Method == HttpMethod.Delete) && key.Length == 0)
                 {
@@ -429,6 +437,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                             ["phases"] = new JsonArray(Phase(start, end, subscription["items"]!["data"]![0]!["price"]!.DeepClone()))
                         };
                         subscription["schedule"] = id;
+                        scheduleSubscriptions[id] = subscription["id"]!.GetValue<string>();
                     }
                     return Json(schedules[id].DeepClone());
                 }
@@ -468,7 +477,7 @@ namespace TerraScale.Dashboard.E2E.Demo
                 return Json(schedule.DeepClone());
                 bool isPreview() => path == "/v1/invoices/create_preview";
             }
-            finally { serial.Release(); }
+            finally { gate.Release(); }
         }
         internal string? SubscriptionStatus(string id)
         {
@@ -483,6 +492,12 @@ namespace TerraScale.Dashboard.E2E.Demo
         internal void SetScenario(string customer, string scenario)
         {
             scenarios[customer] = scenario;
+        }
+
+        private SemaphoreSlim Gate(string subject)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(subject);
+            return gates.GetOrAdd(subject, static _ => new(1));
         }
 
         private async Task<JsonObject> SubscriptionAsync(string id, CancellationToken cancellationToken)

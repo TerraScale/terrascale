@@ -182,7 +182,7 @@ namespace TerraScale.Dashboard.E2E.Features.Auth
         [Arguments("unbound:https://attacker.example/mcp")]
         public async Task RedemptionNamingAnotherResourceBurnsTheCodeWithoutAToken(string? redeemed)
         {
-            await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
+            await using var scenario = await ReferenceScenario.StartAsync(fixture.Root, replica: false);
             using var browser = scenario.CreateClient();
             var persona = scenario.Personas.Seeded;
             var origin = browser.BaseAddress!.GetLeftPart(UriPartial.Authority);

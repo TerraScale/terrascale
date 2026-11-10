@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Dashboard.E2E.Features.Organizations;
 using TerraScale.Dashboard.Platform.Persistence;
 using TUnit.Core.Interfaces;
 
@@ -48,7 +49,6 @@ namespace TerraScale.Dashboard.E2E
             { BaseAddress = replica ? ReplicaOrigin : Origin, Timeout = TimeSpan.FromSeconds(30) };
         }
 
-        // Test admission permits more projects than Free allows; it does not simulate a paid checkout.
         public T Service<T>() where T : notnull
         {
             return first!.Services.GetRequiredService<T>();
@@ -89,9 +89,83 @@ namespace TerraScale.Dashboard.E2E
         }
     }
 
-    // Journeys that start their own hosts need the checkout path, not two extra application instances.
     public sealed class DashboardRootFixture
     {
         public string Root { get; } = DashboardE2EFixture.FindRoot();
+    }
+
+    public sealed class SharedDatabaseSdk : IAsyncInitializer, IAsyncDisposable
+    {
+        public string Root { get; } = DashboardE2EFixture.FindRoot();
+
+        public DatabaseSdkScenario Scenario { get; private set; } = null!;
+
+        public async Task InitializeAsync()
+        {
+            Scenario = await DatabaseSdkScenario.StartAsync(Root);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Scenario is not null)
+            {
+                await Scenario.DisposeAsync();
+            }
+        }
+    }
+
+    public sealed class SharedDemoEnvironment : IAsyncInitializer, IDisposable
+    {
+        public string Root { get; } = DashboardE2EFixture.FindRoot();
+
+        public DemoEnvironment Environment { get; } = new();
+
+        public Task InitializeAsync()
+        {
+            return Environment.InitializeAsync();
+        }
+
+        public void Dispose()
+        {
+            Environment.Dispose();
+        }
+    }
+
+    public sealed class SharedAuthProvider : IAsyncInitializer, IAsyncDisposable
+    {
+        public string Root { get; } = DashboardE2EFixture.FindRoot();
+
+        public AuthProviderScenario Scenario { get; private set; } = null!;
+
+        public async Task InitializeAsync()
+        {
+            Scenario = await AuthProviderScenario.StartAsync(Root);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Scenario is not null)
+            {
+                await Scenario.DisposeAsync();
+            }
+        }
+    }
+
+    public sealed class SharedTsAuthPlatform : IAsyncInitializer, IAsyncDisposable
+    {
+        internal TsAuthPlatformJourneyTests.PlatformScenario Scenario { get; private set; } = null!;
+
+        public async Task InitializeAsync()
+        {
+            Scenario = await TsAuthPlatformJourneyTests.PlatformScenario.StartAsync();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Scenario is not null)
+            {
+                await Scenario.DisposeAsync();
+            }
+        }
     }
 }

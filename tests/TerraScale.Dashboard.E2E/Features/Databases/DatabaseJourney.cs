@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
@@ -29,6 +31,12 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
                 Check(response.StatusCode == HttpStatusCode.SeeOther && response.Headers.Location?.OriginalString is "/onboarding" or "/",
                     "Native onboarding advances the actual current account step: " + form["step"]);
             }
+        }
+
+        internal static async Task<string> ProjectIdAsync(HttpClient client)
+        {
+            using var identity = await client.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
+            return identity!.RootElement.GetProperty("projectId").GetString()!;
         }
 
         // Each scenario owns one TestAuth shared by its host pair; tests read its exchange grants to check bearers exactly.

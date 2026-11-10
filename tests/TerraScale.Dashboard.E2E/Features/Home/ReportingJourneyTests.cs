@@ -3,10 +3,11 @@ using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Common.Formatting;
+using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Home
 {
-    [ClassDataSource<DashboardE2EFixture>]
+    [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
     public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
     {
         [Test]
@@ -19,8 +20,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
                 await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
                 await Assert.That(anonymous.Headers.Location!.OriginalString.StartsWith("/login?returnTo=", StringComparison.Ordinal)).IsTrue();
             }
-            using var login = await HttpJourney.LoginAsync(client);
-            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             using var before = JsonDocument.Parse(await client.GetStringAsync("/__test/reporting/probe"));
             var requestsBefore = before.RootElement.GetProperty("requests").GetArrayLength();
             foreach (var path in new[] { "/analytics?project=foreign-project", "/analytics?database=foreign-database" })
@@ -44,8 +44,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
         public async Task SignedInUsagePageStatesTheReportedPeriod()
         {
             using var client = fixture.CreateClient();
-            using var login = await HttpJourney.LoginAsync(client);
-            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await DatabaseJourney.NativeWorkspaceAsync(client);
             var html = await client.GetStringAsync("/usage");
             var match = Regex.Match(html, "id=\"usage-period\"[\\s\\S]*?<time datetime=\"([^\"]+)\"[\\s\\S]*?<time datetime=\"([^\"]+)\"");
             await Assert.That(match.Success).IsTrue();

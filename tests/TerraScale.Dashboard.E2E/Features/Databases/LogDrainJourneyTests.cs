@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
 public sealed class LogDrainJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]

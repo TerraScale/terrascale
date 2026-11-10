@@ -9,8 +9,8 @@ using Microsoft.AspNetCore.Builder;
 
 namespace TerraScale.Dashboard.E2E.Features.Data
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class ProjectApiKeyContractTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+    public sealed class ProjectApiKeyContractTests(SharedDatabaseSdk shared)
     {
         private static readonly string[] SqlScopes = ["sql:read", "sql:write"];
         private static readonly string[] SetCidrs = ["203.0.113.0/24", "198.51.100.7", "2001:db8::/48"];
@@ -104,7 +104,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         {
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
-            await using var app = await StartAsync(environment, fixture.Root);
+            await using var app = await StartAsync(environment, shared.Root);
             using var client = new HttpClient(new HttpClientHandler
             {
                 ServerCertificateCustomValidationCallback = TestHttps.Validate,
@@ -177,7 +177,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         [Test]
         public async Task ProjectMemberWithoutOrganizationRoleManagesKeys()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
             using var identity = await client.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
@@ -233,7 +233,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         [Test]
         public async Task ProjectCidrsRoundTripThroughMcpToolsAndMemberIsRefused()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             var account = await DatabaseJourney.NativeWorkspaceAsync(client);
             using var identity = await client.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
@@ -285,7 +285,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         [Test]
         public async Task ProjectViewerCannotCreateKeys()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
             using var identity = await client.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
@@ -351,7 +351,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
         {
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
-            await using var app = await StartAsync(environment, fixture.Root);
+            await using var app = await StartAsync(environment, shared.Root);
             using var client = new HttpClient(new HttpClientHandler
             {
                 ServerCertificateCustomValidationCallback = TestHttps.Validate,

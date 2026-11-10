@@ -5,14 +5,14 @@ using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class AgentDatabaseJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+    public sealed class AgentDatabaseJourneyTests(SharedDatabaseSdk shared)
     {
         [ExecutionPriority(Priority.High)]
         [Test]
         public async Task AgentsCreateForkAtNowAndAtSnapshotQuerySetClearTtlAndDelete()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             using var replica = scenario.CreateClient(replica: true);
             using var producer = scenario.CreateProviderClient();
@@ -82,7 +82,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task InvalidAgentTtlRequestsPreserveExpiryAndCreateNoDatabase()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             var account = await DatabaseJourney.NativeWorkspaceAsync(client);
             var secret = await HttpJourney.CreatePatAsync(client, "Invalid agent TTL", account.Password);

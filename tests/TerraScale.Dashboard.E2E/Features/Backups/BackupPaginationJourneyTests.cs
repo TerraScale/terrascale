@@ -5,14 +5,14 @@ using TerraScale.Dashboard.E2E.Features.Databases;
 namespace TerraScale.Dashboard.E2E.Features.Backups
 {
     // list_backups and list_databases return one bounded page per call (TS-1219 slice 1).
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class BackupPaginationJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+    public sealed class BackupPaginationJourneyTests(SharedDatabaseSdk shared)
     {
         [Test]
         [Category("Slow")]
         public async Task HappyPagesTraverseBackupsAndDatabasesExactlyOnce()
         {
-            await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var host = shared.Scenario;
             using var client = host.CreateClient();
             using var producer = host.CreateProviderClient();
             using var replica = host.CreateClient(replica: true);
@@ -93,7 +93,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
         [Test]
         public async Task MalformedCursorsAndLimitsAreRejected()
         {
-            await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var host = shared.Scenario;
             using var client = host.CreateClient();
             var account = await DatabaseJourney.NativeWorkspaceAsync(client);
             var secret = await HttpJourney.CreatePatAsync(client, "Pagination critical path", account.Password);

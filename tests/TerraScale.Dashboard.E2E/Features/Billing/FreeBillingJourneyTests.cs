@@ -7,16 +7,16 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
-    public sealed class FreeBillingJourneyTests
+    [ClassDataSource<SharedDemoEnvironment>(Shared = SharedType.PerTestSession)]
+    public sealed class FreeBillingJourneyTests(SharedDemoEnvironment shared)
     {
         [Test]
         public async Task FreePlanDisplaysWithoutSubscriptionAndCannotCreateStripeCheckout()
         {
-            var environment = new DemoEnvironment();
-            await environment.InitializeAsync();
+            var environment = shared.Environment;
             RejectVendorCalls vendor = null!;
             TestTerraBasePlans plans = null!;
-            await using var app = await environment.CreateTestHostAsync(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
+            await using var app = await environment.CreateTestHostAsync(shared.Root, 0, "http://127.0.0.1", builder =>
             {
                 var original = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 plans = new(original, environment.Databases, new Uri("http://127.0.0.1:8081"));

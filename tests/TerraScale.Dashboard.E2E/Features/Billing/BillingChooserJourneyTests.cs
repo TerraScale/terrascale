@@ -7,7 +7,7 @@ using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
-    [ClassDataSource<DashboardE2EFixture>]
+    [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
     public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
     {
 

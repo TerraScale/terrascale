@@ -2,14 +2,14 @@ using System.Net;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class DatabaseSqlJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedDatabaseSdk>(Shared = SharedType.PerTestSession)]
+    public sealed class DatabaseSqlJourneyTests(SharedDatabaseSdk shared)
     {
         // Create a database, run CREATE, INSERT and SELECT in the SQL editor, then see the row on the Tables tab and the Overview.
         [Test]
         public async Task SqlEditorWritesShowInTablesAndOverview()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
             var id = await HttpJourney.CreateDatabaseAsync(client, "sql-journey");

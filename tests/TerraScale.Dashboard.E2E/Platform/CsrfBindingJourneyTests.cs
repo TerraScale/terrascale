@@ -4,14 +4,17 @@ using System.Text.RegularExpressions;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {
-    [ClassDataSource<DashboardE2EFixture>]
+    [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
     public sealed class CsrfBindingJourneyTests(DashboardE2EFixture fixture)
     {
         [Test]
         public async Task FormProofsAreHostOnlyAndBoundToTheIssuingBrowserSession()
         {
-            var first = await SignInAsync();
-            var second = await SignInAsync();
+            var suffix = Guid.NewGuid().ToString("N")[..12];
+            var email = "csrf-" + suffix + "@example.test";
+            var password = "Csrf-" + suffix;
+            var first = await SignInAsync(email, password, signUp: true);
+            var second = await SignInAsync(email, password, signUp: false);
             await Assert.That(first == second).IsFalse();
 
             using var browser = Raw(first);
@@ -37,10 +40,10 @@ namespace TerraScale.Dashboard.E2E.Platform
             await Assert.That(await LogoutAsync(first + "; " + nonce, token)).IsEqualTo(HttpStatusCode.SeeOther);
         }
 
-        private async Task<string> SignInAsync()
+        private async Task<string> SignInAsync(string email, string password, bool signUp)
         {
             using var client = fixture.CreateClient();
-            using var login = await HttpJourney.LoginAsync(client);
+            using var login = await HttpJourney.LoginAsync(client, email, password, signUp: signUp);
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             return login.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith("ts-dashboard-session=", StringComparison.Ordinal)).Split(';')[0];
         }

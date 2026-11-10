@@ -4,23 +4,24 @@ using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Onboarding
 {
-    [ClassDataSource<DashboardRootFixture>]
-    public sealed class OnboardingMcpJourneyTests(DashboardRootFixture fixture)
+    [ClassDataSource<SharedAuthProvider>(Shared = SharedType.PerTestSession)]
+    public sealed class OnboardingMcpJourneyTests(SharedAuthProvider shared)
     {
         private static readonly string[] BillingIntervals = ["month", "year"];
         [ExecutionPriority(Priority.High)]
         [Test]
         public async Task NativePatCompletesFreeOnboardingAcrossRunningReplicas()
         {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var browser = scenario.CreateClient();
             using var replica = scenario.CreateClient(replica: true);
-            using var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
+            var (email, password) = HttpJourney.NewAccount("native-pat");
+            using var login = await HttpJourney.LoginAsync(browser, email, password, "/api/v1/auth/me", signUp: true);
             Check(login.StatusCode == HttpStatusCode.SeeOther, "The owning signed provider grant starts a native account");
             var cookie = SessionCookie(login);
             var original = await Identity(browser);
             Check(!original.GetProperty("onboardingCompleted").GetBoolean(), "The new provider subject has unfinished account setup");
-            var secret = await HttpJourney.CreatePatAsync(browser, "Native MCP onboarding");
+            var secret = await HttpJourney.CreatePatAsync(browser, "Native MCP onboarding", password);
             var status = await Tool(replica, secret, "get_onboarding", new { });
             Progress(status, "account-information", 0);
             var offered = status.GetProperty("plans").EnumerateArray().ToArray();
@@ -71,9 +72,10 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
         [Test]
         public async Task PaymentStepKeepsThePricingPlanAndDefaultsToFreeWithoutCheckout()
         {
-            await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+            var scenario = shared.Scenario;
             using var browser = scenario.CreateClient();
-            using var login = await HttpJourney.LoginAsync(browser, returnTo: "/onboarding?plan=pro", signUp: true);
+            var (email, password) = HttpJourney.NewAccount("pricing-plan");
+            using var login = await HttpJourney.LoginAsync(browser, email, password, "/onboarding?plan=pro", signUp: true);
             Check(login.StatusCode == HttpStatusCode.SeeOther, "Hosted sign-up starts a native account at onboarding");
             using var account = await browser.GetAsync("/onboarding?plan=pro");
             var accountHtml = await account.Content.ReadAsStringAsync();

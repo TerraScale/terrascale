@@ -20,5 +20,6 @@
 - Optional page parts (sync, metrics, analytics) load through `OptionalPanel`, which renders the page with the part's notice and logs EventId 44 with code frames. Required reads never go through it; add no other broad `catch (Exception)`.
 - Synthetic provider and subprocess fixtures live only in `tests/TerraScale.Dashboard.E2E/Demo/`; the production executable always builds the real application.
 - Each area's Fast suite must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug. Keep default parallelism.
+- Fast journeys share session-wide fixtures (`DashboardE2EFixture`, `SharedDatabaseSdk`, `SharedAuthProvider`, `SharedDemoEnvironment`, `SharedTsAuthPlatform`, all in `tests/TerraScale.Dashboard.E2E/Demo/SharedScenarios.cs`; `verify-e2e.py` rejects `PerTestSession` on any other type) and isolate by signing up their own account; only a journey that changes state other journeys see starts its own scenario (`docs/dashboard/development.md#writing-a-fast-journey`).
 - Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. New features add at most one happy-path and one critical-failure test.
 - Changes limited to `AGENTS.md`/`CLAUDE.md` skip area Fast tests in CI. Mixed commits keep the gates for the changed code.

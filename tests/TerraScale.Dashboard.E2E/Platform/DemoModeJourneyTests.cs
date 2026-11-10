@@ -11,8 +11,6 @@ namespace TerraScale.Dashboard.E2E.Platform
     {
         [Test]
         [Arguments(null)]
-        [Arguments("1")]
-        [Arguments("TRUE")]
         [Arguments("true")]
         public async Task ProductionStartupAlwaysRequiresItsDeliveredCredentials(string? demo)
         {

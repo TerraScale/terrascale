@@ -20,17 +20,18 @@ namespace TerraScale.Dashboard.E2E
         private WebApplication? second;
         private ReferenceStripeTransport? transport;
         public Uri Origin { get; private set; } = null!;
-        public Uri ReplicaOrigin { get; private set; } = null!;
+        public Uri ReplicaOrigin => replicaOrigin ?? throw new InvalidOperationException("This scenario started without a replica host.");
+        private Uri? replicaOrigin;
         public ReferencePersonas Personas { get; private set; } = null!;
 
-        public static async Task<ReferenceScenario> StartAsync(string root, Action<WebApplicationBuilder>? configure = null)
+        public static async Task<ReferenceScenario> StartAsync(string root, Action<WebApplicationBuilder>? configure = null, bool replica = true)
         {
             var scenario = new ReferenceScenario();
-            try { await scenario.InitializeAsync(root, configure); return scenario; }
+            try { await scenario.InitializeAsync(root, configure, replica); return scenario; }
             catch { await scenario.DisposeAsync(); throw; }
         }
 
-        private async Task InitializeAsync(string root, Action<WebApplicationBuilder>? configure)
+        private async Task InitializeAsync(string root, Action<WebApplicationBuilder>? configure, bool replica)
         {
             var environment = new DemoEnvironment();
             Personas = await environment.InitializeReferenceAsync(root);
@@ -45,11 +46,14 @@ namespace TerraScale.Dashboard.E2E
                 configure?.Invoke(builder);
             }
             first = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
-            second = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
             await first.StartAsync();
-            await second.StartAsync();
             Origin = Address(first);
-            ReplicaOrigin = Address(second);
+            if (replica)
+            {
+                second = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
+                await second.StartAsync();
+                replicaOrigin = Address(second);
+            }
             using var client = CreateClient();
             using var ready = await client.GetAsync("/readyz");
             ready.EnsureSuccessStatusCode();

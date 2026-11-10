@@ -24,10 +24,11 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
         private DemoEnvironment environment = null!;
         public string Root { get; private set; } = "";
         public Uri Origin { get; private set; } = null!;
-        public Uri ReplicaOrigin { get; private set; } = null!;
+        public Uri ReplicaOrigin => replicaOrigin ?? throw new InvalidOperationException("This scenario started without a replica host.");
+        private Uri? replicaOrigin;
         public PaymentWebhookAuditTransport Stripe { get; private set; } = null!;
 
-        public static async Task<PaymentWebhookAuditScenario> StartAsync()
+        public static async Task<PaymentWebhookAuditScenario> StartAsync(bool replica = true)
         {
             var scenario = new PaymentWebhookAuditScenario();
             var root = new DirectoryInfo(AppContext.BaseDirectory);
@@ -45,9 +46,12 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
                 scenario.first = await environment.CreateTestHostAsync(root.FullName, 0, "http://127.0.0.1", scenario.Configure);
                 await scenario.first.StartAsync();
                 scenario.Origin = Address(scenario.first);
-                scenario.second = await environment.CreateTestHostAsync(root.FullName, 0, scenario.Origin.ToString().TrimEnd('/'), scenario.Configure);
-                await scenario.second.StartAsync();
-                scenario.ReplicaOrigin = Address(scenario.second);
+                if (replica)
+                {
+                    scenario.second = await environment.CreateTestHostAsync(root.FullName, 0, scenario.Origin.ToString().TrimEnd('/'), scenario.Configure);
+                    await scenario.second.StartAsync();
+                    scenario.replicaOrigin = Address(scenario.second);
+                }
                 return scenario;
             }
             catch { await scenario.DisposeAsync(); throw; }

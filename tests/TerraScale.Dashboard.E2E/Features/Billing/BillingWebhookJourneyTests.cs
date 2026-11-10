@@ -10,7 +10,7 @@ using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
-    [ClassDataSource<DashboardE2EFixture>]
+    [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
     public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
     {
         private static readonly string[] WebhookPaths =
