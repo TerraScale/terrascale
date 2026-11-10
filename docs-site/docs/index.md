@@ -10,4 +10,6 @@ next: false
 
 TerraScale is a SQLite-dialect SQL database in three regions. A replica region can accept a local SQL REST write, and the home is the durable apply point.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 <DocsHome />
