@@ -9,7 +9,7 @@ const phone = { viewport: mobile, isMobile: true, hasTouch: true, deviceScaleFac
 
 test('a second user signs up on a phone, the Free plan refuses to invite them, and after signing out a protected page leads through a password sign-in back to the dashboard', async ({ browser }, info) => {
   const owner = journey();
-  const email = `second-${owner.runId}@example.com`;
+  const email = `second-${owner.runId}${Date.now().toString(36)}@example.com`;
   const password = randomBytes(24).toString('base64url');
   saveSecret('second-user-password', password);
   const name = `Second ${owner.runId}`;
