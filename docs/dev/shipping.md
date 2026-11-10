@@ -26,3 +26,4 @@ only the happy path and critical paths, Slow keeps only heavy critical tests.
 A new feature adds at most one happy-path and one critical-failure test.
 
 For a missing GitHub push event, see [CI recovery](ci-recovery.md).
+This sentence exists only for a CI timing proof.
