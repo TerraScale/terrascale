@@ -150,6 +150,7 @@ replica region (`ts db move-home`, `ts db placement ... -all-regions`).
 
 A database's home region is the durable apply point for writes, a replica region can accept a local SQL REST write and the home applies it, and replicas can live in other serving regions. The default `TerraScale-Durability` is `local`. The server forwards a timed-out local publish with
 `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once.
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 REST reads can use a ready local replica. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
 preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
