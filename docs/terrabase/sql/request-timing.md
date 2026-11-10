@@ -44,3 +44,5 @@ last. Timing values are measurements, not a protocol deadline or an SLA.
 The measurements contain fixed stage and region names, never SQL, tenant names,
 credentials or query arguments. Read behavior and acknowledgement guarantees
 are unchanged by timing instrumentation.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
