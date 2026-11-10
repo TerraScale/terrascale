@@ -29,3 +29,5 @@ buckets and files, usage, backups, purges, closures and expiry.
 - The unused actor router is removed.
 
 Older data directories are refused at start (greenfield, no migration); a production data reset is required.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
