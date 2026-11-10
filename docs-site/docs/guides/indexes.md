@@ -39,3 +39,5 @@ Indexes follow the SQL request limits: 1 to 256 statements per request, each at 
 ## Tip
 
 Use `EXPLAIN QUERY PLAN` before and after adding an index: if the detail field still says `SCAN` on the table rather than `SEARCH … USING INDEX`, the query cannot use it — usually a type mismatch or a leading column that is not constrained.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
