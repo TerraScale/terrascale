@@ -7,7 +7,7 @@ The [Litestream](https://litestream.io/how-it-works/) design uses generations, s
 Shipping captures the engine changes on each file's writer connection (the native capture table, mode `after`).
 See [Tigris access](../tigris.md) for the retained storage integration.
 
-The older scheduled backups (`…/backups`, local snapshot files next to the database) are unchanged. They are not off-node.
+Managed snapshots stay on the node as local snapshot files next to the database (`…/backups`). Restore copies that local file. Continuous shipping still uploads generations, snapshots and log segments.
 
 ## Status of the work
 
