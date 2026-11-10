@@ -3,8 +3,10 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using TerraBase.Engine;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 
 namespace TerraBase.Fast.Sync;
@@ -232,7 +234,37 @@ public sealed class HomeApplyTests
         await Assert.That((await home.SqlAsync("SELECT count(*) FROM clocks")).GetRawText()).IsEqualTo("[[0]]");
     }
 
-    private static async Task<Home> HomeAsync()
+    [Test]
+    public async Task A_busy_apply_retries_the_same_transaction_before_another_can_commit()
+    {
+        var block = 0;
+        await using var home = await HomeAsync((step, _) =>
+        {
+            if (step == "writer.commit" && Volatile.Read(ref block) == 1)
+            {
+                throw new SqlStatementException(new Busy(), "the database is busy; retry", transactionEnded: false);
+            }
+        });
+        await home.SqlAsync("CREATE TABLE notes (id TEXT PRIMARY KEY, body TEXT NOT NULL)");
+        Volatile.Write(ref block, 1);
+        var id = EntityIds.New().ToString();
+        var at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1_000;
+        var changes = new[] { Insert("notes", new { id = "n1", body = "later" }) };
+        var hlc = new { physicalMilliseconds = at, logical = 0, nodeId = "sjc-1" };
+        using var content = new StringContent(JsonSerializer.Serialize(new { id, region = "sjc", hlc, changes }), System.Text.Encoding.UTF8, "application/json");
+        using var busy = await home.Peer.PostAsync(home.ApplyPath, content);
+        var busyBody = await busy.Content.ReadAsStringAsync();
+        await Assert.That(busy.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(busyBody);
+        await Assert.That((await home.SqlAsync("SELECT count(*) FROM notes")).GetRawText()).IsEqualTo("[[0]]");
+        Volatile.Write(ref block, 0);
+        var (_, result) = await home.ApplyAsync("sjc", at, changes, id);
+        await Assert.That(result.GetProperty("state").GetString()).IsEqualTo("confirmed");
+        await Assert.That((await home.SqlAsync("SELECT body FROM notes")).GetRawText()).IsEqualTo("""[["later"]]""");
+    }
+
+    private static Task<Home> HomeAsync() => HomeAsync(null);
+
+    private static async Task<Home> HomeAsync(DatabaseLifecycleCheckpoint? checkpoint)
     {
         var api = await ManagementApi.StartAsync(
             settings => settings["region"] = "gru",
@@ -241,6 +273,10 @@ public sealed class HomeApplyTests
                 services.Replace(ServiceDescriptor.Singleton<IRegionCatalog>(new Serving()));
                 services.Replace(ServiceDescriptor.Singleton<IRegionPeers>(new NoRegions()));
                 services.Replace(ServiceDescriptor.Singleton<IReplicaPeers>(new NoReplicas()));
+                if (checkpoint is not null)
+                {
+                    services.Replace(ServiceDescriptor.Singleton(checkpoint));
+                }
             });
         try
         {
