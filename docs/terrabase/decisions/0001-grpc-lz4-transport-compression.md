@@ -30,3 +30,5 @@ server response encoding. Peer clients register the same provider and request it
   must not be compressed again; decide then whether those calls disable transport compression.
 - `LZ4Stream` in NativeCompressions 0.6.1 omits the LZ4 frame header and cannot decode its own
   output; the provider uses the one-shot `LZ4.Compress`/`LZ4.Decompress` API instead.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
