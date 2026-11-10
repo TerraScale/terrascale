@@ -73,11 +73,24 @@ func TestFileCapabilityURLRegionPin(t *testing.T) {
 	)
 	digest := base64.StdEncoding.EncodeToString(sum256(fileBody))
 	fileBase := "/v1/projects/" + bucketProject + "/buckets/" + bucketID + "/files"
-	signedJSON := `{"id":"` + fileID + `","url":"` + fileURL + `","expiresAt":"` + expires + `","headers":{"content-type":"text/plain","content-length":"5","x-amz-checksum-sha256":"` + digest + `"}}`
 	downloadJSON := `{"id":"` + fileID + `","url":"` + fileURL + `","expiresAt":"` + expires + `","headers":{}}`
 	fileJSON := `{"id":"` + fileID + `","name":"hello.txt","contentType":"text/plain","size":5,"sha256":"` + digest + `","metadata":{},"status":"ready","uploadExpiresAt":"` + expires + `","deleteAfter":null}`
 	pageJSON := `{"items":[` + fileJSON + `],"next":null}`
-	for _, pin := range []string{"sjc", ""} {
+	cases := []struct {
+		pin    string
+		signed string
+		want   [2]string
+	}{
+		{pin: "sjc", signed: "gru", want: [2]string{"gru", "sjc"}},
+		{pin: "sjc", want: [2]string{"sjc", "sjc"}},
+		{pin: "", want: [2]string{"", ""}},
+	}
+	for _, tc := range cases {
+		signedHeaders := `"content-type":"text/plain","content-length":"5","x-amz-checksum-sha256":"` + digest + `"`
+		if tc.signed != "" {
+			signedHeaders += `,"X-TerraScale-Region-Pin":"` + tc.signed + `"`
+		}
+		signedJSON := `{"id":"` + fileID + `","url":"` + fileURL + `","expiresAt":"` + expires + `","headers":{` + signedHeaders + `}}`
 		var storage []string
 		hc := &http.Client{Transport: bucketTransport(func(r *http.Request) (*http.Response, error) {
 			if !strings.HasPrefix(r.URL.Path, "/v1/") {
@@ -102,7 +115,7 @@ func TestFileCapabilityURLRegionPin(t *testing.T) {
 			}
 			return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(reply)), Request: r}, nil
 		})}
-		c, err := tb.New(tb.Config{Token: "fixture.jwt.sig", HTTPClient: hc, RegionPin: pin})
+		c, err := tb.New(tb.Config{Token: "fixture.jwt.sig", HTTPClient: hc, RegionPin: tc.pin})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,8 +129,8 @@ func TestFileCapabilityURLRegionPin(t *testing.T) {
 		}
 		_, _ = io.Copy(io.Discard, body)
 		body.Close()
-		if len(storage) != 2 || storage[0] != pin || storage[1] != pin {
-			t.Fatalf("pin %q storage headers %q", pin, storage)
+		if len(storage) != 2 || storage[0] != tc.want[0] || storage[1] != tc.want[1] {
+			t.Fatalf("pin %q storage headers %q want %q", tc.pin, storage, tc.want)
 		}
 	}
 }
