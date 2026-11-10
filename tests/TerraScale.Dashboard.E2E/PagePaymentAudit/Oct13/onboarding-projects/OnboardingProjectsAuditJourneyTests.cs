@@ -42,7 +42,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects
         [Test]
         public async Task RepeatedScopedSelectionRejectsForeignIdsAndExternalReturns()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, replica: false);
             using var owner = scenario.CreateClient();
             using var outsider = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();

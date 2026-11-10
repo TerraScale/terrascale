@@ -50,7 +50,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
         [Category("PaymentAuditDefect")]
         public async Task UnmappedActivePriceCannotRetainPaidDatabaseCapacity()
         {
-            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
+            await using var scenario = await PaymentWebhookAuditScenario.StartAsync(replica: false);
             using var owner = scenario.CreateClient();
             await CompleteCheckoutAsync(owner, "starter");
             var csrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=billing");
@@ -72,7 +72,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
         [Test]
         public async Task RepeatedCheckoutAndCancelKeepProviderKeysAndLateEventsCannotGrantAccess()
         {
-            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
+            await using var scenario = await PaymentWebhookAuditScenario.StartAsync(replica: false);
             using var owner = scenario.CreateClient();
             using var login = await HttpJourney.LoginAsync(owner);
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -132,7 +132,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
         [Test]
         public async Task SecondStripeCustomerForAnOrganizationIsRejected()
         {
-            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
+            await using var scenario = await PaymentWebhookAuditScenario.StartAsync(replica: false);
             using var owner = scenario.CreateClient();
             await CompleteCheckoutAsync(owner, "starter");
             var binding = await scenario.BillingAsync();
@@ -160,7 +160,7 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectn
         [Category("PaymentAuditExpectation")]
         public async Task CompletedFreeSetupAllowsImmediatePaidCheckout()
         {
-            await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
+            await using var scenario = await PaymentWebhookAuditScenario.StartAsync(replica: false);
             using var owner = scenario.CreateClient();
             await CompleteCheckoutAsync(owner, "free");
             var csrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=billing");

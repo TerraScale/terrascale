@@ -13,7 +13,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         public async Task DatabasesPageRendersWhenAnalyticsRepeatsACounter()
         {
             string? databaseId = null;
-            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http => Task.FromResult(RepeatedCounter(http, databaseId)));
+            await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http => Task.FromResult(RepeatedCounter(http, databaseId)), replica: false);
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             using (var catalog = await producer.PostAsJsonAsync("/__test/control", new { command = "catalog", value = Catalog }))

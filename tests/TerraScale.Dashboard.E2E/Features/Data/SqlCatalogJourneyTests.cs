@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.E2E.Features.Data
                         answer == "missing-columns" ? [] : [new object?[] { 0, "declared_only", answer == "no-type" ? "" : "TEXT", 0, null, 0 }])).ToArray()
                     })
                 };
-            });
+            }, replica: false);
             using var client = scenario.CreateClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
             var id = await HttpJourney.CreateDatabaseAsync(client, "sql-catalog");

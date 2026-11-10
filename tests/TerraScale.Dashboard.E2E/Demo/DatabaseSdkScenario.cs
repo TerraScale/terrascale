@@ -45,7 +45,8 @@ namespace TerraScale.Dashboard.E2E
         private ProducerTransport? transport;
         private readonly DatabaseProducer protocol = new();
         public Uri Origin { get; private set; } = null!;
-        public Uri ReplicaOrigin { get; private set; } = null!;
+        public Uri ReplicaOrigin => replicaOrigin ?? throw new InvalidOperationException("This scenario started without a replica host.");
+        private Uri? replicaOrigin;
         public Uri ProviderOrigin { get; private set; } = null!;
 
         // ts-auth's registry, for callers that act outside the dashboard (the CLI's project and database creates).
@@ -58,11 +59,11 @@ namespace TerraScale.Dashboard.E2E
         }
 
         public static async Task<DatabaseSdkScenario> StartAsync(string root, Action<WebApplicationBuilder>? configureScenario = null,
-            Func<HttpContext, Task<IResult?>>? producerExtension = null, Action<WebApplication>? configureApp = null)
+            Func<HttpContext, Task<IResult?>>? producerExtension = null, Action<WebApplication>? configureApp = null, bool replica = true)
         {
             var scenario = new DatabaseSdkScenario();
             scenario.protocol.Extension = producerExtension;
-            try { await scenario.InitializeAsync(root, configureScenario, configureApp); return scenario; }
+            try { await scenario.InitializeAsync(root, configureScenario, configureApp, replica); return scenario; }
             catch { await scenario.DisposeAsync(); throw; }
         }
 
@@ -118,7 +119,7 @@ namespace TerraScale.Dashboard.E2E
             { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
         }
 
-        private async Task InitializeAsync(string root, Action<WebApplicationBuilder>? configureScenario, Action<WebApplication>? configureApp)
+        private async Task InitializeAsync(string root, Action<WebApplicationBuilder>? configureScenario, Action<WebApplication>? configureApp, bool replica)
         {
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Any, 0, listener => listener.Protocols = HttpProtocols.Http2));
@@ -171,14 +172,17 @@ namespace TerraScale.Dashboard.E2E
                 configureScenario?.Invoke(application);
             }
             first = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
-            second = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
             configureApp?.Invoke(first);
-            configureApp?.Invoke(second);
             protocol.ApiKeys!.StepUp = first.Services.GetRequiredService<TestStepUpGateway>();
             await first.StartAsync();
-            await second.StartAsync();
             Origin = Address(first);
-            ReplicaOrigin = Address(second);
+            if (replica)
+            {
+                second = await environment.CreateTestHostAsync(root, 0, "http://127.0.0.1", Configure);
+                configureApp?.Invoke(second);
+                await second.StartAsync();
+                replicaOrigin = Address(second);
+            }
         }
 
         public Task<DashboardDbContext> StorageAsync()

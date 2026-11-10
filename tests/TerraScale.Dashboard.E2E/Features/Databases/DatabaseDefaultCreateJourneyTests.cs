@@ -19,7 +19,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task EmptyDatabasesPageCreatesThroughTheDialogAndTheOverviewLinksOpenIt()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root);
+            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root, replica: false);
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task DefaultCreateSucceedsWithOnlyAHomeRegionAndTheDatabaseCanBeDeleted()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root);
+            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root, replica: false);
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
@@ -140,7 +140,7 @@ namespace TerraScale.Dashboard.E2E.Features.Databases
         [Test]
         public async Task ReplicaRegionsAreAddedAndTheHomeMovesToAReplica()
         {
-            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root);
+            await using var scenario = await DatabaseSdkScenario.StartAsync(shared.Root, replica: false);
             using var client = scenario.CreateClient();
             using var producer = scenario.CreateProviderClient();
             await DatabaseJourney.NativeWorkspaceAsync(client);
