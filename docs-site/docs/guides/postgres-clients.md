@@ -54,7 +54,7 @@ Dollar-quoted strings (`$$…$$`) and `E'…'` escape strings are refused with `
 
 - psql's `\d`, `\d table`, `\dt`, `\l` and `\dn` are answered from the database's own tables. Any other `pg_catalog` query answers `0A000`.
 - `LISTEN`, `NOTIFY`, `UNLISTEN` and `CREATE/ALTER/DROP EXTENSION` answer `0A000`.
-- `SET` accepts only `client_encoding` (UTF8), `DateStyle` (ISO), `TimeZone` (UTC and its aliases), `extra_float_digits`, `application_name`, `search_path` and `terrascale.write`. `SHOW` answers these and the settings reported at connect (`server_version` is `16.0`).
+- `SET` accepts only `client_encoding` (UTF8), `DateStyle` (ISO), `TimeZone` (UTC and its aliases), `extra_float_digits`, `application_name`, `search_path` and `terrascale.write`. `SHOW` answers these and the settings reported at connect (`server_version` is `16.0 (TerraScale)`).
 
 ## Write routing
 
