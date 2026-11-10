@@ -45,7 +45,8 @@ SDK's typed `Error`.
 ## SQL
 
 Every call is one `POST /v1/projects/{project}/databases/{database}/sql/execute` request and one transaction:
-all statements commit or none do, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused.
+all statements commit or none do, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. A timed-out publish is retried with
+`TerraBase-Publish-Id` set to the same transaction id, and the write applies once.
 
 | Method | Returns |
 |---|---|
