@@ -19,3 +19,5 @@ rebuilds shapes under new handles.
 A `~table:<name>` sentinel (offset 0) records a table's shape generation: `body` is the UTF-8 text
 `<generation ULID>\n<sqlite_schema SQL>`, `end_offset` the head it was issued at, and `sealed_at` the database's
 `PRAGMA schema_version` when it was last checked. Generations add no table, so the storage format is unchanged.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
