@@ -69,3 +69,16 @@ updates:
       security:
         applies-to: security-updates
         patterns: ["*"]
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /scripts/dashboard
+      - /scripts/dashboard/ci
+      - /scripts/vendor
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
