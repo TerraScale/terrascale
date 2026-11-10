@@ -1,6 +1,6 @@
 # Releasing the TerraBase image
 
-TerraBase does not release on a push to `main`. The `Release to every region` step in `.github/workflows/ci.yml` skips `terrabase` while the fleet still runs executors with no fence. A human ships the image by dispatching that same workflow. This page does not record any commit as the live one. Read the running revision from the release job summary or from the service, not from this file.
+TerraBase does not release on a push to `main`. The `Release to every region` step in `.github/workflows/ci.yml` skips `terrabase` while the fleet still runs executors with no fence. A human ships the image by dispatching that same workflow. This page does not record any commit as the live one. Read the running revision from the release job summary or from the service, not from this file. The TerraBase and ts-auth images run as uid 1654, and root is used only to create `/data`.
 
 ## Dispatch
 
