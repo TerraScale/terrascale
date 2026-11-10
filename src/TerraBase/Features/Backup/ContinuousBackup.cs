@@ -610,7 +610,13 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         file.RetryAt = _time.GetUtcNow() + Backoff(file.Failures);
         _logger.ZLogWarning(error, $"Continuous backup of {file.Prefix:@File} failed; the next pass retries");
     }
-    private static double Lag(ShippedFile file, DateTimeOffset now) => file.BehindSince is { } since ? Math.Max(0, (now - since).TotalSeconds) : 0;
+    private static double Lag(ShippedFile file, DateTimeOffset now)
+    {
+        var noticed = file.BehindSince is { } since ? Math.Max(0, (now - since).TotalSeconds) : 0;
+        return file.LastError is not null && file.LastShipped is { } shipped
+            ? Math.Max(noticed, Math.Max(0, (now - shipped).TotalSeconds))
+            : noticed;
+    }
 
     private string ScratchFile(string extension) => Path.Combine(_scratch, EntityIds.New().ToString() + extension);
     private static void DeleteSnapshot(string path) => BackupReader.Delete(path);
