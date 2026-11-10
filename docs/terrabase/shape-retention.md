@@ -56,3 +56,5 @@ in a bounded, memory-admitted queue. Restart, queue overflow, registry eviction
 and table drops without a later shape request can leave derived chunks and
 snapshots behind. A durable database-wide retirement sweep is still needed;
 the current per-handle retention pass cannot discover these forgotten handles.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
