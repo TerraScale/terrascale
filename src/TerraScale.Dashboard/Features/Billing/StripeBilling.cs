@@ -391,7 +391,7 @@ namespace TerraScale.Dashboard.Features.Billing
         // one refresh per organization at a time keeps them from exhausting each other's conditional-write retries.
         private readonly SemaphoreSlim[] refreshing = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
 
-        private async Task<bool> RefreshAsync(string orgId, CancellationToken cancellationToken)
+        internal async Task<bool> RefreshAsync(string orgId, CancellationToken cancellationToken)
         {
             var turn = refreshing[(StringComparer.Ordinal.GetHashCode(orgId) & int.MaxValue) % refreshing.Length];
             await turn.WaitAsync(cancellationToken);
