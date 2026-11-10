@@ -21,3 +21,5 @@ Storage accounting, physical file bytes, replica copies and backup retention are
 Preserve the existing rate, concurrency, memory and storage refusal contract, including `Retry-After` where supplied. Never bypass validation to make a request fit. Enterprise plans still observe statement, transaction and process safety bounds.
 
 SQL reads are free with plan fair use; shape reads are free and unmetered. Committed writes count toward the monthly write allowance and cap. Replication does not add billable units. The published pricing catalog and [operation allowance contract](operation-allowance.md) define the current values; do not duplicate a stale plan table here.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
