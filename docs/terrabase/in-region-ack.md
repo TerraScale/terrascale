@@ -10,7 +10,7 @@ waits for home acceptance. This note extends [local writes and the push](local-o
 The push stream lives in the origin region's JetStream, which runs only on the region's founder, with one replica
 per region (`unique_tag` `region:`, `docs/mesh-jetstream.md` in
 ts-orchestrator). An in-region stream replica is therefore impossible, and the stream is on one host. The second copy
-is held by TerraBase itself, on the region's second node.
+is held by TerraBase itself, on the region's second node. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Nodes of a region
 
