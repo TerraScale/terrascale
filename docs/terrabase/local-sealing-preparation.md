@@ -32,3 +32,5 @@ SQL HTTP routing reads the durable catalog placement even when the follower has 
 ## Native replica reader and writer admission
 
 Local native write transactions acquire the replica's existing exclusive reader-drain lease, also used by page apply and checkpoint, before capture setup and BEGIN. They release it with the local transaction, before any home-durable wait. This prevents pooled reader BEGIN/ROLLBACK operations from colliding with native writer setup and sending an otherwise local write home. Waiting for admission remains cancellable and releases both gates on failure. The existing catch-up after a successfully forwarded write remains mandatory; it is not removed to improve latency. Partner holds, stream publication and acknowledgement durability are unchanged.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
