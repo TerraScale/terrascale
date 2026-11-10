@@ -203,7 +203,7 @@ public sealed class HomeApplyTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var home = await HomeAsync();
-        await home.SqlAsync("CREATE TABLE gauges (id TEXT PRIMARY KEY, v INTEGER NOT NULL CHECK (v = abs(-9223372036854775808)))");
+        await home.SqlAsync("CREATE TABLE gauges (id TEXT PRIMARY KEY, v INTEGER NOT NULL DEFAULT (\"database is locked\"(0)))");
         var id = EntityIds.New().ToString();
         var at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1_000;
         var hlc = new { physicalMilliseconds = at, logical = 0, nodeId = "sjc-1" };
@@ -212,7 +212,7 @@ public sealed class HomeApplyTests
             id,
             region = "sjc",
             hlc,
-            changes = new[] { Insert("gauges", new { id = "g1", v = 1 }) },
+            changes = new[] { Insert("gauges", new { id = "g1" }) },
         }), System.Text.Encoding.UTF8, "application/json");
         using var response = await home.Peer.PostAsync(home.ApplyPath, content, token);
         var body = await response.Content.ReadAsStringAsync(token);

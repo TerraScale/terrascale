@@ -383,8 +383,8 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         NotNull => "not_null",
         Check => "check",
         ForeignKeyFailure => "foreign_key",
-        Constraint or TooBig => "constraint",
+        Constraint or Error or TooBig => "constraint",
         NoSuchTable or NoSuchColumn or Syntax => "schema",
-        Error or AlreadyExists or Busy or Interrupted or ReadOnly or StaleRow => null,
+        AlreadyExists or Busy or Interrupted or ReadOnly or StaleRow => null,
     };
 }
