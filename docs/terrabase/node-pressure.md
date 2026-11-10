@@ -114,3 +114,5 @@ Node and cloud instance identity must be inferred automatically from the running
 node. Memory limits have one correct setting in code.
 
 The node is the runtime host (see [OCI hosting](../oci.md)). The `--memory-budget` input remains a TS-773 gap.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
