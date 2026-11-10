@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 var intent = StepUpFlow.Intent(http, context, "change_plan");
                 if (intent is null)
                 {
-                    return await StepUpFlow.StartAsync(http, context, "change_plan", "ts-auth");
+                    return await StepUpFlow.StartAsync(http, context, "change_plan", "ts-auth", boundOrganizationId: context.Organization.Id);
                 }
 
                 await StepUpFlow.ConsumeAsync(http, context, intent);
