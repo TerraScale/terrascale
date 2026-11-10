@@ -64,6 +64,11 @@ export class Audit {
     const page = this.page;
     await page.waitForLoadState('load');
     await this.quiet();
+    await page.waitForFunction(() =>
+      document.documentElement
+        .getAnimations({ subtree: true })
+        .every((animation) => animation.playState !== 'running' || animation.effect?.getComputedTiming().endTime === Infinity),
+    );
     const found: string[] = [];
     const broken = await page.evaluate(() =>
       [...document.querySelectorAll('img')].filter((image) => image.complete && image.naturalWidth === 0).map((image) => image.currentSrc || image.src),
