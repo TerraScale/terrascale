@@ -34,3 +34,5 @@ The [full results and method](https://github.com/TerraScale/terrascale/blob/main
 include regional p50/p99 latency, CPU, R2 operations, the failed readiness
 attempt and the before/after comparison. See also [subscription pricing](/pricing/)
 and [usage accounting](/concepts/pricing-philosophy).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
