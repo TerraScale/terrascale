@@ -37,6 +37,14 @@ public sealed class HealthTests
         await AssertProbeAsync(client, "/readyz", HttpStatusCode.OK, "ready");
     }
 
+    [Test]
+    public async Task Readyz_is_unavailable_while_the_catalog_is_closed()
+    {
+        var s3 = new FakeS3 { PlatformBucketMissing = true };
+        await using var api = await ManagementApi.StartAsync(s3.Configure, s3.Route);
+        await AssertProbeAsync(api.Server.Client, "/readyz", HttpStatusCode.ServiceUnavailable, "unavailable");
+    }
+
     private static async Task AssertProbeAsync(HttpClient client, string path, HttpStatusCode status, string state)
     {
         using var response = await client.GetAsync(new Uri(path, UriKind.Relative));
