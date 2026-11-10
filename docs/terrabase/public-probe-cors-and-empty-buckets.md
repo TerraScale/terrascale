@@ -15,3 +15,5 @@ Client database uniqueness behavior and storage format are unchanged.
 Upload-signing identity remains independent of backup credentials. This fix does
 not provision an object-store identity, change the storage provider or claim
 that production file transfers have been requalified.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
