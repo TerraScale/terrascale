@@ -789,12 +789,32 @@ internal class HomePush(
                 await step(cancellationToken).ConfigureAwait(false);
                 return;
             }
-            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (!StreamReplicaCountExceedsCluster(error) && (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested))
             {
                 logger.ZLogWarning($"{failure}: {error.GetType().Name:@Error}");
                 await Task.Delay(backoff.Next(), time, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    internal const int StreamReplicasNotSupported = 10074;
+
+    internal static bool StreamReplicaCountExceedsCluster(Exception error)
+    {
+        if (error is not NatsJSApiException { Error: { } api })
+        {
+            return false;
+        }
+
+        if (api.ErrCode == StreamReplicasNotSupported)
+        {
+            return true;
+        }
+
+        var description = api.Description;
+        return description is not null
+            && description.Contains("replica", StringComparison.OrdinalIgnoreCase)
+            && description.Contains("cluster", StringComparison.OrdinalIgnoreCase);
     }
 
     private void RecordPublished(TenantContext database, string transaction, string home, long epoch, ulong sequence) =>
