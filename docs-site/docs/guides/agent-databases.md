@@ -8,6 +8,8 @@ description: Give each agent, session or test run its own database that expires 
 Give every agent, session or test run its own database. Create it with a time to live, fork it from a source or from a
 point in time, hand the agent a key that reaches only that database, and let it expire or delete it when the work ends.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 Shared names and method signatures for every SDK are in [SQL API](https://github.com/TerraScale/terrascale/blob/main/sdk/SQL-API.md#databases-for-agents).
 Requests below use `https://api.terrascale.tech`, with `Authorization: Bearer <token>` from the
 [authentication guide](/guides/authentication). Replace `{project}` with your project ID and `{database}` with a database name or ULID.
