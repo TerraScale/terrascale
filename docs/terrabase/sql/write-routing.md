@@ -44,7 +44,9 @@ When in doubt the router sends it home.
 **Commit path.** A write decided local commits in the region only when three facts hold: the region has at least two
 nodes in the peers file (D16), the clock skew guard allows local writes (`ILocalWriteClock.Allowed`, R12), and a local
 commit path for the database is ready (`ILocalCommitPath`, provided by R7/R10). Until then every write commits at the
-home: `commit=home`. Nothing is configured; the router reads these facts on each decision.
+home: `commit=home`. Nothing is configured; the router reads these facts on each decision. A timed-out local publish is
+forwarded with `TerraBase-Publish-Id` set to the same transaction id, and the home claims that id so the write applies
+once.
 
 ## Forwarding
 
