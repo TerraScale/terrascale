@@ -83,7 +83,8 @@ namespace TerraScale.Dashboard.Features.Organizations
             // Only an owner sets the two-factor policy; the card stays hidden while ts-auth does not report it.
             var requireMfa = tab == "organization" && context.Role == "owner" && context.Organization is { } owned
                 ? await http.RequestServices.GetRequiredService<ITsAuthMfa>().GetRequireMfaAsync(context.Session, owned.Id, http.RequestAborted) : null;
-            return new(ShellModel.For(http, context, "Organization"), tab, regions, error,
+            var shell = ShellModel.For(http, context, "Organization");
+            return new(wizard.Length > 0 ? shell with { ReturnUrl = WorkspaceUrl.For(context, "/organization") } : shell, tab, regions, error,
                 http.Request.Query["newProject"] == "1", wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
                 Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "", RequireMfa: requireMfa,
                 Sso: tab == "sso" && context.CanManage ? await http.RequestServices.GetRequiredService<OrganizationSsoService>().ReadAsync(context, http.RequestAborted) : null);
