@@ -88,28 +88,47 @@ internal static partial class SqlErrors
 
     public const string StaleRowMessage = "terrascale: the statement changed a different number of rows than expected";
 
-    public static (SqlFailure Failure, string Message) Classify(string message, bool parse, bool interrupted) => message switch
+    public static (SqlFailure Failure, string Message) Classify(string message, bool parse, bool interrupted, int sqliteCode = 0)
     {
-        _ when message.Contains(StaleRowMessage, StringComparison.Ordinal) => (new StaleRow(), "the row was changed or deleted since it was read"),
-        _ when Has(message, "UNIQUE constraint failed") => (new Unique(), "UNIQUE constraint failed" + Names(message)),
-        _ when Has(message, "NOT NULL constraint failed") => (new NotNull(), "NOT NULL constraint failed" + Names(message)),
-        _ when Has(message, "CHECK constraint failed") => (new Check(), "CHECK constraint failed" + Names(message)),
-        _ when Has(message, "FOREIGN KEY constraint failed") => (new ForeignKeyFailure(), "FOREIGN KEY constraint failed"),
-        _ when Has(message, "constraint failed") => (new Constraint(), "constraint failed"),
-        _ when Has(message, "no such table") => (new NoSuchTable(), "no such table" + Names(message)),
-        _ when Has(message, "no such column") => (new NoSuchColumn(), "no such column" + Names(message)),
-        _ when Has(message, "already exists") => (new AlreadyExists(), "already exists" + Existing(message)),
-        _ when Has(message, "database is locked") || Has(message, "busy") || Has(message, "schema changed") || Has(message, "schema conflict")
-            || Has(message, "write-write conflict") => (new Busy(), "the database is busy; retry"),
-        _ when interrupted || Has(message, "interrupt") => (new Interrupted(), "the statement was interrupted"),
-        _ when Has(message, "readonly") || Has(message, "read-only") || Has(message, "query_only") => (new ReadOnly(), "attempt to write a readonly database"),
-        _ when Has(message, "too big") || Has(message, "too large") || Has(message, "too many") => (new TooBig(), "a value or statement is too big"),
-        _ when Has(message, "syntax error") || Has(message, "near \"") || Has(message, "unexpected") || Has(message, "unrecognized token") =>
-            (new Syntax(), "SQL syntax error"),
-        _ when SqlPhrases.FirstOrDefault(phrase => Has(message, phrase)) is { } phrase => (new Error(), phrase),
-        _ when parse => (new Syntax(), "SQL syntax error"),
-        _ => (new Error(), "the statement failed to run"),
-    };
+        var primary = sqliteCode & 0xff;
+        if (primary is SqliteBusy or SqliteLocked or SqliteNoMem or SqliteIoErr or SqliteFull or SqliteCantOpen)
+        {
+            return (new Busy(), "the database is busy; retry");
+        }
+
+        return message switch
+        {
+            _ when message.Contains(StaleRowMessage, StringComparison.Ordinal) => (new StaleRow(), "the row was changed or deleted since it was read"),
+            _ when Has(message, "UNIQUE constraint failed") => (new Unique(), "UNIQUE constraint failed" + Names(message)),
+            _ when Has(message, "NOT NULL constraint failed") => (new NotNull(), "NOT NULL constraint failed" + Names(message)),
+            _ when Has(message, "CHECK constraint failed") => (new Check(), "CHECK constraint failed" + Names(message)),
+            _ when Has(message, "FOREIGN KEY constraint failed") => (new ForeignKeyFailure(), "FOREIGN KEY constraint failed"),
+            _ when Has(message, "constraint failed") || primary == SqliteConstraint => (new Constraint(), "constraint failed"),
+            _ when Has(message, "no such table") => (new NoSuchTable(), "no such table" + Names(message)),
+            _ when Has(message, "no such column") => (new NoSuchColumn(), "no such column" + Names(message)),
+            _ when Has(message, "already exists") => (new AlreadyExists(), "already exists" + Existing(message)),
+            _ when primary == SqliteInterrupt || interrupted || Has(message, "interrupt") => (new Interrupted(), "the statement was interrupted"),
+            _ when Has(message, "readonly") || Has(message, "read-only") || Has(message, "query_only") => (new ReadOnly(), "attempt to write a readonly database"),
+            _ when primary == SqliteTooBig || Has(message, "too big") || Has(message, "too large") || Has(message, "too many") => (new TooBig(), "a value or statement is too big"),
+            _ when Has(message, "syntax error") || Has(message, "near \"") || Has(message, "unexpected") || Has(message, "unrecognized token") =>
+                (new Syntax(), "SQL syntax error"),
+            _ when SqlPhrases.FirstOrDefault(phrase => Has(message, phrase)) is { } phrase => (new Error(), phrase),
+            _ when Has(message, "database is locked") || Has(message, "database is busy") || Has(message, "schema changed") || Has(message, "schema conflict")
+                || Has(message, "write-write conflict") => (new Busy(), "the database is busy; retry"),
+            _ when parse => (new Syntax(), "SQL syntax error"),
+            _ => (new Error(), message),
+        };
+    }
+
+    private const int SqliteBusy = 5;
+    private const int SqliteLocked = 6;
+    private const int SqliteNoMem = 7;
+    private const int SqliteInterrupt = 9;
+    private const int SqliteIoErr = 10;
+    private const int SqliteFull = 13;
+    private const int SqliteCantOpen = 14;
+    private const int SqliteTooBig = 18;
+    private const int SqliteConstraint = 19;
 
     public static bool IsLocked(string message) => message.Contains("database is locked", StringComparison.Ordinal);
 
