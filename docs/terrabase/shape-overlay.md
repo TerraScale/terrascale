@@ -54,6 +54,7 @@ response. When the shape is up to date, the answer adds:
 - Direct delivery is best effort: disconnected readers do not replay the provisional stream. R7’s durable push and
   the normal home-confirmed page path continue independently. On reconnect, duplicate ids are suppressed in the
   pending set, and `_ts_applied` in the pulled pages suppresses late confirmed or rejected images before projection.
+  A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 - Ops use the shape's filter and columns, with move-in and move-out. A row a pending transaction inserted is keyed
   `~<transaction>.<row id>` until the home confirms it, because its home row id is not known yet. Later pending changes
   to that row use the same key; changes to home rows resolve the home row id by primary key. If a receiver missed
