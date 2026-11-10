@@ -595,7 +595,7 @@ namespace TerraScale.Dashboard.Common.Accounts
         {
             try { await UpdateOrganizationAsync(context, record, cancellationToken); }
             // A store timeout surfaces as cancellation; only the caller's own abort may skip the committed change's answer.
-            catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or JsonException or TerraBaseException or TimeoutException ||
+            catch (Exception error) when (error is AccountAccessException or DbUpdateConcurrencyException or IOException or HttpRequestException or JsonException or TerraBaseException or TimeoutException ||
                 error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { logger.AuditEventWasNotRecorded(error.GetType().Name); }
         }

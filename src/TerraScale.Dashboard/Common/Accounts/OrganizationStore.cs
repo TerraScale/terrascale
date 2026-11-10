@@ -82,7 +82,15 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             return;
         }
 
-        loaded.Root.Version = AccountService.NewId();
+        if (db.ChangeTracker.Entries().All(entry => entry.State == EntityState.Unchanged || entry is { State: EntityState.Added, Entity: AuditEventRow }))
+        {
+            db.Entry(loaded.Root).Property(row => row.Version).IsModified = true;
+        }
+        else
+        {
+            loaded.Root.Version = AccountService.NewId();
+        }
+
         await RowSync.ReplaceAsync(db, cancellationToken);
     }
 
@@ -96,12 +104,13 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
         for (var attempt = 0; ; attempt++)
         {
             var stored = await FindAsync(id, cancellationToken);
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
             if (stored is { Erased: true })
             {
+                await db.AuditEvents.Where(row => row.OrganizationId == id).ExecuteDeleteAsync(cancellationToken);
                 return;
             }
 
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
             var erased = new OrganizationRecord { Id = id, Kind = stored?.Organization.Kind ?? "business", DeletedProjectIds = stored?.Organization.DeletedProjectIds ?? [] };
             var next = Write(erased, AccountService.NewId(), erasureId);
             if (stored is null)
@@ -114,11 +123,7 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 Apply(db, stored.Rows, next);
             }
 
-            try
-            {
-                await (stored is null ? RowSync.CreateAsync(db, cancellationToken) : RowSync.ReplaceAsync(db, cancellationToken));
-                return;
-            }
+            try { await (stored is null ? RowSync.CreateAsync(db, cancellationToken) : RowSync.ReplaceAsync(db, cancellationToken)); }
             catch (DbUpdateConcurrencyException) when (attempt < 3) { }
         }
     }
