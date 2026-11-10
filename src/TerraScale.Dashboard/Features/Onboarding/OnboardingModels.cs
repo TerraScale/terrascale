@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
     public sealed record OnboardingPage(DocumentModel Document, string CsrfToken,
         string DisplayName = "", string Email = "", string Error = "",
         bool PaymentCanceled = false, string Plan = "", string Step = "account-information", IReadOnlyList<BillingPlan>? Plans = null,
-        IReadOnlyList<string>? Regions = null, string ProjectName = "Personal", string Region = "")
+        IReadOnlyList<string>? Regions = null, string ProjectName = "Personal", string Region = "", string RequestedPlan = "")
     {
         public IReadOnlyList<OnboardingStep> Steps => OnboardingProgress.Steps(Step);
         public int CurrentStep => Steps.Select((step, index) => (step, index)).FirstOrDefault(item => item.step.Current).index + 1;

@@ -160,7 +160,7 @@ namespace TerraScale.Dashboard.E2E.Features.Backups
             await SqlAsync("UPDATE users SET score = 2");
             using (var restored = await HttpJourney.PostFormAsync(client, path, form))
             {
-                var location = restored.Headers.Location?.PathAndQuery ?? "";
+                var location = restored.Headers.Location?.OriginalString ?? "";
                 var operation = location.StartsWith(path + "?restore=", StringComparison.Ordinal) ? location[(path + "?restore=").Length..] : "";
                 await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
                 await Assert.That(TerraScaleIds.IsValid(operation)).IsTrue();

@@ -187,7 +187,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             return await AccountScope.RefreshAsync(accounts, context, cancellationToken);
         }
 
-        private Task ForgetAsync(AccountContext context, CancellationToken cancellationToken)
+        private Task<AccountRecord> ForgetAsync(AccountContext context, CancellationToken cancellationToken)
         {
             var fallback = context.Organizations.Where(org => org.Id != context.Organization!.Id).OrderBy(org => org.Kind != "personal").ThenBy(org => org.Name).FirstOrDefault();
             return accounts.UpdateAccountAsync(context.Session, account =>

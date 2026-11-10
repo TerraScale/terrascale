@@ -59,7 +59,9 @@ namespace TerraScale.Dashboard.Features.Onboarding
                             account.OnboardingStep = "payment-method";
                         }
                     }, cancellationToken);
-                    break;
+                    var requested = form["plan"].ToString();
+                    return (await PlansAsync(cancellationToken)).Any(candidate => candidate.Key == requested)
+                        ? "/onboarding?plan=" + Uri.EscapeDataString(requested) : "/onboarding";
                 case "payment-method":
                     if (context.Account.OnboardingStep != "payment-method")
                     {

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Onboarding
 {
@@ -7,6 +8,7 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
     public sealed class OnboardingMcpJourneyTests(DashboardRootFixture fixture)
     {
         private static readonly string[] BillingIntervals = ["month", "year"];
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task NativePatCompletesFreeOnboardingAcrossRunningReplicas()
         {
@@ -67,19 +69,35 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
         }
 
         [Test]
-        public async Task PaymentStepDefaultsToFreePlanWithoutCheckout()
+        public async Task PaymentStepKeepsThePricingPlanAndDefaultsToFreeWithoutCheckout()
         {
             await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
             using var browser = scenario.CreateClient();
-            using var login = await HttpJourney.LoginAsync(browser, returnTo: "/onboarding", signUp: true);
+            using var login = await HttpJourney.LoginAsync(browser, returnTo: "/onboarding?plan=pro", signUp: true);
             Check(login.StatusCode == HttpStatusCode.SeeOther, "Hosted sign-up starts a native account at onboarding");
-            await SaveAsync(new() { ["step"] = "account-information", ["displayName"] = "Free default" });
+            using var account = await browser.GetAsync("/onboarding?plan=pro");
+            var accountHtml = await account.Content.ReadAsStringAsync();
+            Check(accountHtml.Contains("<input type=\"hidden\" name=\"plan\" value=\"pro\" />", StringComparison.Ordinal),
+                "The account step form carries the plan chosen on the pricing page");
+            using (var information = await HttpJourney.PostFormAsync(browser, "/onboarding/step",
+                new() { ["_csrf"] = await HttpJourney.CsrfAsync(browser, "/onboarding"), ["step"] = "account-information", ["displayName"] = "Pricing plan", ["plan"] = "pro" }))
+            {
+                Check(information.StatusCode == HttpStatusCode.SeeOther && information.Headers.Location?.OriginalString == "/onboarding?plan=pro",
+                    "The account step continues to the plan step with the pricing plan");
+                using var planStep = await browser.GetAsync(information.Headers.Location);
+                var planHtml = await planStep.Content.ReadAsStringAsync();
+                var proStart = planHtml.IndexOf("value=\"pro\"", StringComparison.Ordinal);
+                Check(proStart > 0 && planHtml[proStart..planHtml.IndexOf("/>", proStart, StringComparison.Ordinal)].Contains("checked=\"checked\"", StringComparison.Ordinal),
+                    "The plan step preselects the pricing plan");
+            }
+
             var html = await PageAsync();
             var cards = System.Text.RegularExpressions.Regex.Count(html, "class=\"ts-onboarding-plan\"");
             var firstCardStart = html.IndexOf("ts-onboarding-plan\"", StringComparison.Ordinal);
             var firstCard = html[firstCardStart..html.IndexOf("</label>", firstCardStart, StringComparison.Ordinal)];
             Check(cards == 4 && firstCard.Contains("value=\"free\"", StringComparison.Ordinal) && firstCard.Contains("checked=\"checked\"", StringComparison.Ordinal),
                 "The payment step renders the Free card first, selected by default");
+            Check(firstCard.Contains("No card required", StringComparison.Ordinal), "The Free card states the catalog's billing description");
             Check(html.Contains("Continue on Free", StringComparison.Ordinal) && !html.Contains("name=\"bypass\"", StringComparison.Ordinal),
                 "The single primary action follows the Free selection and the bypass field is gone");
             using var saved = await HttpJourney.PostFormAsync(browser, "/onboarding/step",
@@ -94,13 +112,6 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
             {
                 using var page = await browser.GetAsync("/onboarding");
                 return await page.Content.ReadAsStringAsync();
-            }
-
-            async Task SaveAsync(Dictionary<string, string> form)
-            {
-                form["_csrf"] = await HttpJourney.CsrfAsync(browser, "/onboarding");
-                using var response = await HttpJourney.PostFormAsync(browser, "/onboarding/step", form);
-                Check(response.StatusCode == HttpStatusCode.SeeOther, "Native onboarding advances the current account step: " + form["step"]);
             }
         }
 

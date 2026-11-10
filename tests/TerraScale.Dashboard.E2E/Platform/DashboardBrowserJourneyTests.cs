@@ -48,8 +48,9 @@ namespace TerraScale.Dashboard.E2E.Platform
                         await page.Locator("#database-name").FillAsync(invalid);
                         await Assert.That(await page.Locator("#database-name").EvaluateAsync<bool>("el => el.validity.patternMismatch")).IsTrue().Because("Native database names reject uppercase and a missing leading lowercase letter");
                     }
-                    await page.Locator("#database-name").FillAsync(name + "-x");
+                    await page.Locator("#database-name").FillAsync(name + "-");
                     await Assert.That(await page.Locator("#database-name").EvaluateAsync<bool>("el => el.checkValidity()")).IsTrue().Because("Native database names accept trailing hyphens");
+                    await page.Locator("#database-name").FillAsync(name);
                     var map = page.Locator("#create-database [data-select-id=\"database-home\"]");
                     var home = page.Locator("#database-home");
                     await map.GetByRole(AriaRole.Button, new() { Name = "San Francisco Bay Area (SJC)", Exact = true }).ClickAsync();

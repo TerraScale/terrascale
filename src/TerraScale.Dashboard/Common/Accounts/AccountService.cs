@@ -88,8 +88,13 @@ namespace TerraScale.Dashboard.Common.Accounts
                     catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or OperationCanceledException) { }
                     throw;
                 }
-                await UpdateAccountAsync(session, current =>
+                return await UpdateAccountAsync(session, current =>
                 {
+                    if (session.Email.Length != 0)
+                    {
+                        current.Email = session.Email;
+                    }
+
                     if (current.PersonalOrganizationId.Length != 0)
                     {
                         return;
@@ -488,9 +493,9 @@ namespace TerraScale.Dashboard.Common.Accounts
             org.Projects.Values.OrderBy(item => item.Id, StringComparer.Ordinal).FirstOrDefault();
         }
 
-        public async Task UpdateAccountAsync(SessionRecord session, Action<AccountRecord> update, CancellationToken cancellationToken)
+        public async Task<AccountRecord> UpdateAccountAsync(SessionRecord session, Action<AccountRecord> update, CancellationToken cancellationToken)
         {
-            for (var attempt = 0; attempt < 4; attempt++)
+            for (var attempt = 0; ; attempt++)
             {
                 var stored = await accountStore.FindAsync(session.UserId, cancellationToken) ?? throw new AccountAccessException("Account is unavailable.", 401);
                 if (stored.Erased)
@@ -510,7 +515,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 try
                 {
                     await accountStore.ReplaceAsync(stored, cancellationToken);
-                    return;
+                    return account;
                 }
                 catch (DbUpdateConcurrencyException) when (attempt < 3) { }
             }

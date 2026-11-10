@@ -17,7 +17,7 @@ public static class DashboardStorage
         services.AddSingleton(provider => new TerraBaseSqlClient(provider.GetRequiredService<Transport>().Client,
             new TerraBaseSqlClientOptions { BaseAddress = TerraBaseRpcClient.Origin(provider.GetRequiredService<IHostEnvironment>()) }).Database(ProjectId, Database));
         services.AddHostedService<StorageSweeper>();
-        services.AddPooledDbContextFactory<DashboardDbContext>((provider, options) => options.UseTerraBase(provider.GetRequiredService<TerraBaseSqlDatabase>()));
+        services.AddPooledDbContextFactory<DashboardDbContext>((provider, options) => options.UseTerraBase(provider.GetRequiredService<TerraBaseSqlDatabase>()).AddInterceptors(StateWrites.Instance));
         return services;
     }
 
@@ -40,7 +40,7 @@ public static class DashboardStorage
             request.Headers.Add(TerraBaseRpc.PeerCredentialHeader, credentials.TerraBasePeerSecret);
             request.Headers.Remove(WriteHeader);
             request.Headers.Add(WriteHeader, "home");
-            return await ServerTiming.RpcAsync("state/sql/" + request.RequestUri?.Segments[^1], true,
+            return await ServerTiming.RpcAsync("state/sql/" + request.RequestUri?.Segments[^1], false,
                 () => base.SendAsync(request, cancellationToken));
         }
     }

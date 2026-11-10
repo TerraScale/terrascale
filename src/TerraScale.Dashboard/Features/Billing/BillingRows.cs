@@ -36,6 +36,11 @@ public sealed class BillingBinding : IBillingRow
     public bool TrialUsed { get; set; }
     public long Revision { get; set; }
 
+    public BillingBinding Copy()
+    {
+        return (BillingBinding)MemberwiseClone();
+    }
+
     public sealed class Configuration : IEntityTypeConfiguration<BillingBinding>
     {
         public void Configure(EntityTypeBuilder<BillingBinding> builder)

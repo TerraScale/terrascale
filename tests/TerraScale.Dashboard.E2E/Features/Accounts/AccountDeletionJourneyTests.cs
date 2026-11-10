@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts
 {
@@ -11,6 +12,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
     {
         private const string UserId = "test-user";
 
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task WrongEmailOrSharedOwnershipRefusesAndDeletesNothing()
         {
@@ -34,6 +36,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That(profile.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task ConfirmedDeletionWithPopulatedDatabaseDelegatesToAuthAndKeepsSharedOrganizations()
         {
@@ -98,6 +101,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
         }
 
         // The reconciler cleans the operation once ts-auth proves the deletion; the deleting browser must still see completion.
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task CompletedDeletionStatusIsVisibleToItsBrowserOnly()
         {
@@ -134,6 +138,7 @@ namespace TerraScale.Dashboard.E2E.Features.Accounts
             await Assert.That(completed.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
         }
 
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task PaidSoleOrganizationEndsAfterAuthDeletesIt()
         {

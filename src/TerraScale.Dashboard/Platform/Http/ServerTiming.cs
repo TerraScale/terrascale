@@ -194,8 +194,7 @@ namespace TerraScale.Dashboard.Platform.Http
 
             if (mutation)
             {
-                Interlocked.Increment(ref timing.pendingWrites);
-                Interlocked.Increment(ref timing.writes);
+                timing.BeginWrite();
             }
             var started = timing.clock.Elapsed.TotalMilliseconds;
             var status = 0;
@@ -209,8 +208,7 @@ namespace TerraScale.Dashboard.Platform.Http
             {
                 if (mutation)
                 {
-                    Interlocked.Increment(ref timing.writes);
-                    Interlocked.Decrement(ref timing.pendingWrites);
+                    timing.EndWrite();
                 }
                 var ended = timing.clock.Elapsed.TotalMilliseconds;
                 timing.Record("terrabase", started, ended);
@@ -219,6 +217,28 @@ namespace TerraScale.Dashboard.Platform.Http
                     logger.UpstreamTimingStartMsDurationMs("terrabase", "rpc", "RPC", operation, status, started, ended - started);
                 }
             }
+        }
+
+        public static void BeginStateWrite()
+        {
+            Current.Value?.BeginWrite();
+        }
+
+        public static void EndStateWrite()
+        {
+            Current.Value?.EndWrite();
+        }
+
+        private void BeginWrite()
+        {
+            Interlocked.Increment(ref pendingWrites);
+            Interlocked.Increment(ref writes);
+        }
+
+        private void EndWrite()
+        {
+            Interlocked.Increment(ref writes);
+            Interlocked.Decrement(ref pendingWrites);
         }
 
         public sealed class Handler : DelegatingHandler
@@ -234,8 +254,7 @@ namespace TerraScale.Dashboard.Platform.Http
                 var mutation = Mutates(request);
                 if (mutation)
                 {
-                    Interlocked.Increment(ref timing.pendingWrites);
-                    Interlocked.Increment(ref timing.writes);
+                    timing.BeginWrite();
                 }
                 var started = timing.clock.Elapsed.TotalMilliseconds;
                 HttpResponseMessage? response = null;
@@ -244,8 +263,7 @@ namespace TerraScale.Dashboard.Platform.Http
                 {
                     if (mutation)
                     {
-                        Interlocked.Increment(ref timing.writes);
-                        Interlocked.Decrement(ref timing.pendingWrites);
+                        timing.EndWrite();
                     }
                     var ended = timing.clock.Elapsed.TotalMilliseconds;
                     var upstream = Upstream(request.RequestUri);

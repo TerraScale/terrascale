@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Platform
 {
@@ -10,6 +11,7 @@ namespace TerraScale.Dashboard.E2E.Platform
     [ClassDataSource<DashboardRootFixture>]
     public sealed class OciProductionJourneyTests(DashboardRootFixture fixture)
     {
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task ProductionServesFromTheConfiguredTerraBaseOnTheConfiguredUrl()
         {

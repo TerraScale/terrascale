@@ -152,8 +152,8 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
                 }
             }
             await page.GetByRole(AriaRole.Link, new() { Name = "Manage payment", Exact = true }).ClickAsync();
-            await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url).EndsWith("/__test/portal", StringComparison.Ordinal));
-            await Assert.That(await page.GetByRole(AriaRole.Heading).InnerTextAsync()).IsEqualTo("Test-only Stripe customer portal");
+            await page.GetByRole(AriaRole.Heading, new() { Name = "Test-only Stripe customer portal", Exact = true }).WaitForAsync();
+            await Assert.That(BrowserAudit.WithoutWorkspace(page.Url).EndsWith("/__test/portal", StringComparison.Ordinal)).IsTrue();
             await Assert.That(errors.ToArray()).IsEmpty();
             var screenshots = Path.Combine(fixture.Root, "test-results", "tunit", "billing");
             Directory.CreateDirectory(screenshots);

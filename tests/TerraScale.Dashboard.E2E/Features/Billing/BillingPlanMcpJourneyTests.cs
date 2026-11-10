@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
@@ -8,6 +9,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
     public sealed class BillingPlanMcpJourneyTests(DashboardE2EFixture fixture)
     {
         private static readonly string[] BillingIntervals = ["month", "year"];
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task NativePatUsesOriginalBillingDtosFreshOwnerScopesAndTheSameCrossReplicaReceipts()
         {
