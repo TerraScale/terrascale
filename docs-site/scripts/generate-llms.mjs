@@ -2,8 +2,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const text = `# TerraScale documentation
 
-> TerraScale hosts SQL databases in the SQLite dialect. Each database lives in
-> one home region for writes and can have encrypted read replicas in other regions.
+> TerraScale hosts SQL databases in the SQLite dialect. Each database has
+> one home region, the durable apply point, and encrypted read replicas in other regions. A replica region can accept a local SQL REST write. The default TerraScale-Durability is local.
 > REST, psql and WebSocket can read ready local replicas. Postgres and WebSocket sessions preserve read-your-writes; REST reads are eventually consistent.
 > Replicas are eventually consistent. REST requests and Postgres sessions reach the home from any serving region.
 > Exchange a dashboard API key for a short-lived access token
