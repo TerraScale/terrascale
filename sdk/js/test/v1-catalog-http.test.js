@@ -90,6 +90,22 @@ describe("public database catalog HTTP contracts", () => {
     ]);
     expect(requests.map(request => request.body)).toEqual(['{"name":"branch"}', ""]);
   });
+
+  test("catalog write bodies are one-shot streams", async () => {
+    const seen = new Map();
+    const transport = new V1Transport({
+      project, token, baseUrl: "https://database.example.invalid",
+      fetch: async (input, init) => {
+        seen.set(String(input), init?.body);
+        return new Response(JSON.stringify(database), { status: 201, headers: { "content-type": "application/json" } });
+      },
+    });
+    expect(await new V1Databases(transport).create({ name: "app" })).toEqual(database);
+    const body = [...seen.values()][0];
+    expect(typeof body).not.toBe("string");
+    expect(body instanceof Blob).toBe(false);
+    expect(body instanceof ReadableStream).toBe(true);
+  });
 });
 
 // Conflict metadata must survive catalog list/get and clear on a successful rename.
