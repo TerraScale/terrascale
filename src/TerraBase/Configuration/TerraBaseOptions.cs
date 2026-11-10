@@ -213,6 +213,11 @@ public sealed record TerraBaseOptions
         }
 
         var (region, machineId, peersFile) = ClusterIdentity();
+        if (!production && peersFile is not null)
+        {
+            throw new TerraBaseConfigurationException("Development refuses TS_PEERS_FILE");
+        }
+
         var dataDirectory = values.GetValueOrDefault("data-directory", DefaultDataDirectory);
         if (string.IsNullOrWhiteSpace(dataDirectory))
         {
