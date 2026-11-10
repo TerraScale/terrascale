@@ -28,6 +28,7 @@
         <Icon name="externalLink" className="contact-email-icon" />
       </ExternalLink>
       <ExternalLink href={`mailto:${email}`} class="contact-email-address">{email}</ExternalLink>
+      <p class="contact-description">Report a security issue to security@terrascale.tech.</p>
     </div>
 
     <div class="contact-details">
