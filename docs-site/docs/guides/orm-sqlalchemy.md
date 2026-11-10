@@ -81,6 +81,8 @@ with Session(engine) as session:
 
 The dialect defaults to `SERIALIZABLE` transactions over the SQL WebSocket session: the first statement implicitly begins a transaction, `commit()` and `rollback()` close it, and `begin_nested()` issues a real `SAVEPOINT`. A transaction lives at most 5 seconds: past the limit the server rolls it back, so keep transactions small.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 Pass `isolation_level="AUTOCOMMIT"` to `create_engine` for the one-request-per-statement HTTP path with no server-side transaction; each statement (or executemany batch) is then its own atomic request.
 
 ## Migrations with Alembic
