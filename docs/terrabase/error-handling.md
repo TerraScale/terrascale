@@ -113,3 +113,5 @@ invariant checks remain as described below.
 | `Primitives` | 8 | 0 | Keep: invariant and resource ownership checks |
 
 `Tenancy/ITenantDirectory` also uses native unions: an unreadable catalog is `Unavailable`, never a negative registration, an empty inventory or a Hobby plan. Known missing organizations retain their documented Hobby default.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
