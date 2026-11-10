@@ -333,7 +333,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             CheckIntentJournal();
             DeleteRewriteScratch();
             Ledger = new StorageFaultLedger(this, logger, schemaMemory);
-            Leases = new HomeLeaseGate(clock);
+            Leases = new HomeLeaseGate(HostTime);
 
             Io = new(configured.Threads, configured.Queue, meter);
         }
