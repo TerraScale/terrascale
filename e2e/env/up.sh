@@ -72,7 +72,6 @@ auth=(TS_AUTH_TERRABASE_URL=http://127.0.0.1:8081 TS_AUTH_LISTEN=http://127.0.0.
   TS_AUTH_SMTP_HOST=smtp.email.sa-saopaulo-1.oci.oraclecloud.com TS_AUTH_SMTP_PORT=587
   TS_AUTH_SMTP_USERNAME="$smtp_username" TS_AUTH_SMTP_PASSWORD="$smtp_password"
   CLOUDFLARE_ACCOUNT_ID="$cloudflare_account" CLOUDFLARE_EMAIL_TOKEN="$cloudflare_token")
-start ts-auth-signing-key env "${auth[@]}" dotnet "$build/ts-auth/ts-auth.dll" provision-signing-key
 start ts-auth env "${auth[@]}" dotnet "$build/ts-auth/ts-auth.dll"
 start dashboard env TS_AUTH_DASHBOARD_CLIENT_SECRET="$client_secret" TS_DASHBOARD_SESSION_ENCRYPTION_KEY="$session_key" \
   STRIPE_SECRET_KEY="$stripe_secret_key" STRIPE_WEBHOOK_SECRET="$stripe_signing_secret" TERRABASE_PEER_SECRET="$peer_secret" \
@@ -82,8 +81,6 @@ start dashboard env TS_AUTH_DASHBOARD_CLIENT_SECRET="$client_secret" TS_DASHBOAR
 ready mailpit curl -fsS http://127.0.0.1:8025/readyz
 ready cloudflare-sink curl -fsS http://127.0.0.1:8026/messages
 ready caddy edge_serves
-wait "$(cat "$pids/ts-auth-signing-key.pid")"
-rm "$pids/ts-auth-signing-key.pid"
 ready ts-auth curl -fsS http://127.0.0.1:8090/readyz
 ready dashboard curl -fsS --cacert "$trust" https://dash.terrascale.tech/readyz
 curl -fsS --cacert "$trust" https://dash.terrascale.tech/readyz
