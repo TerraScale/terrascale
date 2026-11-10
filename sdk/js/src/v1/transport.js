@@ -37,6 +37,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  * @property {string | undefined} [apiKey] Server-side TerraScale key for token exchange and scoped-key creation.
  * @property {string | V1TokenProvider | undefined} [token] An access JWT (or a legacy C# tb_ key), or a provider resolved per authenticated request; held privately. Browser callers must use end-user tokens, never project credentials.
  * @property {string | undefined} [baseUrl]
+ *@property {string | undefined} [region]
  * @property {V1EndpointResolver | undefined} [endpointResolver]
  * @property {FetchLike | undefined} [fetch]
  * @property {SqlSocketConstructor | undefined} [WebSocket] Defaults to the runtime's WebSocket.
