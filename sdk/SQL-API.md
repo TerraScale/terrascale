@@ -146,6 +146,7 @@ Codes are constants (`TerraBaseSqlErrorCodes`); the full table with SQLSTATEs an
 
 Retries: REST resends `409 serialization_conflict` at most twice with jitter (the request rolled back entirely) and
 the SDK's existing pre-execution refusals (`503` with Retry-After); nothing else. Sessions never resend.
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 Failures before execution keep each SDK's generic HTTP error types (401, 404, 421 wrong region with the home region,
 429, 503). A refused WebSocket upgrade raises the same types.
