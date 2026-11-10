@@ -75,3 +75,5 @@ and grant errors terminate the subscription; `must_refetch` restarts its snapsho
 `terrabase_shape_flights_active` measures active or briefly retained computations.
 HTTP requests, shared computations and CDN object requests must be reported separately:
 independent remote clients still need their own authenticated connection and responses.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
