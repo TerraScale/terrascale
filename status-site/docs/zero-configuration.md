@@ -23,3 +23,5 @@ Adopted 2026-10-09 (TS-795).
   toggle: the catalog is edited in the admin page.
 - Missing credentials fail closed: without the admin secrets nobody can sign
   in, and a probe whose secret is missing shows "Not configured", never healthy.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
