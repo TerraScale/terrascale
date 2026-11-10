@@ -36,6 +36,10 @@ public sealed partial record AuthOptions
         "github-oauth",
         "google-oauth",
         "terrabase-url",
+        "smtp-host",
+        "smtp-port",
+        "smtp-username",
+        "smtp-password",
         "environment");
 
     /// <summary>Plain-HTTP listen address of the public API (8090, behind the ts-orch TLS edge). TerraBase uses port 8080 on the shared host network.</summary>
@@ -67,8 +71,7 @@ public sealed partial record AuthOptions
     /// <summary>Exact socket peers allowed to supply one rightmost X-Forwarded-For hop. Empty disables forwarding.</summary>
     public IReadOnlyList<IPAddress> TrustedProxies { get; init; } = [];
 
-    /// <summary>Cloudflare Email Sending account and token; without them email is logged, not delivered.</summary>
-    public CloudflareEmailOptions? CloudflareEmail { get; init; }
+    public SmtpEmailOptions? Smtp { get; init; }
 
     /// <summary>Platform OAuth clients, supplied as JSON credentials from OCI Vault; absent credentials hide the button.</summary>
     public IReadOnlyList<Features.ProjectTenants.SocialProviderRecord> SocialClients { get; init; } = [];
@@ -111,22 +114,17 @@ public sealed partial record AuthOptions
     /// </summary>
     public override string ToString() =>
         $"AuthOptions {{ Listen = {this.Listen}, MetricsListen = {this.MetricsListen}, PublicOrigin = {this.PublicOrigin}, "
-        + $"Development = {this.Development}, Email = {(this.CloudflareEmail is null ? "off" : "on")}, "
+        + $"Development = {this.Development}, Email = {(this.Smtp is null ? "off" : "on")}, "
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
 
-    /// <summary>
-    /// Replaces every secret variable (<c>TS_AUTH_*</c>, <c>CLOUDFLARE_*</c>, <c>TERRABASE_PEER_SECRET</c>) that has a
-    /// <c>&lt;NAME&gt;_FILE</c> companion with that file's contents, trailing newline trimmed: a host that mounts secrets as
-    /// files (OCI Vault on gru) delivers them this way. The file wins over the variable. Call before <see cref="FromProcess"/>.
-    /// </summary>
     public static void ReadSecretFiles()
     {
         foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
         {
             if (entry.Key is string key && key.EndsWith("_FILE", StringComparison.Ordinal) && entry.Value is string { Length: > 0 } path
                 && key[..^"_FILE".Length] is var name
-                && (name.StartsWith("TS_AUTH_", StringComparison.Ordinal) || name.StartsWith("CLOUDFLARE_", StringComparison.Ordinal) || name == "TERRABASE_PEER_SECRET"))
+                && (name.StartsWith("TS_AUTH_", StringComparison.Ordinal) || name == "TERRABASE_PEER_SECRET"))
             {
                 try
                 {
@@ -151,17 +149,6 @@ public sealed partial record AuthOptions
             {
                 values[key["TS_AUTH_".Length..].ToLowerInvariant().Replace('_', '-')] = value;
             }
-        }
-
-        // Cloudflare's credential names are separate from TS_AUTH_* settings.
-        if (Environment.GetEnvironmentVariable("CLOUDFLARE_ACCOUNT_ID") is { } accountId)
-        {
-            values["cloudflare-account-id"] = accountId;
-        }
-
-        if (Environment.GetEnvironmentVariable("CLOUDFLARE_EMAIL_TOKEN") is { } emailToken)
-        {
-            values["cloudflare-email-token"] = emailToken;
         }
 
         foreach (var arg in args)
@@ -211,11 +198,20 @@ public sealed partial record AuthOptions
             throw Invalid("TS_AUTH_AUDIT_VERIFY_KEYS may contain at most 5 previous keys");
         }
 
-        var cloudflareAccountId = Optional("cloudflare-account-id");
-        var cloudflareEmailToken = Optional("cloudflare-email-token");
-        if ((cloudflareAccountId is null) != (cloudflareEmailToken is null))
+        var smtpHost = Optional("smtp-host");
+        var smtpUsername = Optional("smtp-username");
+        var smtpPassword = Optional("smtp-password");
+        var smtpPort = 587;
+        if (Optional("smtp-port") is { } rawPort
+            && (!int.TryParse(rawPort, NumberStyles.None, CultureInfo.InvariantCulture, out smtpPort) || smtpPort is < 1 or > 65535))
         {
-            throw Invalid("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN must be set together");
+            throw Invalid("TS_AUTH_SMTP_PORT must be a TCP port number");
+        }
+
+        var smtpSettings = new[] { smtpHost, smtpUsername, smtpPassword };
+        if (smtpSettings.Any(setting => setting is null) && smtpSettings.Any(setting => setting is not null))
+        {
+            throw Invalid("TS_AUTH_SMTP_HOST, TS_AUTH_SMTP_USERNAME and TS_AUTH_SMTP_PASSWORD must be set together");
         }
 
         var rateLimit = 1000;
@@ -235,7 +231,7 @@ public sealed partial record AuthOptions
             AuditVerificationKeys = [.. verifyValues.Select(raw => DecodeKey("audit-verify-keys", raw))],
             RateLimitPerWindow = rateLimit,
             TrustedProxies = ParseTrustedProxies(Optional("trusted-proxies")),
-            CloudflareEmail = cloudflareAccountId is null || cloudflareEmailToken is null ? null : new CloudflareEmailOptions(cloudflareAccountId, cloudflareEmailToken),
+            Smtp = smtpHost is null ? null : new SmtpEmailOptions(smtpHost, smtpPort, smtpUsername!, smtpPassword!),
             SentryDsn = Optional("sentry-dsn") is { } dsn ? ValidateDsn(dsn) : null,
             DashboardClient = ParseDashboardClient(Optional("dashboard-client-secret"), Optional("dashboard-redirect-uris"), Optional("dashboard-post-logout-redirect-uris")),
             AccessTokenAudiences = [.. ParseAudiences(Optional("access-token-audiences")).Prepend(TerraBaseAudience).Distinct(StringComparer.Ordinal)],
@@ -522,12 +518,8 @@ public sealed record ServiceClientOptions(string ClientId, string Secret)
     public override string ToString() => $"{nameof(ServiceClientOptions)} {{ ClientId = {this.ClientId} }}";
 }
 
-/// <summary>The Cloudflare account and token that send email through Cloudflare Email Sending.</summary>
-/// <param name="AccountId">The Cloudflare account that owns the Email Sending domain.</param>
-/// <param name="ApiToken">A token with the account's Email Sending permission.</param>
-public sealed record CloudflareEmailOptions(string AccountId, string ApiToken)
+public sealed record SmtpEmailOptions(string Host, int Port, string Username, string Password, bool RequireTls = true)
 {
-    /// <summary>Omits the token, so formatting or logging the record never discloses it.</summary>
-    public override string ToString() => nameof(CloudflareEmailOptions);
+    public override string ToString() => nameof(SmtpEmailOptions);
 }
 

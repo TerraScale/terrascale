@@ -4,7 +4,7 @@ Auth suppresses OpenIddict and Microsoft Information chatter, while retaining
 Microsoft.Hosting.Lifetime startup/shutdown messages and Warning/Error events.
 TerraScale email outcomes remain at Information.
 
-Each Cloudflare send attempt records a recipient SHA-256 hash and a provider
+Each SMTP send attempt records a recipient SHA-256 hash and a provider
 outcome. `queued` means provider acceptance, not delivery to the inbox. `bounced`
 means a permanent bounce (including provider suppression); `429` means the
 provider refused the request due to its limit. Other failures report `error`.

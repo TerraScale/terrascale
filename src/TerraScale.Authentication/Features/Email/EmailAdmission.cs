@@ -9,7 +9,7 @@ namespace TerraScale.Authentication.Features.Email;
 
 public sealed class EmailAdmission(AuthData data, TimeProvider clock)
 {
-    private const string Key = "cloudflare";
+    private const string Key = "smtp";
     private static readonly Meter Meter = new(AuthMetrics.MeterName);
     private static readonly Counter<long> Decisions = Meter.CreateCounter<long>("ts_auth.email_admission");
     private static readonly Gauge<long> Remaining = Meter.CreateGauge<long>("ts_auth.email_remaining");
@@ -100,7 +100,7 @@ public sealed record EmailBudgetRecord(string Key, DateTimeOffset PausedUntil);
 
 public sealed record EmailReservationRecord(string Id, DateTimeOffset At, EmailPurpose Purpose, string Tenant, string? AttemptId = null);
 
-public sealed class AdmittedEmailSender(EmailAdmission admission, CloudflareEmailSender provider, ILogger<AdmittedEmailSender> logger) : IEmailSender
+public sealed class AdmittedEmailSender(EmailAdmission admission, SmtpEmailSender provider, ILogger<AdmittedEmailSender> logger) : IEmailSender
 {
     public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
         _ = await this.DeliverAsync(recipient, message, cancellationToken).ConfigureAwait(false);

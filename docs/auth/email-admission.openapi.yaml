@@ -9,7 +9,7 @@ security:
   - mailAdmission: []
 tags:
   - name: Email
-    description: Shared Cloudflare account capacity admission.
+    description: Shared provider capacity admission.
 paths:
   /v1/terrascale/email/admission:
     post:
@@ -57,4 +57,4 @@ components:
     mailAdmission:
       type: http
       scheme: bearer
-      description: Lowercase-hex HMAC-SHA256 of UTF-8 terrascale:email-admission:v1:ts-alerts, keyed by the existing Cloudflare token. Admission-only authority; never log it.
+      description: Lowercase-hex HMAC-SHA256 of UTF-8 terrascale:email-admission:v1:ts-alerts, keyed by the shared SMTP password. Admission-only authority; never log it.

@@ -37,7 +37,7 @@ composed API catalog is available in OpenAPI and Scalar.
 
 | Capability | Initial state | Current change or remaining acceptance |
 | --- | --- | --- |
-| Password signup, recovery, verified email | Implemented | Existing HTTP/security regression coverage; Cloudflare Email Sending delivery still needs live acceptance |
+| Password signup, recovery, verified email | Implemented | Existing HTTP/security regression coverage; SMTP delivery still needs live acceptance |
 | Magic links, email passcodes | Implemented | Existing mailbox/proof regressions; delivery, abuse and mobile continuation need further work |
 | Passkeys | Implemented (enrollment via platform API and hosted security page #1248/#1265; hosted passkey sign-in satisfying MFA #1271; listing, renaming and deletion with step-up #1268) | Complete browser/device interoperability is still a release gate |
 | TOTP/recovery MFA | Implemented | Cryptographic/HTTP tests; complete browser/device interoperability is still a release gate |
@@ -85,7 +85,7 @@ composed API catalog is available in OpenAPI and Scalar.
    uniqueness claims, credential migration/import and bulk user export. Guest
    cleanup must coordinate application-owned data rather than silently deleting it.
 8. **Operational evidence.** Independent security review, protocol conformance,
-   browser/mobile compatibility, load and resource measurements, live Cloudflare Email Sending,
+   browser/mobile compatibility, load and resource measurements, live SMTP delivery,
    observability/alerting, backup/restore exercises and rollout procedures.
 
 Enterprise parity additionally needs richer authorization relationships, complete

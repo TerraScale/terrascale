@@ -13,6 +13,6 @@ Production hosting and migration status are in [OCI hosting](../oci.md).
 
 ## Secrets as files
 
-Every secret variable (`TS_AUTH_*`, `CLOUDFLARE_*`, `TERRABASE_PEER_SECRET`) also accepts `<NAME>_FILE=/path`: ts-auth reads
+Every secret variable (`TS_AUTH_*`, `TERRABASE_PEER_SECRET`) also accepts `<NAME>_FILE=/path`: ts-auth reads
 the file, trims the trailing newline, and the file wins over `<NAME>`. A host that mounts secrets as files (OCI Vault on gru)
 delivers them this way. An unreadable file stops the start, naming only the variable.

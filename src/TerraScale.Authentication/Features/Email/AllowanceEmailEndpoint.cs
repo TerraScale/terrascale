@@ -26,7 +26,7 @@ public sealed class AllowanceEmailEndpoint(PlatformDirectory directory, OwnerDel
         Post("/v1/{slug}/email/allowance");
         Name("email_allowance_send");
         Summary("Notify the current organization owners of an allowance threshold");
-        Description("Dashboard ClientBasic email authority. ts-auth resolves current owners internally; no recipient identities are returned. Durable dedupe per organization, UTC month, metric and threshold. Explicit provider rate limits and missing email configuration may be retried. A crash or ambiguous provider acceptance remains unknown and is never automatically resent: Cloudflare Email Sending has no confirmed idempotency contract here. Accepted means provider acceptance, not inbox delivery.");
+        Description("Dashboard ClientBasic email authority. ts-auth resolves current owners internally; no recipient identities are returned. Durable dedupe per organization, UTC month, metric and threshold. Explicit provider rate limits and missing email configuration may be retried. A crash or ambiguous provider acceptance remains unknown and is never automatically resent: the SMTP provider has no confirmed idempotency contract here. Accepted means provider acceptance, not inbox delivery.");
         Tags("Email");
         Metadata(new AcceptsMetadata(["application/json"], typeof(AllowanceEmailRequest)), new RequiresSecurity(SecuritySchemes.ClientBasic));
         Produces<AllowanceEmailResponse>();

@@ -1,7 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -9,10 +7,6 @@ using System.Text.RegularExpressions;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
-using TerraScale.Authentication.Configuration;
-using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Email;
@@ -26,61 +20,6 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
 {
     private const string Base = $"/v1/{OidcIssuer.Slug}/email";
     private static readonly JsonObject Actor = new() { ["id"] = "user_123", ["email"] = "admin@example.test" };
-
-    [Test]
-    [Arguments(200, "{\"success\":true,\"result\":{\"queued\":[\"admin@example.test\"],\"delivered\":[],\"permanent_bounces\":[],\"suppressed_recipients\":[]}}", 202, null)]
-    public async Task Test_sends_report_actual_provider_acceptance(int status, string body, int expected, string? error)
-    {
-        await using var provider = await EmailProviderFixture.FakeCloudflare.StartAsync((HttpStatusCode)status, body: body);
-        using var http = ProviderClient(provider);
-        var captured = new CapturingEmailSender();
-        await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services =>
-            services.AddSingleton<IEmailSender>(new ProductSender(captured, Cloudflare(http))));
-        using var response = await SendAsync(oidc, HttpMethod.Post, Base + "/test", new JsonObject
-        {
-            ["kind"] = "password_reset",
-            ["locale"] = "en",
-            ["to"] = "admin@example.test",
-            ["actor"] = Actor.DeepClone(),
-        });
-        await Assert.That((int)response.StatusCode).IsEqualTo(expected);
-        await Assert.That(provider.Calls).IsEqualTo(1);
-        if (error is not null)
-        {
-            await Assert.That(await ErrorCodeAsync(response)).IsEqualTo(error);
-            await Assert.That(response.Headers.RetryAfter is not null).IsEqualTo(expected == 429);
-        }
-    }
-
-    private static HttpClient ProviderClient(EmailProviderFixture.FakeCloudflare provider) => new(new EmailProviderFixture.ProviderRoute(provider.Address, provider)
-    {
-        InnerHandler = new HttpClientHandler { AllowAutoRedirect = false },
-    });
-
-    private static CloudflareEmailSender Cloudflare(HttpClient http) => new(http,
-        new CloudflareEmailOptions("synthetic-account", "synthetic-token"), NullLogger<CloudflareEmailSender>.Instance);
-
-    private sealed class ProductSender(CapturingEmailSender signIn, IEmailSender? provider = null) : IEmailSender
-    {
-        public Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) => signIn.SendAsync(recipient, message, cancellationToken);
-
-        public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
-        {
-            if (message.Purpose is EmailPurpose.Authentication or EmailPurpose.Invitation)
-            {
-                // Authentication mail goes through the outbox's DeliverAsync too; it is captured, never a product outcome.
-                await signIn.SendAsync(recipient, message, cancellationToken);
-                return EmailDeliveryOutcome.Accepted;
-            }
-
-            if (provider is not null)
-            {
-                return await provider.DeliverAsync(recipient, message, cancellationToken);
-            }
-            await signIn.SendAsync(recipient, message, cancellationToken);
-            return EmailDeliveryOutcome.Accepted;
-        }
-    }
 
     [Test]
     public async Task The_next_sign_in_code_email_uses_the_saved_branding_and_copy()
@@ -169,9 +108,6 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
 
         return await (client ?? oidc.Client).SendAsync(request);
     }
-
-    private static async Task<string> ErrorCodeAsync(HttpResponseMessage response) =>
-        (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()!;
 
     [GeneratedRegex(@"\b[0-9]{6}\b")]
     private static partial Regex SixDigits();
