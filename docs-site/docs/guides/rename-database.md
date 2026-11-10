@@ -44,3 +44,5 @@ The CLI accepts the database's name or its immutable id. The SDKs expose the sam
 ## Concurrent renames
 
 Two regions can accept different renames at once. The database keeps its id, data and backups under one of the names, and the response reports what happened: the losing name comes back as `previousName`, with `conflictOf` naming the database that kept it. Rename again to choose a final name.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
