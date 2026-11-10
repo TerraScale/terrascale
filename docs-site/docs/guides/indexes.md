@@ -5,7 +5,7 @@ description: Speed up queries on TerraScale databases with secondary indexes.
 
 # Indexes
 
-TerraScale SQL keeps secondary indexes on ordinary tables. `CREATE INDEX` and `DROP INDEX` are schema statements, so they run like any other write: inside the request's transaction, on the database's home region, and they need the `sql:write` scope. Every index type the SQLite dialect supports is available: plain, `UNIQUE`, partial (`WHERE …`) and expression indexes.
+TerraScale SQL keeps secondary indexes on ordinary tables. `CREATE INDEX` and `DROP INDEX` are schema changes, so they run inside the request's transaction, on the database's home region, and they need the `sql:write` scope. Every index type the SQLite dialect supports is available: plain, `UNIQUE`, partial (`WHERE …`) and expression indexes.
 
 ## Create and query
 
