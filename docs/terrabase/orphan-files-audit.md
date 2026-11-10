@@ -9,3 +9,5 @@ Each orphan database produces one warning per pass with its summed sidecar bytes
 An orphan first seen at least 24 hours ago is deleted by the next complete pass, at most 16 per pass. Under the engine's lifecycle reservation, one catalog transaction re-checks that the database is still unregistered, without cleanup intent, purge or deletion authority, and that its first-seen record is unchanged; it then records a cleanup intent and drops the record. The files go through the abandoned-creation cleanup: the engine closes the cached store and deletes the main file, sidecars and artifacts, then the intent clears. A registration that arrives before the cleanup keeps the files. A busy engine operation, an unreadable catalog or a failed cleanup keeps the files, and the intent retries through recovery.
 
 During catalog outages or lifecycle-lock contention, the last complete gauge values and first-seen records remain available until a complete pass succeeds, and nothing is deleted.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
