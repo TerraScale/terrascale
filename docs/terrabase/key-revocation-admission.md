@@ -28,3 +28,5 @@ contract's answer for a slow ts-auth is `503 auth_unavailable` with `Retry-After
 `GET /v1/terrascale/api-keys/self` reads the key, the organization its token names (`org_id`) and the project
 (`project_id`) together. Before, it read the key first and the organization and project after it. The answer is the same:
 the key must still belong to the token's organization, or it answers `key_revoked`.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
