@@ -30,21 +30,6 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
 /** A fresh access token for each authenticated request, including stream reconnects. @typedef {() => string | Promise<string>} V1TokenProvider */
 /** @typedef {new (url: string, init: string[] | { protocols: string[]; headers: Record<string, string> }) => import("./sql-socket.js").SqlSocketLike} SqlSocketConstructor */
 /**
- * Project-scoped TerraBase v1 API client. Supply exactly one of baseUrl or endpointResolver.
- * URLs must use HTTPS or loopback HTTP. Mutations are never automatically replayed.
- * @typedef {object} TerraBaseV1ClientConfig
- * @property {string} project
- * @property {string | undefined} [apiKey] Server-side TerraScale key for token exchange and scoped-key creation.
- * @property {string | V1TokenProvider | undefined} [token] An access JWT (or a legacy C# tb_ key), or a provider resolved per authenticated request; held privately. Browser callers must use end-user tokens, never project credentials.
- * @property {string | undefined} [baseUrl]
- *@property {string | undefined} [region]
- * @property {V1EndpointResolver | undefined} [endpointResolver]
- * @property {FetchLike | undefined} [fetch]
- * @property {SqlSocketConstructor | undefined} [WebSocket] Defaults to the runtime's WebSocket.
- * @property {number | undefined} [maxResponseBytes] Default 64 MiB, including query framing and escaping.
- */
-
-/**
  * @typedef {object} V1CallOptions
  * @property {string | Uint8Array} [body]
  * @property {string} [contentType]

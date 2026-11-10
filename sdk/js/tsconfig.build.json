@@ -9,6 +9,6 @@
     "rootDir": "src",
     "outDir": "types"
   },
-  "include": ["src/**/*.js"],
+  "include": ["src/**/*.js", "src/**/*.d.ts"],
   "exclude": ["src/**/*.test.js", "src/integration", "types", "node_modules"]
 }
