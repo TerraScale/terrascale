@@ -319,7 +319,7 @@ export const en = {
           q: 'What does Enterprise include?',
           a: 'Enterprise has a ${enterprisePriceUsd} monthly support base plus usage. Contact sales for terms; Enterprise is not sold through checkout.',
         },
-        { q: 'How are replicas billed?', a: 'The catalog lists one home region per database on every plan. Writes and stored bytes are counted in the home region; replica storage has no separate charge. Plan write caps and SQL read fair use apply.' },
+        { q: 'How are replicas billed?', a: 'The catalog lists three regions per database on every plan. Writes and stored bytes are counted across those regions; replica storage has no separate charge. Plan write caps and SQL read fair use apply.' },
       ],
       contactSales: 'Contact Sales',
     },
@@ -388,7 +388,7 @@ export const en = {
       'TerraScale builds TerraBase, a SQL database service. The dashboard brings together databases, access management and usage.',
     databaseTitle: 'TerraBase',
     databaseText:
-      'The service has three regions. A database can live in one region. A replica region can take a local SQL write, and the home is the durable apply point.',
+      'The service has three regions. Each database has three regions. A replica region can take a local SQL write, and the home is the durable apply point.',
     integrationText:
       'Use the SQLite SQL dialect through PostgreSQL-compatible clients, the HTTP API or the SDKs. Manage databases and API keys in the dashboard.',
     alphaTitle: 'Public Alpha',

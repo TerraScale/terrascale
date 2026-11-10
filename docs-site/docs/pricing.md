@@ -30,13 +30,13 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 
 | Plan | Home regions per database |
 | --- | --- |
-| Free | 1 |
-| Starter | 1 |
-| Pro | 1 |
-| Team | 1 |
-| Enterprise | 1 |
+| Free | 3 |
+| Starter | 3 |
+| Pro | 3 |
+| Team | 3 |
+| Enterprise | 3 |
 
-Each database has one home region and replicas in other serving regions; a replica region can accept a local SQL REST write, the home applies it, and the default TerraScale-Durability is local.
+Each database has three regions. A replica region can accept a local SQL REST write, the home applies it, and the default TerraScale-Durability is local.
 The catalog's regionsPerDatabase counts home regions. Replica storage is not billed separately; writes and stored
 bytes are metered at home. See [regions](/concepts/regions) and [replication](/concepts/replication).
 

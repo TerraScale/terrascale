@@ -22,8 +22,8 @@ for (const [locale, messages] of locales) {
       assert.match(copy, operationRules[locale]);
     }
     assert.match(catalog.metering.storage.definition, /Replica storage is not billed separately/);
-    assert.ok(catalog.plans.every((plan) => plan.entitlements.regionsPerDatabase === 1));
-    assert.ok(catalog.metering.operationUnit.rules.includes('Each database lives in one home region; writes count there.'));
+    assert.ok(catalog.plans.every((plan) => plan.entitlements.regionsPerDatabase === 3));
+    assert.ok(catalog.metering.operationUnit.rules.includes('Each database lives in three regions; writes count there.'));
   });
   test(`${locale}: pricing states the overage rule, storage billing and the egress caveat`, () => {
     const pricingCopy = JSON.stringify(messages.pricing);
@@ -110,7 +110,7 @@ test('pricing copies match the published catalog', () => {
 test('catalog entitlements match the enforced engine tiers', () => {
   const byId = Object.fromEntries(catalog.plans.map((plan) => [plan.id, plan.entitlements]));
   assert.deepEqual(byId.free, { requestsPerSecond: 50, burstRequests: 100, concurrentRequests: 4, queryTimeoutSeconds: 1,
-    storageLimitGb: 0.1, pitrDays: 1, backupRetentionDays: 1, regionsPerDatabase: 1, support: 'Community' });
+    storageLimitGb: 0.1, pitrDays: 1, backupRetentionDays: 1, regionsPerDatabase: 3, support: 'Community' });
   assert.equal(byId.enterprise.requestsPerSecond, null);
   assert.equal(byId.team.pitrDays, 14);
   assert.equal(catalog.metering.allowances.paidOverages, true);
