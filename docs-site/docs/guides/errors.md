@@ -475,7 +475,7 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 ## Wrong region
 
-A `421` with code `wrong_region` means the region you called does not serve the database: only its home region does. The response names the home in the `X-TerraBase-Database-Home` header, its `Location` header carries the same request URL in the home region, and the message reads `the database is served in <region>: send it to https://<host>`. Recover by sending the request to the home region — `ts db info <name>` prints a database's metadata, including its home region. The SDKs do not retry a `421` automatically: the .NET SDK raises `TerraBaseWrongRegionException` and the Go SDK returns an `*tb.APIError`, both carrying `HomeRegion` (and the regions that serve the database), so your code can resend there.
+A `421` with code `wrong_region` means the called region does not serve this database, the response names the home, and the caller sends the request to a region that serves it. The response names the home in the `X-TerraBase-Database-Home` header, its `Location` header carries the same request URL in the home region, and the message reads `the database is served in <region>: send it to https://<host>`. Recover by sending the request to the home region — `ts db info <name>` prints a database's metadata, including its home region. The SDKs do not retry a `421` automatically: the .NET SDK raises `TerraBaseWrongRegionException` and the Go SDK returns an `*tb.APIError`, both carrying `HomeRegion` (and the regions that serve the database), so your code can resend there.
 
 ## Retry behavior
 
