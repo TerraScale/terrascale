@@ -31,3 +31,5 @@ requests. Shape usage meters and infrastructure request counts are separate.
 
 The .NET, Go, Python and Rust SDKs have no SQL table-shape subscription client at
 this revision. They need both the shape protocol and sealed-object reads.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
