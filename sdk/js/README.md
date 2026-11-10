@@ -189,7 +189,7 @@ scope, checked per statement. Keep service credentials private and out of logs a
 `client.databases.create({ name })` uses the called region as the home; `homeRegion` selects another serving region.
 
 A database has one home region and can have replicas in other serving regions.
-A replica region can accept a local SQL REST write; the home applies it. The default
+A replica region can accept a local SQL REST write; the home applies it. The server forwards a timed-out local publish with TerraBase-Publish-Id set to the same transaction id and the home applies that write once. The default
 `TerraScale-Durability` is `local`. REST reads can use a ready local replica. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
 preserve read-your-writes; use the home for REST reads that must see a previous write. All-regions
