@@ -18,7 +18,6 @@ lint: check-css
 	python3 scripts/dashboard/check-simple-ui.py
 	python3 scripts/dashboard/verify-sdk.py
 	python3 scripts/dashboard/verify-e2e.py
-	python3 scripts/dashboard/report-slow-failure.py --self-check
 	DOTNET="$(DOTNET)" bash scripts/dashboard/ci/format.sh
 
 security:
@@ -54,10 +53,11 @@ test-e2e:
 	$(E2E) $(RESULTS)
 
 test-fast:
-	$(E2E) --treenode-filter '/*/*/*/*[Category!=Slow]' $(RESULTS) --report-trx-filename fast.trx
+	bash scripts/dashboard/test-fast.sh
 
-test-slow: turso-native
-	$(E2E) --treenode-filter '/*/*/*/*[Category=Slow]' $(RESULTS) --report-trx-filename slow.trx
+test-slow: build
+	python3 scripts/ci/tunit.py 1 -- $(DOTNET) run --configuration Release --no-build --project tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj -- \
+		$(if $(TESTS),,--treenode-filter '/*/*/*/*[Category=Slow]') $(RESULTS) --report-trx-filename slow.trx
 
 test-live-readiness:
 	$(E2E) --treenode-filter '/*/*/LiveProductionReadinessJourneyTests/*' $(RESULTS) --report-trx-filename live-production-readiness.trx

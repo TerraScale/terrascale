@@ -72,12 +72,14 @@ jobs:
       contents: read
       issues: write
     steps: &slow-steps
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - &slow-checkout-step
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           path: terrascale
           persist-credentials: false
           ref: ${{ needs.changes.outputs.sha }}
-      - name: Download this run's verified pinned release cores
+      - &slow-native-step
+        name: Download this run's verified pinned release cores
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: turso-native-verified
@@ -127,7 +129,8 @@ jobs:
       - name: Remove the CI credential file
         if: ${{ always() && env.AREA == 'terrabase' }}
         run: rm -f "$RUNNER_TEMP/tigris-ci.env"
-      - name: Report the Slow result
+      - &slow-report-step
+        name: Report the Slow result
         id: slow-report
         if: ${{ always() }}
         env:
@@ -136,14 +139,16 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash terrascale/scripts/ci/slow-report.sh
 
-      - name: Record the actual scheduled suite inputs
+      - &slow-record-step
+        name: Record the actual scheduled suite inputs
         id: slow-record
         if: ${{ always() && steps.slow-report.outputs.completed == 'true' && github.event_name == 'schedule' && hashFiles('slow/exit') != '' }}
         working-directory: terrascale
         run: |
           mkdir -p slow
           python3 scripts/ci/slow-state.py record "$AREA"
-      - name: Retain last actual scheduled suite inputs
+      - &slow-retain-step
+        name: Retain last actual scheduled suite inputs
         if: ${{ always() && steps.slow-report.outputs.completed == 'true' && github.event_name == 'schedule' && hashFiles('terrascale/slow/fingerprint') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -167,3 +172,37 @@ jobs:
       contents: read
       issues: write
     steps: *slow-steps
+
+  slow-dashboard-main:
+    needs: [changes, native]
+    if: >-
+      !cancelled() && needs.native.result == 'success'
+      && contains(fromJSON(needs.changes.outputs.slow), 'dashboard')
+    concurrency:
+      group: scheduled-slow-dashboard
+      cancel-in-progress: false
+    env:
+      AREA: dashboard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - *slow-checkout-step
+      - *slow-native-step
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: terrascale/global.json
+      - name: Build the dashboard and install the pinned Playwright Chromium
+        working-directory: terrascale
+        run: |
+          make dashboard-build
+          pwsh tests/TerraScale.Dashboard.E2E/bin/Release/net11.0/playwright.ps1 install --with-deps chromium
+      - name: Dashboard Slow
+        run: |
+          mkdir slow
+          { code=0; make -C terrascale -f scripts/dashboard/Makefile -o build test-slow TEST_ARGS=--no-ansi || code=$?; echo "$code" > slow/exit; } 2>&1 | tee slow/log
+      - *slow-report-step
+      - *slow-record-step
+      - *slow-retain-step

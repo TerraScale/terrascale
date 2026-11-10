@@ -12,13 +12,13 @@ import textwrap
 
 workflow = Path(__file__).resolve().parents[2] / ".github/workflows/slow.yml"
 workflow_text = workflow.read_text()
-match = re.search(r"      - name: Report the Slow result\n.*?        run: bash terrascale/scripts/ci/slow-report.sh\n", workflow_text, re.DOTALL)
+match = re.search(r"      - &slow-report-step\n        name: Report the Slow result\n.*?        run: bash terrascale/scripts/ci/slow-report.sh\n", workflow_text, re.DOTALL)
 assert match, "Slow report block not found"
 report_header = match[0].split("        run: |", 1)[0]
 assert "if: ${{ always() }}" in report_header, "Report setup/build failures too"
 assert "continue-on-error:" not in report_header, "A failed Slow suite must make its job red"
-record_start = workflow_text.index("      - name: Record the actual scheduled suite inputs\n")
-upload_start = workflow_text.index("      - name: Retain last actual scheduled suite inputs\n")
+record_start = workflow_text.index("      - &slow-record-step\n        name: Record the actual scheduled suite inputs\n")
+upload_start = workflow_text.index("      - &slow-retain-step\n        name: Retain last actual scheduled suite inputs\n")
 assert match.end() <= record_start < upload_start, "Record suite inputs only after reporting"
 for start in (record_start, upload_start):
     marker_header = workflow_text[start:].split("\n      - ", 1)[0]
@@ -27,12 +27,15 @@ required = (workflow.parent / "ci.yml").read_text().split("\n  test:\n", 1)[1]
 needs = re.search(r"^    needs: \[(.+)\]$", required, re.M)
 assert needs and not any("slow" in job for job in needs[1].split(",")), "Slow must not block required test"
 assert workflow_text.count("steps: *slow-steps") == 1, "Both main Slow jobs must share the reporter"
+dashboard = workflow_text.split("\n  slow-dashboard-main:\n", 1)[1]
+for step in ("slow-report-step", "slow-record-step", "slow-retain-step"):
+    assert f"      - *{step}\n" in dashboard, f"Dashboard Slow must share {step}"
 script = (workflow.parents[2] / "scripts/ci/slow-report.sh").read_text()
 assert "${{" not in script, "Unhandled workflow expression"
 
 
 def check(case):
-    name, code, tests, main, expected, completed, api_failure = case
+    name, code, tests, main, expected, completed, api_failure, area = case
     with tempfile.TemporaryDirectory(prefix="terrascale-slow-report-") as directory:
         root = Path(directory)
         bin_path = root / "bin"
@@ -55,13 +58,14 @@ def check(case):
             slow.mkdir()
             (slow / "exit").write_text(f"{code}\n")
             log = "".join(f"failed case_{index} (1ms)\n  Exception: Bearer fixture-credential secret=fixture-secret\n" for index in range(tests))
-            (slow / "log").write_text(log + "Test run summary: fixture Authentication.Slow\n  total: 25\n")
+            suite = "TerraScale.Dashboard.E2E" if area == "dashboard" else "Authentication.Slow"
+            (slow / "log").write_text(log + f"Test run summary: fixture {suite}\n  total: 25\n")
         calls_path = root / "calls"
         output_path = root / "output"
         env = {**os.environ, "PATH": f"{bin_path}:{os.environ['PATH']}", "CALLS": str(calls_path),
                "GITHUB_OUTPUT": str(output_path), "FAIL_ISSUE_CREATE": str(api_failure).lower(),
                "GITHUB_STEP_SUMMARY": str(root / "summary"), "GITHUB_REPOSITORY": "fixture/fixture",
-               "GITHUB_SHA": "fixture-sha", "AREA": "auth", "GITHUB_JOB": "main", "RUN_URL": "https://example.invalid/run",
+               "GITHUB_SHA": "fixture-sha", "AREA": area, "GITHUB_JOB": "main", "RUN_URL": "https://example.invalid/run",
                "GITHUB_REF": "refs/heads/main" if main else "refs/heads/fixture"}
         run = subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
         expected_code = 73 if api_failure else code if code is not None else 1
@@ -78,6 +82,7 @@ def check(case):
             assert "fixture-credential" not in body and "fixture-secret" not in body, f"{name}: credentials leaked"
             assert "fixture-sha" in body and "https://example.invalid/run" in body
             assert "Reproduce:" in body and "Expected:" in body and "Actual:" in body
+            assert not tests or f"make {area}-test-slow TESTS=" in body, f"{name}: wrong reproduction target"
         if main and tests:
             assert any(args[:3] == ["issue", "comment", "42"] for args in reports), f"{name}: did not update existing issue"
         if code is None:
@@ -85,12 +90,13 @@ def check(case):
         return name
 
 
-cases = [("passed", 0, 0, True, 0, True, False),
-         ("failures-and-redaction", 2, 2, True, 2, True, False),
-         ("all-eleven-failures", 2, 11, True, 11, True, False),
-         ("missing-build-output", None, 0, True, 1, False, False),
-         ("branch-summary-only", 2, 2, False, 0, False, False),
-         ("issue-api-failure-after-partial-report", 2, 3, True, 2, False, True)]
+cases = [("passed", 0, 0, True, 0, True, False, "auth"),
+         ("failures-and-redaction", 2, 2, True, 2, True, False, "auth"),
+         ("all-eleven-failures", 2, 11, True, 11, True, False, "auth"),
+         ("missing-build-output", None, 0, True, 1, False, False, "auth"),
+         ("branch-summary-only", 2, 2, False, 0, False, False, "auth"),
+         ("dashboard-failures", 2, 2, True, 2, True, False, "dashboard"),
+         ("issue-api-failure-after-partial-report", 2, 3, True, 2, False, True, "auth")]
 with concurrent.futures.ThreadPoolExecutor(max_workers=len(cases)) as pool:
     for result in pool.map(check, cases):
         print(f"Slow report: {result} passed")

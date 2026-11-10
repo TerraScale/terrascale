@@ -17,14 +17,17 @@ def fingerprint(area, revision="HEAD"):
              ".editorconfig", "Directory.*", "*.sln*", ".config",
              "src/TerraScale.Endpoints*", "src/TerraScale.Logging", "src/vendor",
              "src/TerraBase*", "src/TerraScale.Authentication*", "sdk/dotnet",
-             "scripts/vendor", "scripts/ci/slow-state.py",
+             "scripts/vendor", "scripts/ci/slow-state.py", "scripts/ci/tunit.py",
              ".github/workflows/slow.yml", "scripts/ci/slow-report.sh"]
     if area == "auth":
         paths += ["src/TerraScale.Authentication*", "tests/TerraScale.Authentication*",
                   "scripts/auth", "docs/auth/*.yaml"]
-    else:
+    elif area == "terrabase":
         paths += ["tests/TerraBase*", "tests/Turso.Data.Sqlite.Tests", "scripts/terrabase",
                   "tests/TerraScale.Authentication.TestHarness/FakeGitHubActions.cs"]
+    else:
+        paths += ["src/TerraScale.Dashboard*", "src/TerraScale.TerraBase.*", "tests/TerraScale.Dashboard*",
+                  "scripts/dashboard"]
     entries = subprocess.check_output(["git", "ls-tree", "-r", "-z", revision]).split(b"\0")
     selected = []
     for entry in entries:
@@ -72,7 +75,7 @@ def main():
             output.write(f"fingerprint={value}\n")
         return
     changed = []
-    for area in ("auth", "terrabase"):
+    for area in ("auth", "terrabase", "dashboard"):
         try:
             last = previous(area)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
