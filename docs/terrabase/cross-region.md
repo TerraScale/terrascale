@@ -63,6 +63,8 @@ mesh.
 - **Replica regions.** A Postgres or WebSocket session that reaches a replica region of its database is not relayed: it
   reads from the replica and runs writes and transactions on a session at the home
   ([region replicas](region-replicas.md#writes-and-transactions)).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 - `X-TerraBase-Forwarded-For` and the relay are honored only on the internal listener with a matching peer credential;
   public forwarded headers are never trusted.
 
