@@ -45,7 +45,7 @@ The public listener serves `/openapi/v1.json` and `/scalar/`. `/healthz` is live
 - [Database allowances](plan-database-allowance.md), [agent databases](agent-databases.md) and [database rename](database-rename.md).
 - [Clock admission](hlc-clock.md), [node pressure](node-pressure.md) and [metrics export](metrics-export.md).
 
-Derive region, node and peers from `TS_REGION`, `TS_NODE` and `TS_PEERS_FILE`. OCI Vault supplies runtime secrets; GitHub Actions holds CI secrets. Database keys, backups, authorization, revocation and recovery safeguards remain mandatory.
+Derive region, node and peers from `TS_REGION`, `TS_NODE` and `TS_PEERS_FILE`. OCI Vault supplies runtime secrets; GitHub Actions holds CI secrets. Database keys, backups, authorization, revocation and recovery safeguards remain mandatory. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Development and shipping
 
