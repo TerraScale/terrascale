@@ -1,3 +1,0 @@
-{"phase": "during", "at": 1793919007.2266681, "region": "gru", "status": 200, "result": {"results": [{"columns": [], "rows": [], "rows_affected": 1, "last_insert_rowid": 2}]}}
-{"phase": "during", "at": 1793919008.0656693, "region": "sjc", "status": 200, "result": {"results": [{"columns": [], "rows": [], "rows_affected": 1, "last_insert_rowid": 3}]}}
-{"phase": "during", "at": 1793919009.4455209, "region": "fra", "status": 200, "result": {"results": [{"columns": [], "rows": [], "rows_affected": 1, "last_insert_rowid": 4}]}}
