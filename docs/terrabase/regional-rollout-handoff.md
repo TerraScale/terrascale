@@ -124,7 +124,10 @@ with the peer credential, and answers 503 while no writer is known.
 - **REST.** A request that arrived on the client listener carries
   `X-TerraBase-Forwarded-For`, so the writer serves it as a client request: the
   same token, IP-allowlist, scope and quota checks, once, at the writer. One that
-  arrived on the internal listener keeps its peer identity.
+  arrived on the internal listener keeps its peer identity. A writer that cannot
+  be reached answers `421 wrong_region`; a write it was sent but never answered
+  is `503 write_outcome_unknown`
+  ([unanswered forwards](sql/write-routing.md#unanswered-forwards)).
 - **WebSockets** (`sql/ws`, `shape/ws`). An HTTP/1.1 Upgrade on the client
   listener or an RFC 8441 extended CONNECT on the internal listener cannot be
   forwarded as a plain request, so the peer relays the whole socket: it opens a

@@ -2,10 +2,13 @@ extern alias tsauth;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Platform;
@@ -24,7 +27,7 @@ public sealed class RegionalSocketForwardingTests
 
     [Test]
     [Timeout(120_000)]
-    public async Task Sql_sessions_sent_to_the_regional_follower_run_on_the_writer_over_both_listeners_and_an_unreachable_writer_answers_wrong_region(CancellationToken token)
+    public async Task Sql_sessions_sent_to_the_regional_follower_run_on_the_writer_over_both_listeners_an_unreachable_writer_answers_wrong_region_and_an_unanswered_write_answers_write_outcome_unknown(CancellationToken token)
     {
         await using var nats = await JetStreamServer.StartAsync(token);
         using var issuer = new TestIssuer();
@@ -77,6 +80,35 @@ public sealed class RegionalSocketForwardingTests
                 new TerraBaseSqlClient(peer, new TerraBaseSqlClientOptions { BaseAddress = followerInternal }).Database(project, "peer").QueryAsync("SELECT 1", cancellationToken: token));
             await Assert.That((misdirected!.ErrorCode, misdirected.HomeRegion)).IsEqualTo(("wrong_region", "gru"));
             await Assert.That(misdirected.ResponseHeaders["Location"]).IsEquivalentTo([$"https://gru.api.terrascale.tech/v1/projects/{project}/databases/peer/sql/execute"]);
+
+            var received = 0;
+            var lost = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
+            lost.Logging.ClearProviders();
+            lost.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Parse("127.0.0.5"), port, listener => listener.Protocols = HttpProtocols.Http2));
+            await using var unanswering = lost.Build();
+            unanswering.Run(async context =>
+            {
+                Interlocked.Increment(ref received);
+                await context.Request.Body.CopyToAsync(Stream.Null, context.RequestAborted);
+                context.Abort();
+            });
+            await unanswering.StartAsync(token);
+            await File.WriteAllTextAsync(peers, "gru-1 gru 127.0.0.5\ngru-2 gru 127.0.0.3\n", token);
+            foreach (var database in new[]
+            {
+                new TerraBaseSqlClient(peer, new TerraBaseSqlClientOptions { BaseAddress = followerInternal }).Database(project, "peer"),
+                new TerraBaseSqlClient(client, new TerraBaseSqlClientOptions
+                {
+                    BaseAddress = follower.Server.ClientAddress,
+                    AccessTokenProvider = _ => ValueTask.FromResult(bearer),
+                }).Database(project, "client"),
+            })
+            {
+                var unknown = await Assert.ThrowsAsync<TerraBaseUnavailableException>(() => database.ExecuteAsync("DELETE FROM unanswered", cancellationToken: token));
+                await Assert.That((unknown!.StatusCode, unknown.ErrorCode, unknown.OutcomeRegion)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "write_outcome_unknown", "gru"));
+            }
+
+            await Assert.That(received).IsEqualTo(2).Because("the SDK never resends a write whose outcome is unknown");
         }
         finally
         {

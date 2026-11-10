@@ -77,9 +77,10 @@ control character), and a `byte[]` is base64, so a single blob can hold about 76
 under TerraBase's 16 KiB statement limit, which only very wide tables reach; the provider refuses such a row with
 `NotSupportedException`, and the save writes nothing.
 
-Every `UPDATE` and `DELETE` must change exactly one row. The provider follows each one with a guard statement that
-fails the request when the row was not changed, so a stale concurrency token or a row deleted by someone else throws
-`DbUpdateConcurrencyException` and the rest of the save is rolled back with it. A constraint violation
+Every `UPDATE` and `DELETE` must change exactly one row. The provider follows each one with
+`SELECT terrascale_expect_changes(changes(), 1)`, which fails the request with `409 row_conflict` when the row was not
+changed, so a stale concurrency token or a row deleted by someone else throws `DbUpdateConcurrencyException` (its inner
+exception is the `TerraBaseSqlException` with code `row_conflict`) and the rest of the save is rolled back with it. A constraint violation
 (`unique_violation`, `foreign_key_violation`, `check_violation`, …) throws `DbUpdateException` whose inner
 exception is the `TerraBaseSqlException`, and likewise writes nothing.
 
@@ -122,9 +123,11 @@ The execution strategy retries nothing else. Below it, the SDK's HTTP client res
 times, after `Retry-After` when TerraBase sends one, only when TerraBase answers `serialization_conflict` or a `503` it
 marks retry-safe (`remote_region_unavailable`, `confirmation_busy`, `catalog_stale`). SQL requests are POSTs, so a
 `502`, a `504` or a lost connection is not resent: the write may already have committed. A `421 wrong_region` is not
-retried at any level. A region that loses its connection to the database's writer answers it too, possibly after the
-request reached the writer, so a resent write could commit twice. Catch `TerraBaseWrongRegionException` and send the
-work to `HomeRegion`, or retry it yourself when it is safe to repeat.
+retried at any level either; it means nothing was written, so catch `TerraBaseWrongRegionException` and send the work to
+`HomeRegion`. A region that forwards the request to the database's writer answers `421` only when the request never
+left it. When the writer was sent the request and did not answer, the region answers
+`503 write_outcome_unknown` instead (`TerraBaseException.ErrorCode`, the writer's region in `OutcomeRegion`): the write
+may have committed, so nothing resends it. Read what it would have written before you run it again.
 
 ## Writers and replicas
 

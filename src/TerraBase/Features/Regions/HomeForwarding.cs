@@ -68,6 +68,21 @@ internal static class HomeForwarding
             $"the database is served in {region}: send it to https://{Host(region)}", op: null, url: url);
     }
 
+    internal static bool Unanswered(HttpContext context, Exception error) =>
+        error is HttpRequestException || (error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested);
+
+    internal static Task UnansweredAsync(HttpContext context, string region, Exception error)
+    {
+        if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)
+            || error is HttpRequestException { HttpRequestError: HttpRequestError.NameResolutionError or HttpRequestError.ConnectionError or HttpRequestError.SecureConnectionError })
+        {
+            return MisdirectedAsync(context, region);
+        }
+
+        return BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "write_outcome_unknown",
+            $"the request was sent toward the database's writer in {region}, which did not answer; it may have run there", op: null, region: region);
+    }
+
     private static async ValueTask<HomeNode?> HomeOfAsync(HttpContext context)
     {
         if (Listeners.ArrivedOn(context) != TerraBaseListener.Client || Listeners.IsForwarded(context) || context.GetEndpoint() is null
@@ -189,9 +204,9 @@ internal static class HomeForwarding
             response = await services.GetRequiredService<IHttpClientFactory>().CreateClient(HomeLocator.HttpClientName)
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted).ConfigureAwait(false);
         }
-        catch (HttpRequestException)
+        catch (Exception error) when (Unanswered(context, error))
         {
-            await MisdirectedAsync(context, home.Region).ConfigureAwait(false);
+            await UnansweredAsync(context, home.Region, error).ConfigureAwait(false);
             return;
         }
 
