@@ -188,7 +188,7 @@ try
     app.MapTerraBaseMetrics();
     app.MapTerraBaseClock();
     app.MapTerraBaseKeyRevocation(options);
-    app.MapTerraBaseRestRpc();
+    app.MapTerraBaseRestRpc().WithMetadata(ListenerMetadata.Internal);
     await ApplicationRunCompletion.RunAsync(app);
     return 0;
 }

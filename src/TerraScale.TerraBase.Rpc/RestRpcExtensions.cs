@@ -38,11 +38,10 @@ namespace TerraScale.TerraBase.Rpc
         }
 
         /// <summary>Maps every TerraBase MagicOnion service.</summary>
-        public static IEndpointRouteBuilder MapTerraBaseRestRpc(this IEndpointRouteBuilder endpoints)
+        public static IEndpointConventionBuilder MapTerraBaseRestRpc(this IEndpointRouteBuilder endpoints)
         {
             ArgumentNullException.ThrowIfNull(endpoints);
-            endpoints.MapMagicOnionService([typeof(RestApi).Assembly]);
-            return endpoints;
+            return endpoints.MapMagicOnionService([typeof(RestApi).Assembly]);
         }
     }
 }
