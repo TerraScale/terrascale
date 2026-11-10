@@ -100,7 +100,7 @@ use the same project client. Backup operations are typed: `create_backup`/`list_
 `get_backup_destination`/`set_backup_destination` use `ProjectBackupDestination`; its request's
 credentials are write-only and never printed.
 
-A database has one home region and can have encrypted read replicas in other serving regions.
+A database has one home region and can have replicas in other serving regions.
 A replica region can accept a local SQL REST write; the home applies it. The default
 `TerraScale-Durability` is `local`. REST reads can use a ready local replica. Replicas are eventually
 consistent. REST, psql and SQL WebSocket can read ready local replicas. Postgres and WebSocket sessions
