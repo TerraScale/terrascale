@@ -14,13 +14,13 @@ using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.HomeApply;
 
-internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHomeWriteLease leases, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger)
+internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHlcState peers, IHomeWriteLease leases, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger)
     : IHomeApply
 {
     internal const int MaxChanges = 1024;
     internal const int KeptConflicts = 10_000;
     private static readonly TimeSpan KeptConflictAge = TimeSpan.FromDays(30);
-    private static readonly TimeSpan MaxAhead = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan MaxAhead = TimeSpan.FromMilliseconds(50);
     private static readonly TimeSpan KeptApplied = TimeSpan.FromDays(7);
 
     private static readonly string[] Tables =
@@ -37,7 +37,8 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         var id = transaction.Id!;
         var region = transaction.Region!;
         var stamp = transaction.Hlc!.Value;
-        var skewed = stamp.PhysicalMilliseconds - time.GetUtcNow().ToUnixTimeMilliseconds() > MaxAhead.TotalMilliseconds;
+        var bound = Math.Max(time.GetUtcNow().ToUnixTimeMilliseconds(), peers.HighWater);
+        var skewed = stamp.PhysicalMilliseconds - bound > MaxAhead.TotalMilliseconds;
         if (!skewed)
         {
             _ = await clock.ObserveAsync(stamp, cancellationToken).ConfigureAwait(false);
@@ -60,7 +61,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
 
             if (skewed)
             {
-                rejection = new Rejection("clock", null, null, "the transaction's clock is ahead of the home's by more than 60 seconds");
+                rejection = new Rejection("clock", null, null, "the transaction's clock is ahead of the peer clocks by more than 50 milliseconds");
             }
             else
             {

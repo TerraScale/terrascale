@@ -21,7 +21,7 @@ to this API; until R7 lands, the internal HTTP endpoint below is the only produc
 - **Inserts never overwrite.** An insert of a key that exists at the home is a `primary_key` conflict and reverts its
   transaction (D12: tables that take local writes use ULID keys). An update of a row that the home never had reverts
   as `missing_row`.
-- **Clock guard.** A transaction stamped more than 60 seconds ahead of the home's clock reverts as `clock` and never
+- **Clock guard.** A transaction stamped more than 50 milliseconds ahead of the peer clocks this process already holds (or its own clock, when that is later) reverts as `clock` and never
   advances the home's HLC (D21; R12 adds the per-node skew guard).
 - **Triggers do not fire for applied changes.** The origin region already ran them and their writes are part of the
   transaction. See [triggers](#triggers).
