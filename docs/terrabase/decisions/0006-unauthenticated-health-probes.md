@@ -32,3 +32,5 @@ without a key. Its body is region codes, `ok`/`degraded` and lag seconds only (a
   token on the Management API. `/readyz` does not wait for ts-auth's signing keys (decision
   2026-10-10, TS-677): ts-auth stores its data here, so the two would wait for each other after a
   fresh start ([0007](0007-ts-auth-user-tokens.md)).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
