@@ -37,3 +37,5 @@ Download capabilities last 60 seconds and serve as attachments with an octet-str
 R2 buckets created through `cf` on 2026-10-24: `terrascale-gru-files`, `terrascale-sjc-files`, `terrascale-fra-files`. Logical serving regions stay OCI gru/sjc/fra. R2 does not offer a São Paulo location hint: its default placed the gru bucket in ENAM; sjc uses WNAM and fra WEUR. These are R2 placement hints, not guarantees of OCI-region residency. No OCI region was substituted.
 
 All buckets are private; CORS permits GET/HEAD/PUT for customer browser applications and the signed checksum/content headers, without credentials. CORS grants no object access. The service derives the physical bucket from the bucket's creation region. OCI Vault's existing object-store identity delivery provides credentials; the identity must authorize these three buckets. No new customer configuration or enable switch exists. Production rejects Tigris for app files; Development integration binaries can use their existing Tigris test bucket.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
