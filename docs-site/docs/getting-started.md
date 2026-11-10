@@ -18,4 +18,4 @@ curl -sS --fail-with-body \
   "https://api.terrascale.tech/v1/projects/YOUR_PROJECT_ID/databases/YOUR_DATABASE/sql/execute"
 ```
 
-The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once.
+The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
