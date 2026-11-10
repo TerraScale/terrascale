@@ -1,10 +1,16 @@
 # syntax=docker/dockerfile:1
 # Maintenance only: the helper requires a real host of the target architecture.
 FROM rust:1.99.1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3 AS build
-ADD --checksum=sha256:7ea83d5e28577cf9d8655b77705902379e06b82fb29424f6ea328b5f26f17ecb https://codeload.github.com/tursodatabase/turso/tar.gz/5c168be5ef6a32ac966daf5983502a4f694b37ad /turso.tar.gz
 WORKDIR /turso
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
-RUN tar -xzf /turso.tar.gz --strip-components=1
+COPY benchmark/turso-sync-host/turso-pin.env /turso-pin.env
+RUN . /turso-pin.env \
+    && [[ $TURSO_COMMIT =~ ^[0-9a-f]{40}$ ]] \
+    && [[ $TURSO_SHA256 =~ ^[0-9a-f]{64}$ ]] \
+    && curl --fail --location --retry 2 --proto '=https' --tlsv1.2 \
+      -o /turso.tar.gz "https://codeload.github.com/tursodatabase/turso/tar.gz/${TURSO_COMMIT}" \
+    && printf '%s  /turso.tar.gz\n' "$TURSO_SHA256" | sha256sum --check \
+    && tar -xzf /turso.tar.gz --strip-components=1
 # Upstream core/build.rs uses this instead of wall-clock/git metadata.
 ENV SOURCE_DATE_EPOCH=1791270348 CARGO_INCREMENTAL=0 \
     RUSTFLAGS="--cfg=tokio_unstable --remap-path-prefix=/turso=/usr/src/turso -C link-arg=-Wl,-z,nodelete"
@@ -40,7 +46,8 @@ RUN cargo +1.99.1 tree --locked --package turso_sync_sdk_kit --features turso_sd
 ARG TARGETARCH
 COPY scripts/vendor/turso-native-smoke.c scripts/vendor/turso-native-contract-smoke.c scripts/vendor/turso-native-wal-smoke.c \
      scripts/vendor/Dockerfile.turso-native scripts/vendor/build-turso-native.sh scripts/vendor/check-turso-native-crypto.sh /inputs/
-RUN case "$TARGETARCH" in amd64) rid=linux-x64; machine=3e00 ;; arm64) rid=linux-arm64; machine=b700 ;; *) exit 1 ;; esac \
+RUN . /turso-pin.env \
+    && case "$TARGETARCH" in amd64) rid=linux-x64; machine=3e00 ;; arm64) rid=linux-arm64; machine=b700 ;; *) exit 1 ;; esac \
     && test "$(od -An -tx1 -N6 target/lib-release/libturso_sdk_kit.so | tr -d ' \n')" = 7f454c460201 \
     && test "$(od -An -tx1 -j18 -N2 target/lib-release/libturso_sdk_kit.so | tr -d ' \n')" = "$machine" \
     && mkdir -p "/out/runtimes/$rid/native" /out/release \
@@ -71,8 +78,8 @@ RUN case "$TARGETARCH" in amd64) rid=linux-x64; machine=3e00 ;; arm64) rid=linux
         && find . -type f \( -iname '*license*' -o -iname 'copying*' -o -iname 'notice*' -o -name Cargo.toml -o -name .cargo-checksum.json \) -print0 \
         | sort -z | tar --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --null -T - -czf "/out/release/$rid-dependency-licenses.tar.gz") \
     && cp /inputs/* LICENSE.md NOTICE.md Cargo.lock /out/release/ \
-    && cp /turso.tar.gz /out/release/turso-5c168be5ef6a32ac966daf5983502a4f694b37ad.tar.gz \
-    && { printf 'source_commit=5c168be5ef6a32ac966daf5983502a4f694b37ad\nversion=0.8.2\nrid=%s\nhost=%s\n' "$rid" "$(uname -m)"; \
+    && cp /turso.tar.gz "/out/release/turso-${TURSO_COMMIT}.tar.gz" \
+    && { printf 'source_commit=%s\nversion=0.8.2\nrid=%s\nhost=%s\n' "$TURSO_COMMIT" "$rid" "$(uname -m)"; \
          printf 'rust_image=rust:1.99.1-bookworm@sha256:c9155318d07341301a78b45ecdd81af2e43b8b297d64e8fd4c5e80d7735607c3\n'; \
          printf 'command=cargo +1.99.1 build --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts --profile lib-release\n'; \
          printf 'sdk_dependency_defaults=disabled;features=encryption,fts\naegis_backend=runtime-dispatched-c\nSOURCE_DATE_EPOCH=%s\nRUSTFLAGS=%s\n' "$SOURCE_DATE_EPOCH" "$RUSTFLAGS"; \

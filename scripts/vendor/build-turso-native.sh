@@ -9,6 +9,9 @@ case "$(uname -m):$arch" in
   *) echo 'Native publication requires a real host of the requested architecture; emulation is not accepted.' >&2; exit 1 ;;
 esac
 root=$(git rev-parse --show-toplevel)
+source "$root/benchmark/turso-sync-host/turso-pin.env"
+[[ $TURSO_COMMIT =~ ^[0-9a-f]{40}$ ]]
+[[ $TURSO_SHA256 =~ ^[0-9a-f]{64}$ ]]
 if command -v docker >/dev/null; then
   builder=docker
 elif command -v podman >/dev/null; then
