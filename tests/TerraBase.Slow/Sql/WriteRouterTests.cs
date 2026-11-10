@@ -90,6 +90,24 @@ public sealed class WriteRouterTests
     }
 
     [Test]
+    public async Task A_request_header_of_local_does_not_force_a_home_shaped_write_to_commit_locally()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var cluster = await Cluster.StartAsync(token);
+        using var request = new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri(cluster.Database.Data + "/sql/execute"))
+        {
+            Content = JsonContent.Create(new { statements = new[] { new { sql = "UPDATE counters SET n = n - 1 WHERE id = 'c1'" } } }),
+        };
+        request.Headers.Add("TerraScale-Write", "local");
+
+        using var response = await cluster.ViaSjc.SendAsync(request, token);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync(token));
+        await Assert.That(response.Headers.GetValues("TerraScale-Write-Route").Single()).IsEqualTo("route=home; reason=relative_update; commit=home");
+        await Assert.That((await cluster.HomeAsync("SELECT n FROM counters WHERE id = 'c1'", token))[0].GetInt64()).IsEqualTo(9);
+    }
+
+    [Test]
     public async Task A_psql_transaction_and_a_websocket_batch_in_a_replica_region_commit_once_at_the_home_and_return_their_rows()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
