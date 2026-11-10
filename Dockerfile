@@ -158,19 +158,23 @@ RUN case "$TARGETARCH" in amd64) runtime=linux-x64; machine=3e00 ;; arm64) runti
     && make auth-publish RUNTIME="$runtime" PUBLISH_DIR=/out \
     && test "$(od -An -tx1 -j18 -N2 /out/ts-auth | tr -d ' \n')" = "$machine"
 
-# TerraBase stores its volume at /data.
 FROM mcr.microsoft.com/dotnet/runtime-deps:11.0.0-rc.3-resolute-chiseled@sha256:0a70ecd3350d11f4a5377be3a9e44372ef28281ee162b71f498ed69fea901745 AS terrabase
 COPY --from=publish-terrabase /out /app
 USER 0
-# The base image's ASPNETCORE_HTTP_PORTS=8080 only makes Kestrel warn: the services bind their own listeners.
+RUN --mount=type=bind,from=busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213,source=/bin/busybox,target=/busybox ["/busybox","mkdir","-p","/data"]
+RUN --mount=type=bind,from=busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213,source=/bin/busybox,target=/busybox ["/busybox","chown","1654:1654","/data"]
 ENV ASPNETCORE_HTTP_PORTS=
 WORKDIR /data
+USER 1654
 ENTRYPOINT ["/app/terrabase"]
 
 FROM mcr.microsoft.com/dotnet/runtime-deps:11.0.0-rc.3-resolute-chiseled@sha256:0a70ecd3350d11f4a5377be3a9e44372ef28281ee162b71f498ed69fea901745 AS ts-auth
 COPY --from=publish-ts-auth /out /app
 USER 0
+RUN --mount=type=bind,from=busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213,source=/bin/busybox,target=/busybox ["/busybox","mkdir","-p","/data"]
+RUN --mount=type=bind,from=busybox:1.36.1-musl@sha256:3c6ae8008e2c2eedd141725c30b20d9c36b026eb796688f88205845ef17aa213,source=/bin/busybox,target=/busybox ["/busybox","chown","1654:1654","/data"]
 ENV ASPNETCORE_HTTP_PORTS=
+USER 1654
 ENTRYPOINT ["/app/ts-auth"]
 
 # The single-file TerraBase executable CI attaches to a GitHub release on main (ts-go and ts-status tests start it).
