@@ -24,3 +24,5 @@ The legacy checker emits one JSON observation and distinguishes verification
 failure from an unreadable or insecure canary input. Its prior two-region
 observations do not establish automatic discovery, a complete serving inventory
 or a continuous clean soak.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
