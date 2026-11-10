@@ -73,15 +73,15 @@ func TestFileCapabilityURLRegionPin(t *testing.T) {
 	)
 	digest := base64.StdEncoding.EncodeToString(sum256(fileBody))
 	fileBase := "/v1/projects/" + bucketProject + "/buckets/" + bucketID + "/files"
-	downloadJSON := `{"id":"` + fileID + `","url":"` + fileURL + `","expiresAt":"` + expires + `","headers":{}}`
 	fileJSON := `{"id":"` + fileID + `","name":"hello.txt","contentType":"text/plain","size":5,"sha256":"` + digest + `","metadata":{},"status":"ready","uploadExpiresAt":"` + expires + `","deleteAfter":null}`
 	pageJSON := `{"items":[` + fileJSON + `],"next":null}`
 	cases := []struct {
-		pin    string
-		signed string
-		want   [2]string
+		pin      string
+		signed   string
+		download string
+		want     [2]string
 	}{
-		{pin: "sjc", signed: "gru", want: [2]string{"gru", "sjc"}},
+		{pin: "sjc", signed: "gru", download: "gru", want: [2]string{"gru", "gru"}},
 		{pin: "sjc", want: [2]string{"sjc", "sjc"}},
 		{pin: "", want: [2]string{"", ""}},
 	}
@@ -91,6 +91,11 @@ func TestFileCapabilityURLRegionPin(t *testing.T) {
 			signedHeaders += `,"X-TerraScale-Region-Pin":"` + tc.signed + `"`
 		}
 		signedJSON := `{"id":"` + fileID + `","url":"` + fileURL + `","expiresAt":"` + expires + `","headers":{` + signedHeaders + `}}`
+		downloadHeaders := ""
+		if tc.download != "" {
+			downloadHeaders = `"X-TerraScale-Region-Pin":"` + tc.download + `"`
+		}
+		downloadJSON := `{"id":"` + fileID + `","url":"` + fileURL + `","expiresAt":"` + expires + `","headers":{` + downloadHeaders + `}}`
 		var storage []string
 		hc := &http.Client{Transport: bucketTransport(func(r *http.Request) (*http.Response, error) {
 			if !strings.HasPrefix(r.URL.Path, "/v1/") {

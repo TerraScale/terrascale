@@ -130,6 +130,9 @@ func (c *Client) GetObject(ctx context.Context, project, bucketID, key string) (
 	if err != nil {
 		return nil, nil, fmt.Errorf("terrabase: build download request: %w", err)
 	}
+	for k, v := range capability.Headers {
+		get.Header.Set(k, v)
+	}
 	c.pin(get.Header)
 	res, err := c.hc.Do(get)
 	if err != nil {
