@@ -4,6 +4,8 @@ A database's home applies transactions that committed in another region (D4, D5)
 the engine's push and its server-side apply are never used (D14). R7 (streaming push over JetStream) delivers transactions
 to this API; until R7 lands, the internal HTTP endpoint below is the only producer.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Guarantees
 
 - **All or nothing per transaction.** Every change of a transaction is applied in one write transaction at the home,
