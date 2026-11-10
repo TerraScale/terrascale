@@ -40,3 +40,5 @@ TerraBase sets no `Content-Security-Policy`. The Scalar page loads only same-ori
 `style-src 'self' 'unsafe-inline'` (Scalar injects styles at runtime), `img-src 'self' data:` and
 `connect-src 'self'` for the specification and "Try it" requests. This list comes from Scalar 2.17's page and
 scripts, not from a browser run under an enforced policy: try such a policy in report-only mode first.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
