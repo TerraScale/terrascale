@@ -135,6 +135,12 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 45, Level = LogLevel.Warning, Message = "Expired dashboard rows were not swept ({ErrorType}); retrying on the next pass.")]
         internal static partial void ExpiredRowsWereNotSwept(this ILogger logger, string errorType);
 
+        [LoggerMessage(EventId = 46, Level = LogLevel.Warning, Message = "Stripe binding refresh is unavailable ({ErrorType}); retrying next day.")]
+        internal static partial void StripeBindingRefreshIsUnavailableRetryingNext(this ILogger logger, object? errorType);
+
+        [LoggerMessage(EventId = 47, Level = LogLevel.Warning, Message = "A Stripe binding could not be refreshed ({ErrorType}); other organizations continue.")]
+        internal static partial void AStripeBindingCouldNotBeRefreshed(this ILogger logger, object? errorType);
+
         [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
         internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);
     }
