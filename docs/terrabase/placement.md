@@ -89,4 +89,4 @@ writes) a move took 512 ms: 227 ms catch-up and a 276 ms write pause.
 All-regions placement remains authoritative when a lease observation carries an empty explicit replica list.
 Catalog discovery, following, revision notices, replica status and home sessions use the all-regions membership
 rule; revision notices go to the currently discovered peer regions. This preserves replication after a home move
-and automatically includes newly serving regions.
+and automatically includes newly serving regions. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
