@@ -36,3 +36,5 @@ into a new database ([backup.md](backup.md#restore)); the restore creates a new 
 clears a fault in place.
 
 ts-auth stays unready while its storage copy is faulted ([signing keys](../auth/signing-keys.md)).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
