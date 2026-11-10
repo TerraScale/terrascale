@@ -63,3 +63,5 @@ cannot tell another tenant's database from a missing one.
   `Wrong_keys_unknown_databases_and_unreached_databases_fail_alike`: `28P01` for all three.
 - `tests/TerraBase.Fast/Management/ProjectTokenTests.cs`: `database`-restricted tokens and
   hidden management routes.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
