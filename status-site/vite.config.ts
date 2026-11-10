@@ -13,7 +13,7 @@ export default defineConfig((): ViteUserConfig & Pick<UserConfig, "fmt"> => ({
     : [
         cloudflare({
           // GitHub Actions sets the commit; baked into the build so any deploy command reports it.
-          config: (config) => ({ vars: { ...config.vars, VERSION: process.env.GITHUB_SHA ?? "unknown" } }),
+          config: (config) => ({ vars: { ...config.vars, VERSION: process.env.REVISION ?? "unknown" } }),
           auxiliaryWorkers: (
             [
               ["sfo", "aws:us-west-1"],
@@ -27,7 +27,7 @@ export default defineConfig((): ViteUserConfig & Pick<UserConfig, "fmt"> => ({
               workers_dev: false,
               preview_urls: false,
               placement: { region },
-              vars: { VERSION: process.env.GITHUB_SHA ?? "unknown" },
+              vars: { VERSION: process.env.REVISION ?? "unknown" },
             },
           })),
         }),

@@ -57,3 +57,19 @@ Core service publication waits for the aggregate `test` job. When both services
 are selected, TerraBase must finish its rollout before ts-auth starts, so a
 failed TerraBase check cannot deploy only a new scope issuer. Auth-only runs
 continue after `test` when TerraBase was intentionally not selected.
+
+## Redeploy the sites
+
+The docs, landing and status sites deploy from `.github/workflows/sites.yml`
+(`Sites`), not from CI. To redeploy all three, dispatch it on `main`:
+
+```sh
+gh workflow run sites.yml --repo TerraScale/terrascale --ref main
+```
+
+`deploy-landing` and `deploy-status` build and deploy the tip of `main` and
+prove the live revision. `deploy-docs` runs `docs-deploy.yml`, which skips the
+dispatched revision once a newer commit is the head of `main` and requires every
+push workflow of that commit to be green (`docs-site/scripts/check-main.py`). To retry
+one failed site deploy, re-run the failed jobs of its `Sites` run: a re-run
+landing or status job deploys the tip of `main` at that moment.

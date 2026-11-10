@@ -12,7 +12,8 @@ gh pr create --base main --fill
 
 Don't run test suites before pushing: GitHub Actions runs the affected areas'
 Fast suites on the PR (the `changes` job of `ci.yml` selects the areas) and
-again on main after the merge. A PR squash-merges as soon as its checks are
+again on main after the merge. The site checks run on PRs only; on main,
+`sites.yml` builds and deploys the sites a push changed. A PR squash-merges as soon as its checks are
 green and its review passed (`gh pr merge <pr> --squash --delete-branch`). If
 it conflicts, rebase it on `origin/main` and push the branch again. Never push
 directly to `main`.

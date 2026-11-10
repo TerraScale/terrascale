@@ -180,7 +180,7 @@ The minute cron enqueues up to 1,000 eligible subscriber/update pairs into the D
 
 ## Deploy
 
-The `status` job of `.github/workflows/ci.yml` in the terrascale monorepo runs `npm run check`, `npm test`, the Python tests, `npm run lint` and `npm run build` on every change to `status-site/`, then `deploy-status` deploys that build from main with `npm run deploy:prebuilt` and checks the live `/health/version` ([docs/deploy-pipeline.md](docs/deploy-pipeline.md)). The Worker applies `schema.sql` to D1 on first use. The checks use HTTP fakes and local SQLite, without deployment credentials or a TerraBase binary. Locally: `make status-test-fast` from the monorepo root.
+The `status` job of `.github/workflows/ci.yml` in the terrascale monorepo runs `npm run check`, `npm test`, the Python tests, `npm run lint` and `npm run build` on every pull request that changes `status-site/`. On main, `deploy-status` in `.github/workflows/sites.yml` builds the tip of `main`, deploys it with `npm run deploy:prebuilt` and checks the live `/health/version` ([docs/deploy-pipeline.md](docs/deploy-pipeline.md)). The Worker applies `schema.sql` to D1 on first use. The checks use HTTP fakes and local SQLite, without deployment credentials or a TerraBase binary. Locally: `make status-test-fast` from the monorepo root.
 
 Worker secrets: `SUBSCRIPTION_SECRET`, `ADMIN_SESSION_SECRET`, and the probe secrets `TERRABASE_PROBES` and `DATA_API_CANARY`. Set them through the `cf` CLI using protected stdin; never print them.
 
