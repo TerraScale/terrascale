@@ -182,6 +182,12 @@ export const dashboardStates: readonly PageState[] = [
     url: () => `/auth/${section}`,
     covers: { path: new RegExp(`^/auth/${section}$`) },
   })),
+  { name: 'authentication under its alias', url: () => '/authentication', covers: { path: /^\/authentication$/ } },
+  {
+    name: 'authentication users under its alias',
+    url: () => '/authentication/users',
+    covers: { path: new RegExp(`^/authentication/(${authSections.map(([section]) => section).join('|')})$`) },
+  },
   { name: 'analytics', url: () => '/analytics', covers: { path: /^\/analytics$/ } },
   { name: 'analytics over 7 days', url: () => '/analytics?range=7d', covers: { path: /^\/analytics$/ } },
   {
