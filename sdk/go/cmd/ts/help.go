@@ -228,12 +228,12 @@ func helpOptions(name string) map[string]string {
 	case name == "backup destination":
 		options["-yes"] = "required for set (credential JSON only on stdin); delete otherwise types the project ID"
 	case name == "db create":
-		options["-home-region <region>"] = "region that commits the database's writes; default the called region"
+		options["-home-region <region>"] = "home region; default the called region"
 		options["-replica-regions <a,b>"] = "regions that hold replicas"
-		options["-all-regions"] = "a read replica in every serving region"
+		options["-all-regions"] = "a replica in every serving region"
 	case name == "db placement":
 		options["-replica-regions <a,b>"] = "regions that hold replicas; empty removes them"
-		options["-all-regions"] = "a read replica in every serving region, including new ones"
+		options["-all-regions"] = "a replica in every serving region, including new ones"
 	case name == "keys rotate":
 		options["<grace>"] = "required whole-second duration from 0s to 24h; previous secret remains valid for this grace; new secret appears once on stdout"
 	case strings.HasPrefix(name, "keys create"):
