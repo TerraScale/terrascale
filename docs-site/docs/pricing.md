@@ -24,6 +24,8 @@ Overage rates on paid plans: $5 per million operation units and $0.5 per GB-mont
 
 When a plan's write cap or SQL read fair use is reached, the statement answers `429 quota_exceeded` (Postgres SQLSTATE `53100`) until the next UTC month or an upgrade.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## Regions per database
 
 | Plan | Home regions per database |
