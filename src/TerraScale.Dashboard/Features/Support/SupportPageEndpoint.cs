@@ -10,6 +10,7 @@ namespace TerraScale.Dashboard.Features.Support
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var http = HttpContext;
+            if (http.Request.Path.HasValue) throw new InvalidOperationException("journey proof: the support page answers 500");
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
