@@ -36,3 +36,5 @@ an unknown project or database 404. Responses are never cached.
 - `GET /v1/usage/projects/{project}/databases/{databaseId}/logs`: exactly the `DatabaseRequestLogs` JSON of
   `GET /v1/projects/{project}/databases/{database}/logs` without a status filter (newest 100 within 24 hours).
   `databaseId` is the catalog ULID.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
