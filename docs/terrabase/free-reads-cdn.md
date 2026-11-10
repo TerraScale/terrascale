@@ -88,3 +88,5 @@ It uses the existing Zone Cache Purge and Zone Analytics Read permissions on `te
 
 Proof: `tests/TerraBase.Fast/Shapes/ShapeMirrorHttpTests.cs` checks that mirrored objects decrypt to the origin bytes.
 Measurements are in `benchmark/bench/2026-10-23-free-reads.md`.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
