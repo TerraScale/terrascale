@@ -21,6 +21,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
       - uses: ./.github/actions/dotnet-setup
         if: inputs.area == 'sdk-dotnet'
         with:
