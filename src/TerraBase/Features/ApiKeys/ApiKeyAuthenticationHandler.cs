@@ -28,7 +28,7 @@ internal sealed class ApiKeyAuthenticationHandler(
 
         Context.Features.Set(key);
         Claim[] claims = [new(ClaimTypes.NameIdentifier, key.Id), .. key.Scopes.Select(scope => new Claim(ScopeClaim, scope))];
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName))
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
