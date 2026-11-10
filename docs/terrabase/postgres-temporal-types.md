@@ -13,6 +13,8 @@ alter formats. Npgsql maps .NET MinValue/MaxValue to infinity by default; use fi
 Validation applies to typed temporal binds and result columns; text-bound SQL writes can store invalid text, which fails
 when read as temporal.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 ## uuid
 
 Native `uuid` (OID 2950) supports text and binary binds and results. A binary bind is 16 bytes, matching the canonical
