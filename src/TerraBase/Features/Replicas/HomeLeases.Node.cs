@@ -13,10 +13,10 @@ internal sealed partial class HomeLeases
 {
     private async Task RenewAsync(NatsJSContext js, INatsKVStore kv, CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(RenewEvery, time);
+        using var timer = new PeriodicTimer(RenewEvery, leaseGate.Time);
         do
         {
-            var sent = time.GetTimestamp();
+            var sent = leaseGate.Time.GetTimestamp();
             try
             {
                 var lease = JsonSerializer.SerializeToUtf8Bytes(new NodeLease(options.MachineId, options.Region, _session), ReplicasJsonContext.Default.NodeLease);
@@ -24,7 +24,7 @@ internal sealed partial class HomeLeases
                 _nodeRevision = _nodeRevision is { } revision
                     ? await PublishNodeAsync(js, lease, revision, cancellationToken).ConfigureAwait(false)
                     : await TakeNodeAsync(js, kv, lease, cancellationToken).ConfigureAwait(false);
-                leaseGate.Renewed(sent + (long)((Ttl - Margin).TotalSeconds * time.TimestampFrequency));
+                leaseGate.Renewed(sent + (long)((Ttl - Margin).TotalSeconds * leaseGate.Time.TimestampFrequency));
                 if (fresh)
                 {
                     logger.ZLogInformation($"This node holds a new home lease session");

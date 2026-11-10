@@ -4,6 +4,8 @@ namespace TerraBase.Engine;
 
 internal sealed class HomeLeaseGate(TimeProvider time)
 {
+    internal TimeProvider Time => time;
+
     private readonly ConcurrentDictionary<string, bool> _leased = new(StringComparer.Ordinal);
     private long _until;
 
