@@ -90,3 +90,5 @@ accept `ttlHours`. With `pointInTime`, `fork_database` returns a running restore
 [agent database workflow](/guides/agent-databases#agent-workflow), including scoped-key minting over an API key connection.
 
 Creating, rotating or restricting API keys requires a fresh dashboard confirmation: an unattended assistant call returns `step_up_required`, and you finish the action from the dashboard's **API keys** page. Listing and revoking keys work from the assistant.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
