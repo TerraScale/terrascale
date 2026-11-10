@@ -90,6 +90,8 @@ when the most recent NATS report was acknowledged as stored. Reports go to
 replicas and a 15-second TTL. Admission continues to depend on local measurement
 if JetStream or the report bridge is unavailable.
 
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
 The Slow proof contains two integration tests over the real gRPC listener and
 real native SQL storage. The happy path admits a healthy clock despite an unreachable
 WAN peer and proves concurrent issuance and remote observation use the durable reservation
