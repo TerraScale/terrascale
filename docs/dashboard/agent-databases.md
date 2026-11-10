@@ -34,3 +34,5 @@ TerraScale's generated OpenAPI specification and Scalar reference. Dashboard cal
 MagicOnion management and backups contracts for these customer databases; the RPC
 services call TerraBase's public `/v1/projects/{project}/databases` routes. The
 dashboard's own records stay in its relational tables ([state storage](state-storage.md)).
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
