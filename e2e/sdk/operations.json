@@ -1,0 +1,307 @@
+{
+  "contract": "sdk/SQL-API.md",
+  "table": "e2e_{sdk}_{run}",
+  "operations": [
+    {
+      "id": "sql.execute.positional",
+      "group": "a",
+      "title": "execute with positional arguments",
+      "setup": "CREATE TABLE {table} (id TEXT PRIMARY KEY, n INTEGER, label TEXT)",
+      "sql": "INSERT INTO {table} (id, n, label) VALUES (?, ?, ?)",
+      "args": [
+        "a",
+        1,
+        "first"
+      ],
+      "rowsAffected": 1
+    },
+    {
+      "id": "sql.execute.named",
+      "group": "a",
+      "title": "execute with named arguments",
+      "sql": "INSERT INTO {table} (id, n, label) VALUES (:id, :n, :label)",
+      "named": {
+        "id": "b",
+        "n": 2,
+        "label": "second"
+      },
+      "rowsAffected": 1
+    },
+    {
+      "id": "sql.execute.statement",
+      "group": "a",
+      "title": "execute a statement value",
+      "sql": "INSERT INTO {table} (id, n, label) VALUES (?, ?, ?)",
+      "args": [
+        "s",
+        30,
+        "statement"
+      ],
+      "rowsAffected": 1,
+      "check": "SELECT count(*) AS c FROM {table} WHERE id = 's'",
+      "checkRows": [
+        [
+          1
+        ]
+      ]
+    },
+    {
+      "id": "sql.query",
+      "group": "a",
+      "title": "query rows",
+      "sql": "SELECT id, n, label FROM {table} WHERE id IN ('a', 'b') ORDER BY id",
+      "rows": [
+        [
+          "a",
+          1,
+          "first"
+        ],
+        [
+          "b",
+          2,
+          "second"
+        ]
+      ]
+    },
+    {
+      "id": "sql.query.typed",
+      "group": "a",
+      "title": "query typed rows",
+      "sql": "SELECT id, n FROM {table} WHERE id IN ('a', 'b') AND n > ? ORDER BY id",
+      "args": [
+        0
+      ],
+      "objects": [
+        {
+          "id": "a",
+          "n": 1
+        },
+        {
+          "id": "b",
+          "n": 2
+        }
+      ]
+    },
+    {
+      "id": "sql.batch",
+      "group": "a",
+      "title": "batch: one result per statement, all or nothing",
+      "statements": [
+        "INSERT INTO {table} (id, n, label) VALUES ('c', 3, 'third')",
+        "UPDATE {table} SET n = n * 2 WHERE id = 'c'",
+        "SELECT n FROM {table} WHERE id = 'c'"
+      ],
+      "lastRows": [
+        [
+          6
+        ]
+      ],
+      "failing": [
+        "INSERT INTO {table} (id, n, label) VALUES ('d', 4, 'fourth')",
+        "INSERT INTO {table} (id, n, label) VALUES ('a', 5, 'duplicate')"
+      ],
+      "code": "primary_key_violation",
+      "statement": 1,
+      "check": "SELECT count(*) AS c FROM {table} WHERE id = 'd'",
+      "checkRows": [
+        [
+          0
+        ]
+      ]
+    },
+    {
+      "id": "sql.refused",
+      "group": "a",
+      "title": "a refused statement raises SqlError with code, statement, sqlstate and status",
+      "sql": "INSERT INTO {table} (id, n, label) VALUES ('a', 9, 'again')",
+      "code": "primary_key_violation",
+      "sqlstate": "23505",
+      "status": 400,
+      "statement": 0
+    },
+    {
+      "id": "values.roundtrip",
+      "group": "a",
+      "title": "null, exact int64, real, boolean, text and blob round-trip",
+      "setup": "CREATE TABLE {table}_values (k TEXT PRIMARY KEY, n INTEGER, big INTEGER, r REAL, flag INTEGER, t TEXT, b BLOB, absent TEXT)",
+      "sql": "INSERT INTO {table}_values (k, n, big, r, flag, t, b, absent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "values": {
+        "k": "v",
+        "n": 42,
+        "big": "9007199254740993",
+        "r": 1.5,
+        "flag": true,
+        "t": "héllo ✓",
+        "b": "AAEC/w==",
+        "absent": null
+      },
+      "select": "SELECT k, n, big, r, flag, t, b, absent FROM {table}_values WHERE k = 'v'",
+      "storedFlag": 1
+    },
+    {
+      "id": "ws.connect",
+      "group": "a",
+      "title": "connect opens a WebSocket session"
+    },
+    {
+      "id": "ws.statements",
+      "group": "a",
+      "title": "session execute, query and batch",
+      "sql": "INSERT INTO {table} (id, n, label) VALUES ('w1', 1, 'socket')",
+      "query": "SELECT label FROM {table} WHERE id = 'w1'",
+      "rows": [
+        [
+          "socket"
+        ]
+      ],
+      "statements": [
+        "UPDATE {table} SET n = 2 WHERE id = 'w1'",
+        "SELECT n FROM {table} WHERE id = 'w1'"
+      ],
+      "lastRows": [
+        [
+          2
+        ]
+      ]
+    },
+    {
+      "id": "ws.begin_commit",
+      "group": "a",
+      "title": "begin and commit",
+      "sql": "INSERT INTO {table} (id, n, label) VALUES ('w2', 1, 'committed')",
+      "check": "SELECT count(*) AS c FROM {table} WHERE id = 'w2'",
+      "checkRows": [
+        [
+          1
+        ]
+      ]
+    },
+    {
+      "id": "ws.rollback",
+      "group": "a",
+      "title": "begin and rollback",
+      "sql": "INSERT INTO {table} (id, n, label) VALUES ('w3', 1, 'rolled back')",
+      "check": "SELECT count(*) AS c FROM {table} WHERE id = 'w3'",
+      "checkRows": [
+        [
+          0
+        ]
+      ]
+    },
+    {
+      "id": "ws.transaction.commit",
+      "group": "a",
+      "title": "transaction(fn) commits",
+      "sql": "INSERT INTO {table} (id, n, label) VALUES ('w4', 1, 'transaction')",
+      "check": "SELECT count(*) AS c FROM {table} WHERE id = 'w4'",
+      "checkRows": [
+        [
+          1
+        ]
+      ]
+    },
+    {
+      "id": "ws.transaction.rethrow",
+      "group": "a",
+      "title": "transaction(fn) rolls back and rethrows when fn throws",
+      "sql": "INSERT INTO {table} (id, n, label) VALUES ('w5', 1, 'thrown')",
+      "message": "journey rollback",
+      "check": "SELECT count(*) AS c FROM {table} WHERE id = 'w5'",
+      "checkRows": [
+        [
+          0
+        ]
+      ]
+    },
+    {
+      "id": "ws.in_transaction",
+      "group": "a",
+      "title": "inTransaction follows begin and commit"
+    },
+    {
+      "id": "ws.close",
+      "group": "a",
+      "title": "close ends the session for good",
+      "sql": "SELECT 1"
+    },
+    {
+      "id": "conflicts.query",
+      "group": "a",
+      "title": "read terrascale.conflicts with query",
+      "sql": "SELECT * FROM terrascale.conflicts WHERE table_name = ? AND julianday(created_at) >= julianday(?) AND julianday(created_at) < julianday(?) ORDER BY id DESC LIMIT 50",
+      "rows": []
+    },
+    {
+      "id": "ids.new_validate",
+      "group": "a",
+      "title": "new ids validate, other strings do not",
+      "invalid": "not-a-terrascale-id"
+    },
+    {
+      "id": "agent.create_ttl",
+      "group": "b",
+      "title": "createDatabase with a TTL",
+      "name": "e2e-{sdk}-{run}",
+      "ttlSeconds": 3600
+    },
+    {
+      "id": "agent.fork",
+      "group": "b",
+      "title": "forkDatabase (branch)",
+      "needs": "a second database slot: the Free plan allows one database"
+    },
+    {
+      "id": "agent.fork_point_in_time",
+      "group": "b",
+      "title": "forkDatabase at a point in time",
+      "needs": "a second database slot: the Free plan allows one database"
+    },
+    {
+      "id": "agent.set_ttl",
+      "group": "b",
+      "title": "setDatabaseTtl",
+      "ttlSeconds": 7200
+    },
+    {
+      "id": "agent.clear_ttl",
+      "group": "b",
+      "title": "clearDatabaseTtl"
+    },
+    {
+      "id": "agent.scoped_key",
+      "group": "b",
+      "title": "createScopedKey, use it, and be refused outside its database",
+      "access": "read_write",
+      "ttlSeconds": 600,
+      "sql": "CREATE TABLE scoped_check (id TEXT PRIMARY KEY)",
+      "outside": "e2e-outside-{run}",
+      "outsideStatus": 404,
+      "mintStatus": 403
+    },
+    {
+      "id": "agent.delete",
+      "group": "b",
+      "title": "deleteDatabase",
+      "sql": "SELECT 1",
+      "deletedStatus": 404
+    },
+    {
+      "id": "placement.create",
+      "group": "b",
+      "title": "createDatabase with home and replica regions",
+      "needs": "two serving regions: the PR environment serves one region"
+    },
+    {
+      "id": "placement.set",
+      "group": "b",
+      "title": "setDatabasePlacement",
+      "needs": "two serving regions: the PR environment serves one region"
+    },
+    {
+      "id": "placement.move_home",
+      "group": "b",
+      "title": "moveDatabaseHome",
+      "needs": "two serving regions: the PR environment serves one region"
+    }
+  ]
+}

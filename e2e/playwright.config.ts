@@ -24,7 +24,7 @@ export default defineConfig({
     launchOptions: { env: { ...process.env, HOME: browserHome } },
   },
   projects: [
-    { name: 'setup', testMatch: 'journey/setup.spec.ts', use: secretFree },
+    { name: 'setup', testMatch: 'journey/setup.spec.ts', teardown: 'finish', use: secretFree },
     { name: 'sdk-a', testMatch: 'sdk/group-a.spec.ts', dependencies: ['setup'] },
     { name: 'pages-desktop', testMatch: 'pages/*.spec.ts', dependencies: ['setup'], use: { storageState: userSession } },
     {
@@ -36,13 +36,6 @@ export default defineConfig({
     { name: 'hosted', testMatch: 'hosted/*.spec.ts', dependencies: ['setup'], use: secretFree },
     { name: 'interactions', testMatch: 'interactions/*.spec.ts', dependencies: ['setup'], use: { storageState: userSession, ...secretFree } },
     { name: 'invitation', testMatch: 'journey/invitation.spec.ts', dependencies: ['setup'], use: secretFree },
-    {
-      name: 'database',
-      testMatch: 'journey/database.spec.ts',
-      dependencies: ['sdk-a', 'pages-desktop', 'pages-mobile', 'hosted', 'interactions', 'invitation'],
-      use: { storageState: userSession },
-    },
-    { name: 'sdk-b', testMatch: 'sdk/group-b.spec.ts', dependencies: ['database'] },
-    { name: 'teardown', testMatch: 'journey/teardown.spec.ts', dependencies: ['sdk-b'], use: { storageState: userSession, ...secretFree } },
+    { name: 'finish', testMatch: 'journey/finish.spec.ts', use: { storageState: userSession, ...secretFree } },
   ],
 });
