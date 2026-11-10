@@ -14,3 +14,5 @@ another create in each region and requires the exact exhausted-plan message and
 unchanged ID set. This keeps the stronger assertion at its actual precondition.
 The deadline quarantine and its skip attribute are removed. No production behavior,
 peer deadline, parallelism or retry policy changed.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
