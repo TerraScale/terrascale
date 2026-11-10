@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Onboarding
 {
@@ -7,6 +8,7 @@ namespace TerraScale.Dashboard.E2E.Features.Onboarding
     public sealed class OnboardingMcpJourneyTests(DashboardRootFixture fixture)
     {
         private static readonly string[] BillingIntervals = ["month", "year"];
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task NativePatCompletesFreeOnboardingAcrossRunningReplicas()
         {

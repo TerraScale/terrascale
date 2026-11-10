@@ -1,12 +1,14 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases
 {
     [ClassDataSource<DashboardRootFixture>]
     public sealed class AgentDatabaseJourneyTests(DashboardRootFixture fixture)
     {
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task AgentsCreateForkAtNowAndAtSnapshotQuerySetClearTtlAndDelete()
         {

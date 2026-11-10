@@ -1,9 +1,11 @@
 using System.Net;
+using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
 public sealed class BillingPlanStepUpJourneyTests
 {
+    [ExecutionPriority(Priority.High)]
     [Test]
     public async Task PlanChangeAndUndoNeedAFreshConfirmation()
     {

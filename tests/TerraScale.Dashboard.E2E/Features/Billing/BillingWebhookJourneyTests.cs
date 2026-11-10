@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Stripe;
+using TUnit.Core.Enums;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing
 {
@@ -18,6 +19,7 @@ namespace TerraScale.Dashboard.E2E.Features.Billing
             "/api/auth/stripe/webhook"
         ];
 
+        [ExecutionPriority(Priority.High)]
         [Test]
         public async Task CanonicalAndLegacyWebhooksVerifySignaturesAndReconcileCurrentStripeStateAnonymously()
         {
