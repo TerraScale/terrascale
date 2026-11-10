@@ -27,3 +27,5 @@ The [SQL catalog](sql-catalog.md) stores organizations, projects and databases. 
 Project/database usage, analytics and logs come from TerraBase. Monthly writes are billed once where committed; SQL read fair use is separate and reads are free. [Operation allowances](operation-allowance.md), [database stats](database-stats.md) and [metrics export](metrics-export.md) define those measurements. Request observations omit SQL text, row values, credentials and query strings.
 
 Every customer response includes `X-Request-ID` and the serving region. Authorization, cancellation and error responses preserve the same correlation boundary. Administrative pressure and peer transport remain private.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
