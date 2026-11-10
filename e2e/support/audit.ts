@@ -1,39 +1,60 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test as base, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type Response, type TestInfo } from '@playwright/test';
+import { expect, test as base, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
 import { checkLinks, type Link } from './links';
 import { stackHosts } from './stack';
 
 const wcag = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
 const secrets = 'input[type=password], .ts-apikeys-secret-value, #access-token-secret';
 
-type Expected = { url: RegExp; status: number; seen: number };
+type Expected = { url: RegExp; status: number; seen: number; logged: number };
 
 export class Audit {
   private problems: string[] = [];
   private readonly expected: Expected[] = [];
+  private readonly inflight = new Set<Request>();
+  private lastActivity = Date.now();
 
   constructor(
     private readonly page: Page,
     private readonly info: TestInfo,
   ) {
     page.on('console', (message) => {
-      if (message.type() === 'error' || message.type() === 'warning') {
-        this.problems.push(`console ${message.type()}: ${message.text()} at ${message.location().url}`);
-      }
+      if (message.type() !== 'error' && message.type() !== 'warning') return;
+      if (this.expectedLoadFailure(message.text(), message.location().url)) return;
+      this.problems.push(`console ${message.type()}: ${message.text()} at ${message.location().url}`);
     });
     page.on('pageerror', (error) => this.problems.push(`uncaught page error: ${error.message}`));
     page.on('requestfailed', (request) => this.problems.push(`request failed: ${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}`));
     page.on('response', (response) => this.response(response));
+    page.on('request', (request) => this.started(request));
+    page.on('requestfinished', (request) => this.ended(request));
+    page.on('requestfailed', (request) => this.ended(request));
+  }
+
+  async quiet(): Promise<void> {
+    await expect
+      .poll(() => this.inflight.size === 0 && Date.now() - this.lastActivity >= 500, { message: 'no request in flight for 500 ms', intervals: [100] })
+      .toBe(true);
+  }
+
+  private started(request: Request): void {
+    this.inflight.add(request);
+    this.lastActivity = Date.now();
+  }
+
+  private ended(request: Request): void {
+    this.inflight.delete(request);
+    this.lastActivity = Date.now();
   }
 
   expectStatus(url: RegExp, status: number): void {
-    this.expected.push({ url, status, seen: 0 });
+    this.expected.push({ url, status, seen: 0, logged: 0 });
   }
 
   async check(name: string): Promise<void> {
     const page = this.page;
     await page.waitForLoadState('load');
-    await page.waitForLoadState('networkidle');
+    await this.quiet();
     const found: string[] = [];
     const broken = await page.evaluate(() =>
       [...document.querySelectorAll('img')].filter((image) => image.complete && image.naturalWidth === 0).map((image) => image.currentSrc || image.src),
@@ -53,9 +74,17 @@ export class Audit {
   }
 
   async finish(): Promise<void> {
-    if (!this.page.isClosed()) await this.page.waitForLoadState('networkidle');
+    if (!this.page.isClosed()) await this.quiet();
     expect(this.problems.splice(0), 'after the last audited state').toEqual([]);
     for (const expected of this.expected) expect(expected.seen, `HTTP ${expected.status} for ${expected.url}`).toBe(1);
+  }
+
+  private expectedLoadFailure(text: string, url: string): boolean {
+    const status = /^Failed to load resource: the server responded with a status of (\d{3}) /.exec(text)?.[1];
+    const expected = this.expected.find((candidate) => String(candidate.status) === status && candidate.url.test(url) && candidate.logged < candidate.seen);
+    if (!expected) return false;
+    expected.logged += 1;
+    return true;
   }
 
   private response(response: Response): void {
