@@ -69,6 +69,7 @@ The same transport configuration applies to `NewManagement`. `Token` and
 `TokenSource` are mutually exclusive. A source with `Invalidate(string)` is
 refreshed once after a 401, with the same request and grant; a second denial
 stops the call. Explicit tokens and 403/404 responses never use a fallback.
+`Config.RegionPin` sends `X-TerraScale-Region-Pin`; an empty value sends no header.
 
 Errors are `*tb.APIError{Status, Code, Message, RetryAfter, Body, RequestID}`,
 and every error code is also an error value for `errors.Is`, for example
@@ -236,8 +237,8 @@ if errors.As(err, &sqlErr) && errors.Is(err, v1.ErrUniqueViolation) {
   (the request rolled back), plus the client's existing pre-execution refusals
   (429 and transient 503 with Retry-After). A lost response returns
   `ErrCommitUncertain` and is never resent.
-- There is no `Region` option or region pin header; the client uses the one
-  global origin.
+- There is no `Region` option; `Config.RegionPin` sends `X-TerraScale-Region-Pin`
+  and an empty value sends no header. The client uses the one global origin.
 
 #### Interactive transactions (WebSocket)
 
