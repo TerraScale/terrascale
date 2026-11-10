@@ -9,3 +9,5 @@ An HTTP refusal returns `503 disk_capacity`, an actionable message and `Retry-Af
 Native engine temporary files use `<data-directory>/.tmp`. After taking the exclusive data-directory lock, startup clears abandoned native scratch and sets native `TMPDIR` before workers start. Routing is process-wide: another data volume cannot be selected in the same process. Parallel in-process integration hosts use a test-only initializer; the production initializer is tested in an isolated subprocess. No persisted storage format changes.
 
 The administrative Prometheus endpoint exposes `terrabase_disk_reserved_bytes`, `terrabase_disk_free_bytes`, `terrabase_disk_headroom_bytes` and `terrabase_disk_refused_total`. Reserved bytes describe workspace claims rather than bytes physically written. Capacity-refusal drills belong on isolated small volumes; production proof uses a small owned backup/restore only.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
