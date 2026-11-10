@@ -49,7 +49,7 @@ namespace TerraScale.Dashboard.E2E.Features.Home
         private static async Task AssertHealthyAsync(IPage page, IResponse? response, string path)
         {
             await Assert.That(response).IsNotNull().Because(path);
-            await Assert.That(response!.Status).IsNotEqualTo(500).Because(path);
+            await Assert.That(response!.Status).IsLessThan(400).Because(path);
             await Assert.That((await page.ContentAsync()).Contains("unhandled exception", StringComparison.OrdinalIgnoreCase)).IsFalse().Because(path);
         }
     }
