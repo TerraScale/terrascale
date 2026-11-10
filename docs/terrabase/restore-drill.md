@@ -20,3 +20,5 @@ Production acceptance needs reviewed machine/volume recovery targets, timestampe
 Tigris listings, three-region digest comparison and bidirectional replication proof.
 Publish backup/recovery/convergence timings in `benchmark/bench/`; local tests
 establish no production recovery proof.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
