@@ -12,3 +12,5 @@ If caller cancellation and the deadline overlap, caller cancellation takes prece
 The counter resets on process restart; use `increase` or `rate` for history. A zero
 value is healthy telemetry, not a missing signal. The metric changes no storage format,
 anchor admission, retry, or acknowledgement behavior.
+
+A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
