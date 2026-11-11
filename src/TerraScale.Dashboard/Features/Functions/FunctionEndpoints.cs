@@ -5,7 +5,7 @@ using TerraScale.TerraBase.Contracts;
 namespace TerraScale.Dashboard.Features.Functions
 {
     public sealed record FunctionsPage(ShellModel Shell, DatabaseRecord Database, IReadOnlyList<FunctionRecord> Functions, FunctionRecord? Selected,
-        string? InvokeUrl, IReadOnlyList<FunctionInvocation> Logs, string Error);
+        string? InvokeUrl, IReadOnlyList<FunctionInvocation> Logs, string Error, bool NoAccess, string DeleteName);
 
     public static class FunctionEndpoints
     {
@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.Features.Functions
             catch (Exception error) when (KnownFailure(error, http))
             {
                 var missing = error is AccountAccessException { StatusCode: 404 };
-                return View(http, context, database, items, null, [], missing ? error.Message : Message(error), missing ? 404 : Status(error));
+                return View(http, context, database, items, null, [], missing ? error.Message : Message(error), missing ? 404 : Status(error) == 403 ? 200 : Status(error), noAccess: Status(error) == 403);
             }
         }
 
@@ -68,22 +68,26 @@ namespace TerraScale.Dashboard.Features.Functions
             DatabaseRecord database;
             try { database = DatabaseService.Database(context, id); }
             catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }
+            var name = form["name"].ToString();
+            IReadOnlyList<FunctionRecord> items = [];
+            FunctionRecord? selected = null;
+            IReadOnlyList<FunctionInvocation> logs = [];
             try
             {
-                await functions.DeleteAsync(context, database, form["name"].ToString(), http.RequestAborted);
+                items = await functions.ListAsync(context, database, http.RequestAborted);
+                selected = await functions.ReadAsync(context, database, name, http.RequestAborted);
+                logs = selected is null ? [] : await functions.LogsAsync(context, database, name, http.RequestAborted);
+                if (!await functions.DeleteAsync(context, database, name, http.RequestAborted))
+                {
+                    throw new AccountAccessException("This function no longer exists.", 404);
+                }
+
                 return HttpRedirects.SeeOther(DatabaseService.Path(id, "functions"));
             }
             catch (Exception error) when (KnownFailure(error, http))
             {
-                if (error is AccountAccessException { StatusCode: 403 })
-                {
-                    return Results.Problem(error.Message, statusCode: 403);
-                }
-
-                IReadOnlyList<FunctionRecord> items = [];
-                try { items = await functions.ListAsync(context, database, http.RequestAborted); }
-                catch (Exception again) when (KnownFailure(again, http)) { }
-                return View(http, context, database, items, null, [], "The function was not deleted. " + Message(error), Status(error));
+                return View(http, context, database, items, selected, logs, "The function was not deleted. " + Message(error), Status(error),
+                    noAccess: Status(error) == 403, deleteName: name);
             }
         }
 
@@ -111,10 +115,10 @@ namespace TerraScale.Dashboard.Features.Functions
         }
 
         private static RazorSlices.RazorSlice<FunctionsPage> View(HttpContext http, AccountContext context, DatabaseRecord database, IReadOnlyList<FunctionRecord> items, FunctionRecord? selected,
-            IReadOnlyList<FunctionInvocation> logs, string error = "", int status = 200)
+            IReadOnlyList<FunctionInvocation> logs, string error = "", int status = 200, bool noAccess = false, string deleteName = "")
         {
             var page = FunctionsView.Create(new(ShellModel.For(http, context, database.Name + " · Functions"), database, items, selected,
-                selected is null ? null : FunctionBackend.InvokeUrl(context, database, selected.Name), logs, error));
+                selected is null ? null : FunctionBackend.InvokeUrl(context, database, selected.Name), logs, error, noAccess, deleteName));
             page.StatusCode = status;
             return page;
         }
