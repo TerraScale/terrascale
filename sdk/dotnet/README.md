@@ -211,7 +211,8 @@ deploys and invokes functions. `TerraBaseManagementClient` covers the Management
 organization, plans, projects (including close and erase), history erasure, members, invitations, ownership transfer,
 audit retention and audit events. Databases and branches are not management operations; they live on
 `TerraBaseDatabaseClient` above. `TerraBaseRegionsClient` reads the anonymous [serving-region catalog](contracts/terrabase/regions.md).
-`TerraBaseHealthClient` reads the anonymous health probes.
+`TerraBaseHealthClient` reads the anonymous health probes of its `baseAddress`, else the `HttpClient`'s `BaseAddress`,
+else `https://api.terrascale.tech`.
 
 ```csharp
 using TerraScale.DotNet.TerraBase;

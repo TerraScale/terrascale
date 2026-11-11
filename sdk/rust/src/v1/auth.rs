@@ -85,7 +85,7 @@ impl Auth {
                     .ok_or_else(|| Error::InvalidInput("API keys require a project".into()))?;
                 if !key.is_ascii()
                     || key.len() != 79
-                    || !super::ids::valid_entity_id(&key[..26])
+                    || !super::ids::is_valid_id(&key[..26])
                     || key.as_bytes()[26] != b'_'
                     || !key.as_bytes()[27..]
                         .iter()

@@ -195,6 +195,7 @@ db := c.Database(projectID, "main")
 
 _, err = db.Execute(ctx, "CREATE TABLE IF NOT EXISTS people (id TEXT PRIMARY KEY, name TEXT, avatar BLOB)")
 _, err = db.Execute(ctx, "INSERT INTO people VALUES (?, ?, ?)", v1.NewID(), "Ada", []byte{1, 2, 3})
+_, err = db.ExecuteStatement(ctx, v1.Statement{SQL: "INSERT INTO people (id, name) VALUES (?, ?)", Args: []any{v1.NewID(), "Grace"}})
 _, err = db.Execute(ctx, "UPDATE people SET name = :name WHERE name = :old", sql.Named("name", "Ada L."), sql.Named("old", "Ada"))
 
 rows, err := db.Query(ctx, "SELECT id, name FROM people")
@@ -220,6 +221,8 @@ if errors.As(err, &sqlErr) && errors.Is(err, v1.ErrUniqueViolation) {
 }
 ```
 
+- `ExecuteStatement` runs one `v1.Statement` value (`SQL`, `Args` or `Named`), on a
+  `*Database` and on a `*SQLSession`, also inside `Transaction`.
 - Arguments: `nil`, booleans (stored as 1/0), Go integers, finite floats,
   strings, `[]byte` (sent as `{"base64":"…"}`), `json.Number` and any
   `driver.Valuer`. `sql.Named` binds `:name`, `@name` or `$name`. SQLite numbers a bare `?` after

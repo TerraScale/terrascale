@@ -5,7 +5,7 @@ use ulid::Ulid;
 
 use super::errors::{Error, Result};
 
-pub(crate) fn valid_entity_id(id: &str) -> bool {
+pub fn is_valid_id(id: &str) -> bool {
     id.len() == 26
         && id.as_bytes()[0] <= b'7'
         && id
@@ -15,7 +15,7 @@ pub(crate) fn valid_entity_id(id: &str) -> bool {
 
 pub(crate) fn entity_id<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
     let id = String::deserialize(d)?;
-    if valid_entity_id(&id) {
+    if is_valid_id(&id) {
         Ok(id)
     } else {
         Err(serde::de::Error::custom(
@@ -28,7 +28,7 @@ pub(crate) fn optional_entity_id<'de, D: Deserializer<'de>>(
     d: D,
 ) -> std::result::Result<Option<String>, D::Error> {
     let id = Option::<String>::deserialize(d)?;
-    if id.as_deref().is_some_and(|value| !valid_entity_id(value)) {
+    if id.as_deref().is_some_and(|value| !is_valid_id(value)) {
         return Err(serde::de::Error::custom(
             "entity ID must be a canonical uppercase ULID",
         ));
@@ -65,7 +65,7 @@ pub(crate) fn check_name(kind: &str, name: &str) -> Result<()> {
 }
 
 pub(crate) fn check_database_selector(selector: &str) -> Result<()> {
-    if valid_entity_id(selector) {
+    if is_valid_id(selector) {
         Ok(())
     } else {
         check_name("database", selector)

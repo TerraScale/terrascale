@@ -185,6 +185,9 @@ narrower data scopes; they cannot grant `databases:read` or `databases:write`. C
 authorization belong to the producer. SQL reads need the data read scope; writes and DDL also need the data write
 scope, checked per statement. Keep service credentials private and out of logs and browser bundles.
 `createTerraBaseClient` is an alias of `createTerraBaseV1Client`. A region sends `X-TerraScale-Region-Pin`, and a missing, empty, or whitespace region omits it.
+On a server, `createTerraBaseClientFromEnvironment(overrides?)` reads `TERRASCALE_PROJECT_ID`, `TERRASCALE_API_KEY` and
+`TERRASCALE_BASE_URL`. Without that variable, a `baseUrl` or an `endpointResolver` it sends to
+`https://api.terrascale.tech`; passing both `baseUrl` and `endpointResolver` is refused.
 
 `client.databases.create({ name })` uses the called region as the home; `homeRegion` selects another serving region.
 
@@ -203,7 +206,9 @@ keys, making retained encrypted backups unreadable; physical cleanup is separate
 Project and database IDs are canonical uppercase 26-character ULIDs. `generateId()`, `isValidId()` and `requireId()`
 retain that entity-ID contract; use `generateId()` for primary keys of tables that take local writes.
 
-`execute` runs one statement, `query` returns its rows as objects keyed by column name, and `batch` sends 1 to 256
+`execute` runs one statement, given as SQL text with its arguments or as one `{ sql, args }` or `{ sql, named }`
+statement value (on the database, a session and inside `transaction`; any other value is refused before sending),
+`query` returns its rows as objects keyed by column name, and `batch` sends 1 to 256
 statements as one transaction: all commit or none do. `BEGIN`, `COMMIT` and `ROLLBACK` are refused over HTTPS; use a
 WebSocket session for interactive transactions. Arguments are positional (`?`) or named (`:name`, `@name`, `$name`,
 passed without the prefix). Each is `null`, a number, an int64 `bigint`, a boolean (stored as 1 or 0), a string or a

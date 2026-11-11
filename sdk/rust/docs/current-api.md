@@ -14,7 +14,7 @@ or `.endpoint(origin)` for a static endpoint. `Client::builder(origin, token)`
 requires `.project(project_ulid)`. Platform administration uses
 `Client::for_platform(origin, access_token)`.
 
-Entity IDs are canonical uppercase ULIDs; `new_id()` generates one. Database selectors are a
+Entity IDs are canonical uppercase ULIDs; `new_id()` generates one and `is_valid_id(id)` checks one. Database selectors are a
 name or ULID.
 
 ## Public operations

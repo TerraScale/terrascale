@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::client::{Client, Req};
 use super::database::ProjectDatabaseInfo;
 use super::errors::{Error, Result};
-use super::ids::{check_database_selector, check_name, valid_entity_id};
+use super::ids::{check_database_selector, check_name, is_valid_id};
 use super::management::DatabasePlacement;
 
 pub const MOVE_HOME_TIMEOUT: Duration = Duration::from_secs(300);
@@ -233,11 +233,11 @@ impl Client {
     }
 
     pub async fn create_scoped_key(&self, options: &ScopedKeyOptions) -> Result<ScopedKey> {
-        if !valid_entity_id(&options.database)
+        if !is_valid_id(&options.database)
             || options
                 .project
                 .as_deref()
-                .is_some_and(|id| !valid_entity_id(id))
+                .is_some_and(|id| !is_valid_id(id))
         {
             return Err(Error::InvalidInput(
                 "scoped key database and project must be canonical uppercase ULIDs".into(),

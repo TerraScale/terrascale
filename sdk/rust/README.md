@@ -33,7 +33,8 @@ db.batch(vec![
 # let _ = notes; Ok(()) }
 ```
 
-The project is a canonical uppercase ULID and the database a name or ULID. Read the API key from secret
+The project is a canonical uppercase ULID and the database a name or ULID; `new_id()` generates a ULID and
+`is_valid_id(id)` checks one. Read the API key from secret
 storage: `for_project_api_key` exchanges it through ts-auth and refreshes tokens automatically. Reads need
 `sql:read`; writes and schema changes also need `sql:write`. `Client::for_project` takes an
 already exchanged bearer token. `ClientBuilder::region_pin` sends `X-TerraScale-Region-Pin`, and an
