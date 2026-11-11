@@ -14,7 +14,7 @@ if [ -d /run/nscd ]; then mount --bind "$ns/empty" /run/nscd; fi
 mount --bind "$ns/ca-certificates.crt" /etc/ssl/certs/ca-certificates.crt
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 bash "$here/edge.sh" || { status=$?; bash "$here/down.sh"; exit "$status"; }
-mkfifo "$ns/stop"
+trap 'bash "$here/down.sh"; exit 0' TERM
 touch "$ns/ready"
-read -r _ < "$ns/stop"
-bash "$here/down.sh"
+sleep infinity &
+wait

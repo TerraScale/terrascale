@@ -201,6 +201,7 @@ jobs:
           bash env/local.sh exec npx playwright test "${projects[@]}"
       - name: Stop the stack
         if: always() && steps.namespace.outcome == 'success'
+        timeout-minutes: 1
         run: bash e2e/env/local.sh stop
       - id: scrub
         name: Redact every generated secret from the files that upload
