@@ -56,3 +56,5 @@ ready ts-auth curl -fsS --max-time 2 http://127.0.0.1:8090/readyz
 ready dashboard curl -fsS --max-time 2 --cacert "$trust" https://dash.terrascale.tech/readyz
 curl -fsS --max-time 2 --cacert "$trust" https://dash.terrascale.tech/readyz
 echo
+curl -fsS --max-time 2 --cacert "$trust" https://auth.terrascale.tech/readyz
+echo

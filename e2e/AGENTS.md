@@ -98,8 +98,8 @@ before or during the suite, or the suite's own error such as its global timeout)
 65,536 characters. While the issue is open, a failed run replaces its body and comments only when the failed tests
 or the cause changed, naming the tests newly failing and fixed. The next green run closes it. A run during which a
 `/readyz` version changed, because a newer release rolled out under it, neither opens, updates nor closes the issue:
-its job summary says so, and the newer release's own run follows. Only the dashboard's version names a commit;
-ts-auth's names its package version, so a ts-auth rollout during a run goes unseen. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
+its job summary says so, and the newer release's own run follows. Both versions name the commit the service was built
+from, so a rollout of either during a run is seen. Run it from your machine only from a clean shell: `bash e2e/env/local.sh prepare` once for the runners,
 then `bash e2e/env/production.sh`; each run makes three production accounts.
 
 ## Stages
