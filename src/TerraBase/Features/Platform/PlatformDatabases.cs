@@ -33,9 +33,19 @@ internal static class PlatformDatabases
     public static IServiceCollection AddTerraBasePlatform(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
+        services.AddSingleton<PlatformSeedProgress>();
         services.AddHostedService<PlatformSeed>();
         return services;
     }
+}
+
+internal sealed class PlatformSeedProgress
+{
+    private volatile bool _finished;
+
+    internal bool Finished => _finished;
+
+    internal void Finish() => _finished = true;
 }
 
 public readonly union EnsurePlatformResult(Done, Conflict, Unavailable);
@@ -45,7 +55,7 @@ public interface IPlatformCatalog
     ValueTask<EnsurePlatformResult> EnsurePlatformAsync(CancellationToken cancellationToken);
 }
 
-internal sealed class PlatformSeed(IPlatformCatalog catalog, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
+internal sealed class PlatformSeed(IPlatformCatalog catalog, PlatformSeedProgress progress, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
 {
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
 
@@ -59,9 +69,11 @@ internal sealed class PlatformSeed(IPlatformCatalog catalog, TimeProvider time, 
                 switch (await catalog.EnsurePlatformAsync(stoppingToken).ConfigureAwait(false))
                 {
                     case Done:
+                        progress.Finish();
                         logger.ZLogInformation($"Platform databases are seeded");
                         return;
                     case Conflict conflict:
+                        progress.Finish();
                         logger.ZLogError($"Platform databases conflict with existing catalog records: {conflict.Code:@Code}");
                         return;
                     case Unavailable unavailable when failure != unavailable.Message:

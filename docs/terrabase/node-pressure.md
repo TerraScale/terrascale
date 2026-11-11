@@ -19,8 +19,8 @@ returns 404. Consumers requiring schema 2 or the old route must adopt this
 contract before consuming the release; there is no compatibility alias.
 `node` is the runtime node identity (see [OCI hosting](../oci.md)).
 
-`local_ready` is sampled using exactly `/readyz`'s storage, catalog
-and shutdown checks; it is null before the first readiness sample. It does not
+`local_ready` is sampled using exactly `/readyz`'s checks; it is null before
+the first readiness sample. It does not
 prove certified member state or receipt of every peer's data. Consequently
 `state` stays `unknown`, even when local readiness is true.
 `io_admitted_count` is actual currently admitted storage transactions and

@@ -215,6 +215,12 @@ internal sealed partial class EngineManagementService(
             return new Done();
         }
 
+        if (await ReadCatalogAsync(transaction => CheckReadAsync(transaction, cancellationToken), cancellationToken).ConfigureAwait(false) is Done)
+        {
+            _catalogCurrent = true;
+            return new Done();
+        }
+
         var accepted = await WriteCatalogAsync<CatalogCheck>(async transaction =>
         {
             var version = await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false);

@@ -40,6 +40,8 @@ auth=(TS_AUTH_TERRABASE_URL=http://127.0.0.1:8081 TS_AUTH_LISTEN=http://127.0.0.
   TS_AUTH_SMTP_USERNAME="$smtp_username" TS_AUTH_SMTP_PASSWORD="$smtp_password"
   CLOUDFLARE_ACCOUNT_ID="$cloudflare_account" CLOUDFLARE_EMAIL_TOKEN="$cloudflare_token")
 start ts-auth env "${auth[@]}" dotnet "$build/ts-auth/ts-auth.dll"
+timeout --kill-after=10 "$boot_seconds" env "${auth[@]}" dotnet "$build/ts-auth/ts-auth.dll" provision-signing-key > "$logs/provision-signing-key.log" 2>&1 \
+  || { echo "ts-auth provision-signing-key failed or was still running after $boot_seconds s (exit status $?)" >&2; tail -n 40 "$logs/provision-signing-key.log" >&2; exit 1; }
 start dashboard env TS_AUTH_DASHBOARD_CLIENT_SECRET="$client_secret" TS_DASHBOARD_SESSION_ENCRYPTION_KEY="$session_key" \
   STRIPE_SECRET_KEY="$stripe_secret_key" STRIPE_WEBHOOK_SECRET="$stripe_signing_secret" TERRABASE_PEER_SECRET="$peer_secret" \
   TS_DASHBOARD_TERRABASE_URL=http://127.0.0.1:8081 TS_REGION=gru TS_NODE=journey-1 \

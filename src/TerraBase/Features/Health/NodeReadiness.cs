@@ -2,6 +2,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.HomePush;
+using TerraBase.Features.Platform;
 using TerraBase.Features.Replicas;
 using HomePushService = TerraBase.Features.HomePush.HomePush;
 
@@ -13,13 +14,13 @@ public interface INodeReadiness
 }
 
 internal sealed class NodeReadiness(
-    IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate,
+    IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate, PlatformSeedProgress platform,
     RegionalOwners owners, TerraBaseOptions options,
     HomePushService push, HomeLeases leases) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
-        if (!gate.IsOpen || lifetime.ApplicationStopping.IsCancellationRequested
+        if (!gate.IsOpen || !platform.Finished || lifetime.ApplicationStopping.IsCancellationRequested
             || options is { NatsUrl: not null, PeersFile: not null }
                 && (owners.Find(options.Region) is null || !push.Started || !leases.Ready))
         {
