@@ -553,6 +553,13 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return err
 	}
 	u := auth.WithToken(token)
+	signIn := func(ctx context.Context) (*tsauth.User, error) {
+		current, err := accessToken(ctx, device)
+		if err != nil {
+			return nil, err
+		}
+		return auth.WithToken(current), nil
+	}
 	consent := func(kind, label, id string) error {
 		return confirmManagementTarget("Delete "+kind, label, id, *yes, in, prompt, tty)
 	}
@@ -592,7 +599,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	case "orgs create", "orgs info", "orgs rename":
 		return organizationLifecycle(ctx, u, name, operands, out)
 	case "orgs delete":
-		return deleteOrganizationLifecycle(ctx, u, operands[0], consent, out)
+		return deleteOrganizationLifecycle(ctx, u, signIn, operands[0], consent, out, prompt)
 	case "projects":
 		return listProjects(ctx, u, *org, out)
 	case "projects info", "projects rename":
@@ -622,10 +629,10 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return runInit(ctx, s, database, *lang, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out, prompt)
 	}
 	if name == "keys create" {
-		return createKey(ctx, s, keyReq, out, prompt)
+		return createKey(ctx, s, keyReq, out)
 	}
 	if name == "keys rotate" {
-		return rotateKey(ctx, s, rotationID, rotationGrace, out, prompt)
+		return rotateKey(ctx, s, signIn, rotationID, rotationGrace, out, prompt)
 	}
 	if name == "db export" {
 		return dbExport(ctx, s, operands[0], *exportFile, *force, out)
@@ -705,12 +712,10 @@ func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyR
 
 // createKey creates a key and prints its secret once, with its expiry and
 // allowed networks on stderr.
-func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out, prompt io.Writer) error {
-	k, err := stepUp(ctx, s, tsauth.StepUpCreateAPIKey, "Creating API keys", func(u *tsauth.User) (*tsauth.CreatedAPIKey, error) {
-		return u.CreateAPIKey(ctx, s.org, s.project, req)
-	}, prompt)
+func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io.Writer) error {
+	k, err := s.user.CreateAPIKey(ctx, s.org, s.project, req)
 	if err != nil {
-		return err
+		return keyOperationError(err, "Creating API keys", s)
 	}
 	if jsonMode(out) {
 		return keyOutputError(emitJSON(out, k)) // This explicit create command reveals the secret once.

@@ -7,14 +7,14 @@ title: CLI access and execution context
 Use `ts auth login`, approve the displayed URL/code, then check `ts whoami`, `ts orgs` and `ts projects`. Login progress goes to stderr in JSON mode; tokens are never printed. `ts auth logout` revokes the saved session and removes its credential file.
 
 `ts -expires 30d keys create reports example` requests a database-restricted key. Server permissions still apply; `-allow-cidr` restricts client networks and `-expires` accepts `30d`, `90d`, `365d` or `never` (default).
-`keys create` and `keys rotate` need a fresh sign-in confirmation: the CLI prints the hosted confirmation URL and waits, you approve with your password or an email code (plus two-factor when enrolled), and the secret is shown once in the terminal. Ctrl+C cancels the wait; an unconfirmed proof expires after five minutes.
-`keys list` and `keys revoke` need no confirmation.
+`keys rotate` needs a fresh sign-in confirmation: the CLI prints the hosted confirmation URL and waits, you approve with your password or an email code (plus two-factor when enrolled), and the new secret is shown once in the terminal. Ctrl+C cancels the wait; an unconfirmed proof expires after five minutes.
+`keys create`, `keys list` and `keys revoke` need no sign-in confirmation.
 Capture a newly created key once in a private file or secret store; exclude secrets from logs and shell history. `keys list` returns safe metadata, expiry, allowed networks, creator, creation time and nullable last-use time (a successful token exchange, up to five minutes stale); `keys revoke <id>` revokes access. `TERRASCALE_API_KEY` selects API-key authentication for database commands; organization keys also need `-project <id>`.
 
 `ts context set my-org my-project example` resolves organization/project IDs and verifies the optional database before saving. `ts context show` and `ts context clear` work offline; saved selectors live beside credentials in `context.json`, without tokens.
 `ts db info @` explicitly uses the saved database. An explicit database name wins. Explicit `-org` or `-project` before the command overrides saved selectors and discards dependent database defaults, so supply the database name with those flags. To use `@`, select a matching context and omit the override flags. API-key commands ignore sign-in context. Another account's saved defaults fail until cleared or explicitly overridden; every request still checks access.
 
-`ts -project my-project db delete example` asks for the exact database name; organization and project deletion ask for the resolved ID. Unattended commands require explicit `-yes` before the command; consent never grants permissions.
+`ts -project my-project db delete example` asks for the exact database name; organization and project deletion ask for the resolved ID. Unattended commands require explicit `-yes` before the command; consent never grants permissions. Organization deletion also needs the same fresh sign-in confirmation as `keys rotate`, which `-yes` does not skip.
 
 For automation, inspect `ts --json db info preview`, verify the project and branch lineage, then supply `-expected-id <ULID>` and `-yes` before `db delete`:
 
