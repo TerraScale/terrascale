@@ -29,7 +29,7 @@ func parseKeyRotation(args []string) (string, time.Duration, error) {
 	return args[0], grace, nil
 }
 
-var stepUpPollInterval = 5 * time.Second
+const stepUpPollInterval = 5 * time.Second
 
 func stepUp[T any](ctx context.Context, signIn func(context.Context) (*tsauth.User, error), purpose, organization, action string, operate func(*tsauth.User) (*T, error), fail func(error) error, diagnostics io.Writer) (*T, error) {
 	u, err := signIn(ctx)
@@ -67,7 +67,7 @@ func stepUp[T any](ctx context.Context, signIn func(context.Context) (*tsauth.Us
 		}
 		if time.Now().After(challenge.ExpiresAt) {
 			return nil, &cliError{code: string(api.Code), status: api.Status,
-				message: action + " was not confirmed before its deadline; run the command again for a fresh confirmation."}
+				message: action + " did not complete before its confirmation expired; run the command again for a fresh confirmation."}
 		}
 		timer := time.NewTimer(stepUpPollInterval)
 		select {
