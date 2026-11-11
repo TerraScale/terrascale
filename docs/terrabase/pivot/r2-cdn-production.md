@@ -331,13 +331,12 @@ Q6 alerts on actual storage, Class A/B, cache hit ratio and purge backlog.
    Warm an extensionless object without Origin and from two browser origins,
    DELETE and purge it, then verify all variants stop returning HIT across
    tiered caches. Measure the additional R2 fills per Origin variant.
-4. Fast integration remains a required CI gate on the exact PR head. Run the
-   independent Slow real-R2 scenario for CDN HIT, durable purge through
-   restart/429/saturation/credential failure and eventual deletion. Include
-   a sweeper outage spanning actual lifecycle expiry: recovery must purge
-   from durable inventory after the bucket has already lost the objects.
-   Report failures through the existing automatic issue path. Slow remains
-   non-blocking for merges; failed proof is still unfinished task evidence.
+4. The journey remains the required CI gate on the exact PR head. Prove CDN
+   HIT, durable purge through restart/429/saturation/credential failure and
+   eventual deletion against real R2, including a sweeper outage spanning
+   actual lifecycle expiry: recovery must purge from durable inventory after
+   the bucket has already lost the objects. Failed proof is unfinished task
+   evidence.
 5. Repeat the N = 1/10/100/1000 scenario three times on SQL shapes (F10),
    compare client cache headers with R2 `r2OperationsAdaptiveGroups` GET
    counts over the same windows, and publish under `benchmark/bench/`.

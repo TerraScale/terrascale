@@ -134,13 +134,8 @@ request's do.
 
 - Legacy objects without records stay unclassified until a writer adds a record to the same handle;
   removing them needs a separate reviewed rebuild or reset decision.
-- Request admission is exempt by design (see above); no test exercises an unavailable plan, whose path
-  counts the database as refused before any storage work.
-- The 1,025-handle test does not fill the registry's retirement queue itself; it proves the sweep needs
-  no queue or registry entry for more durable handles than the queue holds.
-- No test observes the mirror floor notification: Fast servers have no Tigris mirror, so the callback is a
-  no-op there.
-- Changing the incarnation in place is not exercised by the tests; it takes the same comparison as a
-  generation change.
+- Request admission is exempt by design (see above); an unavailable plan counts the database as refused before any
+  storage work.
+- Changing the incarnation in place takes the same comparison as a generation change.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

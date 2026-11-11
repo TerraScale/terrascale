@@ -62,9 +62,7 @@ context, the database a detail page shows) are not panels and still fail the req
 
 Paths are relative to `src/TerraScale.Dashboard`. `IAnalyticsBackend`
 (`Features/Analytics/AnalyticsModels.cs`) is the read-only contract used by
-the UI. Tests keep the real adapter and serve a test-only producer protocol
-from `tests/TerraScale.Dashboard.E2E/Demo/TestReporting.cs`. Production never
-synthesizes metrics.
+the UI. Production never synthesizes metrics.
 
 SDK 0.0.3 source (`ff1d1126087d40d112ca27383fbb3111e320cb4a`) exposes usage,
 but does not publish analytics/replication methods. TerraBase main

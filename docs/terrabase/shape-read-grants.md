@@ -60,11 +60,4 @@ handle; clients holding the old one get `409 must_refetch`. A grant whose condit
 
 End-user tokens cannot run SQL or reach management routes (`403`). An expired or tampered token answers `401`.
 
-## 4. Tests
-
-`tests/TerraBase.Fast/Shapes/ShapeGrantTests.cs`: an end user reads only their own rows and the granted columns, also
-after live changes; an ungranted table, a table outside the token and an expired token are refused.
-`tests/TerraBase.Fast/Shapes/RegionShapeTailTests.cs`: a grant set in gru reaches the sjc replica, and an end user's live
-tail in sjc receives only their own new row without ungranted columns.
-
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

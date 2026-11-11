@@ -68,7 +68,3 @@ Both pages share the hosted per-IP budget. The outbound client times out after 1
 public unicast addresses, so a configured OIDC issuer cannot reach loopback, private, link-local or mesh addresses.
 
 ## Tests
-
-`tests/TerraScale.Authentication.Fast/Oidc/SocialSignInTests.cs` runs Google end to end against
-`FakeSocialProviders`, in-process contract fakes of Google, GitHub, Apple and a generic OIDC issuer that check each
-provider's token request (client credentials or Apple's client-secret JWT, redirect URI, PKCE verifier).

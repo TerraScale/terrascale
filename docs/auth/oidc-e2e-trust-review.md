@@ -65,19 +65,6 @@ attest the job name or dispatch input, and a workflow path alone is not immutabl
 
 ## Tests and evidence needed before activation
 
-The legacy grant's Fast integration coverage checks valid bound issuance,
-unbound/revoked denial, wrong issuer/audience, repository/owner ids, repository,
-workflow, ref, event, missing required claims, expired/not-yet-valid assertions,
-wrong algorithms/signatures, replay and scope escalation. Added coverage requires
-an exact subject and scalar-string policy claims, and proves caller-supplied
-organization/project/admin claims cannot move or widen the issued token.
-
-Existing TerraBase Slow integration coverage (`UserAuthTests`) exercises a real
-ts-auth workload token against TerraBase: its own project's database succeeds;
-another project and management routes return 404. This is code coverage, not live
-readiness evidence. Parent CI must run the changed auth Fast cases and the relevant
-TerraBase integration cases; no local suite was run for this preparation.
-
 Before approving the new consumer, extend the same HTTP integration tests for
 its exact matrix above: valid selected-project read succeeds; wrong or missing
 environment/subject/workflow/ref/event/repo/owner/audience is denied; writes,

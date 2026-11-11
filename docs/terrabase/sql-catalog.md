@@ -38,8 +38,4 @@ projects enrolled there. Only the home region writes a database's row. Other reg
 replica of that region's system database pulled through region replicas (PIVOT R3); until then a region knows only
 its own rows, and a database homed elsewhere answers as an unknown database ([cross-region.md](cross-region.md)).
 
-## Tests
-
-`tests/TerraBase.Fast/Catalog/SqlCatalogTests.cs` (create, list, drop, restart, rows in `catalog_databases`).
-
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

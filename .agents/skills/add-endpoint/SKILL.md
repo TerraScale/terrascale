@@ -1,6 +1,6 @@
 ---
 name: add-endpoint
-description: Add an HTTP endpoint to a TerraScale .NET service (TerraBase, ts-auth, Dashboard) using TerraScale.Endpoints, with OpenAPI, auth scope, JSON context registration and a test. Use when adding or changing a REST route.
+description: Add an HTTP endpoint to a TerraScale .NET service (TerraBase, ts-auth, Dashboard) using TerraScale.Endpoints, with OpenAPI, auth scope, JSON context registration and its journey step. Use when adding or changing a REST route.
 ---
 
 # Add an HTTP endpoint
@@ -59,13 +59,13 @@ Discovery is compile-time; no manual route registration is needed.
 - XML doc comments on the records and endpoint become the OpenAPI text (rendered by Scalar). Describe limits and errors there.
 - IDs are ULIDs. Errors use the service's `ErrorBody`/`ErrorResponse`. Don't leak whether another tenant's resource exists.
 - Validate everything; return 400 with a clear message. Check the caller owns the resource.
-- ts-auth: OpenAPI is checked by `make auth-openapi-check`; change implementation, OpenAPI, examples and tests together.
+- ts-auth: OpenAPI is checked by `make auth-openapi-check`; change implementation, OpenAPI and examples together.
 
-## 4. Test
+## 4. Journey
 
-One happy-path test in `tests/<Project>.Fast/<Feature>/` that calls the real endpoint over HTTP. Add one critical-failure test only for auth, tenant isolation or data-loss risks. Copy the fixture use from a sibling test file.
+If a customer or the dashboard reaches the endpoint, cover it with a journey step (`e2e/AGENTS.md`): the page, flow or SDK operation that calls it. Add no other test.
 
 ## 5. Then
 
 - If customers call it, add it to the SDKs (`sdk-parity` skill) and update the API doc in `docs/<area>/`.
-- Build: `make terrabase-build` / `make auth-build` / `make dashboard-build`. Open a PR; CI runs the tests.
+- Build: `make terrabase-build` / `make auth-build` / `make dashboard-build`. Open a PR; CI builds and checks it and runs the journey.

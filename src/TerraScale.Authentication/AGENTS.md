@@ -11,7 +11,7 @@ ts-auth is the hosted identity provider. Prioritize security, tenant isolation, 
 - Persist state only in relational tables through `AuthDbContext` (`src/TerraScale.Authentication/Storage`) on the TerraBase EF Core provider; see `docs/auth/storage.md`. Schema changes are EF Core migrations generated with the `src/TerraScale.Authentication.EntityFrameworkDesign` host and committed; encode invariants (uniqueness, ownership) as constraints. Hot paths save in one request without explicit transactions. Never embed/import the TerraBase server or bypass the SDK. Reach TerraBase with the peer credential, never an auth token signed by ts-auth. Do not copy other products' data; call their SDKs.
 - C#/ASP.NET Core on .NET 11; single-file self-contained Linux x64/arm64 releases. Razor Slices renders HTML; business logic stays out of templates. Datastar drives server updates through `Assets/admin/datastar.js`; no .NET Datastar SDK is currently referenced. Add no other backend runtime or frontend framework.
 - Use Geralt/libsodium for Argon2id, Microsoft.IdentityModel for JWTs and OpenIddict for OAuth/OIDC. No custom cryptography or token-signing algorithms.
-- Build: `make auth-build`; Fast: `make auth-test-fast`; Slow: `make auth-test-slow`; checks: `make auth-check`, `make auth-audit`, `make auth-openapi-check`; development: `make auth-dev` (`scripts/auth/dev.sh`).
+- Build: `make auth-build`; checks: `make auth-check`, `make auth-audit`, `make auth-openapi-check`; development: `make auth-dev` (`scripts/auth/dev.sh`).
 
 ## Architecture and security
 
@@ -30,16 +30,14 @@ ts-auth is the hosted identity provider. Prioritize security, tenant isolation, 
 ## Contracts and UI
 
 - One canonical OpenAPI document covers implemented methods, paths, parameters, bodies, responses, errors, authentication and permissions. Use unique stable operation IDs and shared/generated schemas. Security declarations match enforcement.
-- Change implementation, OpenAPI, examples and integration tests together. Preserve standards-required content types and errors. Scalar loads the same contract checked by `make auth-openapi-check`.
+- Change implementation, OpenAPI and examples together. Preserve standards-required content types and errors. Scalar loads the same contract checked by `make auth-openapi-check`.
 - Examples use synthetic data. Document internal/admin APIs without publishing them. Never preload credentials, persist documentation authorization or send authenticated doc requests through third-party proxies. Self-host pinned documentation assets.
-- Fast validates OpenAPI structure/references, routes, representative responses and Scalar loading without browser errors.
+- `make auth-openapi-check` exports the served OpenAPI document and lints it with the platform contract.
 - Render on the backend; use Datastar for incremental interaction, SSE when appropriate. Keep identity and permissions server-side. Browser signals are untrusted; send only necessary fields. Escape values and keep untrusted input out of executable expressions. Never echo credentials into HTML or streams.
 - Keep CSP-compatible configuration and security headers. Provide accessible forms, keyboard navigation, visible focus and clear validation. Preserve behavior across repeated updates, reconnects and navigation. Reuse brand assets.
 
 ## Tests
 
-- Auth Fast must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug.
-- Integration/end-to-end suites: `tests/TerraScale.Authentication.Fast` and `.Slow`; shared source utilities in `.TestHarness`. Cover changed behavior through real HTTP, authentication and ts-dotnet persistence boundaries; do not mock critical paths. Use isolated synthetic accounts and clean up. Delivery/federation use sandboxes or controlled services, never real users. Browser tests use Playwright Chromium.
-- Test only the happy path and critical paths. Fast has one happy-path test per public feature, plus sign-in, token/API-key validation, revocation, replay, cross-tenant denial, storage fail-closed and OpenAPI/Scalar. Slow keeps only heavy critical tests (TerraBase crash/recovery, regional outage, erasure). A new feature adds at most one happy-path and one critical-failure test; never add edge permutations, validation matrices or copy assertions.
-- Surface confirmed security defects immediately and add a minimal Fast regression.
+- The journey in `e2e/` is the only test: it signs up, reads the code from Mailpit, onboards and uses the hosted pages of the ts-auth built from the commit under test. A behaviour that matters becomes a journey step (`e2e/AGENTS.md`); delivery and federation use sandboxes, never real users.
+- Surface confirmed security defects immediately.
 - Consult installed-version documentation for .NET, ASP.NET Core, OpenIddict, Datastar/CSP, OpenAPI, Scalar, OWASP auth/password/session/authorization guidance, RFC 9700 and OpenID Connect Core.

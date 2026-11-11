@@ -63,10 +63,7 @@ After `DELETE …/databases/{database}` (204) the CDN still served the same ciph
 epoch keys derive from the database's own data key (`ShapeCrypto.Scope` is `BackupLayout.KeyScope`), so the
 [crypto-shredding](../crypto-shredding.md) of that key also covers every shape object of the database and its tenant.
 
-The Slow test `ShapeKeyShreddingTests` checks that a deleted database's shape objects cannot be opened: before deletion
-each mirrored object opens with its released key, and after deletion no key is released and `DataKeys` throws
-`DatabaseShreddedException`. CDN fill-once behavior is no longer tested. The `ts-terrabase-shapes-test` bucket and the
-`R2_SHAPES_CI_CREDENTIALS` secret are unused.
+The `ts-terrabase-shapes-test` bucket and the `R2_SHAPES_CI_CREDENTIALS` secret are unused.
 
 Still open: the durable purge outbox and account-wide purge budget above; deleting a database does not yet remove
 its R2 objects or queue their prefix purge (the eight-day lifecycle removes them, and crypto-shredding makes cached

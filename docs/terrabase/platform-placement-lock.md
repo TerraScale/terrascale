@@ -28,8 +28,4 @@ This changes no storage format or replication protocol. It adds the 409 response
 
 ## Proof
 
-`tests/TerraBase.Fast/Platform/PlatformPlacementLockTests.cs` covers both platform databases through a scoped project
-client. It sends each refused body and checks the code and the unchanged catalog record. It also checks that the
-`allRegions: true` PATCH writes nothing and that a branch is in every region with no home and stays locked.
-
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

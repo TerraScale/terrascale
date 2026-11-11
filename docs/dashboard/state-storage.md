@@ -176,14 +176,8 @@ organization's `allowance_alerts`.
 
 ## Tests
 
-The E2E suite (`tests/TerraScale.Dashboard.E2E`) runs the relational tables on a real TerraBase built from the same
-commit by `scripts/dashboard/TerraScale.Dashboard.slnx` (`Demo/TerraBaseStorage.cs`). Each test process starts one
-TerraBase with the test peer secret and one project when the assembly starts, and generates the migration script while
-TerraBase launches. Each `DemoEnvironment` gets its own database there, with the script `dotnet ef` generates from the committed migrations applied in one request (history rows
-included), and its hosts replace only the `TerraBaseSqlDatabase` registration; their startup `MigrateAsync` finds
-nothing pending. Journeys read rows through `DemoEnvironment.StorageAsync()`. The production-process journey
-(`Platform/OciProductionJourneyTests.cs`) starts the built program against a fresh `ts-dashboard` platform database
-and waits for `MigrateAsync` to make it ready.
+The journey in `e2e/` drives the dashboard against a real TerraBase built from the same commit; the dashboard
+creates and migrates its database on start ([`e2e/AGENTS.md`](../../e2e/AGENTS.md)).
 
 ## Resets
 

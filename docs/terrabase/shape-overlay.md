@@ -91,10 +91,3 @@ reports the keys shown from provisional writes in `state.provisional`.
   transaction outside these limits, or a NATS message over 1 MiB, shows once the home confirms it.
 - A restarted node starts with no provisional transactions. Its SQL reads still see them through the overlay.
 
-## Proof
-
-`tests/TerraBase.Slow/Shapes/ShapeOverlayTests.cs` (multi-host JetStream drill, beside `HomePushTests`): a local write wakes a parked sjc tail with its provisional insert, then
-the pulled home pages confirm it and the provisional set empties; a write the home rejects turns into `revert` and
-the home's row.
-
-F8: `tests/TerraBase.Slow/Shapes/RegionShapeStreamTests.cs` proves sjc → fra provisional delivery before home apply, confirmation/rejection, and home-only fallback during an isolated TCP link cut without duplicate rows.

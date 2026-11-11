@@ -15,13 +15,13 @@ From the producer endpoint (see `add-endpoint`), write down: method, `/v1` route
 
 Read each SDK's `AGENTS.md` before editing. Copy the closest existing operation in that SDK.
 
-| SDK | Where | Contract check | Build | Fast |
+| SDK | Where | Contract check | Build | Check |
 | --- | --- | --- | --- | --- |
-| .NET | `sdk/dotnet` | `sdk/dotnet/contracts/` | `dotnet build` of the SDK project | `make sdk-dotnet-test-fast` |
-| JS | `sdk/js/src` (ES modules + JSDoc) | `npm run check:v1-route-manifest` (`sdk-v1-route-manifest.json`) | `npm run build` | `make sdk-js-test-fast` |
-| Go | `sdk/go` (`v1/`, root package) | `sdk/go/contracts/` | `go build ./...` | `make sdk-go-test-fast` |
-| Python | `sdk/python` | `sdk/python/contracts/openapi-routes.json` | type check | `make sdk-python-test-fast` |
-| Rust | `sdk/rust` | `sdk/rust/contracts/` | `cargo build` | `make sdk-rust-test-fast` |
+| .NET | `sdk/dotnet` | `sdk/dotnet/contracts/` | `dotnet build` of the SDK project | `make sdk-dotnet-check` |
+| JS | `sdk/js/src` (ES modules + JSDoc) | `npm run check:v1-route-manifest` (`sdk-v1-route-manifest.json`) | `npm run build` | `make sdk-js-check` |
+| Go | `sdk/go` (`v1/`, root package) | `sdk/go/contracts/` | `go build ./...` | `make sdk-go-check` |
+| Python | `sdk/python` | `sdk/python/contracts/openapi-routes.json` | type check | `make sdk-python-check` |
+| Rust | `sdk/rust` | `sdk/rust/contracts/` | `cargo build` | `make sdk-rust-check` |
 
 Regenerate route manifests or contract fixtures with the SDK's own script when the route list changes (JS: `npm run generate:v1-route-manifest`).
 
@@ -33,9 +33,9 @@ Regenerate route manifests or contract fixtures with the SDK's own script when t
 - Keep credentials and server-only operations out of browser bundles (JS).
 - Packages stay at `0.0.X`; don't publish or tag releases until go-live (`docs/decisions/go-live.md`).
 
-## 4. Tests
+## 4. Journey
 
-One happy-path test per SDK against an HTTP fixture of the real contract. No per-SDK edge-case matrices.
+Add the operation to `e2e/sdk/operations.json` and its step to all five runners under `e2e/sdk/` (`e2e/AGENTS.md`, SDK operation). No other test.
 
 ## 5. Docs
 

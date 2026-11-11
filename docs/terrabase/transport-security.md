@@ -45,7 +45,6 @@ psql "host=pg.terrascale.tech port=5432 dbname=<project>/<database> user=any ssl
 
 ## Proof
 
-- `tests/TerraBase.Fast/Platform/TransportSecurityTests.cs`
 - ts-orchestrator `internal/edge` tests for the edge's TLS listeners.
 
 

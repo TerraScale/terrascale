@@ -4,7 +4,7 @@ Ships with every app scaffolded by `create-terrascale-app`.
 
 Follow the TerraScale workspace Shipping code rules when working in a TerraScale repo; downstream apps use their own shipping policy.
 
-Build: `npm run build`. The template has no separate test script; validate scaffold changes with `npm test --prefix create-terrascale-app` from ts-docs.
+Build: `npm run build`.
 
 ## Zero configuration
 
@@ -22,5 +22,3 @@ Build: `npm run build`. The template has no separate test script; validate scaff
 ## Credentials
 
 - `TERRASCALE_API_KEY` is server-only. Never expose it through `NEXT_PUBLIC_` settings, client components or logs.
-- Each area's Fast suite must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug. Keep default parallelism.
-- Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. New features add at most one happy-path and one critical-failure test.

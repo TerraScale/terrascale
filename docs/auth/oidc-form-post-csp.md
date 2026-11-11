@@ -15,8 +15,8 @@ form-action <callback origin>; base-uri 'none'; object-src 'none'; frame-ancesto
   allowlist (`ProjectRedirectPolicy`), so the target is always a registered,
   allowed callback. A disallowed URI never reaches this page.
 - `script-src` allows only the pinned hash of OpenIddict's fixed
-  `document.form.submit();`. An OpenIddict upgrade that changes that script fails
-  the Fast test `The_pinned_script_hash_matches_the_page_OpenIddict_renders`.
+  `document.form.submit();`. An OpenIddict upgrade that changes that script must
+  update the pinned hash.
 - `form-action` is the callback's origin (IDN hosts as punycode, non-default
   port kept). CSP has no syntax for IPv6 literals or native-app hosts, so those
   callbacks get their scheme (`https:`, `com.example.app:`).

@@ -9,11 +9,11 @@ Agent and contributor rules: [`AGENTS.md`](AGENTS.md). Shipping: [pull request t
 | Path | What |
 |---|---|
 | `src/` | Projects: libs (`TerraScale.Endpoints*`, `TerraScale.Logging`), auth (`TerraScale.Authentication*`), terrabase (`TerraBase*`) |
-| `tests/` | Integration suites (`*.Fast`, `*.Slow`), TestHarness projects, and the libs test projects |
+| `e2e/` | The journey, the only test: Playwright against the real services and all five SDKs ([`e2e/AGENTS.md`](e2e/AGENTS.md)) |
 | `benchmark/` | Go benchmark code and `benchmark/bench/` results; `benchmark/dotnet/` for .NET library benchmarks |
 | `docs/` | `docs/terrabase/` and `docs/auth/`, each with a `README.md` |
 | `scripts/` | `scripts/libs`, `scripts/auth`, `scripts/terrabase` |
-| `.github/workflows/` | CI (GitHub Actions, GitHub-hosted runners); `Dockerfile` holds its build and test stages |
+| `.github/workflows/` | CI (GitHub Actions, GitHub-hosted runners); `Dockerfile` holds the publish and runtime stages |
 
 ## Production
 
@@ -35,13 +35,9 @@ Run them from the repository root. Locally, prefix each with `nice -n 19`.
 | Command | What it does |
 |---|---|
 | `make build` | Build the solution |
-| `make test-fast` | Run the blocking integration suites |
-| `make test-slow` | Run the non-blocking integration suites |
-| `make <target> TESTS="Ns.Class.Test_name ..."` | Run only the named tests (all cases of each, including parameterized ones); a name that selects nothing fails the run |
-| `make <target> TEST_ARGS="--treenode-filter ..."` | Pass extra TUnit runner arguments; a filtered run that selects nothing fails |
-| `make check` | Formatting, build and the Fast suite; CI is the gate, so running it locally is optional |
+| `make check` | Formatting, build, libs style, the auth audit and OpenAPI check and the benchmark checks; CI is the gate, so running it locally is optional |
 | `make dev` | Run TerraBase and ts-auth locally under Aspire (see below) |
-| `make libs-*`, `make auth-*`, `make terrabase-*`, `make benchmark-*` | Per-area targets |
+| `make libs-*`, `make auth-*`, `make terrabase-*`, `make dashboard-*`, `make benchmark-*`, `make sdk-<sdk>-check`, `make docs-build`, `make landing-build`, `make status-build` | Per-area targets |
 
 ## Local development with Aspire
 

@@ -97,8 +97,7 @@ after admission acquisition; foreign/third-node DB isolation; dead-source recove
 and retained Version:0 bootstrap. Every drill reconciles acknowledged rows. The
 drills that run an actual b443 process (retained-owner bootstrap and v2 rollback)
 were one-time local qualification on a dev host; the five-repeat evidence is
-recorded under `benchmark/bench/`, and the Slow suite keeps the candidate-side
-Version:0 bootstrap crash-resume drill. Three later live
+recorded under `benchmark/bench/`. Three later live
 rollouts must separately meet the request-error, latency and bounded-recovery
 criteria under the agreed regional load.
 
@@ -137,10 +136,6 @@ with the peer credential, and answers 503 while no writer is known.
   life. The writer runs the session exactly like one that reached it directly,
   so the 5-second transaction limit and single-writer semantics hold. A writer
   that cannot be reached answers `421 wrong_region`.
-
-`tests/TerraBase.Slow/Sync/RegionalSocketForwardingTests.cs` runs EF Core
-migrations, an explicit transaction and a 300-row save through the serving peer
-over both listeners.
 
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

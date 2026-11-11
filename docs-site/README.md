@@ -12,16 +12,15 @@ nice -n 19 npm run dev -- --host 0.0.0.0 --port 5176
 nice -n 19 npm run build
 ```
 
-Run `nice -n 19 npm test` after building. CI checks public output and local links,
-published catalog parity, generated pricing, SDK examples,
-starter authentication and connection validation. It never downloads or runs a
-TerraBase engine; engine qualification belongs in the monorepo.
+`npm run build` also checks the public output and local links. `npm run check`
+verifies that the generated canonical data, pricing, LLM files and translations
+are current. Nothing here downloads or runs a TerraBase engine.
 
 ## Deploy
 
 The site lives at `docs-site/` in the public `TerraScale/terrascale` monorepo.
-Run its commands from that directory. `make docs-test-fast` at the root runs
-locked installation, the site build and the core tests; the `docs` job of
+Run its commands from that directory. `make docs-build` at the root runs the
+locked installation and the site build; the `docs` job of
 `.github/workflows/ci.yml` runs it on every pull request that changes the docs.
 
 After a docs PR merges to `main`, the `deploy-docs` job of the `Sites` workflow

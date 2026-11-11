@@ -48,10 +48,5 @@ callbacks through the existing credential hash check.
 
 No public HTTP/SDK shape changes: platform provider responses remain names only;
 project exports retain their explicit DTO mapping without the new authority field.
-Fast HTTP regressions cover changed email, collisions, case-sensitive subject
-replacement refusal, namespace separation, collision refusal with an active factor,
-bound-account TOTP completion through the OAuth code flow, single-use challenges and account-state
-preservation using real TerraBase storage and controlled provider transports.
-Execution evidence belongs to CI; these cases do not establish live-provider or
-multi-region race/convergence qualification. Those checks, project/SSO bindings
+Live-provider and multi-region race/convergence qualification, project/SSO bindings
 and their MFA completion, and deliberate linking remain follow-up work.

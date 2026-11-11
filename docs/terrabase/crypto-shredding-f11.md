@@ -117,8 +117,6 @@ confidentiality boundary.
 
 ## Proof
 
-The Fast integration coverage retains one happy path (a real partner hold, an independent warm region cache and
-zero-GET warm decode and immediate post-delete decrypt rejection through an authenticated peer eviction) and one critical failure (custody failure returns 503 and durable deletion retries).
 The live evidence records the green deployment
 `91b84926d`, all six nodes ready, and a gru database with sjc/fra replicas, a managed snapshot and a shape.
 DELETE returned 204 in 6.081s; subsequent regional reads, restore and key-release requests returned 404, both custody

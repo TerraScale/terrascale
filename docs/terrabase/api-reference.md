@@ -29,9 +29,6 @@ and served on the client listener only; the internal listener answers `404`, lik
 - `info.version` is the build version; `servers` is the relative `/` (described with the node's region), so
   "Try it" targets whichever regional host or proxy served the specification. No hostname is configured or hardcoded.
 
-`ApiReferenceTests` in the Fast suite pins the operation list and security requirements: a new public endpoint
-updates its snapshot, and an admin operation appearing there is a leak.
-
 ## Security headers
 
 TerraBase sets no `Content-Security-Policy`. The Scalar page loads only same-origin resources: default fonts from

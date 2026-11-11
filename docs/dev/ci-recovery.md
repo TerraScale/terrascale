@@ -8,22 +8,20 @@ gh workflow run ci.yml --repo TerraScale/terrascale --ref main
 ```
 
 Use the branch name: GitHub rejects a raw SHA as a dispatch ref. Normal dispatch
-runs every core Fast/build/packaging area because it has no `push.before` to diff.
+selects both services, TerraBase and ts-auth, because it has no `push.before` to diff.
 Images recovery dispatches must start at the real main head; branch and tag
 dispatches cannot release. The existing `native_artifacts` maintenance dispatch remains
 unqualified and cannot satisfy the release gate.
 
-The aggregate `test` job includes policy checks, native verification, every
-selected Fast suite and production packaging. Normal dispatch also runs both
-core service jobs (`main` and `main-auth`), which only release from the real main
-ref after their required Fast and packaging jobs pass. Existing CI behavior and
-quality gates remain intact; the dispatch runs the existing checks.
+On a dispatch the aggregate `test` job requires `changes` and the policy checks.
+Normal dispatch then runs both service jobs (`main`, then `main-auth-ordered`), which
+publish from their own Release build and release only from the real main ref.
 
 Dashboard release requires that revision's own push or dispatch Images run,
-whose Dashboard Fast job builds and tests the application it releases.
+whose `test` job (`dashboard-ci.yml`) builds and checks the application it releases.
 The Images gate accepts push CI after the complete run and its required `test`
 job succeed. Normal dispatch additionally requires successful `main` and
-`main-auth` jobs. Those main-ref-only service jobs prevent a branch or tag
+`main-auth-ordered` jobs. Those main-ref-only service jobs prevent a branch or tag
 dispatch from posing as main qualification. Failed CI remains disqualifying, and native
 maintenance, pull requests and skipped quality gates cannot qualify.
 

@@ -7,7 +7,7 @@ Run area commands from `sdk/js` in the monorepo.
 - Public package: `@terrascale/sdk`. Keep `package.json` at `0.0.X` and `package-lock.json` in sync until the owner lifts this restriction.
 - Source is JavaScript ES modules with JSDoc in `src/`; `npm run build` generates TypeScript declarations in `types/`. Use native Node/npm tools, not a TypeScript source rewrite.
 - Use Node 22 or 24 and the npm version in `packageManager`. Install with `npm ci`.
-- Fast: `npm test`; build: `npm run build`; static checks: `npm run typecheck` and `npm run check:v1-route-manifest`; browser tests: `npm run test:browser`.
+- Build: `npm run build`; static checks: `npm run typecheck` and `npm run check:v1-route-manifest`. From the repository root, `make sdk-js-check` installs, type-checks and builds.
 - Current exports are root, `admin`, `management`, `ts-auth`, `react` and `svelte`. Keep credentials and server-only operations out of browser bundles. Do not add Dashboard-named or generic request entrypoints.
 
 ## Public API
@@ -29,14 +29,11 @@ Run area commands from `sdk/js` in the monorepo.
 ## Contract evidence
 
 - REST changes require OpenAPI/route-manifest drift checks. Reactive changes require generated schema, byte vectors and the current C# producer/JavaScript semantic corpus.
-- Live API checks use authorized, isolated service allocations and published contracts. Report unavailable live gates as skipped; never fabricate evidence. Keep qualification claims separate from HTTP fixture unit tests.
+- Live API checks use authorized, isolated service allocations and published contracts. Report unavailable live gates as skipped; never fabricate evidence.
 
 ## Configuration
 
 - Keep features always on; no feature flags, enable switches, opt-ins or kill switches. Keep one correct value in code, with no new tuning knobs.
-- Fakes, demo stores and skip-auth belong only in test code and test binaries.
+- No fakes, demo stores or skip-auth. The journey in `e2e/` is the only test; an SDK operation gets a step in its runners (`e2e/AGENTS.md`).
 - Keep the switch-style configuration check; unavoidable third-party names need a narrow allowance and a one-line reason.
 - README.md records implementation and qualification gaps. Do not claim unshipped behavior or bypass authorization, tenant scope, registered callbacks, payment consent or safety guards.
-- Each area's Fast suite must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug. Keep default parallelism.
-- Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. New features add at most one happy-path and one critical-failure test.
-- Changes limited to `AGENTS.md`/`CLAUDE.md` skip area Fast tests in CI. Mixed commits keep the gates for the changed code.

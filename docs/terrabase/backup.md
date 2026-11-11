@@ -355,7 +355,7 @@ is when its last change was read.
 A restore always creates a new database, with a new incarnation, in the region that serves the source database.
 Native SQL tables, their indexes, views, triggers and constraints restore with their rows; a replica that pulls a
 restored database with a revision of its source rebootstraps (`OtherIncarnation`): a restore never continues a
-replica's incremental history. Proof: `tests/TerraBase.Fast/Backup/SqlTableBackupTests.cs`.
+replica's incremental history.
 Backups taken before the TS-602 wipe use the old schema and do not need to restore after
 it (user decision, 2026-10-07). Production backup starts right after that cutover.
 
@@ -658,6 +658,5 @@ After a rollout, also check:
 
 ## Restore acceptance and catalog security
 
-See [recovery verification](restore-drill.md) for Fast backup/wipe/restore coverage.
 Production Tigris recovery needs separate acceptance evidence. The catalog security
 gate is held separately in [PR #213](https://github.com/TerraScale/terrascale/pull/213).

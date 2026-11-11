@@ -48,5 +48,4 @@ rejected admission. `429 operation_allowance` is a quota refusal and is not retr
 
 ## Validation
 
-`tests/project_*.rs`, `tests/csharp_problem_contract.rs` and transport tests use HTTP fakes and
-producer-derived fixtures. No producer binary or live credentials are needed.
+The monorepo's journey runs the Rust runner (`e2e/sdk/rust`) against the TerraBase built from the same commit.

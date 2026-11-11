@@ -105,12 +105,6 @@ home record. The old file stays fenced until that catalog write succeeds.
 
 ## Tests
 
-`tests/TerraBase.Slow/Sync/HomeFailoverTests.cs` runs gru and sjc on one JetStream server, writes to two databases (one
-with `durability: all`, one default), cuts gru off from JetStream mid-write, and checks that sjc
-takes over, keeps every `all` write, loses only a tail of default writes, and that gru refuses writes before and after
-it reconnects. While gru is cut off, sjc commits local writes that each increment a counter; after the takeover every
-acknowledged one is in the new home and the counter shows each applied once.
-
 ## Known gaps
 
 - `durability` is accepted on SQL REST only; the WebSocket frame field and `SET terrascale.durability` follow.

@@ -14,7 +14,7 @@ Revocations and destructive management routes anchor before acknowledging succes
 
 Inspect `/v1/catalog-gate` through the authorized private administrative channel using HTTP/2 and the [peer credential](peer-authentication.md), supplied to curl through a mode-0600 header file that is deleted after use. A bare request on 8081 is currently recorded as unmatched; the following enforcement release will refuse it with 401. The response reports `open`, `trusted`, `pending` and SHA-256 of the catalog bucket digests. Unverified tenant recovery never opens the catalog.
 
-Identical organization/project/database creates reuse live catalog entries without changing versions; missing local storage initializes after successful commit. Different content, ownership, placement and tombstones remain `id_taken`. Shutdown-caused cancelled RPCs become normal cancellation; real faults still surface. Parallel Fast integration controls cover these behaviors and stale/absent/tampered anchors.
+Identical organization/project/database creates reuse live catalog entries without changing versions; missing local storage initializes after successful commit. Different content, ownership, placement and tombstones remain `id_taken`. Shutdown-caused cancelled RPCs become normal cancellation; real faults still surface.
 
 Production acceptance needs reviewed machine/volume recovery targets, timestamped
 Tigris listings, three-region digest comparison and bidirectional replication proof.

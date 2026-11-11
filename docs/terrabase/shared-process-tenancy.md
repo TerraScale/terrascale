@@ -37,7 +37,6 @@ node and shared fairly between organizations.
 - Rate, concurrency, memory and result caps are unchanged ([plan resource policy](qos.md)): results hold at most
   10,000 rows and 8 MiB ([native SQL](sql/native-sql.md)).
 
-Proof: `tests/TerraBase.Slow/Tenancy/SharedProcessTests.cs` (1,000 databases), `tests/TerraBase.Fast/Tenancy/SharedProcessTests.cs` (noisy neighbour),
-benchmark results in `benchmark/bench/2026-11-04-shared-process-tenancy.md`.
+Benchmark results: `benchmark/bench/2026-11-04-shared-process-tenancy.md`.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

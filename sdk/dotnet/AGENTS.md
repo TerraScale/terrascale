@@ -2,15 +2,14 @@
 
 ## Layout and checks
 
-- Paths and commands below are relative to `sdk/dotnet/`; from the repository root use `make sdk-dotnet-test-fast`.
+- Paths and commands below are relative to `sdk/dotnet/`; from the repository root `make sdk-dotnet-check` restores and builds both frameworks.
 - Release workflow: `.github/workflows/sdk-dotnet-release.yml` at the repository root. Package identity remains `TerraScale.DotNet`.
 
-- SDK: `src/TerraScale.DotNet`; TUnit tests: `tests/TerraScale.DotNet.Tests`; contract fixtures: `contracts/`.
-- EF Core provider: `src/TerraScale.EntityFrameworkCore` (package `TerraScale.EntityFrameworkCore`); its integration tests `tests/TerraScale.EntityFrameworkCore.Tests` start the TerraBase built from the same commit (`TERRABASE_BINARY`, set by `make sdk-dotnet-test-fast`).
+- SDK: `src/TerraScale.DotNet`; contract fixtures: `contracts/`.
+- EF Core provider: `src/TerraScale.EntityFrameworkCore` (package `TerraScale.EntityFrameworkCore`).
 - Keep related files and services together using feature-sliced design.
 - Use the SDK pinned in `global.json`; nullable types, analyzers and warnings as errors stay enabled.
 - Build: `dotnet build TerraScale.DotNet.slnx --configuration Release`.
-- Fast: `bash scripts/test-fast.sh` (both supported frameworks, fully parallel).
 - Release checks: `bash scripts/check-release.sh`.
 
 ## API rules
@@ -27,9 +26,6 @@
 ## Configuration
 
 - Keep features always on; no feature flags, enable switches, opt-ins or kill switches. Keep one correct value in code, with no new tuning knobs.
-- Fakes, demo stores and skip-auth belong only in test code and test binaries.
+- No fakes, demo stores or skip-auth. The journey in `e2e/` is the only test; an SDK operation gets a step in its runners (`e2e/AGENTS.md`).
 - Keep the switch-style configuration check; unavoidable third-party names need a narrow allowance and a one-line reason.
 - README.md records implementation and qualification gaps. Do not claim unshipped behavior or bypass authorization, tenant scope, registered callbacks, payment consent or safety guards.
-- Each area's Fast suite must finish in under 30 s wall time; each single test must finish in under 10 s. A Fast suite over 30 s or a test over 10 s is a bug. Keep default parallelism.
-- Test only the happy path and critical paths in Fast; move heavy critical tests to Slow and delete everything else. New features add at most one happy-path and one critical-failure test.
-- Changes limited to `AGENTS.md`/`CLAUDE.md` skip area Fast tests in CI. Mixed commits keep the gates for the changed code.

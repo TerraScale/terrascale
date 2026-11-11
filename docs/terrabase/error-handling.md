@@ -83,8 +83,6 @@ malformed JSON body, with `400 invalid_request`.
 2. Make validators return `Valid<T>`. Make endpoints switch, and send every failure through `ErrorResponse.From`.
    Declare `Produces<ErrorBody>(status)`.
 3. Keep the constructor bans in `BannedSymbols.txt`; expected failures must never use an exception bridge.
-4. Cover every failure branch in the Fast suite (status, `error.code`, `error.message`), as
-   `ManagementErrorTests` does.
 
 ## Checklist
 

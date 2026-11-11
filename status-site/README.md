@@ -95,16 +95,15 @@ Admin authorization uses signed HTTP fakes in tests. Live sign-in uses the regis
 
 The dev server listens on every interface (reachable over the tailnet) and reloads on change. The local D1 database lives under `.wrangler/state`. Arm the coordinator (and roll up samples) with `curl 'http://localhost:5173/cdn-cgi/handler/scheduled'`; rounds then run every 30 seconds.
 
-## Contract tests
+## Checks
 
 ```sh
 nice -n 19 npm run check
 nice -n 19 npm run lint
 nice -n 19 npm run build
-nice -n 19 npm test
 ```
 
-Tests never download or run a TerraBase binary. The TerraBase probes are tested with fake configs and fetchers only; production probes call the live public API.
+Production probes call the live public API; nothing here downloads or runs a TerraBase binary.
 
 ## API
 
@@ -180,7 +179,7 @@ The minute cron enqueues up to 1,000 eligible subscriber/update pairs into the D
 
 ## Deploy
 
-The `status` job of `.github/workflows/ci.yml` in the terrascale monorepo runs `npm run check`, `npm test`, the Python tests, `npm run lint` and `npm run build` on every pull request that changes `status-site/`. On main, `deploy-status` in `.github/workflows/sites.yml` builds the tip of `main`, deploys it with `npm run deploy:prebuilt` and proves from Cloudflare's records that each of the three Workers serves the version that deploy created, with that commit as its message ([docs/deploy-pipeline.md](docs/deploy-pipeline.md)). The Worker applies `schema.sql` to D1 on first use. The checks use HTTP fakes and local SQLite, without deployment credentials or a TerraBase binary. Locally: `make status-test-fast` from the monorepo root.
+The `status` job of `.github/workflows/ci.yml` in the terrascale monorepo runs `npm run check`, `npm run lint` and `npm run build` on every pull request that changes `status-site/`. On main, `deploy-status` in `.github/workflows/sites.yml` builds the tip of `main`, deploys it with `npm run deploy:prebuilt` and proves from Cloudflare's records that each of the three Workers serves the version that deploy created, with that commit as its message ([docs/deploy-pipeline.md](docs/deploy-pipeline.md)). The Worker applies `schema.sql` to D1 on first use. The checks need no deployment credentials or TerraBase binary. Locally: `make status-build` from the monorepo root.
 
 Worker secrets: `SUBSCRIPTION_SECRET`, `ADMIN_SESSION_SECRET`, and the probe secrets `TERRABASE_PROBES` and `DATA_API_CANARY`. Set them through the `cf` CLI using protected stdin; never print them.
 

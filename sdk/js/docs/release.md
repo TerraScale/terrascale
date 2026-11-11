@@ -10,8 +10,7 @@ The GitHub Actions workflow `.github/workflows/ci.yml` runs on GitHub-hosted
 `ubuntu-24.04` runners. It uses Node 24.21.0 (22.23.2 for scheduled and manual
 runs), provisions the reviewed npm CLI, and audits every committed npm graph.
 Pull request and merge-queue runs that change non-documentation files install
-the locked dependency tree, then typecheck, build type declarations, check the
-v1 route manifest and run `npm test`. A push to `main` reuses a passing pull
+the locked dependency tree, then typecheck and build type declarations. A push to `main` reuses a passing pull
 request check for the identical tree. Browser, integration and real-service checks are not part of
 GitHub CI. Frozen contract bytes or archived overlays are not runtime
 qualification evidence.
@@ -77,8 +76,8 @@ Client/resource management responses use exact snake_case records and safe numer
 
 `.github/workflows/publish.yml` publishes the `@terrascale/sdk` npm package when
 a `v0.0.N` tag is pushed. The tag must match the `package.json` version, which
-must match `^0\.0\.[0-9]+$`. The job audits the npm graph, runs the typecheck,
-route-drift check and `npm test`, then runs `npm publish --provenance --access
+must match `^0\.0\.[0-9]+$`. The job audits the npm graph, runs the typecheck
+and route-drift check, then runs `npm publish --provenance --access
 public`. Bump the version to release. The workflow uses npm trusted publishing
 (OIDC) when configured and otherwise reads `NPM_TOKEN` as an Actions secret.
 The TS-795 operating contract requires vendor-issued publication credentials

@@ -13,7 +13,3 @@ This presentation change does not alter the authentication API, stored
 credentials, recovery-code lifetime or single-use checks. Reusing a consumed
 recovery code remains invalid. Turning off two-factor authentication still
 requires recent authentication and signs out existing sessions.
-
-Fast browser integration coverage exercises email-code segmentation, full
-recovery-code sign-in and full recovery-code removal against the real hosted
-HTTP application with isolated browser contexts and TerraBase test storage.
