@@ -243,8 +243,8 @@ jobs:
       - name: No test file outside the journey
         if: github.event_name == 'pull_request'
         run: |
-          added=$(git diff --name-only --diff-filter=A HEAD^1 HEAD)
-          if grep -v '^e2e/' <<< "$added" | grep -E '(^|/)tests?/|_test\.go$|\.test\.(c?m?js|ts|tsx)$|(^|/)test_[^/]*\.py$|[Tt]ests?\.cs$|\.Tests?/'; then
+          added=$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD)
+          if grep -v '^e2e/' <<< "$added" | grep -E '(^|/)([Tt]ests?|[Tt]esting|__tests__|__mocks__|[^/]*-tests)/|\.(Test[^/]*|E2E)/|(^|/)(tests?|test_[^/]*|conftest)\.py$|(^|/)tests?\.rs$|_tests?\.(go|rs|py)$|\.(test|spec)\.[cm]?[jt]sx?$|([.-]t|T)ests?\.cs$|(^|/)test-[^/]*\.(sh|py|[cm]?js|ts)$|-tests?\.(sh|py|[cm]?js|ts)$|(^|/)(vitest|jest|playwright)[^/]*\.config\.[cm]?[jt]s$'; then
             echo '::error::This pull request adds the test files above. The journey in e2e/ is the only test.'
             exit 1
           fi

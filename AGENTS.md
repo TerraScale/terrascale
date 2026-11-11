@@ -84,7 +84,7 @@ Step-by-step guides live in `.agents/skills/` (also linked from `.claude/skills/
 
 - The journey in `e2e/` is the only test. It drives TerraBase, ts-auth and the dashboard built from the commit under test, and all five SDKs, on every pull request (`journey` job of `ci.yml`, `.github/workflows/journey.yml`). Read `e2e/AGENTS.md` before you change it.
 - A behaviour that matters becomes a journey step: a page, flow or SDK operation in `e2e/` (`e2e/AGENTS.md` says how). Never add any other test, test project, fake or fixture.
-- `checks` fails a pull request that adds a test file outside `e2e/`: a path in a `test/`, `tests/` or `*.Test(s)/` folder, or a file named `*_test.go`, `*.test.{js,cjs,mjs,ts,tsx}`, `test_*.py` or `*Test(s).cs`.
+- `checks` fails a pull request that adds a file outside `e2e/`, or moves one in, whose folder or name marks it as a test. The pattern lives in one place: the `No test file outside the journey` step of `ci.yml`.
 
 ## CI
 
