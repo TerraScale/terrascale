@@ -9,7 +9,7 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 
 | Concept | .NET | Notes |
 |---|---|---|
-| Client | `new TerraBaseSqlClient(http, options)` | options: `BaseAddress` or `Region` (default origin `https://api.terrascale.tech`), `ApiKey` or `AccessTokenProvider` |
+| Client | `new TerraBaseSqlClient(http, options)` | options: `BaseAddress` or `Region` (default origin `https://api.terrascale.tech`), `ApiKey` or `AccessTokenProvider`, and `AuthAddress`, the ts-auth origin that exchanges an `ApiKey` |
 | Client from the environment | `TerraBaseSqlClient.FromEnvironment()` | `TERRASCALE_API_KEY`; optional `TERRASCALE_BASE_URL`, default `https://api.terrascale.tech` |
 | Database | `client.Database(projectId, database)` | name or ULID; no request |
 
@@ -19,6 +19,17 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 
 JS/TS, Python and Rust also read `TERRASCALE_PROJECT_ID`; .NET and Go take the project per database. Without
 `TERRASCALE_BASE_URL` every SDK sends to `https://api.terrascale.tech`.
+
+An API key is exchanged at `https://auth.terrascale.tech` only while the client sends to `https://api.terrascale.tech`.
+With any other TerraBase origin, or an endpoint resolver, every SDK refuses to build an API-key client, before any
+request, unless the caller names the ts-auth that exchanges the key:
+
+| .NET | JS/TS | Go | Python | Rust |
+|---|---|---|---|---|
+| `AuthAddress` | `authBaseUrl` | `Config.TSAuthBaseURL` | `issuer=` (the issuer, `<origin>/terrascale`) | `.auth_base_url(origin)` |
+
+The environment clients take no such variable: with another `TERRASCALE_BASE_URL`, pass the option (JS/TS overrides,
+Python `issuer=`); .NET, Go and Rust refuse.
 
 ## Databases for agents
 
@@ -33,7 +44,7 @@ only that database. Server contract: `docs/terrabase/agent-databases.md`; record
 | `setDatabaseTtl(project, database, ttlSeconds)` | `PUT …/databases/{database}/ttl` `{"ttlSeconds"}` | `ManagedDatabase` (200) |
 | `clearDatabaseTtl(project, database)` | `DELETE …/databases/{database}/ttl` | `ManagedDatabase` (200) |
 | `deleteDatabase(project, database)` | `DELETE …/databases/{database}` | nothing (204) |
-| `createScopedKey({ project?, database, access, ttlSeconds? })` | `POST https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys`, `Authorization: Basic base64(keyId:key)` of the client's `ApiKey`, `{"project","database","access","ttl_seconds"}` | `ScopedKey` (201) |
+| `createScopedKey({ project?, database, access, ttlSeconds? })` | `POST https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys`, or the same path on the ts-auth the client names, `Authorization: Basic base64(keyId:key)` of the client's `ApiKey`, `{"project","database","access","ttl_seconds"}` | `ScopedKey` (201) |
 
 `ManagedDatabase` is the existing database body (`id`, `projectId`, `name`, `branchedFrom`, `createdAt`, `region`,
 `homeRegion`, …) plus `expiresAt` (RFC 3339, or null without a TTL).

@@ -87,6 +87,7 @@ pub struct ClientBuilder {
     project: Option<String>,
     access_token: bool,
     region_pin: Option<String>,
+    auth_base_url: Option<String>,
 }
 
 impl fmt::Debug for ClientBuilder {
@@ -119,6 +120,7 @@ impl ClientBuilder {
             project: None,
             access_token: false,
             region_pin: None,
+            auth_base_url: None,
         }
     }
 
@@ -140,6 +142,12 @@ impl ClientBuilder {
     #[must_use]
     pub fn region_pin(mut self, region: impl Into<String>) -> Self {
         self.region_pin = Some(region.into());
+        self
+    }
+
+    #[must_use]
+    pub fn auth_base_url(mut self, url: impl Into<String>) -> Self {
+        self.auth_base_url = Some(url.into());
         self
     }
 
@@ -218,7 +226,9 @@ impl ClientBuilder {
                 "a region pin requires a static endpoint".into(),
             ));
         }
-        let auth = Auth::new(self.credential, self.project.as_deref())?;
+        let auth_origin =
+            key_exchange_origin(&self.credential, self.auth_base_url.as_deref(), &base)?;
+        let auth = Auth::new(self.credential, self.project.as_deref(), &auth_origin)?;
         // Never send a bearer key over plain HTTP through a proxy taken from
         // the environment (HTTP_PROXY/ALL_PROXY): loopback HTTP and loopback
         // hosts always connect directly.
@@ -286,6 +296,32 @@ fn is_loopback(url: &Url) -> bool {
         Some(url::Host::Ipv4(ip)) => IpAddr::V4(ip).is_loopback(),
         Some(url::Host::Ipv6(ip)) => IpAddr::V6(ip).is_loopback(),
         None => false,
+    }
+}
+
+fn key_exchange_origin(
+    credential: &Credential,
+    auth_base_url: Option<&str>,
+    base: &Url,
+) -> Result<String> {
+    let public = parse_base_url(DEFAULT_BASE_URL)?;
+    match (credential, auth_base_url) {
+        (Credential::Bearer(_), Some(_)) => Err(Error::InvalidInput(
+            "auth_base_url exchanges an API key; remove it or use Client::for_project_api_key".into(),
+        )),
+        (_, Some(raw)) => {
+            let url = parse_base_url(raw)?;
+            if url.path() != "/" {
+                return Err(Error::InvalidInput(
+                    "auth_base_url must be a bare ts-auth origin without a path".into(),
+                ));
+            }
+            Ok(url.origin().ascii_serialization())
+        }
+        (Credential::ApiKey(_), None) if *base != public => Err(Error::InvalidInput(
+            "set auth_base_url to the ts-auth that exchanges the API key: with a TerraBase origin other than https://api.terrascale.tech the key is not sent to production ts-auth".into(),
+        )),
+        _ => Ok("https://auth.terrascale.tech".into()),
     }
 }
 
@@ -391,7 +427,6 @@ impl Client {
     }
     /// Exchanges a first-party API key for project-scoped bearer tokens.
     /// Tokens refresh automatically and the cache is shared by all clones.
-    /// The API key is sent only to the fixed first-party authentication origin.
     pub fn for_project_api_key(
         project: impl ToString,
         api_key: impl Into<String>,

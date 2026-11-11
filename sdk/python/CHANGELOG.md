@@ -5,6 +5,11 @@
 - `execute(Statement(...), args)`, and `query` called that way, on the client,
   the async client and both SQL sessions raise `TypeError` before any request:
   a `Statement` carries its own arguments. Earlier versions dropped `args`.
+- An `api_key` client with a `base_url` other than `https://api.terrascale.tech`
+  needs `issuer=`, the ts-auth issuer that exchanges the key, and raises
+  `ValueError` before any request without it. Earlier versions sent the key to
+  `https://auth.terrascale.tech` for every `base_url`. The DB-API `connect` and
+  the SQLAlchemy URL query take `issuer` too.
 - Added the optional `sqlalchemy` extra (`pip install terrascale[sqlalchemy]`): a
   `terrascale://<project_id>/<database>` SQLAlchemy dialect and PEP 249 DBAPI
   over the SQL HTTP API, running in autocommit — each statement is one request

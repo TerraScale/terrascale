@@ -73,7 +73,7 @@ class AsyncTerraScale:
         max_attempts: int = _spec.MAX_ATTEMPTS,
         http_client: httpx.AsyncClient | None = None,
     ):
-        api_key, self.project, self.base_url = _settings(api_key, project, token, base_url)
+        api_key, self.project, self.base_url = _settings(api_key, project, token, base_url, issuer)
         self._http = http_client or httpx.AsyncClient(timeout=timeout, follow_redirects=False, http2=True)
         self._owns_http = http_client is None
         self._max_attempts = max(1, max_attempts)

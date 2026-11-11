@@ -175,8 +175,8 @@ let agent = Client::for_project_api_key(project, scoped.key).build()?;
 # let _ = agent; Ok(()) }
 ```
 
-`create_scoped_key` sends the client's API key with Basic authentication only to the fixed ts-auth
-scoped-keys endpoint. It requires a database ULID and `Read` or `ReadWrite` access. Key TTLs range
+`create_scoped_key` sends the client's API key with Basic authentication only to the ts-auth
+scoped-keys endpoint, on `https://auth.terrascale.tech` or the `auth_base_url` origin. It requires a database ULID and `Read` or `ReadWrite` access. Key TTLs range
 from 60 to 2,592,000 seconds, default to 3600 and cannot outlive the parent key. Supply `project` for
 an organization key; for a project key it must match that key's project. Scoped keys cannot manage
 databases, mint keys or reach another database. Revoking or rotating the parent revokes its scoped keys.

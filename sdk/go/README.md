@@ -95,9 +95,12 @@ it cannot fit the remaining deadline. Earlier caller cancellation wins.
 ### Databases for agents
 
 Use `Config.APIKey` to create a database per agent, session or test run and mint
-a key that reaches only its database ULID. The client exchanges API keys at the
-fixed auth origin and caches project tokens for REST and SQL WebSocket calls.
-`APIKey`, `Token` and `TokenSource` are mutually exclusive.
+a key that reaches only its database ULID. The client exchanges API keys at
+`https://auth.terrascale.tech` and caches project tokens for REST and SQL WebSocket
+calls. With a `BaseURL` other than `https://api.terrascale.tech`, or a `Resolver`,
+set `TSAuthBaseURL` to the bare ts-auth origin that exchanges the key; without it
+`New` returns an error before any request instead of sending the key to
+`https://auth.terrascale.tech`. `APIKey`, `Token` and `TokenSource` are mutually exclusive.
 
 ```go
 c, err := tb.New(tb.Config{APIKey: apiKey})

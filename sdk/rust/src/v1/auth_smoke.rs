@@ -52,14 +52,11 @@ async fn exchanges_project_key_refreshes_once_and_reuses_shared_cache() {
         seen
     });
     let key = format!("{PROJECT}_{}", "a".repeat(52));
-    let mut client = Client::for_project_api_key(PROJECT, &key)
+    let client = Client::for_project_api_key(PROJECT, &key)
         .endpoint(&url)
+        .auth_base_url(&url)
         .build()
         .unwrap();
-    let Auth::Key(auth) = &mut Arc::get_mut(&mut client.inner).unwrap().auth else {
-        unreachable!()
-    };
-    Arc::get_mut(auth).unwrap().endpoint = format!("{url}/terrascale/oauth/token").parse().unwrap();
     let request = Req::new(Method::POST, vec!["v1", "databases"])
         .json(&serde_json::json!({"name":"orders"}))
         .unwrap();
