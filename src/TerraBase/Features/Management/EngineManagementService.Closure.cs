@@ -4,6 +4,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.FileStorage;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management;
+using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using ZLogger;
@@ -16,6 +17,11 @@ internal sealed partial class EngineManagementService
 
     public async ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken)
     {
+        if (PlatformDatabases.IsPlatformProject(projectId))
+        {
+            return ManagementErrors.PlatformProjectProtected;
+        }
+
         var result = await FenceProjectAsync(projectId, closureId, authorityOrganizationId, version, cancellationToken).ConfigureAwait(false);
         if (result is not ProjectClosureStatus { Status: ProjectClosure.Pending })
         {

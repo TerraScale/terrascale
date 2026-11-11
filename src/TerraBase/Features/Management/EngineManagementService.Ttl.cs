@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using TerraBase.Errors;
+using TerraBase.Features.Platform;
 using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -12,9 +13,9 @@ internal sealed partial class EngineManagementService
     private const int ExpiriesPerPass = 64;
     private DateTimeOffset _nextExpirySweep;
 
-    public ValueTask<SetDatabaseRegionsResult> SetDatabaseTtlAsync(
+    public async ValueTask<SetDatabaseRegionsResult> SetDatabaseTtlAsync(
         string userId, string organizationId, string projectId, string databaseId, long? ttlSeconds, CancellationToken cancellationToken) =>
-        WriteAsync<SetDatabaseRegionsResult>(async transaction =>
+        PlatformDatabases.IsPlatform(organizationId) ? ManagementErrors.PlatformDatabaseProtected : await WriteAsync<SetDatabaseRegionsResult>(async transaction =>
         {
             var project = await AuthorizedProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (project is not TenantContext)
@@ -41,7 +42,7 @@ internal sealed partial class EngineManagementService
             var changed = database with { ExpiresAt = DatabaseTtl.ExpiresAt(time.GetUtcNow(), ttlSeconds) };
             await CatalogTables.PutDatabaseAsync(transaction, changed, cancellationToken).ConfigureAwait(false);
             return changed;
-        }, static error => error, cancellationToken);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
     private async ValueTask ExpireDatabasesAsync(CancellationToken cancellationToken)
     {

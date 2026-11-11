@@ -28,6 +28,8 @@ internal static class PlatformDatabases
 
     public static bool IsPlatform(string? organizationId) => organizationId == OrganizationId;
 
+    public static bool IsPlatformProject(string? projectId) => projectId is AuthProjectId or DashboardProjectId;
+
     public static DatabasePlacement Placement(string region) => new(region, [], 1);
 
     public static IServiceCollection AddTerraBasePlatform(this IServiceCollection services)

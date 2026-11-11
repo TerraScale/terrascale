@@ -180,6 +180,11 @@ internal sealed partial class EngineManagementService
             };
         }
 
+        if (PlatformDatabases.IsPlatform(tenant.OrganizationId))
+        {
+            return ManagementErrors.PlatformDatabaseProtected;
+        }
+
         if (await CatalogTables.DatabaseAsync(transaction, projectId, databaseId, cancellationToken).ConfigureAwait(false) is not { } database)
         {
             return ManagementErrors.NotFound;

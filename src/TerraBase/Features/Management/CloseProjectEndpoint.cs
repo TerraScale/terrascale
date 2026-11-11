@@ -14,7 +14,7 @@ internal sealed class CloseProjectEndpoint(IProjectCatalog catalog) : Endpoint<P
         Name("closeProject");
         Summary("Fences a ts-auth project for closure");
         Description("Version 1 requires an empty project. Version 2 is ts-auth's explicit account-erasure handoff: permanently fences the project, purges its databases in every region, revokes its TerraBase keys, removes its backup destination and erases its file buckets with their files. 200 accepted once every catalog holder confirmed the project empty and active database erasure; 202 pending while any has not "
-            + "(or one sees a database). 409 not_empty, closure_conflict or binding_conflict writes nothing. A never-enrolled project is fenced too: "
+            + "(or one sees a database). 409 not_empty, closure_conflict, binding_conflict or platform_project_protected (the ts-auth and ts-dashboard platform projects) writes nothing. A never-enrolled project is fenced too: "
             + "there is no 404. Retry with the same closureId after a lost response.");
         Tags("Administration");
         Produces<ProjectClosureStatus>();

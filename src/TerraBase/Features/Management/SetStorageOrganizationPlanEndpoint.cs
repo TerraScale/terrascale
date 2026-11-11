@@ -13,10 +13,11 @@ internal sealed class SetStorageOrganizationPlanEndpoint(IProjectCatalog catalog
         Put("/admin/organizations/{organization}/plan");
         Name("setStorageOrganizationPlan");
         Summary("Sets a ts-auth organization's plan");
-        Description("Publishes hobby, starter, pro, team or enterprise in every region for the storage organization of a ts-auth organization. Publication before any databases creates its storage record, which its projects' first database enrollment adopts with the plan. An unchanged published plan writes nothing. 404 not_found for a deleted organization or an organization created through management routes. 503 plan_unpublished when a region cannot accept the plan; retry publication.");
+        Description("Publishes hobby, starter, pro, team or enterprise in every region for the storage organization of a ts-auth organization. Publication before any databases creates its storage record, which its projects' first database enrollment adopts with the plan. An unchanged published plan writes nothing. 403 platform_plan_locked for the platform organization. 404 not_found for a deleted organization or an organization created through management routes. 503 plan_unpublished when a region cannot accept the plan; retry publication.");
         Tags("Administration");
         Produces<Organization>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();

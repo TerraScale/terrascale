@@ -53,6 +53,11 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             return mapping is { Registered: true, Organization: not null } && (createIn is null || createIn == mapping.Organization) ? mapping.Organization : ManagementErrors.NotFound;
         }
 
+        if (PlatformDatabases.IsPlatform(organizationId) || PlatformDatabases.IsPlatformProject(projectId))
+        {
+            return ManagementErrors.NotFound;
+        }
+
         return await WriteAsync<ResolveProjectResult>(async transaction =>
         {
             if (await CatalogTables.ProjectOrganizationAsync(transaction, projectId, cancellationToken).ConfigureAwait(false) is { } existing)
@@ -117,7 +122,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<SetPlanResult> SetStoragePlanAsync(string organizationId, PlanTier plan, CancellationToken cancellationToken) =>
-        await WriteAsync<SetPlanResult>(async transaction =>
+        PlatformDatabases.IsPlatform(organizationId) ? ManagementErrors.PlatformPlanLocked : await WriteAsync<SetPlanResult>(async transaction =>
         {
             var organization = await CatalogTables.OrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             if (await CatalogTables.RetiredAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false)
