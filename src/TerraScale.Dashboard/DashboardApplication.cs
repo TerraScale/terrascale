@@ -128,6 +128,7 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<AdminPlanVisibilityEndpoint>(),
                 EndpointRegistration.Create<AdminPlanDeleteEndpoint>(),
                 EndpointRegistration.Create<ApiKeysPageEndpoint>(),
+                EndpointRegistration.Create<ApiKeyDetailsPageEndpoint>(),
                 EndpointRegistration.Create<ListDashboardCredentialsEndpoint>(),
                 EndpointRegistration.Create<CreateDashboardCredentialEndpoint>(),
                 EndpointRegistration.Create<RevokeDashboardCredentialEndpoint>(),

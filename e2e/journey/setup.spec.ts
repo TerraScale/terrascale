@@ -89,7 +89,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   const keyDialog = page.locator('#create-key[open]');
   await expect(keyDialog).toBeVisible();
   await page.locator('#key-name').fill(apiKeyName);
-  await keyDialog.getByRole('checkbox', { name: /^Full access/ }).check();
+  await keyDialog.getByRole('radio', { name: 'Full access', exact: true }).check();
   for (const scope of scopes) {
     const box = keyDialog.locator(`fieldset input[name="scopes"][value="${scope}"]`);
     await expect(box).toBeChecked();
@@ -106,7 +106,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await page.reload();
   const keyRow = page.locator('main tr').filter({ hasText: apiKeyName });
   await expect(keyRow).toHaveCount(1);
-  await expect(keyRow.locator('.ts-apikeys-scopes .ts-badge')).toHaveText(['Full access']);
+  await expect(keyRow.locator('.ts-apikeys-access')).toHaveText(['Full']);
   expect((await page.content()).includes(apiKey), 'the API key secret is gone after a reload').toBe(false);
   await shell(page, identity);
   await audit.check('API keys after reload');

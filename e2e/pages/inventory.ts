@@ -223,7 +223,20 @@ export const dashboardStates: readonly PageState[] = [
     data: async (page, journey) => {
       const row = page.locator('main tr').filter({ hasText: journey.apiKeyName });
       await expect(row).toHaveCount(1);
-      await expect(row.locator('.ts-apikeys-scopes .ts-badge')).toHaveText(['Full access']);
+      await expect(row.locator('.ts-apikeys-access')).toHaveText(['Full']);
+      expect((await page.content()).includes(journey.apiKey), 'the API key secret is never shown again').toBe(false);
+    },
+  },
+  {
+    name: 'api key details',
+    url: (journey) => `/api-keys/${journey.apiKey.split('_')[0]}`,
+    covers: { path: new RegExp(`^/api-keys/${ulid}$`) },
+    heading: (page, journey) => page.getByRole('heading', { level: 1, name: journey.apiKeyName, exact: true }),
+    data: async (page, journey) => {
+      const details = page.locator('#key-details');
+      await expect(details.locator('dd.ts-mono')).toHaveText(journey.apiKey.split('_')[0]);
+      await expect(details.locator('.ts-apikeys-scopes .ts-badge')).toHaveText(['Full access']);
+      await expect(page.locator('#key-allowed-ips')).toContainText('Any IP');
       expect((await page.content()).includes(journey.apiKey), 'the API key secret is never shown again').toBe(false);
     },
   },

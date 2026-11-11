@@ -79,7 +79,7 @@ test('a second API key is created without a confirmation, shown once, and revoke
   await row.getByRole('button', { name: 'Revoke', exact: true }).click();
   await expect(page.locator('dialog[open]')).toBeVisible();
   await audit.check('revoke API key dialog');
-  await page.locator('dialog[open]').getByRole('button', { name: 'Revoke credential', exact: true }).click();
+  await page.locator('dialog[open]').getByRole('button', { name: 'Revoke key', exact: true }).click();
   await page.waitForURL((url) => url.pathname === '/api-keys');
   await expect(page.locator('main tr').filter({ hasText: name })).toHaveCount(0);
   await expect(page.locator('main tr').filter({ hasText: current.apiKeyName })).toHaveCount(1);
