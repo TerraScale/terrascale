@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       native_artifacts:
-        description: 'Maintenance: prepare combined native release assets only (no Fast/images/publication)'
+        description: 'Maintenance: prepare combined native release assets only (no builds, images or publication)'
         type: boolean
         default: false
       # Cold maintenance pins the TerraBase digest into its fences before the window, then releases it to the fenced
@@ -49,13 +49,13 @@ env:
 jobs:
   # Runs on every event: a skipped job would skip "test".
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     outputs:
-      fast: ${{ steps.areas.outputs.fast }}
+      dotnet: ${{ steps.areas.outputs.dotnet }}
       main: ${{ steps.areas.outputs.main }}
       ordered: ${{ steps.areas.outputs.ordered }}
       sha: ${{ github.sha }}
@@ -67,7 +67,7 @@ jobs:
       journey: ${{ steps.journey.outputs.journey }}
     steps:
       # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
-      - if: github.event_name != 'pull_request'
+      - if: github.event_name == 'push'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
@@ -91,38 +91,29 @@ jobs:
               - .editorconfig
               - BannedSymbols.txt
               - TerraScale.slnx
-              # Both services reference the libraries; their tests and benchmarks build only in libs.slnf.
               - src/TerraScale.Endpoints*/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
             # Each area lists only inputs its own projects build.
             dotnet-sdk: &dotnet-sdk
-              # The auth store and TerraBase E2E reference the .NET SDK from this revision.
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
             libs:
               - *shared
               - libs.slnf
-              - tests/TerraScale.Endpoints.Tests/**/!(AGENTS.md|CLAUDE.md)
-              - tests/TerraScale.Logging.Tests/**/!(AGENTS.md|CLAUDE.md)
               - benchmark/dotnet/TerraScale.Endpoints.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
               - benchmark/dotnet/TerraScale.Logging.Benchmarks/**/!(AGENTS.md|CLAUDE.md)
               - scripts/ci/image-payloads.sh
-              - scripts/ci/test-area.sh
             auth:
               - *shared
               - *dotnet-sdk
               - scripts/ci/image-payloads.sh
               - auth.slnf
               - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
-              - tests/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
-              # The published platform contract (OpenApiTests, auth-openapi-check); the Markdown docs are not inputs.
               - docs/auth/*.yaml
               - scripts/auth/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/ci/auth-build.sh
             auth-server:
               - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
               # TerraBase's RPC surface and the contracts it implements.
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
-              # The vendored driver TerraBase embeds; auth integration tests start that TerraBase.
               - src/vendor/**/!(AGENTS.md|CLAUDE.md)
             # What ts-auth runs against TerraBase: its own code and the SDK it calls TerraBase with.
             auth-client:
@@ -130,49 +121,38 @@ jobs:
               - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
             terrabase:
               - *shared
-              - *dotnet-sdk
               - src/vendor/**/!(AGENTS.md|CLAUDE.md)
-              - tests/Turso.Data.Sqlite.Tests/**/!(AGENTS.md|CLAUDE.md)
               - scripts/vendor/**/!(AGENTS.md|CLAUDE.md)
-              - scripts/ci/terrabase-*
               - terrabase.slnf
               - scripts/ci/image-payloads.sh
-              - scripts/ci/test-area.sh
               - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
-              - tests/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - landing-site/static/pricing.json
               - scripts/terrabase/!(AGENTS.md|CLAUDE.md)
               - scripts/terrabase/**/!(AGENTS.md|CLAUDE.md)
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
               - .github/workflows/sdk-dotnet-*.yml
-              - .github/workflows/sdk-fast.yml
               - .github/workflows/ci.yml
             sdk-go:
               - sdk/go/**/!(AGENTS.md|CLAUDE.md)
               - .github/workflows/sdk-go-*.yml
-              - .github/workflows/sdk-fast.yml
               - .github/workflows/ci.yml
             sdk-js:
               - sdk/js/**/!(AGENTS.md|CLAUDE.md)
               - .github/workflows/sdk-js-*.yml
-              - .github/workflows/sdk-fast.yml
               - .github/workflows/ci.yml
             sdk-python:
               - sdk/python/**/!(AGENTS.md|CLAUDE.md)
               - .github/workflows/sdk-python-*.yml
-              - .github/workflows/sdk-fast.yml
               - .github/workflows/ci.yml
             sdk-rust:
               - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
               - .github/workflows/sdk-rust-*.yml
-              - .github/workflows/sdk-fast.yml
               - .github/workflows/ci.yml
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
-              - .github/workflows/docs-*.yml
               - .github/workflows/ci.yml
               - src/TerraBase/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.Dashboard/sdk-versions.json
@@ -189,7 +169,6 @@ jobs:
               - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.Endpoints/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md|CLAUDE.md)
-              - tests/TerraScale.Dashboard*/**/!(AGENTS.md|CLAUDE.md)
               - scripts/dashboard/**/!(AGENTS.md|CLAUDE.md)
               - scripts/ci/release-only.sh
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
@@ -225,14 +204,12 @@ jobs:
           ordered=$(jq 'index("auth-server") != null and index("auth-client") != null' <<< "$CHANGES")
           [[ $GITHUB_EVENT_NAME != workflow_dispatch ]] || ordered=true
           echo "ordered=$ordered" >> "$GITHUB_OUTPUT"
-          [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
-          echo "fast=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
+          [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES='[]'
+          echo "dotnet=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
           echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
-  # Cheap policy checks run beside changes instead of before the Fast receipts; test (and so every release) requires
-  # them.
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -263,12 +240,19 @@ jobs:
       - name: Merged EF Core migrations stay unchanged
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/migrations-frozen.py HEAD^1
+      - name: No test file outside the journey
+        if: github.event_name == 'pull_request'
+        run: |
+          added=$(git diff --name-only --diff-filter=A HEAD^1 HEAD)
+          if grep -v '^e2e/' <<< "$added" | grep -E '(^|/)tests?/|_test\.go$|\.test\.(c?m?js|ts|tsx)$|(^|/)test_[^/]*\.py$|[Tt]ests?\.cs$|\.Tests?/'; then
+            echo '::error::This pull request adds the test files above. The journey in e2e/ is the only test.'
+            exit 1
+          fi
       # Production runs on OCI through ts-orch; only Tigris (its endpoint and `fly storage`) stays. The brackets keep
       # these lines from matching themselves.
       - name: Workflows name no retired hosting provider
         if: github.event_name != 'push'
         run: '! grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
-      # Reads the labels live: after labelling, re-run checks (docs/terrabase/ci.md, storage train).
       - name: Storage train
         if: github.event_name == 'pull_request'
         env:
@@ -371,11 +355,10 @@ jobs:
           path: native-release/
           if-no-files-found: error
 
-  # Each affected area builds, checks and runs its Fast suite on a hosted runner for this exact commit.
   libs:
     needs: changes
-    if: contains(fromJSON(needs.changes.outputs.fast), 'libs')
-    runs-on: ubuntu-latest
+    if: contains(fromJSON(needs.changes.outputs.dotnet), 'libs')
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - &checkout
@@ -399,49 +382,50 @@ jobs:
         name: Locked restore and pinned native libraries
         working-directory: terrascale
         run: make restore turso-native
-      - name: Checked build and Libraries Fast
+      - name: Checked build, whitespace and style
         working-directory: terrascale
-        run: bash scripts/ci/test-area.sh fast libs
+        run: |
+          make -o restore fmt-check libs-build SOLUTION=libs.slnf CONFIGURATION=Release
+          make -o restore -o libs-build libs-check CONFIGURATION=Release
+          scripts/ci/release-only.sh
 
   auth:
     needs: changes
-    if: contains(fromJSON(needs.changes.outputs.fast), 'auth')
-    runs-on: ubuntu-latest
+    if: contains(fromJSON(needs.changes.outputs.dotnet), 'auth')
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - *checkout
       - *setup-dotnet
       - *turso-native-cache
       - *locked-restore
-      - name: Checked Auth build
+      - name: Checked build, whitespace, NuGet audit and OpenAPI contract
         working-directory: terrascale
         run: |
-          npx --yes playwright@1.63.0 install --with-deps chromium >"$RUNNER_TEMP/playwright.log" 2>&1 &
-          playwright=$!
-          bash scripts/ci/auth-build.sh
-          wait "$playwright" || { cat "$RUNNER_TEMP/playwright.log"; exit 1; }
-      - name: Auth Fast
-        working-directory: terrascale
-        run: env -u DOTNET_PROCESSOR_COUNT -u DOTNET_GCHeapCount make -o restore -o auth-fast-build -o turso-native auth-test-fast CONFIGURATION=Release
+          make -o restore fmt-check SOLUTION=auth.slnf CONFIGURATION=Release
+          make -o restore -o auth-restore auth-check CONFIGURATION=Release
+          scripts/ci/release-only.sh
 
   terrabase:
     needs: changes
-    if: contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
-    runs-on: ubuntu-latest
+    if: contains(fromJSON(needs.changes.outputs.dotnet), 'terrabase')
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - *checkout
       - *setup-dotnet
       - *turso-native-cache
       - *locked-restore
-      - name: Checked build, integration proofs and TerraBase Fast
+      - name: Checked build and whitespace
         working-directory: terrascale
-        run: bash scripts/ci/test-area.sh fast terrabase
+        run: |
+          make -o restore fmt-check terrabase-build SOLUTION=terrabase.slnf CONFIGURATION=Release
+          scripts/ci/release-only.sh
 
   main:
-    needs: [changes, terrabase, test]
+    needs: [changes, test]
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
+      !cancelled() && needs.test.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'terrabase')
     concurrency:
@@ -451,7 +435,7 @@ jobs:
     env:
       AREA: terrabase
       SERVICE: terrabase
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -564,7 +548,7 @@ jobs:
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 210
     permissions:
       contents: read
@@ -610,9 +594,9 @@ jobs:
   # ts-auth releases in parallel with TerraBase, except after it when one push changes both TerraBase's server and
   # what ts-auth calls it with (changes.outputs.ordered): shared scope and contract changes reach TerraBase first.
   main-auth:
-    needs: [changes, auth, test]
+    needs: [changes, test]
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
+      !cancelled() && needs.test.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered != 'true'
     concurrency:
@@ -621,7 +605,7 @@ jobs:
     env: &auth-env
       AREA: auth
       SERVICE: ts-auth
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions: &release-permissions
       contents: read
@@ -631,9 +615,9 @@ jobs:
     steps: *production-steps
 
   main-auth-ordered:
-    needs: [changes, auth, test, main]
+    needs: [changes, test, main]
     if: >-
-      !cancelled() && needs.test.result == 'success' && needs.auth.result == 'success'
+      !cancelled() && needs.test.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && contains(fromJSON(needs.changes.outputs.main), 'auth') && needs.changes.outputs.ordered == 'true'
       && (!contains(fromJSON(needs.changes.outputs.main), 'terrabase') || needs.main.result == 'success')
@@ -641,35 +625,32 @@ jobs:
       group: production-auth
       cancel-in-progress: false
     env: *auth-env
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions: *release-permissions
     steps: *production-steps
 
-  # A run that selects no core area (docs, SDKs, sites, dashboard) runs only changes. A failed changes job still
-  # reaches test, so the rollup stays red.
   test:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
-    needs: [changes, checks, libs, auth, terrabase]
+    needs: [changes, checks, libs, auth, terrabase, dashboard, sdk]
     if: >-
       ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
       && (needs.changes.result != 'success' || needs.checks.result != 'success'
-      || needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]') }}
-    runs-on: ubuntu-latest
+      || needs.changes.outputs.dotnet != '[]' || needs.changes.outputs.sdks != '[]' || needs.dashboard.result != 'skipped'
+      || needs.changes.outputs.main != '[]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
-      actions: read
     steps:
-      - name: Every affected Fast area passed
+      - name: Every selected leg passed
         env:
-          FAST_AREAS: ${{ needs.changes.outputs.fast }}
+          LEGS: ${{ needs.changes.outputs.dotnet }}
           RESULTS: ${{ toJSON(needs) }}
         run: |
           if grep -qE 'failure|cancelled' <<< '${{ join(needs.*.result, ' ') }}'; then exit 1; fi
-          for area in $(jq -r '.[]' <<< "$FAST_AREAS"); do
-            [[ $(jq -r --arg area "$area" '.[$area].result' <<< "$RESULTS") == success ]] || exit 1
+          for leg in $(jq -r '.[]' <<< "$LEGS"); do
+            [[ $(jq -r --arg leg "$leg" '.[$leg].result' <<< "$RESULTS") == success ]] || exit 1
           done
 
   dashboard:
@@ -684,14 +665,47 @@ jobs:
       fail-fast: false
       matrix:
         area: ${{ fromJSON(needs.changes.outputs.sdks) }}
-    uses: ./.github/workflows/sdk-fast.yml
-    with:
-      area: ${{ matrix.area }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      AREA: ${{ matrix.area }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        if: matrix.area == 'sdk-dotnet'
+        with:
+          dotnet-version: |
+            10.0.401
+            11.0.100
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        if: matrix.area != 'sdk-dotnet'
+        with:
+          install: false
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        if: matrix.area == 'sdk-go'
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: sdk-go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('sdk/go/.go-version', 'sdk/go/go.sum') }}
+      - name: Install the pinned SDK toolchain
+        run: |
+          set -euo pipefail
+          case "$AREA" in
+            sdk-go) mise use -g "go@$(cat sdk/go/.go-version)"; dirname "$(mise which go)" >> "$GITHUB_PATH" ;;
+            sdk-python) mise use -g uv@0.13.7; dirname "$(mise which uv)" >> "$GITHUB_PATH" ;;
+            sdk-rust) rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy ;;
+          esac
+      - name: Build and type-check the SDK
+        run: make "$AREA-check"
 
   docs:
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -702,8 +716,8 @@ jobs:
         with:
           node-version-file: docs-site/.node-version
           package-manager-cache: false
-      - name: Docs Fast
-        run: make docs-test-fast
+      - name: Build and check the docs site
+        run: make docs-build
 
   landing:
     needs: changes
@@ -722,7 +736,7 @@ jobs:
       - name: Install dependencies
         working-directory: landing-site
         run: npm ci --no-audit --no-fund
-      - name: Run tests and validate the static build
+      - name: Validate the static build
         working-directory: landing-site
         run: npm run build
 
@@ -743,12 +757,10 @@ jobs:
       - name: Install dependencies
         working-directory: status-site
         run: npm ci --no-audit --no-fund
-      - name: Check, test and build
+      - name: Check, lint and build
         working-directory: status-site
         run: |
           npm run check
-          npm test
-          python3 -m unittest discover -s scripts -p 'test_*.py'
           npm run lint
           npm run build
 
