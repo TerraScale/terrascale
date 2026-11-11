@@ -9,7 +9,7 @@ replaced or deleted.
 
 The repository is public at [TerraScale/terrascale](https://github.com/TerraScale/terrascale), with this SDK in `sdk/dotnet/`.
 
-Ship a version bump in `src/TerraScale.DotNet/TerraScale.DotNet.csproj`, then tag the green `main` commit with `sdk/dotnet/v0.0.X`. The monorepo workflow is `.github/workflows/sdk-dotnet-release.yml`.
+Ship a version bump in `src/TerraScale.DotNet/TerraScale.DotNet.csproj`, then tag the green `main` commit with `sdk/dotnet/v0.0.X`. The monorepo workflow is `.github/workflows/sdk-release.yml`.
 
 See automatic tagged NuGet releases for exact qualification, GitHub Packages verification and nuget.org publication. Both supported target frameworks, net10.0 and net11.0, remain part of qualification. Package identities and `0.0.X` versioning stay the same.
 

@@ -3,7 +3,7 @@
 ## Layout and checks
 
 - Paths and commands below are relative to `sdk/dotnet/`; from the repository root `make sdk-dotnet-check` restores and builds both frameworks.
-- Release workflow: `.github/workflows/sdk-dotnet-release.yml` at the repository root. Package identity remains `TerraScale.DotNet`.
+- Release workflow: `.github/workflows/sdk-release.yml` (`SDK Release`) at the repository root, on `sdk/dotnet/v0.0.X` tags. Package identity remains `TerraScale.DotNet`.
 
 - SDK: `src/TerraScale.DotNet`; contract fixtures: `contracts/`.
 - EF Core provider: `src/TerraScale.EntityFrameworkCore` (package `TerraScale.EntityFrameworkCore`).

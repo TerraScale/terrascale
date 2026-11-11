@@ -36,11 +36,8 @@ are mutations; reconcile an uncertain outcome before retrying.
 
 ## Release handoff
 
-Releases bump `src/terrascale/_version.py`, tag the same
-`v0.0.X` version and publish a GitHub release. `.github/workflows/publish.yml`
-checks the tag matches the source version, builds with uv and uses PyPI trusted
-publishing through the GitHub `pypi` environment. It also exposes a manual
-dispatch, subject to the same tag check. CI tests Python 3.10–3.13 and checks
-wheel metadata. The inventory records that PyPI publication is still pending
-with its existing publisher owner; this change neither verifies that external
-trust configuration nor publishes a package. The current source version is 0.0.1.
+Releases bump `src/terrascale/_version.py` and push the tag `sdk/python/v0.0.X` of
+the same version on `main`. `.github/workflows/sdk-release.yml` checks that the tag
+matches the source version, builds with uv and publishes through PyPI trusted
+publishing in the GitHub `pypi` environment. PyPI publication is still pending;
+nothing here verifies that external trust configuration or publishes a package.
