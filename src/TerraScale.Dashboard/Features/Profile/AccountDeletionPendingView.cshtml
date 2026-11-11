@@ -1,6 +1,10 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Profile.AccountDeletionPendingPage>
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.Document, DocumentModel>
-<main class="ts-login"><div class="ts-login-column"><div class="ts-login-panel"><div class="ts-login-stack">
+<main class="ts-login">
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
+    </section>
+    <div class="ts-login-column"><div class="ts-login-panel"><div class="ts-login-stack">
     <h1 class="ts-auth-title">@Model.Title</h1>
     <p class="ts-auth-subtitle" role="status" aria-live="polite">@Model.Message</p>
     <form method="post" action="/api/v1/dashboard/profile/delete/status" data-submit-once
