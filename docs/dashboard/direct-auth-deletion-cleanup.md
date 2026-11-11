@@ -12,13 +12,15 @@ and is counted in `terrascale_deletion_cleanup_failing_entries` on `/metrics`
 until a pass cleans it. The browser deletion logs its own failed attempt to end an
 organization's billing the same way.
 
-Before any cleanup or ACK, the dashboard creates an immutable record keyed by the
+Before any cleanup or ACK, the dashboard creates a record keyed by the
 auth erasure ULID in `deletion_cleanup`. It retains the exact proof, and in
 `deletion_cleanup_targets` the opaque project/customer references discovered
 before removing their aggregates ([state storage](state-storage.md#deletions)).
 A failed journal write prevents cleanup and ACK. Every poll replays retained
-entries before contacting auth, including after ACK and during auth outages.
-Entries have no TTL or retirement rule. A failed entry does not block the others.
+entries before listing new proofs, including after ACK and during auth outages.
+The local replay of an entry has no TTL or retirement rule; only the Stripe
+calls of an organization entry end, as described below. A failed entry does not
+block the others.
 
 An account proof erases that subject's profile and identity data, sessions,
 credentials and personal access tokens. The `accounts` row keeps only its key and
@@ -51,12 +53,22 @@ conditional-write failures retain the proof and relevant references for retry.
 
 A Checkout can reach Stripe after ACK. Retained replay lists Checkouts and
 subscriptions for retained customers and searches Stripe customers by exact
-organization metadata, including older or unpublished customer bindings. Stripe
-search is eventually consistent, so this is continuing repair rather than proof
-that an external operation can never appear later. Only verified terminal results
-permit removing local Checkout/customer mappings and replacing billing and
-organization roots with minimal erasure markers. No subscription is canceled
-merely because the auth endpoint is missing.
+organization metadata, including older or unpublished customer bindings. Such a
+Checkout was reserved before billing was marked `deleting` or fenced, both of
+which precede the ACK, and expires `StripeBilling.CheckoutLifetime` (one hour)
+after its reservation. The entry records when auth acknowledged its proof
+(`acknowledged_at`, written after the ACK). An organization entry without that
+time, such as one recorded before the column existed, is acknowledged again
+after its next successful replay, which can only make the time later. Once a
+replay that started at least one hour after `acknowledged_at` has ended the
+organization's billing, the entry records `billing_settled_at` and its later
+replays make no Stripe call; an entry that is never acknowledged keeps calling
+Stripe. Stripe search is eventually consistent, so that last replay relies on
+Stripe having indexed each such Checkout's customer, created at least 30 minutes
+before the Checkout expired. Only verified terminal results permit removing
+local Checkout/customer mappings and replacing billing and organization roots
+with minimal erasure markers. No subscription is canceled merely because the
+auth endpoint is missing.
 
 Organization cleanup removes projected projects, saved queries, alert rules with
 their pending events, log drains with their cursors, billing change receipts,

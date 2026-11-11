@@ -135,7 +135,9 @@ organization fences the `organizations` row first, so no checkout can start, and
 ### Deletions
 
 `DeletionReconciler` replays every `deletion_cleanup` entry, ordered by `id`, before it asks ts-auth for new proofs,
-and keeps the entries forever, so a regional write that lands after ts-auth's acknowledgement is removed again. A new
+and keeps the entries forever, so a regional write that lands after ts-auth's acknowledgement is removed again. An
+organization entry's `acknowledged_at` and `billing_settled_at` end only its Stripe calls
+([cleanup](direct-auth-deletion-cleanup.md)). A new
 proof is recorded with its targets in one `SaveChangesAsync`; a second reconciler recording the same proof fails on the
 primary key and reads the stored entry, which must carry the same scope, subject and organization.
 

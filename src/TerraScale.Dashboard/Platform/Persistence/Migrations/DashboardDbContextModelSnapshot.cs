@@ -1650,6 +1650,14 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("id");
 
+                    b.Property<DateTime?>("AcknowledgedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("acknowledged_at");
+
+                    b.Property<DateTime?>("BillingSettledAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("billing_settled_at");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT")
                         .HasColumnName("created_at");

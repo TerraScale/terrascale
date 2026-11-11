@@ -44,7 +44,9 @@ namespace TerraScale.Dashboard.Features.Profile
                     try
                     {
                         Validate(entry.Proof);
+                        var started = clock.GetUtcNow().UtcDateTime;
                         await CleanAsync(entry, cancellationToken);
+                        await SettleAsync(entry, started, cancellationToken);
                         cleaned.Add(entry.Proof.Id);
                     }
                     catch (Exception error) when (Retryable(error, cancellationToken)) { Fail(failed, entry.Proof, error); }
@@ -73,6 +75,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     var entry = await journal.RememberAsync(proof, cancellationToken);
                     await CleanAsync(entry, cancellationToken);
                     await deletions.AcknowledgeAsync(proof, cancellationToken);
+                    await journal.AcknowledgedAsync(proof.Id, cancellationToken);
                     cleaned.Add(proof.Id);
                 }
                 catch (Exception error) when (Retryable(error, cancellationToken)) { Fail(failed, proof, error); }
@@ -112,6 +115,20 @@ namespace TerraScale.Dashboard.Features.Profile
             return (error.GetType().Name, "-");
         }
 
+        private async Task SettleAsync(DeletionCleanupJournal.Entry entry, DateTime started, CancellationToken cancellationToken)
+        {
+            switch (entry)
+            {
+                case { Proof.Scope: DeletionCleanupRow.Organization, AcknowledgedAt: null }:
+                    await deletions.AcknowledgeAsync(entry.Proof, cancellationToken);
+                    await journal.AcknowledgedAsync(entry.Proof.Id, cancellationToken);
+                    break;
+                case { Proof.Scope: DeletionCleanupRow.Organization, BillingSettledAt: null, AcknowledgedAt: { } acknowledged } when started >= acknowledged + StripeBilling.CheckoutLifetime:
+                    await journal.BillingSettledAsync(entry.Proof.Id, cancellationToken);
+                    break;
+            }
+        }
+
         private void Fail(Dictionary<string, string> failed, TsAuthDeletionProof proof, Exception error)
         {
             var (type, code) = Failure(error);
@@ -141,7 +158,11 @@ namespace TerraScale.Dashboard.Features.Profile
                     break;
                 case "organization":
                     var ended = await billing.EndSubscriptionAsync(proof.SubjectId, cancellationToken, completedDeletion: true);
-                    await billing.EndCustomersForDeletionAsync(proof.SubjectId, entry.CustomerIds, cancellationToken);
+                    if (entry.BillingSettledAt is null)
+                    {
+                        await billing.EndCustomersForDeletionAsync(proof.SubjectId, entry.CustomerIds, cancellationToken);
+                    }
+
                     await Features.Data.SqlWorkspace.EraseAsync(storage, row => row.OrganizationId == proof.SubjectId, cancellationToken);
                     await using (var db = await storage.CreateDbContextAsync(cancellationToken))
                     {

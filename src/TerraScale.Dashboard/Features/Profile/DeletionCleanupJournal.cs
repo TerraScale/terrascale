@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -8,7 +9,7 @@ namespace TerraScale.Dashboard.Features.Profile
 {
     public sealed class DeletionCleanupJournal(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, TimeProvider clock)
     {
-        public sealed record Entry(TsAuthDeletionProof Proof, string[] ProjectIds, string[] CustomerIds);
+        public sealed record Entry(TsAuthDeletionProof Proof, string[] ProjectIds, string[] CustomerIds, DateTime? AcknowledgedAt, DateTime? BillingSettledAt);
 
         public async Task<IReadOnlyList<Entry>> ListAsync(CancellationToken cancellationToken)
         {
@@ -60,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
             }
 
-            var entry = new Entry(proof, [.. projects.Order(StringComparer.Ordinal)], [.. customers.Order(StringComparer.Ordinal)]);
+            var entry = new Entry(proof, [.. projects.Order(StringComparer.Ordinal)], [.. customers.Order(StringComparer.Ordinal)], null, null);
             await using (var db = await storage.CreateDbContextAsync(cancellationToken))
             {
                 db.DeletionCleanup.Add(new DeletionCleanupRow
@@ -86,6 +87,26 @@ namespace TerraScale.Dashboard.Features.Profile
             return Match(await FindAsync(proof.Id, cancellationToken) ?? throw new IOException("Cleanup journal disappeared."), proof);
         }
 
+        public Task AcknowledgedAsync(string id, CancellationToken cancellationToken)
+        {
+            return StampAsync(id, row => row.AcknowledgedAt, cancellationToken);
+        }
+
+        public Task BillingSettledAsync(string id, CancellationToken cancellationToken)
+        {
+            return StampAsync(id, row => row.BillingSettledAt, cancellationToken);
+        }
+
+        private async Task StampAsync(string id, Expression<Func<DeletionCleanupRow, DateTime?>> column, CancellationToken cancellationToken)
+        {
+            DateTime? now = clock.GetUtcNow().UtcDateTime;
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            if (await db.DeletionCleanup.Where(row => row.Id == id).ExecuteUpdateAsync(row => row.SetProperty(column, now), cancellationToken) != 1)
+            {
+                throw new IOException("Cleanup journal disappeared.");
+            }
+        }
+
         private async Task<Entry?> FindAsync(string id, CancellationToken cancellationToken)
         {
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
@@ -105,7 +126,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 : row.OrganizationId is null ? row.SubjectId : throw new IOException("Cleanup journal organization row names another organization.");
             return new(new(row.Id, row.Scope, row.SubjectId, organizationId),
                 [.. kept[DeletionCleanupTargetRow.Project].Select(target => target.TargetId).Order(StringComparer.Ordinal)],
-                [.. kept[DeletionCleanupTargetRow.Customer].Select(target => target.TargetId).Order(StringComparer.Ordinal)]);
+                [.. kept[DeletionCleanupTargetRow.Customer].Select(target => target.TargetId).Order(StringComparer.Ordinal)], row.AcknowledgedAt, row.BillingSettledAt);
         }
 
         private static Entry Match(Entry entry, TsAuthDeletionProof proof)
