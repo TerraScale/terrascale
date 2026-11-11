@@ -1,0 +1,5 @@
+@inherits RazorSlice<DialogError>
+@if (Model.HasError)
+{
+    <div class="ts-alert ts-alert-danger" role="alert" id="@(Model.DialogId + "-error")" data-init="el.closest('dialog').showModal()"><p class="ts-alert-body">@Model.Message</p></div>
+}

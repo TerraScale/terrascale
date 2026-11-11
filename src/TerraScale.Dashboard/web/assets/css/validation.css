@@ -1,0 +1,13 @@
+.ts-input[aria-invalid="true"],
+.ts-select[aria-invalid="true"],
+ts-code-editor:has(textarea[aria-invalid="true"]) {
+  border-color: var(--ts-danger);
+}
+
+.ts-validation-message {
+  color: var(--ts-danger);
+  font-size: .8125rem;
+  line-height: 1.5;
+  margin: .375rem 0 0;
+  overflow-wrap: anywhere;
+}
