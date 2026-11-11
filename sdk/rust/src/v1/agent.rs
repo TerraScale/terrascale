@@ -1,5 +1,4 @@
 use std::fmt;
-use std::time::Duration;
 
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -10,17 +9,13 @@ use super::errors::{Error, Result};
 use super::ids::{check_database_selector, check_name, is_valid_id};
 use super::management::DatabasePlacement;
 
-pub const MOVE_HOME_TIMEOUT: Duration = Duration::from_secs(300);
-
 pub type ManagedDatabase = ProjectDatabaseInfo;
 
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateDatabaseOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub home_region: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub replica_regions: Option<Vec<String>>,
+    pub regions: Option<Vec<String>>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub all_regions: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,6 +74,23 @@ impl fmt::Debug for ScopedKey {
     }
 }
 
+fn check_regions(regions: &[String]) -> Result<()> {
+    if regions.is_empty() {
+        return Err(Error::InvalidInput(
+            "regions must name at least one region".into(),
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for region in regions {
+        if region.is_empty() || !seen.insert(region) {
+            return Err(Error::InvalidInput(
+                "regions must be distinct region ids".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn check_ttl(ttl: Option<u64>, maximum: u64) -> Result<()> {
     if ttl.is_some_and(|value| !(60..=maximum).contains(&value)) {
         return Err(Error::InvalidInput(format!(
@@ -96,10 +108,13 @@ impl Client {
     ) -> Result<ManagedDatabase> {
         check_name("database", name)?;
         check_ttl(options.ttl_seconds, 31_536_000)?;
-        if options.replica_regions.is_some() && options.all_regions {
+        if options.regions.is_some() && options.all_regions {
             return Err(Error::InvalidInput(
-                "set replica_regions or all_regions, not both".into(),
+                "set regions or all_regions, not both".into(),
             ));
+        }
+        if let Some(regions) = &options.regions {
+            check_regions(regions)?;
         }
         #[derive(Serialize)]
         struct Body<'a> {
@@ -189,34 +204,17 @@ impl Client {
         database: &str,
         placement: &DatabasePlacement,
     ) -> Result<ManagedDatabase> {
-        if placement.home_region.is_some()
-            || placement.replica_regions.is_some() == placement.all_regions
-        {
+        if placement.regions.is_some() == placement.all_regions {
             return Err(Error::InvalidInput(
-                "set exactly one of replica_regions or all_regions; move the home with move_database_home".into(),
+                "set exactly one of regions or all_regions".into(),
             ));
+        }
+        if let Some(regions) = &placement.regions {
+            check_regions(regions)?;
         }
         self.database(database)
             .management(Method::PATCH, &[], &[], Some(placement), StatusCode::OK)
             .await
-    }
-
-    pub async fn move_database_home(
-        &self,
-        database: &str,
-        home_region: &str,
-    ) -> Result<ManagedDatabase> {
-        check_database_selector(database)?;
-        if home_region.is_empty() {
-            return Err(Error::InvalidInput("home_region is required".into()));
-        }
-        let mut req = Req::new(Method::POST, vec!["v1", "databases", database, "move-home"])
-            .json(&serde_json::json!({"homeRegion": home_region}))?;
-        req.timeout = Some(MOVE_HOME_TIMEOUT);
-        req.move_unresolved_retries = 5;
-        self.send_project(req)
-            .await?
-            .decode_status(&[StatusCode::OK])
     }
 
     pub async fn clear_database_ttl(&self, database: &str) -> Result<ManagedDatabase> {

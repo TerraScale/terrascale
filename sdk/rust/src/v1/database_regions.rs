@@ -15,6 +15,8 @@ pub struct DatabaseRegions {
 #[serde(rename_all = "camelCase")]
 pub struct ReplicaStatus {
     pub region: String,
+    #[serde(default)]
+    pub role: Option<String>,
     pub lag_ms: Option<f64>,
     pub last_pulled_at: Option<String>,
     pub last_verified: Option<String>,

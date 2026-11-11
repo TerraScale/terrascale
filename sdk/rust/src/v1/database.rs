@@ -87,9 +87,8 @@ pub struct ProjectDatabaseInfo {
     #[serde(default)]
     pub expires_at: Option<String>,
     pub region: String,
-    pub home_region: String,
     #[serde(default)]
-    pub replica_regions: Vec<String>,
+    pub regions: Vec<String>,
     #[serde(default)]
     pub all_regions: bool,
 }
