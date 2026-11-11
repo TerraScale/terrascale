@@ -274,19 +274,13 @@
     {
       "id": "placement.create",
       "group": "b",
-      "title": "createDatabase with home and replica regions",
+      "title": "createDatabase with a set of regions",
       "needs": "two serving regions: the PR environment serves one region"
     },
     {
       "id": "placement.set",
       "group": "b",
       "title": "setDatabasePlacement",
-      "needs": "two serving regions: the PR environment serves one region"
-    },
-    {
-      "id": "placement.move_home",
-      "group": "b",
-      "title": "moveDatabaseHome",
       "needs": "two serving regions: the PR environment serves one region"
     },
     {

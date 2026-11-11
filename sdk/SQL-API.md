@@ -51,7 +51,7 @@ only that database. Server contract: `docs/terrabase/agent-databases.md`; record
 | `createScopedKey({ project?, database, access, ttlSeconds? })` | `POST https://auth.terrascale.tech/v1/terrascale/api-keys/self/scoped-keys`, or the same path on the ts-auth the client names, `Authorization: Basic base64(keyId:key)` of the client's `ApiKey`, `{"project","database","access","ttl_seconds"}` | `ScopedKey` (201) |
 
 `ManagedDatabase` is the existing database body (`id`, `projectId`, `name`, `branchedFrom`, `createdAt`, `region`,
-`homeRegion`, …) plus `expiresAt` (RFC 3339, or null without a TTL).
+`regions`, …) plus `expiresAt` (RFC 3339, or null without a TTL).
 
 - `ttlSeconds` is 60 to 31,536,000 (365 days). The database, its backups and its data keys are deleted (crypto-shredded)
   within seconds after `expiresAt`; deletion is the same as `deleteDatabase`. A TTL database counts against the plan's
@@ -80,37 +80,35 @@ Durations are seconds in every SDK (`TimeSpan`/`Duration` accepted where idiomat
 
 ## Placement: where a database lives
 
-A replica region can accept a local SQL REST write; the home is the durable apply point, and the default
+Every region that holds a database is equal. A region can accept a local SQL REST write, and the default
 `TerraScale-Durability` is `local`. The server forwards a timed-out local publish with `TerraBase-Publish-Id`
-set to the same transaction id, and the home applies that write once. All-regions
-mode places a replica in every serving region, including regions that join later. A database can move its home to one
-of its replica regions. Server contract: `docs/terrabase/placement.md`; recorded fixtures:
+set to the same transaction id, and applies that write once. All-regions
+mode holds the database in every serving region, including regions that join later. TerraBase picks which region
+writes and moves that on its own when the set changes. Server contract: `docs/terrabase/placement.md`; recorded fixtures:
 `sdk/dotnet/contracts/terrabase/placement/`. Routes need `databases:write`.
 
 | Method | Request | Returns |
 |---|---|---|
-| `createDatabase(project, name, { homeRegion?, replicaRegions?, allRegions?, ttlSeconds? })` | `POST /v1/projects/{project}/databases` `{"name","homeRegion","replicaRegions","allRegions","ttlSeconds"}` | `ManagedDatabase` (201) |
-| `setDatabasePlacement(project, database, { replicaRegions?, allRegions? })` | `PATCH …/databases/{database}` `{"replicaRegions"}` or `{"allRegions"}` | `ManagedDatabase` (200) |
-| `moveDatabaseHome(project, database, homeRegion)` | `POST …/databases/{database}/move-home` `{"homeRegion"}` | `ManagedDatabase` (200) |
+| `createDatabase(project, name, { regions?, allRegions?, ttlSeconds? })` | `POST /v1/projects/{project}/databases` `{"name","regions","allRegions","ttlSeconds"}` | `ManagedDatabase` (201) |
+| `setDatabasePlacement(project, database, { regions?, allRegions? })` | `PATCH …/databases/{database}` `{"regions"}` or `{"allRegions"}` | `ManagedDatabase` (200) |
 
-`ManagedDatabase` carries `homeRegion`, `replicaRegions` (sorted; with `allRegions` every serving region other than the
-home) and `allRegions` (boolean).
+`ManagedDatabase` carries `regions` (every region that holds the database, sorted by region id; the order has no
+meaning) and `allRegions` (boolean). During a transition the server may still send `homeRegion` and `replicaRegions`;
+the SDKs ignore them.
 
-- Omitted options are not sent. `replicaRegions` names at most 8 distinct serving regions other than the home and
-  turns all-regions mode off; `allRegions: true` turns it on. Sending both is refused, and `setDatabasePlacement` needs
-  one of them.
-- `moveDatabaseHome` waits until the move is done (seconds). `homeRegion` must be a replica region; the old home becomes
-  a replica. Writes pause briefly while the home switches; no acknowledged write is lost.
-- Placement requests go to the home region. Behind `api.terrascale.tech` the edge routes them; a direct regional call
-  elsewhere answers `421 wrong_region` naming the home.
-- Errors keep each SDK's HTTP error types: `400 invalid_request` (bad regions, target not a replica), `409
-  move_in_progress`, `421 wrong_region`, `503 replica_not_ready` (the target replica could not catch up; nothing
-  changed) and `503 move_unresolved` (the move outcome is being settled; retry the same call).
+- Omitted options are not sent. `regions` names at least one distinct serving region and turns all-regions mode off;
+  `allRegions: true` turns it on. Sending both is refused, and `setDatabasePlacement` needs one of them. Fewer than one
+  region, a duplicate or a region that does not serve is a validation error; the SDKs do not retry it.
+- `GET …/databases/{database}/regions` keeps one entry per region. An entry may carry `"role": "writer"` for the region
+  that commits writes. Nothing at the top level names a home.
+- Placement requests go to a region that holds the database. Behind `api.terrascale.tech` the edge routes them; a direct
+  regional call elsewhere answers `421 wrong_region`.
+- Errors keep each SDK's HTTP error types: `400 invalid_request` (fewer than one region, a duplicate, or a region that
+  does not serve) and `421 wrong_region`.
 
 | .NET | JS/TS | Go | Python | Rust |
 |---|---|---|---|---|
 | `client.SetDatabasePlacementAsync` | `client.setDatabasePlacement` | `client.SetDatabasePlacement` | `client.set_database_placement` | `client.set_database_placement` |
-| `client.MoveDatabaseHomeAsync` | `client.moveDatabaseHome` | `client.MoveDatabaseHome` | `client.move_database_home` | `client.move_database_home` |
 
 ## REST: one request, one transaction
 
