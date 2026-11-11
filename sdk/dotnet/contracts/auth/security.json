@@ -69,7 +69,6 @@
       "not_found",
       "not_pending",
       "rate_limited",
-      "rotation_pending",
       "step_up_required",
       "temporarily_unavailable",
       "unauthorized"

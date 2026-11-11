@@ -469,7 +469,7 @@
           "Credentials"
         ],
         "summary": "Rotate a project key and reveal its new secret once",
-        "description": "Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period. With 0, the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With grace, these bounds apply from its end. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.",
+        "description": "Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period. With 0, the old secret and its tokens stop everywhere within 2 seconds; open connections (including Postgres) close within 3 seconds. With grace, these bounds apply from its end. Rotation is always available: it ends any older previous secret immediately; the current secret becomes the previous one for the requested grace. At most two secrets remain valid. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.",
         "operationId": "rotateDashboardCredential",
         "requestBody": {
           "content": {

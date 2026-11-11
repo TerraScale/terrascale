@@ -95,7 +95,6 @@ internal static class TerraScaleAuthErrors
         "last_owner",
         "name_taken",
         "not_empty",
-        "rotation_pending",
         "email_mismatch",
         "invitation_expired",
         "invitation_pending",
