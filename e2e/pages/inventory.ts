@@ -54,6 +54,12 @@ async function databaseHeader(page: Page, journey: Journey): Promise<void> {
   await expect(header.getByText(new RegExp(`^${journey.databaseRegion}$`, 'i')).first()).toBeVisible();
 }
 
+async function regionPicked(page: Page, map: string, journey: Journey): Promise<void> {
+  const picked = page.locator(`#${map} .ts-region-callout:is([data-placed], [data-docked]) input[name="regions"]:checked`);
+  await expect(picked).toHaveCount(1);
+  await expect(picked).toHaveValue(new RegExp(`^${journey.databaseRegion}$`, 'i'));
+}
+
 async function connectCard(page: Page, journey: Journey): Promise<void> {
   const tabs = page.locator('#db-connect-sdk [role=tab]');
   await expect(tabs).toHaveCount(5);
@@ -227,9 +233,7 @@ export const dashboardStates: readonly PageState[] = [
     url: () => '/databases?create=1',
     covers: { path: /^\/databases$/, query: { create: /^1$/ } },
     heading: inDialog('create-database', 'New database'),
-    data: async (page, journey) => {
-      await expect(page.locator('#create-database input[name="homeRegion"]')).toHaveValue(journey.databaseRegion);
-    },
+    data: (page, journey) => regionPicked(page, 'create-database-regions', journey),
   },
   {
     name: 'database overview',
@@ -259,6 +263,10 @@ export const dashboardStates: readonly PageState[] = [
       data: async (page, journey) => {
         await expect(page).toHaveTitle(`${journey.databaseName} · ${label} · TerraScale`);
         await databaseHeader(page, journey);
+        if (tab === 'replication') {
+          await expect(page.getByRole('heading', { level: 2, name: 'Regions', exact: true })).toBeVisible();
+          await regionPicked(page, 'database-regions', journey);
+        }
       },
     }),
   ),
