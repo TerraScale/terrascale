@@ -47,4 +47,5 @@ nice -n 19 python3 scripts/auth/email-flows-check.py --cleanup-state
 `--resume-dashboard` continues only the existing account's protected product
 paths before cleanup; it does not start another signup or reset. An incomplete
 audit exits nonzero even when the individually delivered flows passed. The
-existing `signup-mail-check.py` remains the narrow independent delivery probe.
+production journey's sign-up (`e2e/journey/setup.spec.ts`) is the narrow delivery probe that runs after
+every release.

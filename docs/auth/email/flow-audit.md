@@ -57,8 +57,8 @@ The optional status subscription check received HTTP 403 before any subscription
 POST, so no subscription was created and no delivery is claimed. Protected
 proofs remain pending until the user confirms the separate sign-in fix is live.
 
-The independent daily signup workflow runs reviewed main code, never redeems a
-signup code, and reports failures without making production delivery an
-unreliable external dependency of required CI. The journey, with Mailpit as the
-SMTP server, is the merge gate. Provider acceptance, inbox delivery and final resource
+The production journey runs reviewed main code against production after every
+release and daily, redeems the signup code it receives, and reports failures in
+an issue without making production delivery an external dependency of required
+CI. The journey, with Mailpit as the SMTP server, is the merge gate. Provider acceptance, inbox delivery and final resource
 cleanup are distinct results; none implies the others.
