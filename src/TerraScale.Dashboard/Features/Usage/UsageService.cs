@@ -15,10 +15,20 @@ namespace TerraScale.Dashboard.Features.Usage
     {
         public long? LogicalBytes => Reading?.LogicalBytes;
     }
-    public sealed record UsageAllowance(string Name, string Allowance, string Used, double? Percent, string PlanName, string? ExactUsed = null, string? ExactAllowance = null)
+    public sealed record UsageFigure(string Value, string Unit = "")
+    {
+        public static UsageFigure Bytes(long bytes)
+        {
+            var text = MetricFormat.Bytes(bytes);
+            var split = text.LastIndexOf(' ');
+            return new(text[..split], text[(split + 1)..]);
+        }
+    }
+    public sealed record UsageAllowance(string Name, string Allowance, UsageFigure Used, bool Measured, double? Percent, string PlanName, string? ExactUsed = null, string? ExactAllowance = null)
     {
         public string Tone => Percent >= 100 ? "danger" : Percent >= 80 ? "warning" : "success";
         public string Label => $"{Name}: {ValueFormat.PercentLabel(Percent ?? 0)} of the {PlanName} plan's allowance";
+        public double Fill => Percent is > 0 and var percent ? Math.Clamp(percent, 1, 100) : 0;
     }
     public sealed record UsagePage(ShellModel Shell, UsageSelection Selection, string Tab, string Saved, SpendingSnapshot Spending,
         IReadOnlyList<UsageProjectRow> Projects, IReadOnlyList<UsageDatabaseRow> Databases, IReadOnlyList<UsageAllowance> Allowances,
@@ -147,9 +157,15 @@ namespace TerraScale.Dashboard.Features.Usage
 
             UsageAllowance Allowance(string title, string allowance, long limit, long used, bool bytes, bool measured, string unit = "operation units/month")
             {
-                return new(title, !bytes && limit > 0 ? ChartGeometry.Compact(limit) + " " + unit : allowance,
-                measured ? bytes ? MetricFormat.Bytes(used) : ChartGeometry.Compact(used) : "Not metered",
+                return new(title, !bytes && limit > 0 ? Rounded(limit) + " " + unit : allowance,
+                measured ? bytes ? UsageFigure.Bytes(used) : new(ChartGeometry.Compact(used)) : new("Not metered"), measured,
                 measured && limit > 0 ? ValueFormat.Percent(used, limit) : null, name, measured && !bytes ? used.ToString("N0", CultureInfo.InvariantCulture) : null, !bytes && limit > 0 ? limit.ToString("N0", CultureInfo.InvariantCulture) + " " + unit : null);
+            }
+
+            static string Rounded(long limit)
+            {
+                var text = ChartGeometry.Compact(limit);
+                return text.Length > 3 && text[^3..^1] == ".0" ? text[..^3] + text[^1] : text;
             }
         }
     }

@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Usage
@@ -35,7 +36,14 @@ namespace TerraScale.Dashboard.Features.Usage
                     return HttpRedirects.SeeOther("/");
                 }
 
-                return UsageView.Create(await usage.LoadAsync(ShellModel.For(http, selection.Context, "Usage"), selection, tab, http.Request.Query["saved"].ToString(), http.RequestAborted));
+                var page = await usage.LoadAsync(ShellModel.For(http, selection.Context, "Usage"), selection, tab, http.Request.Query["saved"].ToString(), http.RequestAborted);
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await DatastarEvents.PatchElementsAsync(http, UsagePageView.Create(page));
+                    return Results.Empty;
+                }
+
+                return UsageView.Create(page);
             }
             catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
             catch (IOException) { return Results.Text("Could not load usage.", statusCode: 503); }

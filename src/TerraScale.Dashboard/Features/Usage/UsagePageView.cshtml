@@ -1,0 +1,33 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Usage.UsagePage>
+@using TerraScale.Dashboard.Features.Usage
+@using TerraScale.Dashboard.Features.Analytics
+@{
+    var selection = Model.Selection;
+    var projectId = selection.Context.Project?.Id ?? "";
+    var tabs = selection.Member && Model.SpendingAlert ? new[] { (Key: "overview", Label: "Overview"), (Key: "settings", Label: "Spending alert") } : [];
+    var overview = new FilterField("tab", "overview");
+    var project = new FilterField("project", projectId);
+    var database = new FilterField("database", selection.DatabaseId);
+    var range = new FilterField("range", selection.Range);
+}
+<main id="usage-page" class="ts-page ts-usage" data-on:datastar-fetch="evt.detail.el.matches?.('.ts-filter-control') &amp;&amp; (evt.detail.type === 'started' ? ($_navPending = true) : evt.detail.type === 'finished' ? ($_navPending = false) : (evt.detail.type === 'error' || evt.detail.type === 'retries-failed') &amp;&amp; location.reload())"><header class="ts-usage-header"><h1>Usage</h1></header>
+@if (tabs.Length > 0 || Model.Tab == "overview")
+{
+    <div class="ts-toolbar ts-usage-toolbar">
+        @if (tabs.Length > 0) { <nav class="ts-tabs" aria-label="Usage sections">@foreach (var tab in tabs) { <a class="ts-tab" href="@Model.ProjectHref(projectId, tab.Key)" aria-current="@(tab.Key == Model.Tab ? "page" : null)"><span>@tab.Label</span></a> }</nav> }
+        @if (Model.Tab == "overview")
+        {
+            FilterOption[] databases = [new("", "All databases"), .. selection.Context.Project!.Databases.Values.OrderBy(item => item.Name, StringComparer.Ordinal).Select(item => new FilterOption(item.Id, item.Name))];
+            <div class="ts-filters ts-filter-bar" role="search" aria-label="Filter usage">
+                @(await RenderPartialAsync<FilterMenuView, FilterControl>(new("usage-project", "Project", "/usage", "project", projectId, [.. Model.Projects.Select(item => new FilterOption(item.Spending.Id, item.Spending.Name))], [overview, range])))
+                @(await RenderPartialAsync<FilterMenuView, FilterControl>(new("usage-database", "Database", "/usage", "database", selection.DatabaseId, databases, [overview, project, range])))
+                @(await RenderPartialAsync<FilterRangeView, FilterControl>(new("usage-range", "Period", "/usage", "range", selection.Range, FilterControl.Ranges, [overview, project, database])))
+            </div>
+        }
+    </div>
+}
+@if (Model.SpendingAlert && Model.Saved == "ok") { <div class="ts-spending-notice" data-signals="{spendingSaved: true}" data-attr:hidden="!$spendingSaved"><div class="ts-alert ts-alert-success" role="alert"><div class="ts-row-between"><div class="ts-stack-sm"><p class="ts-alert-title">Changes saved</p><p class="ts-alert-body">Spending alert saved.</p></div><button class="ts-icon-btn" type="button" aria-label="Dismiss save confirmation" data-on:click="$spendingSaved = false">@Icons.Render("X", 16)</button></div></div></div> }
+@if (Model.SpendingAlert && Model.Saved == "invalid") { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">Enter a non-negative dollar amount with at most two decimal places.</p></div> }
+@if (Model.Tab == "overview") { <p class="ts-meta ts-measurement-loading" role="status">Loading usage…</p>@(await RenderPartialAsync<UsageOverviewView, UsagePage>(Model))@if (Model.InternalBill is null && !Model.SpendingAlert && selection.Member) { @(await RenderPartialAsync<SpendingView, UsagePage>(Model)) } }
+else { @(await RenderPartialAsync<SpendingView, UsagePage>(Model)) }
+</main>
