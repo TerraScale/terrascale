@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Organizations
     public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
         OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
         BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null,
-        string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0);
+        string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null, string Notice = "", int NoticeStatus = 0, InvitationDraft? InviteDraft = null);
 
     public static class OrganizationEndpoints
     {
@@ -155,6 +155,13 @@ namespace TerraScale.Dashboard.Features.Organizations
                     }, id ?? form["userID"].ToString(), form["role"].ToString(), http.RequestAborted, proof);
                 }
                 return HttpRedirects.SeeOther(operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger" : "/organization?tab=members");
+            }
+            catch (AccountAccessException error) when (operation == "invite")
+            {
+                var page = await PageModelAsync(http, context, placement, error.Message);
+                var slice = OrganizationView.Create(page with { InviteDraft = new(form["email"].ToString(), form["role"].ToString()) });
+                slice.StatusCode = error.StatusCode;
+                return slice;
             }
             catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger" : null); }
         }
