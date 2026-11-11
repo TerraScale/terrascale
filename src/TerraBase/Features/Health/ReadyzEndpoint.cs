@@ -12,7 +12,7 @@ public sealed class ReadyzEndpoint(
         Get("/readyz");
         Name("readyz");
         Summary("Readiness probe");
-        Description("503 while the storage engine is closed, the data directory is not writable, ts-auth's signing keys have not been fetched yet (when auth-issuer is set), a catalog follower has not caught up with its primary yet or the server is shutting down.");
+        Description("503 while the storage engine is closed, the data directory is not writable, the catalog has not passed its restore gate, the platform database seed is still pending or the server is shutting down, and in a cluster until this node knows its region's writer and has started its home push and leases.");
         Tags("Health");
         Produces<StatusBody>();
         Produces<StatusBody>(StatusCodes.Status503ServiceUnavailable);

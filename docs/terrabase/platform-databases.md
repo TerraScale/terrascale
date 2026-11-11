@@ -10,7 +10,7 @@ TerraScale services store their state in TerraBase SQL databases. TerraBase seed
 | Dashboard project | `00000000000000000000000005` | ts-dashboard |
 | Dashboard database | `00000000000000000000000004` | ts-dashboard |
 
-`Features/Platform/PlatformDatabases.cs` defines these identities. Startup seeds missing fixed catalog bindings conditionally and refuses conflicting identities. Seeding storage does not grant customer access or replace ts-auth's independent identity bootstrap. Verify placement and data convergence against the serving revision rather than inferring them from a catalog entry.
+`Features/Platform/PlatformDatabases.cs` defines these identities. Startup seeds missing fixed catalog bindings conditionally and refuses conflicting identities. `/readyz` answers 503 while that seed is pending. The seed ends when both platform databases exist, or when it refuses a conflicting identity, which it logs as an error and does not retry before the next start; either way readiness stops waiting for it. Seeding storage does not grant customer access or replace ts-auth's independent identity bootstrap. Verify placement and data convergence against the serving revision rather than inferring them from a catalog entry.
 
 Auth and dashboard use the .NET SDK's SQL endpoint, the dashboard through the TerraBase EF Core provider. Every call requires the listener's credential and authorization boundary. Service credentials never belong in a customer browser, tool output or logs. Missing or incompatible issuer/audience metadata fails closed.
 
