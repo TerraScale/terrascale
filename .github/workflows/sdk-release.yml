@@ -1,14 +1,11 @@
 name: SDK Release
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - 'sdk/go/**'
-      - 'scripts/sdk/**'
-      - '.github/workflows/sdk-release.yml'
-      - '!**/AGENTS.md'
-      - '!**/CLAUDE.md'
+  push:
     tags:
       - 'sdk/go/v0.0.*'
       - 'sdk/js/v0.0.*'
@@ -26,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: sdk-release-${{ inputs.tag || github.ref }}
+  group: sdk-release-${{ github.event_name == 'workflow_run' && github.run_id || inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -35,74 +32,53 @@ env:
   GITHUB_FEED: https://nuget.pkg.github.com/TerraScale/index.json
 
 jobs:
-  tests:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  go-due:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
-      actions: read
     outputs:
-      eligible: ${{ steps.gate.outputs.eligible }}
-      revision: ${{ steps.gate.outputs.revision }}
+      due: ${{ steps.due.outputs.due }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
-      - id: gate
-        name: Select green main
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          REVISION: ${{ github.sha }}
+          fetch-depth: 0
+          sparse-checkout: .github
+      - id: due
+        name: Compare the Go release inputs with the newest Go tag
         run: |
-          python3 - <<'PYTHON'
-          import json, os, subprocess, time
-          def gh(*args):
-              return json.loads(subprocess.check_output(['gh', *args], text=True))
-          repo, pushed = os.environ['REPOSITORY'], os.environ['REVISION']
-          def green(sha):
-              runs = gh('run', 'list', '--repo', repo, '--branch', 'main', '--commit', sha,
-                        '--event', 'push', '--limit', '100', '--json', 'status,conclusion,workflowName')
-              runs = [item for item in runs if item['workflowName'] != 'SDK Release']
-              return bool(runs) and all(item['status'] == 'completed'
-                                        and item['conclusion'] in {'success', 'skipped'} for item in runs)
-          def releasable():
-              return pushed if green(pushed) else None
-          deadline = time.monotonic() + 25 * 60
-          revision = releasable()
-          while time.monotonic() < deadline and revision is None:
-              time.sleep(30)
-              revision = releasable()
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f"eligible={'true' if revision else 'false'}\n")
-              if revision:
-                  output.write(f'revision={revision}\n')
-          if not revision:
-              print('No green main revision became releasable.')
-          PYTHON
+          latest=$(git for-each-ref --count=1 --sort=-v:refname --format='%(refname:short)' 'refs/tags/sdk/go/v0.0.*')
+          if git merge-base --is-ancestor "$latest" HEAD && ! git diff-tree --quiet -r "$latest" HEAD -- sdk/go scripts/sdk \
+            .github/workflows/sdk-release.yml ':(exclude,glob)**/AGENTS.md' ':(exclude,glob)**/CLAUDE.md'; then
+            echo due=true >> "$GITHUB_OUTPUT"
+          fi
 
   go:
-    needs: tests
+    needs: go-due
     if: >-
-      !cancelled() && (needs.tests.outputs.eligible == 'true'
+      !cancelled() && (needs.go-due.outputs.due == 'true'
       || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/sdk/go/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    concurrency:
+      group: sdk-go-release
+      cancel-in-progress: false
     permissions:
       contents: write
-      actions: read
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       revision: ${{ steps.tag.outputs.revision }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: ${{ needs.tests.outputs.revision || inputs.tag || github.ref }}
+          ref: ${{ github.event.workflow_run.head_sha || inputs.tag || github.ref }}
           persist-credentials: false
           fetch-depth: 0
       - name: Validate the versioned main tag
-        if: github.ref != 'refs/heads/main'
+        if: github.event_name != 'workflow_run'
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
@@ -130,10 +106,11 @@ jobs:
           VERSION: ${{ steps.qualified.outputs.version }}
         run: |
           revision=$(git rev-parse HEAD)
-          if [ "$GITHUB_REF" = refs/heads/main ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
             TAG="sdk/go/v$VERSION"
-            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/sdk%2Fgo%2Fv$VERSION" > /dev/null 2>&1; then
-              echo "$TAG is already released; nothing to do."
+            latest=$(git for-each-ref --count=1 --sort=-v:refname --format='%(refname:short)' 'refs/tags/sdk/go/v0.0.*')
+            if ! git merge-base --is-ancestor "$latest" HEAD; then
+              echo "$latest is on a newer commit than $revision; nothing to release."
               exit 0
             fi
             gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$revision" > /dev/null
@@ -149,7 +126,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-      actions: read
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
