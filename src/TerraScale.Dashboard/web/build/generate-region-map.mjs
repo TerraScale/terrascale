@@ -72,4 +72,4 @@ mkdirSync(BRAND, { recursive: true });
 writeFileSync(join(BRAND, "region-map.svg"), svg);
 writeFileSync(join(SCRIPTS, "region-map-data.js"), data);
 console.log("src/TerraScale.Dashboard/web/static/brand/region-map.svg (dotted world map)");
-console.log("src/TerraScale.Dashboard/web/assets/js/region-map-data.js (dot lattice and region coordinates)");
+console.log("src/TerraScale.Dashboard/web/assets/js/region-map-data.js (dot grid and region coordinates)");
